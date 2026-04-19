@@ -111,7 +111,7 @@ impl<'a> CheckerState<'a> {
         // generic call argument collection for `Array.prototype.map`.
         {
             let db = self.ctx.types.as_type_database();
-            if tsz_solver::is_function_type(db, type_id)
+            if crate::query_boundaries::common::is_function_type(db, type_id)
                 || crate::query_boundaries::common::callable_shape_id(db, type_id).is_some()
             {
                 return type_id;
@@ -433,7 +433,10 @@ impl<'a> CheckerState<'a> {
                             .get_body(def_id)
                             .filter(|&b| lazy_def_id(self.ctx.types, b).is_none());
                         if let Some(b) = body {
-                            !tsz_solver::is_structurally_deferred_type(self.ctx.types, b)
+                            !crate::query_boundaries::common::is_structurally_deferred_type(
+                                self.ctx.types,
+                                b,
+                            )
                         } else {
                             !self.alias_ast_is_deferred(target_sym_id)
                         }
@@ -527,9 +530,10 @@ impl<'a> CheckerState<'a> {
         // TYPE namespace, so `type X = Static<typeof X>` (where `const X` also exists)
         // is NOT circular. Evaluating such types would re-enter the type alias
         // resolution for the merged symbol and produce a false TS2456.
-        let has_typeof_self = tsz_solver::collect_type_queries(self.ctx.types, resolved_type)
-            .iter()
-            .any(|sym_ref| sym_ref.0 == sym_id.0);
+        let has_typeof_self =
+            crate::query_boundaries::common::collect_type_queries(self.ctx.types, resolved_type)
+                .iter()
+                .any(|sym_ref| sym_ref.0 == sym_id.0);
         let evaluated = if has_typeof_self {
             resolved_type
         } else {

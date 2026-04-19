@@ -235,7 +235,10 @@ impl<'a> CheckerState<'a> {
                     use crate::query_boundaries::common::PropertyAccessResult;
                     match self.resolve_property_access_with_env(member, name) {
                         PropertyAccessResult::Success { type_id, .. } => {
-                            let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                            let expected = crate::query_boundaries::common::remove_undefined(
+                                self.ctx.types,
+                                type_id,
+                            );
                             match attr_type {
                                 Some(attr_type) => {
                                     *attr_type == TypeId::ANY
@@ -354,14 +357,14 @@ impl<'a> CheckerState<'a> {
         let props_type = self.normalize_jsx_required_props_target(props_type);
 
         // Union props: delegate to whole-object assignability checking.
-        if tsz_solver::is_union_type(self.ctx.types, props_type) {
+        if crate::query_boundaries::common::is_union_type(self.ctx.types, props_type) {
             self.check_jsx_union_props(attributes_idx, props_type, tag_name_idx, children_ctx);
             return;
         }
         // Skip attribute-vs-props checking for any/error props.
         let skip_prop_checks = props_type == TypeId::ANY
             || props_type == TypeId::ERROR
-            || tsz_solver::contains_error_type(self.ctx.types, props_type);
+            || crate::query_boundaries::common::contains_error_type(self.ctx.types, props_type);
 
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
@@ -378,7 +381,10 @@ impl<'a> CheckerState<'a> {
         // Suppress excess-property errors when props has unresolved type params.
         // Check both raw and evaluated props (evaluation may collapse type params).
         let props_has_type_params = raw_props_has_type_params
-            || tsz_solver::contains_type_parameters(self.ctx.types, props_type);
+            || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                props_type,
+            );
         let component_has_managed_props_metadata = component_type.is_some_and(|comp| {
             use crate::query_boundaries::common::PropertyAccessResult;
             matches!(
@@ -601,8 +607,10 @@ impl<'a> CheckerState<'a> {
                         if is_data_or_aria && from_index_signature {
                             continue;
                         }
-                        let write_check_type =
-                            tsz_solver::remove_undefined(self.ctx.types, type_id);
+                        let write_check_type = crate::query_boundaries::common::remove_undefined(
+                            self.ctx.types,
+                            type_id,
+                        );
                         // Strip undefined from optional props (write-position checking).
                         (
                             write_check_type,
@@ -613,8 +621,10 @@ impl<'a> CheckerState<'a> {
                         let Some(type_id) = property_type else {
                             continue;
                         };
-                        let write_check_type =
-                            tsz_solver::remove_undefined(self.ctx.types, type_id);
+                        let write_check_type = crate::query_boundaries::common::remove_undefined(
+                            self.ctx.types,
+                            type_id,
+                        );
                         (
                             write_check_type,
                             matches!(type_id, TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE),
@@ -653,11 +663,17 @@ impl<'a> CheckerState<'a> {
                         // but the props_type has been instantiated to a concrete type.
                         let component_has_type_params = component_type.is_some_and(|comp| {
                             self.is_generic_jsx_component(comp)
-                                || tsz_solver::contains_type_parameters(self.ctx.types, comp)
+                                || crate::query_boundaries::common::contains_type_parameters(
+                                    self.ctx.types,
+                                    comp,
+                                )
                         }) || special_attr_component_type
                             .is_some_and(|comp| {
                                 self.is_generic_jsx_component(comp)
-                                    || tsz_solver::contains_type_parameters(self.ctx.types, comp)
+                                    || crate::query_boundaries::common::contains_type_parameters(
+                                        self.ctx.types,
+                                        comp,
+                                    )
                             });
 
                         if !has_string_index // excess property check
@@ -858,8 +874,13 @@ impl<'a> CheckerState<'a> {
                     //   <ReactSelectClass<ExtractValueType<WrappedProps>> value={props.value} />
                     // where the conditional type in `props.value` can't yet be resolved.
                     let attr_has_unresolved_type_params =
-                        tsz_solver::contains_type_parameters(self.ctx.types, expected_type)
-                            || tsz_solver::contains_type_parameters(self.ctx.types, actual_type);
+                        crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            expected_type,
+                        ) || crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            actual_type,
+                        );
                     if actual_type != TypeId::ANY
                         && actual_type != TypeId::ERROR
                         && !attr_has_unresolved_type_params
@@ -960,7 +981,10 @@ impl<'a> CheckerState<'a> {
                 // where `props: T`), we can't enumerate the properties it provides.
                 // Mark spread_covers_all so missing-required-property checks (TS2741)
                 // don't fire — the generic spread could provide any property.
-                if tsz_solver::contains_type_parameters(self.ctx.types, spread_type) {
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    spread_type,
+                ) {
                     spread_covers_all = true;
                 }
 
@@ -1549,7 +1573,10 @@ impl<'a> CheckerState<'a> {
                 match self.resolve_property_access_with_env(member_resolved, name) {
                     PropertyAccessResult::Success { type_id, .. } => {
                         // Strip undefined from optional properties (write-position)
-                        let expected = tsz_solver::remove_undefined(self.ctx.types, type_id);
+                        let expected = crate::query_boundaries::common::remove_undefined(
+                            self.ctx.types,
+                            type_id,
+                        );
                         // any/error types are always compatible
                         if *attr_type == TypeId::ANY || *attr_type == TypeId::ERROR {
                             return true;
@@ -1601,7 +1628,10 @@ impl<'a> CheckerState<'a> {
             // The per-member check fails because the type parameter doesn't match any
             // single member, but the constraint ensures correctness at instantiation.
             let any_attr_has_type_params = provided_attrs.iter().any(|(_, attr_type)| {
-                tsz_solver::contains_type_parameters(self.ctx.types, *attr_type)
+                crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    *attr_type,
+                )
             });
 
             if !any_attr_has_type_params {

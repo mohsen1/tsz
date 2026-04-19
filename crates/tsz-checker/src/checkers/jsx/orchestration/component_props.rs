@@ -434,10 +434,16 @@ impl<'a> CheckerState<'a> {
             .get_jsx_library_managed_attributes_application(component_type, display_props_type)
             .unwrap_or(display_props_type);
 
-        let raw_has_type_params =
-            tsz_solver::contains_type_parameters(self.ctx.types, raw_props_type)
-                || tsz_solver::contains_type_parameters(self.ctx.types, semantic_props_type)
-                || tsz_solver::contains_type_parameters(self.ctx.types, component_type);
+        let raw_has_type_params = crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            raw_props_type,
+        ) || crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            semantic_props_type,
+        ) || crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            component_type,
+        );
         let display_target = self.format_type(display_props_type);
         Some((semantic_props_type, raw_has_type_params, display_target))
     }
@@ -1055,14 +1061,15 @@ impl<'a> CheckerState<'a> {
         let instantiated =
             self.instantiate_jsx_function_shape_with_substitution(&function_shape, &substitution);
         let props_type = instantiated.params.first()?.type_id;
-        let props_type = if tsz_solver::is_union_type(self.ctx.types, props_type)
-            || should_preserve_contextual_application_shape(self.ctx.types, props_type)
-        {
-            props_type
-        } else {
-            let props_type = self.resolve_type_for_property_access(props_type);
-            self.evaluate_type_with_env(props_type)
-        };
+        let props_type =
+            if crate::query_boundaries::common::is_union_type(self.ctx.types, props_type)
+                || should_preserve_contextual_application_shape(self.ctx.types, props_type)
+            {
+                props_type
+            } else {
+                let props_type = self.resolve_type_for_property_access(props_type);
+                self.evaluate_type_with_env(props_type)
+            };
         let props_type = self.apply_jsx_library_managed_attributes(component_type, props_type);
         let props_type = self.narrow_jsx_props_union_from_attributes(attributes_idx, props_type);
         if props_type == TypeId::ANY || props_type == TypeId::UNKNOWN || props_type == TypeId::ERROR

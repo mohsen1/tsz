@@ -235,7 +235,8 @@ impl<'a> CheckerState<'a> {
             if let Some(contextual) = contextual_type {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
-                let resolved = tsz_solver::remove_nullish(self.ctx.types, resolved);
+                let resolved =
+                    crate::query_boundaries::common::remove_nullish(self.ctx.types, resolved);
                 if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
                 }
@@ -268,7 +269,8 @@ impl<'a> CheckerState<'a> {
             // Strip null/undefined before evaluation — matches tsc's getNonNullableType
             // in getApparentTypeOfContextualType. Without this, `Iterable<T> | null`
             // evaluates to `Object{...} | null` which triggers union ambiguity.
-            let ctx_type = tsz_solver::remove_nullish(self.ctx.types, ctx_type);
+            let ctx_type =
+                crate::query_boundaries::common::remove_nullish(self.ctx.types, ctx_type);
             let ctx_type = self.evaluate_type_with_env(ctx_type);
             let ctx_type = self.resolve_lazy_type(ctx_type);
             self.evaluate_application_type(ctx_type)

@@ -120,8 +120,8 @@ impl<'a> CheckerState<'a> {
         index: usize,
         arg_count: Option<usize>,
     ) -> bool {
-        if tsz_solver::is_union_type(self.ctx.types, expected)
-            || tsz_solver::is_intersection_type(self.ctx.types, expected)
+        if crate::query_boundaries::common::is_union_type(self.ctx.types, expected)
+            || crate::query_boundaries::common::is_intersection_type(self.ctx.types, expected)
         {
             return true;
         }
@@ -526,7 +526,7 @@ impl<'a> CheckerState<'a> {
             && ty != TypeId::ANY
             && ty != TypeId::ERROR
             && ty != TypeId::UNDEFINED
-            && !tsz_solver::type_contains_undefined(self.ctx.types, ty)
+            && !crate::query_boundaries::common::type_contains_undefined(self.ctx.types, ty)
         {
             ty = self.ctx.types.factory().union2(ty, TypeId::UNDEFINED);
         }
@@ -1032,7 +1032,8 @@ impl<'a> CheckerState<'a> {
                 // this, `T | undefined` causes false TS2339 on destructured
                 // property access.
                 if param.initializer.is_some() {
-                    ctx_type = tsz_solver::remove_undefined(self.ctx.types, ctx_type);
+                    ctx_type =
+                        crate::query_boundaries::common::remove_undefined(self.ctx.types, ctx_type);
                 }
                 // Assign the contextual type to the binding pattern elements
                 let request = crate::context::TypingRequest::with_contextual_type(ctx_type);

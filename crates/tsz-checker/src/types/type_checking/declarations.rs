@@ -612,7 +612,9 @@ impl<'a> CheckerState<'a> {
     /// Check if a type is a `TypeQuery` (typeof X) that resolves to the global Function type.
     /// This handles cases like `typeof c1` where `c1: Function`.
     fn is_member_function_type(&mut self, type_id: TypeId) -> bool {
-        if let Some(sym_ref) = tsz_solver::type_query_symbol(self.ctx.types, type_id) {
+        if let Some(sym_ref) =
+            crate::query_boundaries::common::type_query_symbol(self.ctx.types, type_id)
+        {
             let sym_id = tsz_binder::SymbolId(sym_ref.0);
             let resolved = self.get_type_of_symbol(sym_id);
             if resolved != type_id {

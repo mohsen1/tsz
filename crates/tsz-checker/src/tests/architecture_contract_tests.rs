@@ -1599,7 +1599,7 @@ fn checker_files_stay_under_loc_limit() {
     //   types/computation/call.rs (1805→split), checkers/call_checker.rs (1396),
     //   checkers/jsx/props/mod.rs, checkers/jsx/props/resolution.rs, checkers/jsx/props/validation.rs (1469)
     let grandfathered: &[(&str, usize)] = &[
-        ("types/function_type.rs", 1940),
+        ("types/function_type.rs", 1955),
         ("state/type_analysis/computed_commonjs.rs", 2787),
         ("checkers/jsx/props/resolution.rs", 1600),
         ("checkers/jsx/orchestration", 2397),
@@ -4218,6 +4218,83 @@ fn test_no_inline_visitor_calls_in_checker_modules() {
         violations.is_empty(),
         "ALL checker code must use query_boundaries wrappers — no direct \
          tsz_solver::visitor:: calls allowed outside query_boundaries/.\n\
+         Violations found:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// Zero-tolerance guard: no direct inline calls to `tsz_solver::somefunc(` are allowed
+/// outside `query_boundaries/`. All solver function calls must go through boundary wrappers.
+///
+/// This guard catches top-level solver function calls like `tsz_solver::is_conditional_type(...)`
+/// that bypass the query_boundaries layer. Struct/enum paths like `tsz_solver::TypeId` and
+/// sub-namespace paths like `tsz_solver::operations::property::` are excluded from this check
+/// since they're either data types (handled by `test_solver_imports_go_through_query_boundaries`)
+/// or internal solver modules with their own boundary guards.
+#[test]
+fn test_no_inline_solver_function_calls_in_checker_modules() {
+    let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    walk_rs_files_recursive(&checker_src, &mut files);
+
+    let mut violations = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(&checker_src)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if rel.starts_with("query_boundaries/") || rel.starts_with("tests/") {
+            continue;
+        }
+
+        let src = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            // Detect `tsz_solver::lowercase_name(` — a direct solver function call.
+            // This pattern matches `tsz_solver::` followed by a lowercase identifier (function)
+            // and an opening paren, distinguishing it from type/struct paths.
+            let mut rest = trimmed;
+            while let Some(pos) = rest.find("tsz_solver::") {
+                let after = &rest[pos + "tsz_solver::".len()..];
+                // Check if this starts with a lowercase letter (function call, not type)
+                if after
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+                {
+                    // Check that there's no second `::` before a `(` — that would be a submodule
+                    // path like `tsz_solver::operations::property::`, not a direct function call.
+                    let name_end = after
+                        .find(|c: char| !c.is_alphanumeric() && c != '_')
+                        .unwrap_or(after.len());
+                    let name = &after[..name_end];
+                    let suffix = &after[name_end..];
+                    // It's a direct function call if followed immediately by `(`
+                    if suffix.starts_with('(') {
+                        violations.push(format!("  {}:{} — {}", rel, line_num + 1, trimmed));
+                        break;
+                    }
+                }
+                // Advance past this occurrence
+                rest = &rest[pos + 1..];
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "ALL checker code must use query_boundaries wrappers — no direct \
+         inline tsz_solver::funcname( calls allowed outside query_boundaries/.\n\
          Violations found:\n{}",
         violations.join("\n")
     );

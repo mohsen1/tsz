@@ -843,7 +843,7 @@ impl<'a> CheckerState<'a> {
     fn type_has_tuple_like_multiple_children(&mut self, type_id: TypeId) -> bool {
         let type_id = self.evaluate_type_with_env(type_id);
 
-        if tsz_solver::is_tuple_type(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id) {
             return true;
         }
 
@@ -868,8 +868,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Direct array/tuple check
-        if tsz_solver::is_array_type(self.ctx.types, type_id)
-            || tsz_solver::is_tuple_type(self.ctx.types, type_id)
+        if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
         {
             return true;
         }
@@ -914,8 +914,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if tsz_solver::is_array_type(self.ctx.types, type_id)
-            || tsz_solver::is_tuple_type(self.ctx.types, type_id)
+        if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_tuple_type(self.ctx.types, type_id)
         {
             return true;
         }

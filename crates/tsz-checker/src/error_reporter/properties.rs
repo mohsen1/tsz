@@ -124,11 +124,13 @@ impl<'a> CheckerState<'a> {
             .any(|members| {
                 members.iter().any(|member| {
                     let evaluated_member = self.evaluate_type_for_assignability(*member);
-                    tsz_solver::is_primitive_type(self.ctx.types, evaluated_member)
-                        || crate::query_boundaries::common::is_type_parameter_like(
-                            self.ctx.types,
-                            evaluated_member,
-                        )
+                    crate::query_boundaries::common::is_primitive_type(
+                        self.ctx.types,
+                        evaluated_member,
+                    ) || crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        evaluated_member,
+                    )
                 })
             })
     }
@@ -454,7 +456,7 @@ impl<'a> CheckerState<'a> {
         // (e.g., after typeof narrowing exhausts all possibilities).
         if type_id == TypeId::ERROR
             || type_id == TypeId::ANY
-            || tsz_solver::is_error_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::is_error_type(self.ctx.types, type_id)
         {
             return;
         }
@@ -498,7 +500,8 @@ impl<'a> CheckerState<'a> {
                 type_id,
             );
             if constraint.is_some_and(|constraint| {
-                constraint == TypeId::ERROR || tsz_solver::is_error_type(self.ctx.types, constraint)
+                constraint == TypeId::ERROR
+                    || crate::query_boundaries::common::is_error_type(self.ctx.types, constraint)
             }) {
                 return;
             }
@@ -529,7 +532,10 @@ impl<'a> CheckerState<'a> {
                         );
                     if scope_constraint.is_some_and(|constraint| {
                         constraint == TypeId::ERROR
-                            || tsz_solver::is_error_type(self.ctx.types, constraint)
+                            || crate::query_boundaries::common::is_error_type(
+                                self.ctx.types,
+                                constraint,
+                            )
                             || is_self_ref(constraint)
                             || constraint == type_id
                     }) {
@@ -2024,13 +2030,13 @@ impl<'a> CheckerState<'a> {
 
         // Check if the type is structurally empty (no user-defined properties).
         // Interfaces may be lazy or materialized - check both paths.
-        if tsz_solver::is_empty_object_type(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_empty_object_type(self.ctx.types, type_id) {
             return true;
         }
 
         // For lazy types (DefId-backed interfaces), check if the interface
         // declaration has zero members in the AST.
-        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
             .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
             .or_else(|| {
                 self.ctx
@@ -2043,7 +2049,7 @@ impl<'a> CheckerState<'a> {
             if def_name == name {
                 // Check if the body type is an empty object
                 if let Some(body) = def.body
-                    && tsz_solver::is_empty_object_type(self.ctx.types, body)
+                    && crate::query_boundaries::common::is_empty_object_type(self.ctx.types, body)
                 {
                     return true;
                 }
@@ -2059,7 +2065,7 @@ impl<'a> CheckerState<'a> {
     /// Try to get the display name for a type, checking symbol and def store.
     fn dom_type_name(&self, type_id: TypeId) -> Option<String> {
         // Try Lazy(DefId) types directly
-        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, type_id)
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
             && let Some(def) = self.ctx.definition_store.get(def_id)
         {
             let name = self.ctx.types.resolve_atom(def.name);

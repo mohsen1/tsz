@@ -750,8 +750,9 @@ impl<'a> CheckerState<'a> {
             // may produce different values on each call.
             let call_type = self.get_type_of_node(computed.expression);
             let db = self.ctx.types.as_type_database();
-            let is_symbol_like = tsz_solver::unique_symbol_ref(db, call_type).is_some()
-                || tsz_solver::type_query_symbol(db, call_type).is_some()
+            let is_symbol_like = crate::query_boundaries::common::unique_symbol_ref(db, call_type)
+                .is_some()
+                || crate::query_boundaries::common::type_query_symbol(db, call_type).is_some()
                 || call_type == tsz_solver::TypeId::SYMBOL;
             if is_symbol_like {
                 return true;
@@ -924,7 +925,11 @@ impl<'a> CheckerState<'a> {
             resolved_expr_type,
             assignability_expr_type,
         ] {
-            if tsz_solver::unique_symbol_ref(self.ctx.types.as_type_database(), candidate).is_some()
+            if crate::query_boundaries::common::unique_symbol_ref(
+                self.ctx.types.as_type_database(),
+                candidate,
+            )
+            .is_some()
             {
                 return false;
             }

@@ -270,7 +270,10 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .any(|member| self.union_with_non_nullish_non_object_member(member, depth - 1)),
             ExcessPropertiesKind::NotObject => {
-                if tsz_solver::is_primitive_type(self.ctx.types, evaluated_type) {
+                if crate::query_boundaries::common::is_primitive_type(
+                    self.ctx.types,
+                    evaluated_type,
+                ) {
                     return true;
                 }
 
@@ -334,7 +337,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn precise_callable_context_type(&mut self, type_id: TypeId) -> Option<TypeId> {
-        let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
+        let type_id = crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
         if type_id == TypeId::UNDEFINED {
             return None;
         }
@@ -389,7 +392,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if !tsz_solver::type_contains_undefined(self.ctx.types, property_context_type) {
+        if !crate::query_boundaries::common::type_contains_undefined(
+            self.ctx.types,
+            property_context_type,
+        ) {
             return Some(property_context_type);
         }
 
@@ -444,7 +450,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::assignability::ExcessPropertiesKind;
         use crate::query_boundaries::common::PropertyAccessResult;
 
-        let type_id = tsz_solver::remove_undefined(self.ctx.types, type_id);
+        let type_id = crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
         if type_id == TypeId::UNDEFINED {
             return ContextualPropertyPresence::Absent;
         }
@@ -1107,8 +1113,9 @@ impl<'a> CheckerState<'a> {
             return Some(preferred);
         }
 
-        let current_eval = tsz_solver::evaluate_type(self.ctx.types, current);
-        let candidate_eval = tsz_solver::evaluate_type(self.ctx.types, candidate);
+        let current_eval = crate::query_boundaries::common::evaluate_type(self.ctx.types, current);
+        let candidate_eval =
+            crate::query_boundaries::common::evaluate_type(self.ctx.types, candidate);
         let candidate_narrower = crate::query_boundaries::assignability::is_fresh_subtype_of(
             self.ctx.types,
             candidate_eval,
@@ -1153,8 +1160,14 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let current_eval = tsz_solver::evaluate_type(self.ctx.types, current_param);
-                    let candidate_eval = tsz_solver::evaluate_type(self.ctx.types, candidate_param);
+                    let current_eval = crate::query_boundaries::common::evaluate_type(
+                        self.ctx.types,
+                        current_param,
+                    );
+                    let candidate_eval = crate::query_boundaries::common::evaluate_type(
+                        self.ctx.types,
+                        candidate_param,
+                    );
                     let current_narrower =
                         crate::query_boundaries::assignability::is_fresh_subtype_of(
                             self.ctx.types,

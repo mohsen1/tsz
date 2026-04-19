@@ -29,12 +29,12 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
 
         // Safety guard: skip when types already contain checker error states.
-        if tsz_solver::contains_error_type(self.ctx.types, spread_type) {
+        if crate::query_boundaries::common::contains_error_type(self.ctx.types, spread_type) {
             return false;
         }
 
         let spread_has_type_params =
-            tsz_solver::contains_type_parameters(self.ctx.types, spread_type);
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, spread_type);
 
         // For concrete spread types, whole-type assignability is the fast path and
         // also prevents false positives from imprecise per-property extraction.
@@ -221,7 +221,7 @@ impl<'a> CheckerState<'a> {
             let expected_type = match self.resolve_property_access_with_env(props_type, &prop_name)
             {
                 PropertyAccessResult::Success { type_id, .. } => {
-                    tsz_solver::remove_undefined(self.ctx.types, type_id)
+                    crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id)
                 }
                 // Property doesn't exist in target - this will be caught as excess
                 // property or missing property elsewhere
@@ -229,7 +229,7 @@ impl<'a> CheckerState<'a> {
             };
 
             let source_type = if prop.optional {
-                tsz_solver::remove_undefined(self.ctx.types, prop.type_id)
+                crate::query_boundaries::common::remove_undefined(self.ctx.types, prop.type_id)
             } else {
                 prop.type_id
             };

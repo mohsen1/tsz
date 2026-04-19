@@ -425,7 +425,7 @@ impl<'a> CheckerState<'a> {
                 }
                 type_args.push(inferred.unwrap_or(TypeId::UNKNOWN));
             }
-            let instantiated = tsz_solver::instantiate_generic(
+            let instantiated = crate::query_boundaries::common::instantiate_generic(
                 self.ctx.types,
                 instance_type,
                 &effective_type_params,

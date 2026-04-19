@@ -871,8 +871,10 @@ impl<'a> CheckerState<'a> {
                                 && prop_type != TypeId::NEVER
                                 && prop_type != TypeId::ERROR
                             {
-                                let is_mapped =
-                                    tsz_solver::is_mapped_type(self.ctx.types, object_type);
+                                let is_mapped = crate::query_boundaries::common::is_mapped_type(
+                                    self.ctx.types,
+                                    object_type,
+                                );
                                 if !from_idx_sig && !is_mapped {
                                     let is_optional =
                                         self.is_property_optional(object_type, &prop_name);

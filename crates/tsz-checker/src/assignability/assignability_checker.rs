@@ -376,8 +376,10 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 shape.return_type,
             );
-            let skip_for_conditional =
-                tsz_solver::is_conditional_type(self.ctx.types, shape.return_type);
+            let skip_for_conditional = crate::query_boundaries::common::is_conditional_type(
+                self.ctx.types,
+                shape.return_type,
+            );
             let skip = skip_for_type_params || skip_for_type_query || skip_for_conditional;
             let evaluated = if skip {
                 shape.return_type
@@ -727,7 +729,10 @@ impl<'a> CheckerState<'a> {
             {
                 members.iter().any(|&member| {
                     crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
-                        && tsz_solver::contains_type_parameters(self.ctx.types, member)
+                        && crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            member,
+                        )
                 })
             } else {
                 false
@@ -775,8 +780,9 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        let contains_type_parameters =
-            |type_id: TypeId| tsz_solver::contains_type_parameters(self.ctx.types, type_id);
+        let contains_type_parameters = |type_id: TypeId| {
+            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id)
+        };
 
         let is_structural_target_that_must_not_be_suppressed = |type_id: TypeId| {
             let has_structural_mismatch_shape = |candidate: TypeId| {
@@ -877,8 +883,10 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::assignability::has_recursive_type_parameter_constraint(
                 self.ctx.types,
                 type_id,
-            ) || (tsz_solver::contains_type_parameters(self.ctx.types, type_id)
-                && !is_type_parameter_like(self.ctx.types, type_id))
+            ) || (crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                type_id,
+            ) && !is_type_parameter_like(self.ctx.types, type_id))
         };
 
         // Check if both source and target are simple generic Applications with the same base.
@@ -892,8 +900,14 @@ impl<'a> CheckerState<'a> {
             ) {
                 // Same base type, both contain type parameters
                 return s_app.base == t_app.base
-                    && tsz_solver::contains_type_parameters(self.ctx.types, s)
-                    && tsz_solver::contains_type_parameters(self.ctx.types, t);
+                    && crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        s,
+                    )
+                    && crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        t,
+                    );
             }
             false
         };
@@ -907,10 +921,9 @@ impl<'a> CheckerState<'a> {
         // (e.g., IterableIterator<T> from values()) to overloads.
         let is_generic_application_with_type_params = |ty: TypeId| -> bool {
             if let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, ty)
-                && app
-                    .args
-                    .iter()
-                    .any(|&arg| tsz_solver::contains_type_parameters(self.ctx.types, arg))
+                && app.args.iter().any(|&arg| {
+                    crate::query_boundaries::common::contains_type_parameters(self.ctx.types, arg)
+                })
             {
                 return true;
             }
@@ -1389,7 +1402,10 @@ impl<'a> CheckerState<'a> {
             .map(|p| {
                 let mut eval_ty = p.type_id;
                 // Resolve Lazy references (interface/type alias names)
-                if tsz_solver::is_lazy_type(self.ctx.types.as_type_database(), eval_ty) {
+                if crate::query_boundaries::common::is_lazy_type(
+                    self.ctx.types.as_type_database(),
+                    eval_ty,
+                ) {
                     let resolved = self.evaluate_type_for_assignability(eval_ty);
                     if resolved != eval_ty {
                         any_changed = true;
@@ -1404,7 +1420,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let mut eval_write = p.write_type;
-                if tsz_solver::is_lazy_type(self.ctx.types.as_type_database(), eval_write) {
+                if crate::query_boundaries::common::is_lazy_type(
+                    self.ctx.types.as_type_database(),
+                    eval_write,
+                ) {
                     let resolved = self.evaluate_type_for_assignability(eval_write);
                     if resolved != eval_write {
                         any_changed = true;
@@ -1479,7 +1498,8 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        let needs_substitution = tsz_solver::contains_this_type(self.ctx.types, type_id);
+        let needs_substitution =
+            crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id);
 
         if !needs_substitution {
             return type_id;
@@ -1499,7 +1519,7 @@ impl<'a> CheckerState<'a> {
 
         let instance_type = self.get_class_instance_type(class_idx, class_data);
 
-        if tsz_solver::is_this_type(self.ctx.types, type_id) {
+        if crate::query_boundaries::common::is_this_type(self.ctx.types, type_id) {
             // Substitute bare `ThisType` with the concrete class instance type so
             // that `return this` / `f(this)` assignability succeeds by identity check.
             instance_type

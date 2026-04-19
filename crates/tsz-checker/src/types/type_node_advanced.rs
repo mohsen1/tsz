@@ -181,9 +181,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // But suppress if object type is ANY/ERROR/conditional/generic (circular reference implicit any)
                 else if object_type != TypeId::ANY
                     && object_type != TypeId::ERROR
-                    && !tsz_solver::is_error_type(self.ctx.types, object_type)
-                    && !tsz_solver::is_conditional_type(self.ctx.types, object_type)
-                    && !tsz_solver::is_generic_application(self.ctx.types, object_type)
+                    && !crate::query_boundaries::common::is_error_type(self.ctx.types, object_type)
+                    && !crate::query_boundaries::common::is_conditional_type(
+                        self.ctx.types,
+                        object_type,
+                    )
+                    && !crate::query_boundaries::common::is_generic_application(
+                        self.ctx.types,
+                        object_type,
+                    )
                     && let Some(members) = crate::query_boundaries::common::union_members(
                         self.ctx.types,
                         object_for_tuple_check,
@@ -289,7 +295,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 // (TS7022/TS7024 already reported for the circularity)
                 let is_error_or_any = object_type == TypeId::ANY
                     || object_type == TypeId::ERROR
-                    || tsz_solver::is_error_type(self.ctx.types, object_type);
+                    || crate::query_boundaries::common::is_error_type(self.ctx.types, object_type);
 
                 // Suppress TS2339 for generic application types (e.g., Options<State, Actions>)
                 // where the type arguments are type parameters. When the object type is generic,
@@ -301,8 +307,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     crate::query_boundaries::common::is_generic_application_with_type_params(
                         self.ctx.types,
                         resolved_object,
-                    ) || tsz_solver::is_generic_application(self.ctx.types, object_type)
-                        || self.union_contains_application(resolved_object);
+                    ) || crate::query_boundaries::common::is_generic_application(
+                        self.ctx.types,
+                        object_type,
+                    ) || self.union_contains_application(resolved_object);
 
                 // Suppress TS2339 when the index type itself contains type parameters.
                 // This handles cases like `Options<State, Actions>[Key]` where Key is a type parameter.
@@ -324,12 +332,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 // Suppress TS2339 for conditional types (e.g., Parameters<T>) that may not be
                 // fully resolvable when T has circular reference
-                let is_conditional = tsz_solver::is_conditional_type(self.ctx.types, object_type);
+                let is_conditional = crate::query_boundaries::common::is_conditional_type(
+                    self.ctx.types,
+                    object_type,
+                );
 
                 // Suppress TS2339 for indexed access types (e.g., T[keyof T]) where the
                 // result type cannot be determined until the type parameter is instantiated.
-                let is_index_access = tsz_solver::is_index_access_type(self.ctx.types, object_type)
-                    || tsz_solver::is_index_access_type(self.ctx.types, resolved_object);
+                let is_index_access = crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    object_type,
+                ) || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    resolved_object,
+                );
 
                 // Suppress TS2339 when the object type contains unresolved type parameters.
                 // E.g., `Cond<T[K]>["foo"]` where T and K are generic.
@@ -401,9 +417,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
-            members
-                .iter()
-                .any(|&m| tsz_solver::is_generic_application(self.ctx.types, m))
+            members.iter().any(|&m| {
+                crate::query_boundaries::common::is_generic_application(self.ctx.types, m)
+            })
         } else {
             false
         }
@@ -413,7 +429,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     fn resolve_object_for_tuple_check(&self, object_type: TypeId) -> TypeId {
         let unwrapped =
             crate::query_boundaries::common::unwrap_readonly(self.ctx.types, object_type);
-        if let Some(def_id) = tsz_solver::lazy_def_id(self.ctx.types, unwrapped) {
+        if let Some(def_id) =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, unwrapped)
+        {
             let resolved = self
                 .ctx
                 .type_env

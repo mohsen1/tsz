@@ -197,7 +197,10 @@ impl<'a> CheckerState<'a> {
                         let has_defaults = type_params.iter().any(|p| p.default.is_some());
                         if has_defaults {
                             let default_args: Vec<TypeId> =
-                                tsz_solver::resolve_default_type_args(self.ctx.types, &type_params);
+                                crate::query_boundaries::common::resolve_default_type_args(
+                                    self.ctx.types,
+                                    &type_params,
+                                );
                             let def_id = self.ctx.get_or_create_def_id(sym_id);
                             // Resolve the type alias body so its type params and body
                             // are registered in type_env. Without this, Application
@@ -261,7 +264,7 @@ impl<'a> CheckerState<'a> {
                     .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                     .collect();
                 if !type_params.is_empty() && !type_args.is_empty() {
-                    return tsz_solver::instantiate_generic(
+                    return crate::query_boundaries::common::instantiate_generic(
                         self.ctx.types,
                         body_type,
                         &type_params,

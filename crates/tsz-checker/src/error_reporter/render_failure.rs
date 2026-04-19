@@ -658,7 +658,7 @@ impl<'a> CheckerState<'a> {
             self.format_type_diagnostic(source_type)
         };
         let is_source_primitive = (source_type != tsz_solver::TypeId::OBJECT
-            && tsz_solver::is_primitive_type(self.ctx.types, source_type))
+            && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type))
             || is_primitive_type_name(&display_src_str);
         if is_source_primitive {
             let tgt_str = self.format_type_diagnostic(target_type);
@@ -1021,8 +1021,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // TSC emits TS2322 instead of TS2741 when the target is an intersection type.
-        if tsz_solver::is_intersection_type(self.ctx.types, target_type)
-            || tsz_solver::is_intersection_type(self.ctx.types, target)
+        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
+            || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
         {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str_full = self.format_type_diagnostic(target);
@@ -1162,7 +1162,7 @@ impl<'a> CheckerState<'a> {
         target_type: TypeId,
     ) -> Diagnostic {
         // TSC emits TS2322 instead of TS2739/TS2740 when the source is a primitive type.
-        if tsz_solver::is_primitive_type(self.ctx.types, source_type) {
+        if crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type) {
             let src_str = self.format_type_diagnostic(source_type);
             let tgt_str = self.format_type_diagnostic(target_type);
             let message = format_message(
@@ -1271,8 +1271,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // TSC emits TS2322 instead of TS2739/TS2740 when the target is an intersection type.
-        if tsz_solver::is_intersection_type(self.ctx.types, target_type)
-            || tsz_solver::is_intersection_type(self.ctx.types, target)
+        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
+            || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
         {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);
@@ -1472,8 +1472,12 @@ impl<'a> CheckerState<'a> {
             // private or protected, the function fundamentally can't satisfy the class's
             // nominal brand requirement. TSC emits TS2322 (general mismatch) here, not
             // TS2741 (missing property). For class-to-class assignments, TSC keeps TS2741.
-            let source_is_function = tsz_solver::is_function_type(self.ctx.types, source)
-                || tsz_solver::is_function_type(self.ctx.types, source_type);
+            let source_is_function =
+                crate::query_boundaries::common::is_function_type(self.ctx.types, source)
+                    || crate::query_boundaries::common::is_function_type(
+                        self.ctx.types,
+                        source_type,
+                    );
             if source_is_function
                 && let Some(prop_info) =
                     self.property_info_for_display(target_type, filtered_names[0])
@@ -1938,12 +1942,13 @@ impl<'a> CheckerState<'a> {
                 |members| {
                     !members.is_empty()
                         && members.iter().all(|&m| {
-                            tsz_solver::literal_value(self.ctx.types, m).is_some()
+                            crate::query_boundaries::common::literal_value(self.ctx.types, m)
+                                .is_some()
                                 || m == TypeId::BOOLEAN_TRUE
                                 || m == TypeId::BOOLEAN_FALSE
                         })
                 },
-            ) && !tsz_solver::is_primitive_type(self.ctx.types, source)
+            ) && !crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
                 && !display.contains(" | ")
             {
                 self.format_type_diagnostic(source)
@@ -2003,7 +2008,7 @@ impl<'a> CheckerState<'a> {
         }
         if depth == 0
             && (target_str == "Callable" || target_str == "Applicable")
-            && !tsz_solver::is_primitive_type(self.ctx.types, source)
+            && !crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
         {
             let prop_name = if target_str == "Callable" {
                 "call"
