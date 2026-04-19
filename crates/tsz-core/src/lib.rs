@@ -245,22 +245,7 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 
 use crate::context::transform::TransformContext;
 
-/// Opaque wrapper for transform directives across the wasm boundary.
-#[wasm_bindgen]
-pub struct WasmTransformContext {
-    inner: TransformContext,
-    target_es5: bool,
-    module_kind: ModuleKind,
-}
-
-#[wasm_bindgen]
-impl WasmTransformContext {
-    /// Get the number of transform directives generated.
-    #[wasm_bindgen(js_name = getCount)]
-    pub fn get_count(&self) -> usize {
-        self.inner.len()
-    }
-}
+pub use crate::api::wasm::transforms::WasmTransformContext;
 
 pub use crate::api::wasm::parser::Parser;
 
