@@ -244,6 +244,7 @@ pub fn create_scanner(text: String, skip_trivia: bool) -> ScannerState {
 // Parser WASM Interface (High-Performance Parser)
 // =============================================================================
 
+use crate::api::wasm::code_actions::{default_code_action_context, parse_code_action_context};
 use crate::api::wasm::compiler_options::CompilerOptions;
 use crate::binder::BinderState;
 use crate::checker::context::LibContext;
@@ -256,65 +257,13 @@ use crate::lsp::diagnostics::convert_diagnostic;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::resolver::ScopeCache;
 use crate::lsp::{
-    CodeActionContext, CodeActionKind, CodeActionProvider, Completions, DocumentSymbolProvider,
-    FindReferences, GoToDefinition, HoverProvider, ImportCandidate, ImportCandidateKind,
-    RenameProvider, SemanticTokensProvider, SignatureHelpProvider,
+    CodeActionProvider, Completions, DocumentSymbolProvider, FindReferences, GoToDefinition,
+    HoverProvider, RenameProvider, SemanticTokensProvider, SignatureHelpProvider,
 };
 use crate::parser::ParserState;
 use crate::project::lib_cache::get_or_create_lib_file;
-use serde::Deserialize;
 use std::sync::Arc;
 use tsz_solver::TypeInterner;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImportCandidateInput {
-    module_specifier: String,
-    local_name: String,
-    kind: String,
-    export_name: Option<String>,
-    #[serde(default)]
-    is_type_only: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CodeActionContextInput {
-    #[serde(default)]
-    diagnostics: Vec<tsz_lsp::diagnostics::LspDiagnostic>,
-    #[serde(default)]
-    only: Option<Vec<CodeActionKind>>,
-    #[serde(default)]
-    import_candidates: Vec<ImportCandidateInput>,
-}
-
-impl TryFrom<ImportCandidateInput> for ImportCandidate {
-    type Error = JsValue;
-
-    fn try_from(input: ImportCandidateInput) -> Result<Self, Self::Error> {
-        let local_name = input.local_name;
-        let kind = match input.kind.as_str() {
-            "named" => {
-                let export_name = input.export_name.unwrap_or_else(|| local_name.clone());
-                ImportCandidateKind::Named { export_name }
-            }
-            "default" => ImportCandidateKind::Default,
-            "namespace" => ImportCandidateKind::Namespace,
-            other => {
-                return Err(JsValue::from_str(&format!(
-                    "Unsupported import candidate kind: {other}"
-                )));
-            }
-        };
-
-        Ok(Self {
-            module_specifier: input.module_specifier,
-            local_name,
-            kind,
-            is_type_only: input.is_type_only,
-        })
-    }
-}
 
 /// Opaque wrapper for transform directives across the wasm boundary.
 #[wasm_bindgen]
@@ -1458,11 +1407,7 @@ impl Parser {
             Position::new(end_line, end_char),
         );
 
-        let context = CodeActionContext {
-            diagnostics: Vec::new(),
-            only: None,
-            import_candidates: Vec::new(),
-        };
+        let context = default_code_action_context();
 
         let result = provider.provide_code_actions(root, range, context);
         Ok(serde_wasm_bindgen::to_value(&result)?)
@@ -1481,25 +1426,7 @@ impl Parser {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let context = if context.is_null() || context.is_undefined() {
-            CodeActionContext {
-                diagnostics: Vec::new(),
-                only: None,
-                import_candidates: Vec::new(),
-            }
-        } else {
-            let context_input: CodeActionContextInput = serde_wasm_bindgen::from_value(context)?;
-            let import_candidates = context_input
-                .import_candidates
-                .into_iter()
-                .map(ImportCandidate::try_from)
-                .collect::<Result<Vec<_>, _>>()?;
-            CodeActionContext {
-                diagnostics: context_input.diagnostics,
-                only: context_input.only,
-                import_candidates,
-            }
-        };
+        let context = parse_code_action_context(context)?;
 
         let root = self
             .source_file_idx
