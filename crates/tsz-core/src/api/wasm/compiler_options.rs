@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use wasm_bindgen::prelude::JsValue;
 
 /// Compiler options passed from JavaScript/WASM.
 /// Maps to TypeScript compiler options.
@@ -340,5 +341,21 @@ impl CompilerOptions {
             erasable_syntax_only: false,
             no_fallthrough_cases_in_switch: false,
         }
+    }
+}
+
+pub(crate) fn parse_compiler_options_json(options_json: &str) -> Result<CompilerOptions, JsValue> {
+    serde_json::from_str::<CompilerOptions>(options_json)
+        .map_err(|e| JsValue::from_str(&format!("Failed to parse compiler options: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_compiler_options_json;
+
+    #[test]
+    fn parse_compiler_options_json_accepts_valid_input() {
+        let parsed = parse_compiler_options_json(r#"{"strict":true,"module":99}"#);
+        assert!(parsed.is_ok(), "valid options JSON should parse");
     }
 }
