@@ -550,7 +550,11 @@ impl<'a> CodeActionProvider<'a> {
         // Match tsserver's behavior of picking the file's existing newline
         // style (preferring the first observed sequence), falling back to
         // CRLF when the source has no newlines (matches tsserver default).
-        let newline = if self.source.contains("\r\n") {
+        // An explicit override (from `format.newLineCharacter`) wins over
+        // both the source scan and the CRLF default.
+        let newline = if let Some(override_nl) = self.new_line_override.as_deref() {
+            override_nl
+        } else if self.source.contains("\r\n") {
             "\r\n"
         } else if self.source.contains('\n') {
             "\n"
