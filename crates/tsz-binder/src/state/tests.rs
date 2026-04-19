@@ -141,6 +141,50 @@ export type { D as E } from './b';
 }
 
 #[test]
+fn jsdoc_import_tag_binds_alias_symbols_in_js_files() {
+    let source = r#"
+/**
+ * @import * as NS from "./a"
+ * @import { I as RenamedI } from "./a"
+ * @import DefaultThing from "./a"
+ */
+class C {}
+"#;
+    let mut parser = ParserState::new("b.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let ns_sym_id = binder
+        .file_locals
+        .get("NS")
+        .expect("expected JSDoc namespace import alias");
+    let ns_sym = binder
+        .symbols
+        .get(ns_sym_id)
+        .expect("expected symbol data for NS");
+    assert_ne!(ns_sym.flags & symbol_flags::ALIAS, 0);
+    assert!(ns_sym.is_type_only);
+    assert_eq!(ns_sym.import_module.as_deref(), Some("./a"));
+    assert_eq!(ns_sym.import_name.as_deref(), Some("*"));
+
+    assert!(
+        binder.file_locals.get("RenamedI").is_none(),
+        "named JSDoc imports should stay in typedef machinery (no binder alias)"
+    );
+    assert!(
+        binder.file_locals.get("DefaultThing").is_none(),
+        "default JSDoc imports should stay in typedef machinery (no binder alias)"
+    );
+
+    assert!(
+        binder.file_import_sources.iter().any(|spec| spec == "./a"),
+        "expected JSDoc imports to register import source for dependency tracking"
+    );
+}
+
+#[test]
 fn export_as_namespace_records_current_file_namespace_metadata() {
     let source = r"
 export var x: number;
