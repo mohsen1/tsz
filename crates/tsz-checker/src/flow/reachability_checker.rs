@@ -834,16 +834,29 @@ impl<'a> CheckerState<'a> {
         let Some(var_data) = self.ctx.arena.get_variable(node) else {
             return false;
         };
-        // Check if it's `var` (not let/const) by examining declaration list flags
-        // The flags are on the VariableDeclarationList child node
-        for &decl_idx in &var_data.declarations.nodes {
-            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                // Check if it's let/const (not var) using combined node+parent flags
-                let flags = self.ctx.arena.get_variable_declaration_flags(decl_idx);
-                if (flags & (node_flags::LET | node_flags::CONST)) != 0 {
-                    return false;
-                }
-                // Check that declaration has no initializer
+        // var_data.declarations.nodes contains VARIABLE_DECLARATION_LIST nodes
+        // (typically one). Walk each list, then each list's individual
+        // VARIABLE_DECLARATIONs, to check both `var`-ness and initializer
+        // presence. Iterating only the outer list previously missed
+        // initializers on declarations like `var x = 10;`, so unreachable
+        // `var x = 10;` after `return` was wrongly skipped instead of
+        // emitting TS7027.
+        for &list_idx in &var_data.declarations.nodes {
+            // Check let/const flag at the list level.
+            let list_flags = self.ctx.arena.get_variable_declaration_flags(list_idx);
+            if (list_flags & (node_flags::LET | node_flags::CONST)) != 0 {
+                return false;
+            }
+            let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                continue;
+            };
+            let Some(var_list) = self.ctx.arena.get_variable(list_node) else {
+                continue;
+            };
+            for &decl_idx in &var_list.declarations.nodes {
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
                     && var_decl.initializer.is_some()
                 {
