@@ -214,6 +214,26 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // TS2708: when the left side is an import-equals alias targeting
+                    // an uninstantiated (type-only) namespace, `typeof alias.member`
+                    // is invalid because the alias has no value form. tsc emits
+                    // TS2708 on the alias itself; mirror that before walking the
+                    // chain (which would otherwise produce a follow-on TS2339).
+                    if let Some(left_node) = self.ctx.arena.get(left_idx)
+                        && left_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && let Some(sym_id) = self.resolve_identifier_symbol(left_idx)
+                        && self.is_import_alias_to_type_only_namespace(sym_id)
+                    {
+                        let alias_name = self
+                            .ctx
+                            .arena
+                            .get_identifier(left_node)
+                            .map(|id| id.escaped_text.clone())
+                            .unwrap_or_default();
+                        self.error_namespace_used_as_value_at(&alias_name, left_idx);
+                        return TypeId::ERROR;
+                    }
+
                     // Resolve the left side as a value expression.
                     // For nested qualified names (e.g. `typeof a.b.c`), recurse
                     // through the value property chain instead of dispatching to

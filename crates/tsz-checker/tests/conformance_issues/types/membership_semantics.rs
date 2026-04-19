@@ -518,8 +518,8 @@ delete f.e;
     );
     let exact_ts2790 = exact.iter().filter(|(code, _)| *code == 2790).count();
     assert_eq!(
-        exact_ts2790, 4,
-        "Expected TS2790 for all required properties under exactOptionalPropertyTypes. Actual: {exact:#?}"
+        exact_ts2790, 2,
+        "Expected TS2790 only for properties without undefined in type (a, c). tsc checks if undefined is assignable to the type regardless of exactOptionalPropertyTypes. Actual: {exact:#?}"
     );
 }
 

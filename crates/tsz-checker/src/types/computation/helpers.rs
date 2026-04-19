@@ -877,13 +877,13 @@ impl<'a> CheckerState<'a> {
                                 if !from_idx_sig && !is_mapped {
                                     let is_optional =
                                         self.is_property_optional(object_type, &prop_name);
-                                    let optional_via_undefined =
+                                    let type_includes_undefined =
                                         !self.ctx.compiler_options.exact_optional_property_types
-                                            && crate::query_boundaries::class_type::type_includes_undefined(
+                                            && tsz_solver::type_queries::type_includes_undefined(
                                                 self.ctx.types,
                                                 prop_type,
                                             );
-                                    if !is_optional && !optional_via_undefined {
+                                    if !is_optional && !type_includes_undefined {
                                         self.error_at_node(
                                             operand_idx,
                                             crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
