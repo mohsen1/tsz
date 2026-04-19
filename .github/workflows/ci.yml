@@ -100,6 +100,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      - name: Validate workspace metadata
+        run: scripts/arch/check-workspace-metadata.sh
+
       - name: Run clippy (workspace crates - deny warnings)
         run: |
           cargo clippy \
