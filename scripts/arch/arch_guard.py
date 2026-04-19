@@ -462,10 +462,11 @@ def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: d
     if excludes.get("exclude_test_files") and is_test_file(rel):
         return matches
 
-    for i, line in enumerate(file_text.splitlines(), start=1):
-        if excludes.get("ignore_comment_lines", False):
-            if line.lstrip().startswith("//"):
-                continue
+    text_for_matching = (
+        strip_rust_comments(file_text) if excludes.get("ignore_comment_lines", False) else file_text
+    )
+
+    for i, line in enumerate(text_for_matching.splitlines(), start=1):
         if pattern.search(line):
             matches.append(i)
     return matches
