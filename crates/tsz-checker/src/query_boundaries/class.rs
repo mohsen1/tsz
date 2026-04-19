@@ -432,11 +432,13 @@ pub(crate) fn should_report_property_type_mismatch(
     node_idx: NodeIndex,
 ) -> bool {
     let narrowed_source = checker.narrow_this_from_enclosing_typeof_guard(node_idx, source);
+    let relation_source = unwrap_single_property_value_type(checker, narrowed_source);
+    let relation_target = unwrap_single_property_value_type(checker, target);
     // TS2430 property compatibility is still a member-compatibility check, even
     // though it uses regular assignability instead of no-erase-generics. Using
     // the broader TS2322 suppression here hides real interface-extends failures
     // when the derived property mentions outer type parameters.
-    if checker.should_suppress_member_assignability(narrowed_source, target) {
+    if checker.should_suppress_member_assignability(relation_source, relation_target) {
         return false;
     }
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
@@ -449,30 +451,30 @@ pub(crate) fn should_report_property_type_mismatch(
     let request = {
         use crate::query_boundaries::assignability::RelationRequest;
         let (prepared_source, prepared_target) =
-            checker.prepare_assignability_inputs(narrowed_source, target);
+            checker.prepare_assignability_inputs(relation_source, relation_target);
         RelationRequest::assign(prepared_source, prepared_target)
     };
     let outcome = checker.execute_relation_request(&request);
 
     if outcome.related {
-        if needs_strict_generic_target_callable_recheck(checker, narrowed_source, target) {
-            let strict_source = unwrap_single_property_value_type(checker, narrowed_source);
-            let strict_target = unwrap_single_property_value_type(checker, target);
+        if needs_strict_generic_target_callable_recheck(checker, relation_source, relation_target) {
+            let strict_source = unwrap_single_property_value_type(checker, relation_source);
+            let strict_target = unwrap_single_property_value_type(checker, relation_target);
             return !checker.is_assignable_to_no_erase_generics(strict_source, strict_target);
         }
         return false;
     }
     if outcome.weak_union_violation
         || checker.should_skip_weak_union_error_with_outcome(
-            narrowed_source,
-            target,
+            relation_source,
+            relation_target,
             node_idx,
             Some(&outcome),
         )
     {
         return false;
     }
-    if is_coinductive_return_type_cycle(checker, narrowed_source, target) {
+    if is_coinductive_return_type_cycle(checker, relation_source, relation_target) {
         return false;
     }
     true
