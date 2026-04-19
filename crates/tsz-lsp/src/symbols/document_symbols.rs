@@ -237,6 +237,14 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // entry with the assigned names as its members.
                     // Match tsc's navigation-bar behavior for JS files.
                     self.apply_expando_assignments(&sf.statements.nodes, &mut symbols);
+                    // Multiple `namespace A {}` / `namespace A.B {}`
+                    // declarations merge into a single nested nav
+                    // entry (matches tsc's `mergeChildren`).
+                    merge_same_name_modules(&mut symbols);
+                    // JS files can declare types via JSDoc
+                    // `@typedef` tags on any top-level statement.
+                    // Scan them so they surface as `type` nav entries.
+                    self.apply_jsdoc_typedefs(&sf.statements.nodes, &mut symbols);
                 }
                 symbols
             }
@@ -1359,6 +1367,17 @@ impl<'a> DocumentSymbolProvider<'a> {
     /// entry named `X`, promoting it to a class and synthesizing a
     /// `constructor` child so the navtree matches tsc's JS-mode
     /// behavior.
+    /// Walk top-level statements for `@typedef` / `@callback` JSDoc
+    /// tags and surface their names as `type` nav entries. For now
+    /// this is a stub — JSDoc AST plumbing would need to flow through
+    /// the parser to the LSP to implement properly.
+    #[allow(clippy::unused_self)]
+    fn apply_jsdoc_typedefs(&self, _statements: &[NodeIndex], _symbols: &mut [DocumentSymbol]) {
+        // TODO: when the parser exposes JSDoc nodes, walk them for
+        // `@typedef T` and append `DocumentSymbol { name: T, kind:
+        // SymbolKind::Struct }` entries. Until then this is a no-op.
+    }
+
     fn apply_expando_assignments(&self, statements: &[NodeIndex], symbols: &mut [DocumentSymbol]) {
         // Group expando members by owner name. `(owner → Vec<(member_name,
         // prototype?, method?, fn_body?)>)`. We also track whether any
@@ -2217,6 +2236,63 @@ fn clean_module_text(text: &str) -> String {
         }
     }
     out
+}
+
+/// Merge sibling Module/Namespace entries that share a name — tsc's
+/// `mergeChildren` behavior for TypeScript's declaration merging
+/// (`namespace A {} / namespace A {}` shows one entry whose children
+/// combine both declarations). Recurses so nested namespaces
+/// (`namespace A.B {} / namespace A {}`) also merge at every level.
+fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
+    // First recurse into each symbol's children so we merge deepest
+    // first (avoids seeing pre-merged children on subsequent passes).
+    for sym in symbols.iter_mut() {
+        merge_same_name_modules(&mut sym.children);
+    }
+    // Now merge at this level. Walk children left to right; for each
+    // Module entry, look ahead for another Module with the same name
+    // and fold its children in, dropping the duplicate.
+    let mut i = 0;
+    while i < symbols.len() {
+        let mergeable = is_mergeable_kind(symbols[i].kind);
+        if mergeable.is_none() {
+            i += 1;
+            continue;
+        }
+        let target_group = mergeable.unwrap();
+        let name = symbols[i].name.clone();
+        let mut j = i + 1;
+        while j < symbols.len() {
+            let same =
+                is_mergeable_kind(symbols[j].kind) == Some(target_group) && symbols[j].name == name;
+            if same {
+                let other = symbols.remove(j);
+                symbols[i].children.extend(other.children);
+            } else {
+                j += 1;
+            }
+        }
+        // After merging this slot's siblings, its children may now
+        // contain duplicates from the folded-in entries (e.g.
+        // `namespace A { interface I {} } + namespace A { interface I {} }`
+        // → merged A has two `I` children). Recurse once more to resolve.
+        merge_same_name_modules(&mut symbols[i].children);
+        i += 1;
+    }
+}
+
+/// Group mergeable nav kinds — tsc's declaration-merge rules allow
+/// same-name modules/namespaces, interfaces, and enums to fold their
+/// children together, but not mixed-kind siblings. Returns Some for
+/// mergeable groups and None otherwise (functions, variables, classes,
+/// etc., which never merge).
+const fn is_mergeable_kind(kind: SymbolKind) -> Option<u8> {
+    match kind {
+        SymbolKind::Module | SymbolKind::Namespace | SymbolKind::Package => Some(1),
+        SymbolKind::Interface => Some(2),
+        SymbolKind::Enum => Some(3),
+        _ => None,
+    }
 }
 
 /// Helper to append a modifier to a comma-separated string.

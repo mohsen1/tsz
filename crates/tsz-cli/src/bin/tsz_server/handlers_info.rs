@@ -2065,15 +2065,20 @@ impl Server {
                     | SymbolKind::Namespace
                     | SymbolKind::File
                     | SymbolKind::Struct => true,
+                    // tsc's `isTopLevelFunctionDeclaration` allows only
+                    // SourceFile, ModuleBlock, MethodDeclaration, and
+                    // Constructor as parents. A function at the source
+                    // file level (None parent) or inside a method /
+                    // constructor body surfaces — but a function inside
+                    // a namespace body is NOT top-level here, because
+                    // tsc's parent-check sees the ModuleDeclaration
+                    // nav node (which isn't in the allowed list), not
+                    // the underlying ModuleBlock.
                     SymbolKind::Function => matches!(
                         parent_kind,
                         None // root (source file)
                             | Some(
-                                SymbolKind::File
-                                    | SymbolKind::Module
-                                    | SymbolKind::Namespace
-                                    | SymbolKind::Method
-                                    | SymbolKind::Constructor
+                                SymbolKind::File | SymbolKind::Method | SymbolKind::Constructor
                             )
                     ),
                     _ => false,
