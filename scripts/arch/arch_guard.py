@@ -443,6 +443,14 @@ LINE_LIMIT_CHECKS = [
     ),
 ]
 
+FILE_LINE_LIMIT_CHECKS = [
+    (
+        "Core boundary: tsz-core lib facade must stay under 2420 LOC",
+        ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
+        2420,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -520,6 +528,28 @@ def scan_line_limits(base: pathlib.Path, limit: int, exclude_files=None):
         if line_count > limit:
             hits.append(f"{rel}:{line_count} lines (limit {limit})")
     return hits
+
+
+def scan_file_line_limit(path: pathlib.Path, limit: int):
+    if not path.exists():
+        return []
+
+    try:
+        rel = path.relative_to(ROOT).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+
+    line_count = 0
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            for line_count, _line in enumerate(handle, start=1):
+                pass
+    except OSError:
+        return []
+
+    if line_count > limit:
+        return [f"{rel}:{line_count} lines (limit {limit})"]
+    return []
 
 
 def strip_rust_comments(text: str) -> str:
@@ -736,6 +766,12 @@ def main() -> int:
             continue
         exclude_files = rest[0] if rest else None
         hits = scan_line_limits(base, limit, exclude_files)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, path, limit in FILE_LINE_LIMIT_CHECKS:
+        hits = scan_file_line_limit(path, limit)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
