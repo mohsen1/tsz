@@ -463,17 +463,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 );
 
             if source_refs_target_params {
-                if !self.erase_generics
-                    && source_mentions_outer_type_params
-                    && (source_instantiated.is_constructor || target_instantiated.is_constructor)
-                {
-                    // Constructor types in strict member-compatibility checks must
-                    // not be promoted to "effectively generic" just because the
-                    // source happens to mention an outer-scope type parameter with
-                    // the same structural identity as the target's local type param.
-                    // That would incorrectly accept
+                if !self.erase_generics {
+                    // In strict member-compatibility checks (TS2416/TS2430), a
+                    // non-generic source must never be promoted to "effectively
+                    // generic", even when it appears to reference the target's
+                    // type-parameter identities. That identity-sharing can arise
+                    // from contextual seeding and would incorrectly accept concrete
+                    // members as subtypes of universally quantified ones, e.g.:
+                    //   `(x: T) => T[]` <= `<U>(x: U) => U[]`
                     //   `new (x: T) => T[]` <= `new <U>(x: U) => U[]`
-                    // for TS2430/TS2416-style checks.
                     self.type_param_equivalences.truncate(equiv_start);
                     return SubtypeResult::False;
                 }
@@ -505,20 +503,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // This ensures TS2416 is correctly emitted for incompatible overrides.
                 target_instantiated.type_params.clear();
             } else {
-                if !source_instantiated.is_constructor && !target_instantiated.is_constructor {
-                    // For single call-signature assignability, tsc keeps target type
-                    // parameters visible (does not erase to constraints) so concrete
-                    // source signatures don't spuriously satisfy "for all T" targets.
-                    target_instantiated.type_params.clear();
-                } else {
-                    // Keep constructor behavior unchanged: erase target type params to
-                    // their constraints so constructor compatibility continues to follow
-                    // existing assignability/comparable rules.
-                    let target_canonical =
-                        erase_type_params_to_constraints(&target_instantiated.type_params);
-                    target_instantiated =
-                        self.instantiate_function_shape(&target_instantiated, &target_canonical);
-                }
+                // For single-signature assignability (call and construct), keep target
+                // type parameters visible (do not erase to constraints) so a concrete
+                // source signature cannot spuriously satisfy a universally quantified
+                // generic target.
+                target_instantiated.type_params.clear();
             }
         }
 

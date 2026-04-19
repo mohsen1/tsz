@@ -401,6 +401,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.allow_void_return = (flags & (1 << 5)) != 0;
         self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
         self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+        self.erase_generics = (flags & crate::RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
         self
     }
 
