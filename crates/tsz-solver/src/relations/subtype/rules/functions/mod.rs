@@ -1021,7 +1021,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // candidates exist (`getDefaultTypeArgumentType`). Detect this case
             // and use `unknown` instead, so that the subsequent structural
             // comparison doesn't fail due to contravariant parameter positions.
+            let has_candidates = infer_ctx
+                .find_type_param(renamed_tp.name)
+                .is_some_and(|var| infer_ctx.var_has_candidates(var));
             let no_actual_inference_candidates = lower_bounds.is_empty()
+                && !has_candidates
                 && original_tp.constraint.is_some()
                 && upper_bounds
                     .iter()
