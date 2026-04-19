@@ -963,13 +963,23 @@ impl<'a> DocumentSymbolProvider<'a> {
                         node_range(self.arena, self.line_map, self.source_text, module.name);
 
                     let modifiers = self.get_kind_modifiers_from_list(&module.modifiers);
+                    let is_ambient = modifiers.split(',').any(|m| m == "declare");
 
-                    let children = if innermost_body.is_some() {
+                    let mut children = if innermost_body.is_some() {
                         self.collect_symbols(innermost_body, Some(&name))
                     } else {
                         vec![]
                     };
                     let _ = innermost;
+
+                    // tsc's `getModifiers` walks ancestors and returns
+                    // `declare` on every declaration that lives inside
+                    // an ambient namespace/module. Propagate manually
+                    // by appending `declare` to each descendant's
+                    // kindModifiers (recursively).
+                    if is_ambient {
+                        propagate_ambient_modifier(&mut children);
+                    }
 
                     vec![DocumentSymbol {
                         name,
@@ -2236,7 +2246,10 @@ impl<'a> DocumentSymbolProvider<'a> {
         )
     }
 
-    /// Check if a node kind is a declaration.
+    /// Check if a node kind is a declaration. Used in the
+    /// EXPORT_DECLARATION arm to decide whether to recurse into the
+    /// exported clause (declarations) vs. treat it as a re-export
+    /// (NAMED_EXPORTS etc).
     const fn is_declaration(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
@@ -2244,6 +2257,10 @@ impl<'a> DocumentSymbolProvider<'a> {
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
             || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
             || kind == syntax_kind_ext::ENUM_DECLARATION
+            // `export namespace X {}` inside an ambient module wraps
+            // the MODULE_DECLARATION in an EXPORT_DECLARATION. Without
+            // this, the module body drops on the floor.
+            || kind == syntax_kind_ext::MODULE_DECLARATION
     }
 
     /// Build an `alias` entry for a single import/export binding. The `name`
@@ -2524,6 +2541,20 @@ fn clean_module_text(text: &str) -> String {
         }
     }
     out
+}
+
+/// Append `declare` to every descendant's `kindModifiers` (skipping
+/// duplicates). tsc implicitly applies `declare` to every declaration
+/// nested inside an ambient namespace/module, so the nav output
+/// reads `export,declare` for `declare namespace Windows { export
+/// var A }` instead of just `export`.
+fn propagate_ambient_modifier(symbols: &mut [DocumentSymbol]) {
+    for sym in symbols.iter_mut() {
+        let mut buf = sym.kind_modifiers.clone();
+        append_modifier(&mut buf, "declare");
+        sym.kind_modifiers = buf;
+        propagate_ambient_modifier(&mut sym.children);
+    }
 }
 
 /// Merge sibling Module/Namespace entries that share a name — tsc's
