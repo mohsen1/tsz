@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rustc_hash::FxHashMap;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
-use crate::api::wasm::compiler_options::CompilerOptions;
+use crate::api::wasm::compiler_options::{CompilerOptions, parse_compiler_options_json};
 use crate::api::wasm::program_results::{
     CheckDiagnosticJson, FileCheckResultJson, ParseDiagnosticJson,
 };
@@ -109,18 +109,12 @@ impl WasmProgram {
     /// * `options_json` - JSON string containing compiler options
     #[wasm_bindgen(js_name = setCompilerOptions)]
     pub fn set_compiler_options(&mut self, options_json: &str) -> Result<(), JsValue> {
-        match serde_json::from_str::<CompilerOptions>(options_json) {
-            Ok(options) => {
-                self.compiler_options = options;
-                // Invalidate any previous compilation since options affect typing
-                self.merged = None;
-                self.bind_results = None;
-                Ok(())
-            }
-            Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse compiler options: {e}"
-            ))),
-        }
+        let options = parse_compiler_options_json(options_json)?;
+        self.compiler_options = options;
+        // Invalidate any previous compilation since options affect typing
+        self.merged = None;
+        self.bind_results = None;
+        Ok(())
     }
 
     /// Get the number of files in the program.
