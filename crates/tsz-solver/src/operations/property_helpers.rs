@@ -286,7 +286,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // The evaluator may not fully resolve type aliases used as mapped constraints,
             // so we resolve the DefId to get the underlying type and check that.
             TypeData::Lazy(def_id) => {
-                if let Some(resolved) = self.db.resolve_lazy(def_id, self.interner())
+                if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner())
                     && resolved != evaluated
                 {
                     return self.is_key_in_mapped_constraint(resolved, prop_name);
@@ -592,18 +592,20 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // to resolve_lazy directly (needed for built-in type aliases like
         // Readonly, Partial, Required, etc. whose DefId may not have a
         // SymbolId mapping in the solver database).
-        let (body_type, type_params) = match self.db.def_to_symbol_id(def_id) {
+        let (body_type, type_params) = match self.resolver().def_to_symbol_id(def_id) {
             Some(sym_id) => {
                 let symbol_ref = crate::SymbolRef(sym_id.0);
-                let body = if let Some(inner_def_id) = self.db.symbol_to_def_id(symbol_ref) {
-                    self.db.resolve_lazy(inner_def_id, self.interner())
+                let body = if let Some(inner_def_id) = self.resolver().symbol_to_def_id(symbol_ref)
+                {
+                    self.resolver().resolve_lazy(inner_def_id, self.interner())
                 } else {
-                    self.db.resolve_symbol_ref(symbol_ref, self.interner())
+                    self.resolver()
+                        .resolve_symbol_ref(symbol_ref, self.interner())
                 };
-                let params = match self.db.get_type_params(symbol_ref) {
+                let params = match self.resolver().get_type_params(symbol_ref) {
                     Some(p) if !p.is_empty() => Some(p),
                     _ => self
-                        .db
+                        .resolver()
                         .get_lazy_type_params(def_id)
                         .filter(|p| !p.is_empty()),
                 };
@@ -611,9 +613,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
             None => {
                 // Direct DefId resolution path for built-in mapped type aliases
-                let body = self.db.resolve_lazy(def_id, self.interner());
+                let body = self.resolver().resolve_lazy(def_id, self.interner());
                 let params = self
-                    .db
+                    .resolver()
                     .get_lazy_type_params(def_id)
                     .filter(|p| !p.is_empty());
                 (body, params)

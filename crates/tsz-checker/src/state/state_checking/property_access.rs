@@ -73,6 +73,18 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn resolve_property_access_via_boundary(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> tsz_solver::operations::property::PropertyAccessResult {
+        self.ctx.types.resolve_property_access_with_options(
+            object_type,
+            prop_name,
+            self.ctx.compiler_options.no_unchecked_indexed_access,
+        )
+    }
+
     /// Resolve property access using `TypeEnvironment` (includes lib.d.ts types).
     ///
     /// This method creates a `PropertyAccessEvaluator` with the `TypeEnvironment` as the resolver,
@@ -123,11 +135,7 @@ impl<'a> CheckerState<'a> {
         // Route through QueryDatabase so repeated property lookups hit QueryCache.
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.
-        let result = self.ctx.types.resolve_property_access_with_options(
-            object_type,
-            prop_name,
-            self.ctx.compiler_options.no_unchecked_indexed_access,
-        );
+        let result = self.resolve_property_access_via_boundary(object_type, prop_name);
 
         self.resolve_property_access_with_env_post_query(object_type, prop_name, result)
     }
@@ -159,11 +167,7 @@ impl<'a> CheckerState<'a> {
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
                 mapped_candidate_type = expanded;
                 resolved_object_type = expanded;
-                result = self.ctx.types.resolve_property_access_with_options(
-                    expanded,
-                    prop_name,
-                    self.ctx.compiler_options.no_unchecked_indexed_access,
-                );
+                result = self.resolve_property_access_via_boundary(expanded, prop_name);
             }
         }
 
@@ -172,11 +176,7 @@ impl<'a> CheckerState<'a> {
         if pruned_object_type != resolved_object_type {
             resolved_object_type = pruned_object_type;
             mapped_candidate_type = pruned_object_type;
-            result = self.ctx.types.resolve_property_access_with_options(
-                pruned_object_type,
-                prop_name,
-                self.ctx.compiler_options.no_unchecked_indexed_access,
-            );
+            result = self.resolve_property_access_via_boundary(pruned_object_type, prop_name);
         }
 
         // If the solver returned PropertyNotFound or a bare Success{ANY} for a
@@ -217,11 +217,8 @@ impl<'a> CheckerState<'a> {
                 let evaluated = self.evaluate_type_with_env(constraint);
                 if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR
                 {
-                    let retry_result = self.ctx.types.resolve_property_access_with_options(
-                        evaluated,
-                        prop_name,
-                        self.ctx.compiler_options.no_unchecked_indexed_access,
-                    );
+                    let retry_result =
+                        self.resolve_property_access_via_boundary(evaluated, prop_name);
                     // Only accept the retry if it produced a concrete Success
                     // (not another bare Success{ANY}), so we don't mask genuine
                     // TypeParameter-with-any-constraint cases.
@@ -244,11 +241,20 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if matches!(
+        let retry_mapped_from_any = matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                from_index_signature: false,
+                ..
+            }
+        );
+        if (matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
                 | tsz_solver::operations::property::PropertyAccessResult::IsUnknown
-        ) && query::is_mapped_type(self.ctx.types, mapped_candidate_type)
+        ) || retry_mapped_from_any)
+            && query::is_mapped_type(self.ctx.types, mapped_candidate_type)
             && let Some(mapped_property) =
                 self.resolve_mapped_property_with_env(mapped_candidate_type, prop_name)
         {
@@ -303,7 +309,9 @@ impl<'a> CheckerState<'a> {
             }
 
             if saw_deferred_any_fallback {
-                return tsz_solver::operations::property::PropertyAccessResult::simple(TypeId::ANY);
+                // Preserve PropertyNotFound for deferred mapped members instead of
+                // fabricating `any`, so unresolved `keyof T` surfaces still report
+                // the usual missing-property diagnostic.
             }
 
             result = tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
@@ -326,11 +334,7 @@ impl<'a> CheckerState<'a> {
                 && expanded != TypeId::ANY
                 && expanded != TypeId::ERROR
             {
-                return self.ctx.types.resolve_property_access_with_options(
-                    expanded,
-                    prop_name,
-                    self.ctx.compiler_options.no_unchecked_indexed_access,
-                );
+                return self.resolve_property_access_via_boundary(expanded, prop_name);
             }
         }
 

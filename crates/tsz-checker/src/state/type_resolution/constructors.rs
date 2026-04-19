@@ -737,6 +737,52 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn instantiate_base_instance_type_with_args(
+        &mut self,
+        base_instance_type: TypeId,
+        base_type_params: &[tsz_solver::TypeParamInfo],
+        type_arguments: Option<&NodeList>,
+    ) -> TypeId {
+        if type_arguments.is_none() || base_type_params.is_empty() {
+            return self.resolve_lazy_type(base_instance_type);
+        }
+
+        let mut type_args = Vec::with_capacity(type_arguments.map_or(0, |args| args.nodes.len()));
+        if let Some(args) = type_arguments {
+            for &arg_idx in &args.nodes {
+                type_args.push(self.get_type_from_type_node(arg_idx));
+            }
+        }
+
+        if type_args.is_empty() {
+            return self.resolve_lazy_type(base_instance_type);
+        }
+
+        let base_instance_type = self.resolve_lazy_type(base_instance_type);
+        if type_args.len() < base_type_params.len() {
+            for (param_index, param) in base_type_params.iter().enumerate().skip(type_args.len()) {
+                let fallback = param.default.or(param.constraint).unwrap_or(TypeId::UNKNOWN);
+                let substitution = tsz_solver::TypeSubstitution::from_args(
+                    self.ctx.types,
+                    &base_type_params[..param_index],
+                    &type_args,
+                );
+                type_args.push(tsz_solver::instantiate_type_preserving_meta(
+                    self.ctx.types,
+                    fallback,
+                    &substitution,
+                ));
+            }
+        }
+        if type_args.len() > base_type_params.len() {
+            type_args.truncate(base_type_params.len());
+        }
+
+        let substitution =
+            tsz_solver::TypeSubstitution::from_args(self.ctx.types, base_type_params, &type_args);
+        tsz_solver::instantiate_type(self.ctx.types, base_instance_type, &substitution)
+    }
+
     pub(crate) fn base_instance_type_from_expression(
         &mut self,
         expr_idx: NodeIndex,
@@ -758,86 +804,56 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
-            && let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
-            && let Some(base_node) = self.ctx.arena.get(base_class_idx)
-            && let Some(base_class) = self.ctx.arena.get_class(base_node)
-        {
-            let mut type_args =
-                Vec::with_capacity(type_arguments.map_or(0, |args| args.nodes.len()));
-            if let Some(args) = type_arguments {
-                for &arg_idx in &args.nodes {
-                    type_args.push(self.get_type_from_type_node(arg_idx));
-                }
-            }
-
-            let base_instance_type = self
-                .ctx
-                .class_instance_type_cache
-                .get(&base_class_idx)
-                .copied()
-                .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
-            let base_instance_type = self.resolve_lazy_type(base_instance_type);
-            let resolved = if type_args.is_empty() {
-                Some(base_instance_type)
-            } else {
+        if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) {
+            if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
+                && let Some(base_node) = self.ctx.arena.get(base_class_idx)
+                && let Some(base_class) = self.ctx.arena.get_class(base_node)
+            {
+                let base_instance_type = self
+                    .ctx
+                    .class_instance_type_cache
+                    .get(&base_class_idx)
+                    .copied()
+                    .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let (base_type_params, base_type_param_updates) =
                     self.push_type_parameters(&base_class.type_parameters);
-                let resolved = if base_class
-                    .type_parameters
-                    .as_ref()
-                    .map_or(0, |params| params.nodes.len())
-                    == 0
-                    && type_args.is_empty()
-                {
-                    Some(base_instance_type)
-                } else {
-                    if type_args.len() < base_type_params.len() {
-                        for (param_index, param) in
-                            base_type_params.iter().enumerate().skip(type_args.len())
-                        {
-                            let fallback = param
-                                .default
-                                .or(param.constraint)
-                                .unwrap_or(TypeId::UNKNOWN);
-                            let substitution = tsz_solver::TypeSubstitution::from_args(
-                                self.ctx.types,
-                                &base_type_params[..param_index],
-                                &type_args,
-                            );
-                            type_args.push(tsz_solver::instantiate_type_preserving_meta(
-                                self.ctx.types,
-                                fallback,
-                                &substitution,
-                            ));
-                        }
-                    }
-                    if type_args.len() > base_type_params.len() {
-                        type_args.truncate(base_type_params.len());
-                    }
-
-                    let substitution = tsz_solver::TypeSubstitution::from_args(
-                        self.ctx.types,
-                        &base_type_params,
-                        &type_args,
-                    );
-                    Some(tsz_solver::instantiate_type(
-                        self.ctx.types,
-                        base_instance_type,
-                        &substitution,
-                    ))
-                };
+                let resolved = Some(self.instantiate_base_instance_type_with_args(
+                    base_instance_type,
+                    &base_type_params,
+                    type_arguments,
+                ));
                 self.pop_type_parameters(base_type_param_updates);
-                resolved
-            };
 
-            if should_cache {
-                self.ctx
-                    .base_instance_expr_cache
-                    .borrow_mut()
-                    .insert(expr_idx, resolved);
+                if should_cache {
+                    self.ctx
+                        .base_instance_expr_cache
+                        .borrow_mut()
+                        .insert(expr_idx, resolved);
+                }
+                return resolved;
             }
-            return resolved;
+
+            // Cross-file/lib heritage can resolve the symbol correctly but not the
+            // declaration node in the current arena. Preserve the merged class
+            // instance surface by resolving through the symbol-based class path
+            // before falling back to constructor-only synthesis.
+            if let Some((base_instance_type, base_type_params)) =
+                self.class_instance_type_with_params_from_symbol(base_sym_id)
+            {
+                let resolved = Some(self.instantiate_base_instance_type_with_args(
+                    base_instance_type,
+                    &base_type_params,
+                    type_arguments,
+                ));
+
+                if should_cache {
+                    self.ctx
+                        .base_instance_expr_cache
+                        .borrow_mut()
+                        .insert(expr_idx, resolved);
+                }
+                return resolved;
+            }
         }
 
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;

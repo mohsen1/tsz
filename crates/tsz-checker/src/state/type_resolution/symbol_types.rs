@@ -109,7 +109,9 @@ impl<'a> CheckerState<'a> {
                     let is_merged_with_namespace =
                         flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0;
                     let should_force_interface_decl_path =
-                        has_interface_decl && (flags & symbol_flags::INTERFACE) == 0;
+                        has_interface_decl
+                            && ((flags & symbol_flags::INTERFACE) == 0
+                                || prefer_interface_type_position);
                     // Cross-file interface symbols can share SymbolId values with
                     // local symbols in the current binder. Resolve them through a
                     // delegated checker anchored to the symbol's home arena first.

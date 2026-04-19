@@ -95,7 +95,7 @@ pub struct TypeFormatter<'a> {
     /// Application (e.g., `type Foo = Id<{...}>`). In assignability error messages,
     /// tsc shows the Application form `Id<{...}>` rather than the outer alias `Foo`.
     skip_application_alias_names: bool,
-    /// When true, don't follow display_alias when it points to an Intersection
+    /// When true, don't follow `display_alias` when it points to an Intersection
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
     skip_intersection_display_alias: bool,
@@ -209,7 +209,7 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
-    /// Don't follow display_alias when it points to an Intersection type
+    /// Don't follow `display_alias` when it points to an Intersection type
     /// and the current type is an Object. tsc shows the merged object form
     /// in TS2741 messages, not the intersection form.
     pub const fn with_skip_intersection_display_alias(mut self) -> Self {

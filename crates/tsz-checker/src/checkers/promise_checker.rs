@@ -13,16 +13,19 @@ use tsz_solver::TypeId;
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    fn is_builtin_promise_like_name(name: &str) -> bool {
+        name == "Promise" || name == "PromiseLike"
+    }
+
     // =========================================================================
     // Promise Type Detection
     // =========================================================================
 
     /// Check if a name refers to a Promise-like type.
     ///
-    /// Returns true for "Promise", "`PromiseLike`", or any name containing "Promise".
-    /// This handles built-in Promise types as well as custom Promise implementations.
+    /// Returns true for the built-in `Promise` and `PromiseLike` names only.
     pub fn is_promise_like_name(&self, name: &str) -> bool {
-        matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
+        Self::is_builtin_promise_like_name(name)
     }
 
     /// Check if a name refers to exactly the global Promise type (not subclasses).
@@ -271,7 +274,7 @@ impl<'a> CheckerState<'a> {
                 query::classify_promise_type(self.ctx.types, base)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && self.is_promise_like_name(symbol.escaped_name.as_str())
+                && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
             {
                 return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
             }
@@ -284,7 +287,7 @@ impl<'a> CheckerState<'a> {
             {
                 let sym_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && self.is_promise_like_name(symbol.escaped_name.as_str())
+                    && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
                 {
                     return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
                 }
@@ -307,7 +310,7 @@ impl<'a> CheckerState<'a> {
                 // Use DefId -> SymbolId bridge
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && self.is_promise_like_name(symbol.escaped_name.as_str())
+                    && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
                 {
                     return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
                 }
@@ -428,7 +431,7 @@ impl<'a> CheckerState<'a> {
         };
         let name = symbol.escaped_name.as_str();
 
-        if self.is_promise_like_name(name) {
+        if Self::is_builtin_promise_like_name(name) {
             // Return UNKNOWN instead of ANY when there are no type arguments (consistent with Task 4-6)
             return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
         }
@@ -493,7 +496,7 @@ impl<'a> CheckerState<'a> {
         // before lowering (e.g., Promise<T> where Promise is from lib and might not fully resolve)
         if let Some(type_ref) = self.ctx.arena.get_type_ref_at(type_alias.type_node)
             && let Some(ident) = self.ctx.arena.get_identifier_at(type_ref.type_name)
-            && self.is_promise_like_name(ident.escaped_text.as_str())
+            && Self::is_builtin_promise_like_name(ident.escaped_text.as_str())
         {
             // It's Promise<...> or PromiseLike<...>
             // Get the first type argument and substitute bindings
@@ -621,7 +624,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check if it's Promise or PromiseLike
-            if !self.is_promise_like_name(&ident.escaped_text) {
+            if !Self::is_builtin_promise_like_name(&ident.escaped_text) {
                 continue;
             }
 
@@ -751,14 +754,14 @@ impl<'a> CheckerState<'a> {
             if let Some(name_node) = self.ctx.arena.get(type_ref.type_name) {
                 // Check for simple identifier like "Promise"
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    return self.is_promise_like_name(&ident.escaped_text);
+                    return Self::is_builtin_promise_like_name(&ident.escaped_text);
                 }
                 // Also check for qualified names like SomeModule.Promise
                 if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node)
                     && let Some(right_node) = self.ctx.arena.get(qualified.right)
                     && let Some(ident) = self.ctx.arena.get_identifier(right_node)
                 {
-                    return self.is_promise_like_name(&ident.escaped_text);
+                    return Self::is_builtin_promise_like_name(&ident.escaped_text);
                 }
             }
         }

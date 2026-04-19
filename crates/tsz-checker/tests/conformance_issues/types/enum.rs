@@ -266,15 +266,15 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     for file_name in lib_names {
         for root in &lib_roots {
             let lib_path = root.join(file_name);
-            if lib_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&lib_path) {
-                    if !seen_files.insert(file_name.to_string()) {
-                        break;
-                    }
-                    let lib_file = LibFile::from_source(file_name.to_string(), content);
-                    lib_files.push(Arc::new(lib_file));
+            if lib_path.exists()
+                && let Ok(content) = std::fs::read_to_string(&lib_path)
+            {
+                if !seen_files.insert(file_name.to_string()) {
                     break;
                 }
+                let lib_file = LibFile::from_source(file_name.to_string(), content);
+                lib_files.push(Arc::new(lib_file));
+                break;
             }
         }
     }
@@ -290,10 +290,6 @@ fn without_missing_global_type_errors(diagnostics: Vec<(u32, String)>) -> Vec<(u
         .into_iter()
         .filter(|(code, _)| *code != 2318)
         .collect()
-}
-
-fn compile_and_get_diagnostics_with_lib(source: &str) -> Vec<(u32, String)> {
-    compile_and_get_diagnostics_with_lib_and_options(source, CheckerOptions::default())
 }
 
 fn compile_and_get_diagnostics_with_lib_and_options(
@@ -511,62 +507,6 @@ testSet.transform(
     //     has_error(&diagnostics, 2339),
     //     "Expected TS2339 for the invalid second transform() pipeline."
     // );
-}
-
-fn compile_and_get_diagnostics_with_merged_lib_contexts_and_shared_cache_and_options(
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<(u32, String)> {
-    let lib_files = load_lib_files_for_test();
-
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    let checker_lib_contexts = if lib_files.is_empty() {
-        Vec::new()
-    } else {
-        let raw_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| BinderLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&raw_contexts);
-        vec![CheckerLibContext {
-            arena: Arc::clone(&lib_files[0].arena),
-            binder: Arc::new({
-                let mut merged = BinderState::new();
-                merged.merge_lib_contexts_into_binder(&raw_contexts);
-                merged
-            }),
-        }]
-    };
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    if !checker_lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(checker_lib_contexts);
-    }
-    checker.ctx.shared_lib_type_cache = Some(Arc::new(dashmap::DashMap::new()));
-
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code != 2318)
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
 }
 
 #[test]

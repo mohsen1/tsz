@@ -15,7 +15,17 @@ pub(crate) fn resolve_property_access(
     obj_type: TypeId,
     prop_name: &str,
 ) -> PropertyAccessResult {
-    let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    resolve_property_access_with_options(db, obj_type, prop_name, false)
+}
+
+pub(crate) fn resolve_property_access_with_options(
+    db: &dyn QueryDatabase,
+    obj_type: TypeId,
+    prop_name: &str,
+    no_unchecked_indexed_access: bool,
+) -> PropertyAccessResult {
+    let mut evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
     evaluator.resolve_property_access(obj_type, prop_name)
 }
 
@@ -30,7 +40,44 @@ pub(crate) fn resolve_property_access_raw_this(
     obj_type: TypeId,
     prop_name: &str,
 ) -> PropertyAccessResult {
-    let evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    resolve_property_access_raw_this_with_options(db, obj_type, prop_name, false)
+}
+
+pub(crate) fn resolve_property_access_raw_this_with_options(
+    db: &dyn QueryDatabase,
+    obj_type: TypeId,
+    prop_name: &str,
+    no_unchecked_indexed_access: bool,
+) -> PropertyAccessResult {
+    let mut evaluator = tsz_solver::operations::property::PropertyAccessEvaluator::new(db);
+    evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+    evaluator.set_skip_this_binding(true);
+    evaluator.resolve_property_access(obj_type, prop_name)
+}
+
+pub(crate) fn resolve_property_access_with_resolver(
+    db: &dyn QueryDatabase,
+    resolver: &dyn tsz_solver::TypeResolver,
+    obj_type: TypeId,
+    prop_name: &str,
+    no_unchecked_indexed_access: bool,
+) -> PropertyAccessResult {
+    let mut evaluator =
+        tsz_solver::operations::property::PropertyAccessEvaluator::with_resolver(db, resolver);
+    evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+    evaluator.resolve_property_access(obj_type, prop_name)
+}
+
+pub(crate) fn resolve_property_access_raw_this_with_resolver(
+    db: &dyn QueryDatabase,
+    resolver: &dyn tsz_solver::TypeResolver,
+    obj_type: TypeId,
+    prop_name: &str,
+    no_unchecked_indexed_access: bool,
+) -> PropertyAccessResult {
+    let mut evaluator =
+        tsz_solver::operations::property::PropertyAccessEvaluator::with_resolver(db, resolver);
+    evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
     evaluator.set_skip_this_binding(true);
     evaluator.resolve_property_access(obj_type, prop_name)
 }

@@ -43,6 +43,91 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
     }
 
+    fn fallback_new_target_type(&mut self) -> TypeId {
+        let function_type = self
+            .checker
+            .resolve_lib_type_by_name("Function")
+            .unwrap_or(TypeId::FUNCTION);
+        self.checker
+            .ctx
+            .types
+            .factory()
+            .union2(function_type, TypeId::UNDEFINED)
+    }
+
+    fn resolve_new_target_type(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext::{
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+        };
+
+        let Some(owner_idx) = self.checker.find_enclosing_non_arrow_function(idx) else {
+            self.checker.error_at_node(
+                idx,
+                diagnostic_messages::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
+                diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
+            );
+            return self.fallback_new_target_type();
+        };
+
+        let Some(owner_node) = self.checker.ctx.arena.get(owner_idx) else {
+            return self.fallback_new_target_type();
+        };
+
+        match owner_node.kind {
+            CONSTRUCTOR => {
+                let Some(parent) = self
+                    .checker
+                    .ctx
+                    .arena
+                    .get_extended(owner_idx)
+                    .map(|ext| ext.parent)
+                else {
+                    return self.fallback_new_target_type();
+                };
+                let Some(class_node) = self.checker.ctx.arena.get(parent) else {
+                    return self.fallback_new_target_type();
+                };
+                let Some(class_data) = self.checker.ctx.arena.get_class(class_node) else {
+                    return self.fallback_new_target_type();
+                };
+                self.checker.get_class_constructor_type(parent, class_data)
+            }
+            FUNCTION_DECLARATION | FUNCTION_EXPRESSION => {
+                if let Some(sym_id) = self.checker.ctx.binder.get_node_symbol(owner_idx) {
+                    let owner_type = self.checker.get_type_of_symbol(sym_id);
+                    if owner_type != TypeId::ERROR && owner_type != TypeId::UNKNOWN {
+                        return self
+                            .checker
+                            .ctx
+                            .types
+                            .factory()
+                            .union2(owner_type, TypeId::UNDEFINED);
+                    }
+                }
+
+                let owner_type = self.checker.type_of_value_declaration(owner_idx);
+                if owner_type != TypeId::ERROR && owner_type != TypeId::UNKNOWN {
+                    self.checker
+                        .ctx
+                        .types
+                        .factory()
+                        .union2(owner_type, TypeId::UNDEFINED)
+                } else {
+                    self.fallback_new_target_type()
+                }
+            }
+            _ => {
+                self.checker.error_at_node(
+                    idx,
+                    diagnostic_messages::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
+                    diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
+                );
+                self.fallback_new_target_type()
+            }
+        }
+    }
+
     /// Dispatch type computation based on node kind.
     pub fn dispatch_type_computation(&mut self, idx: NodeIndex) -> TypeId {
         self.dispatch_type_computation_with_request(idx, &TypingRequest::NONE)
@@ -1748,11 +1833,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
             // MetaProperty: `new.target` (import.meta is parsed as PROPERTY_ACCESS_EXPRESSION)
-            k if k == syntax_kind_ext::META_PROPERTY => {
-                // new.target returns the constructor function or undefined.
-                // Return any as a safe fallback.
-                TypeId::ANY
-            }
+            k if k == syntax_kind_ext::META_PROPERTY => self.resolve_new_target_type(idx),
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(

@@ -300,8 +300,60 @@ impl CheckerState<'_> {
         )?;
         let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
         let type_expr = type_expr.trim();
-        // Use the authoritative resolution kernel — no fallback chain needed.
-        self.resolve_jsdoc_reference(type_expr)
+        // Use the authoritative resolution kernel first, then fall back to the
+        // enclosing JSDoc template scope for bare template names like `T`.
+        self.resolve_jsdoc_reference(type_expr).or_else(|| {
+            let normalized = type_expr
+                .trim_end_matches('=')
+                .trim_start_matches("...")
+                .trim();
+
+            let mut current = idx;
+            for _ in 0..16 {
+                let parent_idx = self.ctx.arena.get_extended(current)?.parent;
+                let parent_node = self.ctx.arena.get(parent_idx)?;
+                let is_function_like = matches!(
+                    parent_node.kind,
+                    k if k == syntax_kind_ext::CONSTRUCTOR
+                        || k == syntax_kind_ext::METHOD_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                        || k == syntax_kind_ext::ARROW_FUNCTION
+                );
+                if !is_function_like {
+                    current = parent_idx;
+                    continue;
+                }
+
+                if let Some(ty) = self
+                    .enclosing_jsdoc_class_template_types(parent_idx)
+                    .get(normalized)
+                    .copied()
+                {
+                    return Some(ty);
+                }
+
+                if let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
+                    for (name, is_const) in Self::jsdoc_template_type_params(&jsdoc) {
+                        if name == normalized {
+                            let atom = self.ctx.types.intern_string(&name);
+                            return Some(self.ctx.types.factory().type_param(
+                                tsz_solver::TypeParamInfo {
+                                    name: atom,
+                                    constraint: None,
+                                    default: None,
+                                    is_const,
+                                },
+                            ));
+                        }
+                    }
+                }
+
+                break;
+            }
+
+            None
+        })
     }
 
     fn jsdoc_simple_template_type_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {

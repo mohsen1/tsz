@@ -351,29 +351,6 @@ namedFoo.toExponential(2);
     );
 }
 
-// ---------------------------------------------------------------------------
-// Multi-file helpers for cross-file type-only export tests
-// ---------------------------------------------------------------------------
-
-/// Compile two files (a.ts and b.ts) and return diagnostics from b.ts.
-/// `module_spec` is the import specifier used in b.ts to reference a.ts (e.g., "./a").
-fn compile_two_files_get_diagnostics(
-    a_source: &str,
-    b_source: &str,
-    module_spec: &str,
-) -> Vec<(u32, String)> {
-    compile_two_files_get_diagnostics_with_options(
-        a_source,
-        b_source,
-        module_spec,
-        CheckerOptions {
-            module: tsz_common::common::ModuleKind::CommonJS,
-            no_lib: true,
-            ..Default::default()
-        },
-    )
-}
-
 fn compile_two_files_get_diagnostics_with_options(
     a_source: &str,
     b_source: &str,

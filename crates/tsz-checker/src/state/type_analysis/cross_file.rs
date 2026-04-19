@@ -8,7 +8,114 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+
+    if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+        return arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone());
+    }
+
+    if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+        let qn = arena.get_qualified_name(node)?;
+        let left = entity_name_text_in_arena(arena, qn.left)?;
+        let right = entity_name_text_in_arena(arena, qn.right)?;
+        return Some(format!("{left}.{right}"));
+    }
+
+    if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        && let Some(access) = arena.get_access_expr(node)
+    {
+        let left = entity_name_text_in_arena(arena, access.expression)?;
+        let right = arena
+            .get(access.name_or_argument)
+            .and_then(|right_node| arena.get_identifier(right_node))?;
+        return Some(format!("{left}.{}", right.escaped_text));
+    }
+
+    None
+}
+
 impl<'a> CheckerState<'a> {
+    fn resolve_cross_file_global_type_symbol(
+        &self,
+        name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let normalized = name.strip_prefix("globalThis.").unwrap_or(name);
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .file_locals
+            .get(normalized)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs(normalized, &lib_binders)
+            })
+            .or_else(|| {
+                normalized
+                    .rsplit('.')
+                    .next()
+                    .filter(|tail| *tail != normalized)
+                    .and_then(|tail| {
+                        self.ctx.binder.file_locals.get(tail).or_else(|| {
+                            self.ctx.binder.get_global_type_with_libs(tail, &lib_binders)
+                        })
+                    })
+            })
+    }
+
+    fn resolve_cross_file_heritage_type_arg(
+        &mut self,
+        arena: &tsz_parser::NodeArena,
+        node_idx: NodeIndex,
+    ) -> TypeId {
+        let Some(node) = arena.get(node_idx) else {
+            return TypeId::UNKNOWN;
+        };
+
+        match node.kind {
+            k if k == tsz_scanner::SyntaxKind::StringKeyword as u16 => return TypeId::STRING,
+            k if k == tsz_scanner::SyntaxKind::NumberKeyword as u16 => return TypeId::NUMBER,
+            k if k == tsz_scanner::SyntaxKind::BooleanKeyword as u16 => return TypeId::BOOLEAN,
+            k if k == tsz_scanner::SyntaxKind::VoidKeyword as u16 => return TypeId::VOID,
+            k if k == tsz_scanner::SyntaxKind::UndefinedKeyword as u16 => {
+                return TypeId::UNDEFINED;
+            }
+            k if k == tsz_scanner::SyntaxKind::NullKeyword as u16 => return TypeId::NULL,
+            k if k == tsz_scanner::SyntaxKind::NeverKeyword as u16 => return TypeId::NEVER,
+            k if k == tsz_scanner::SyntaxKind::UnknownKeyword as u16 => return TypeId::UNKNOWN,
+            k if k == tsz_scanner::SyntaxKind::AnyKeyword as u16 => return TypeId::ANY,
+            _ => {}
+        }
+
+        let name = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            arena.get_type_ref(node)
+                .and_then(|type_ref| entity_name_text_in_arena(arena, type_ref.type_name))
+        } else {
+            entity_name_text_in_arena(arena, node_idx)
+        };
+
+        let Some(name) = name else {
+            return TypeId::UNKNOWN;
+        };
+        if let Some(&type_id) = self.ctx.type_parameter_scope.get(&name) {
+            return type_id;
+        }
+        if let Some(sym_id) = self.resolve_cross_file_global_type_symbol(&name) {
+            return self.get_type_of_symbol(sym_id);
+        }
+
+        let atom = self.ctx.types.intern_string(&name);
+        self.ctx.types.type_param(tsz_solver::TypeParamInfo {
+            name: atom,
+            constraint: None,
+            default: None,
+            is_const: false,
+        })
+    }
+
     /// Get a symbol from the current binder, lib binders, or other file binders.
     /// This ensures we can resolve symbols from lib.d.ts and other files.
     pub(crate) fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
@@ -1152,34 +1259,63 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
 
-                        // Extract the expression (base type name) from the heritage type
-                        let expr_idx = if let Some(expr) = arena.get_expr_type_args(type_node) {
-                            expr.expression
-                        } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                            if let Some(type_ref) = arena.get_type_ref(type_node) {
-                                type_ref.type_name
+                        let (expr_idx, type_arguments) =
+                            if let Some(expr) = arena.get_expr_type_args(type_node) {
+                                (expr.expression, expr.type_arguments.as_ref())
+                            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                                if let Some(type_ref) = arena.get_type_ref(type_node) {
+                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
+                                } else {
+                                    (type_idx, None)
+                                }
                             } else {
-                                type_idx
-                            }
-                        } else {
-                            type_idx
-                        };
+                                (type_idx, None)
+                            };
 
-                        // Resolve the base type by name via file_locals
-                        let Some(base_node) = arena.get(expr_idx) else {
+                        let Some(name) = entity_name_text_in_arena(arena, expr_idx) else {
                             continue;
                         };
-                        let Some(ident) = arena.get_identifier(base_node) else {
-                            continue;
-                        };
-                        let name = ident.escaped_text.as_str();
-                        let Some(base_sym_id) = self.ctx.binder.file_locals.get(name) else {
+                        let Some(base_sym_id) = self.resolve_cross_file_global_type_symbol(&name)
+                        else {
                             continue;
                         };
 
-                        let base_type = self.get_type_of_symbol(base_sym_id);
+                        let mut base_type = self.get_type_of_symbol(base_sym_id);
                         if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
                             continue;
+                        }
+                        if let Some(type_arguments) = type_arguments {
+                            let base_params = self.get_type_params_for_symbol(base_sym_id);
+                            if !base_params.is_empty() {
+                                let mut type_args = Vec::with_capacity(type_arguments.nodes.len());
+                                for &arg_idx in &type_arguments.nodes {
+                                    type_args
+                                        .push(self.resolve_cross_file_heritage_type_arg(arena, arg_idx));
+                                }
+                                while type_args.len() < base_params.len() {
+                                    let param = &base_params[type_args.len()];
+                                    type_args.push(
+                                        param
+                                            .default
+                                            .or(param.constraint)
+                                            .unwrap_or(TypeId::UNKNOWN),
+                                    );
+                                }
+                                if type_args.len() > base_params.len() {
+                                    type_args.truncate(base_params.len());
+                                }
+                                let substitution =
+                                    crate::query_boundaries::common::TypeSubstitution::from_args(
+                                        self.ctx.types,
+                                        &base_params,
+                                        &type_args,
+                                    );
+                                base_type = crate::query_boundaries::common::instantiate_type(
+                                    self.ctx.types,
+                                    base_type,
+                                    &substitution,
+                                );
+                            }
                         }
 
                         derived_type = self.merge_interface_types(derived_type, base_type);

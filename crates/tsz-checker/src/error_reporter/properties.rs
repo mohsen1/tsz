@@ -811,13 +811,6 @@ impl<'a> CheckerState<'a> {
             // These should still report TS2339 for property access failures as tsc does.
         }
 
-        // Suppress TS2339 for generic mapped types that may contain the property.
-        // For example, `T extends { [K in keyof U]: V }` may have properties
-        // that we can't determine until the mapped type is instantiated.
-        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, type_id) {
-            return;
-        }
-
         // Suppress TS2339 for types that are intersections involving generic conditional types.
         // For example, `{ foo: T } & (T extends string ? { bar: string } : { baz: number })`
         // where the conditional type part may or may not have the property being accessed.
