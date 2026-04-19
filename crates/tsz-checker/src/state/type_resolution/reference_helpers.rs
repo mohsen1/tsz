@@ -422,6 +422,21 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {
+        let mut visited = Vec::new();
+        self.symbol_is_namespace_only_tracked(sym_id, &mut visited)
+    }
+
+    /// Cycle-aware variant of [`symbol_is_namespace_only`]. Accepts the caller's
+    /// `visited_aliases` so that mutual recursion with [`Self::resolve_alias_symbol`]
+    /// shares a single cycle-tracking vector. Without this, a helper that starts
+    /// its own fresh `Vec::new()` would bypass the caller's protection and allow
+    /// unbounded recursion across alias chains that form cycles only when viewed
+    /// at the full mutual-recursion level.
+    pub(crate) fn symbol_is_namespace_only_tracked(
+        &self,
+        sym_id: SymbolId,
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> bool {
         let lib_binders = self.get_lib_binders();
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
             if symbol.flags & symbol_flags::ALIAS != 0 {
@@ -429,15 +444,15 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
 
-                let mut visited = Vec::new();
-                let target_sym_id = self.resolve_alias_symbol(sym_id, &mut visited);
+                let target_sym_id = self.resolve_alias_symbol(sym_id, visited_aliases);
 
                 if matches!(symbol.import_name.as_deref(), Some("*")) && target_sym_id.is_some() {
                     if symbol.is_umd_export {
                         if let Some(target_sym_id) = target_sym_id
                             && target_sym_id != sym_id
                         {
-                            return self.symbol_is_namespace_only(target_sym_id);
+                            return self
+                                .symbol_is_namespace_only_tracked(target_sym_id, visited_aliases);
                         }
                         return false;
                     }
@@ -447,7 +462,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(target_sym_id) = target_sym_id
                     && target_sym_id != sym_id
                 {
-                    return self.symbol_is_namespace_only(target_sym_id);
+                    return self.symbol_is_namespace_only_tracked(target_sym_id, visited_aliases);
                 }
 
                 // For module-level imports (`import X = require('...')` or

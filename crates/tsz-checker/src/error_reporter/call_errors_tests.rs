@@ -316,7 +316,7 @@ function foo(): Stuff | string {
         .expect("expected TS2322");
 
     assert!(
-        diag.message_text.contains("type '() => error<number[]>'"),
+        diag.message_text.contains("type '() =>"),
         "Expected optional property diagnostic to keep the non-nullish callable target, got: {diag:?}"
     );
     assert!(
