@@ -46,7 +46,6 @@ impl Server {
         }
         const SCRIPT: &str = include_str!("native_ts_worker.js");
 
-
         let payload_obj = payload.as_object_mut()?;
         if payload_obj.get("openFiles").is_none() {
             let mut native_open_files = self.open_files.clone();
