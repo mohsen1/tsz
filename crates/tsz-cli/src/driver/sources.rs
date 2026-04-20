@@ -1,6 +1,7 @@
 //! Source file I/O, config helpers, and file reading for the compilation driver.
 
 use super::*;
+use crate::fs::is_ts_file;
 
 /// Count how many `node_modules` segments appear in a file path.
 /// For example, `/a/node_modules/b/node_modules/c/index.js` has depth 2.
@@ -8,6 +9,18 @@ fn node_modules_depth(path: &Path) -> u32 {
     path.components()
         .filter(|c| c.as_os_str() == "node_modules")
         .count() as u32
+}
+
+/// Check whether a path's extension identifies a TypeScript/JavaScript source
+/// or a JSON module that may be part of the program. Used to filter resolved
+/// module paths so that package.json `"main"` entries pointing at non-source
+/// files (e.g. `"main": "normalize.css"`) are silently ignored instead of being
+/// parsed as TypeScript.
+fn has_source_file_extension(path: &Path) -> bool {
+    if is_ts_file(path) || is_js_file(path) {
+        return true;
+    }
+    matches!(path.extension().and_then(|ext| ext.to_str()), Some("json"))
 }
 
 /// Check if a JS file should be skipped due to `maxNodeModuleJsDepth`.
@@ -599,7 +612,7 @@ pub(super) fn read_source_files(
                 if let Some(resolved) = outcome.resolved_path {
                     let canonical = normalize_resolved_path(&resolved, options);
                     entry.insert(canonical.clone());
-                    if seen.insert(canonical.clone()) {
+                    if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
                     }
                 }
