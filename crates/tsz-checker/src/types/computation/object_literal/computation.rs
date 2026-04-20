@@ -347,7 +347,17 @@ impl<'a> CheckerState<'a> {
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
                     // evaluate them with the full resolver first so the solver can
                     // extract property types from the resulting concrete object type.
-                    let property_context_type = if let Some(ctx_type) = contextual_type {
+                    let function_property_lookup_context = if initializer_is_function_like
+                        && original_contextual_type
+                            .is_some_and(|ctx_type| self.primitive_union_member_has_property(ctx_type, &name))
+                    {
+                        original_contextual_type.or(contextual_type)
+                    } else {
+                        contextual_type
+                    };
+                    let property_context_type = if let Some(ctx_type) =
+                        function_property_lookup_context
+                    {
                         let lookup_type = self.contextual_lookup_type(ctx_type);
                         let lookup_presence =
                             self.named_contextual_property_presence(lookup_type, &name);
@@ -398,7 +408,7 @@ impl<'a> CheckerState<'a> {
                             Some(jsdoc_callable_context_type)
                         } else if jsdoc_declared_type.is_none() {
                             self.function_initializer_context_type(
-                                contextual_type,
+                                function_property_lookup_context,
                                 &name,
                                 property_context_type,
                                 prop.initializer,
@@ -424,7 +434,7 @@ impl<'a> CheckerState<'a> {
                         && initializer_context_type.is_none()
                         && initializer_is_function_like
                         && original_contextual_type.is_some_and(|ctx_type| {
-                            self.contextual_type_has_primitive_union_member(ctx_type)
+                            self.primitive_union_member_has_property(ctx_type, &name)
                         });
                     let resolved_prop_ctx = self.substitute_contextual_this_type(
                         jsdoc_declared_type.or(initializer_context_type).or(
