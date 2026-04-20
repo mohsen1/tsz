@@ -775,6 +775,11 @@ impl<'a> CheckerState<'a> {
                 .node_info(current)
                 .and_then(|info| self.ctx.arena.get(info.parent))
                 .is_some_and(|parent| {
+                    // Skip when the anchor is the *name* or *declaration* side of a
+                    // declaration-like construct. In those cases any leading JSDoc
+                    // `@type` describes the declared (target) type, not the source
+                    // expression — so reading it here would display the target type
+                    // as the source, producing "Type 'X' is not assignable to type 'X'".
                     matches!(
                         parent.kind,
                         syntax_kind_ext::PROPERTY_ASSIGNMENT
@@ -782,6 +787,10 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::METHOD_DECLARATION
                             | syntax_kind_ext::GET_ACCESSOR
                             | syntax_kind_ext::SET_ACCESSOR
+                            | syntax_kind_ext::PROPERTY_DECLARATION
+                            | syntax_kind_ext::VARIABLE_DECLARATION
+                            | syntax_kind_ext::PARAMETER
+                            | syntax_kind_ext::BINDING_ELEMENT
                     )
                 })
             {
