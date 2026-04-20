@@ -98,16 +98,24 @@ fn filter_lib_diagnostics_tsc(
     // `error TSxxxx:` that our no-position regex matched but the code-list
     // regex did not. Drop such orphan fingerprints.
     //
-    // Exception: TS2318 "Cannot find global type" at synthetic position
-    // (`<unknown>:0:0`) is legitimately stored only in fingerprints for
-    // @noLib tests (the tsc cache generator records them that way when
-    // tsc's test harness produces them as program-level diagnostics).
-    // Keep those so the noLib branch in the runner can compare against
-    // tsz's TS2318 emissions. See PR #578 and #612.
+    // Exception: a small whitelist of program-level diagnostics that tsc
+    // emits at the synthetic position (`<unknown>:0:0`) WITHOUT reflecting
+    // the code in the per-test `error_codes` list. These are legitimate
+    // comparisons against tsz's emissions:
+    //
+    //   - TS2318 "Cannot find global type" — @noLib tests (see PR #578, #612).
+    //   - TS2468 "Cannot find global value 'Promise'" — ES5 lib tests that
+    //     use async/dynamic-import (tsc reports it as a top-level file-less
+    //     error but the test case's `error_codes` only includes the
+    //     file-anchored TS2705/TS2712/etc.).
+    const PROGRAM_LEVEL_WHITELIST: &[u32] = &[2318, 2468];
     let code_set: std::collections::HashSet<u32> = codes.iter().copied().collect();
     fps.retain(|fp| {
         code_set.contains(&fp.code)
-            || (fp.code == 2318 && fp.file.is_empty() && fp.line == 0 && fp.column == 0)
+            || (PROGRAM_LEVEL_WHITELIST.contains(&fp.code)
+                && fp.file.is_empty()
+                && fp.line == 0
+                && fp.column == 0)
     });
 
     let had_lib = fps.iter().any(is_lib_diagnostic);
