@@ -57,6 +57,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         name.starts_with("[Symbol.") || name.starts_with("__@")
     }
 
+    /// Returns `true` if `type_id` is function-like — i.e. has at least one
+    /// call or construct signature. Used by TS2739/TS2741 explain code to skip
+    /// `prototype` from the missing-property list (tsc treats `prototype` as
+    /// implicit on any callable value).
+    fn type_has_callable_signature(&self, type_id: TypeId) -> bool {
+        use crate::type_queries::has_call_signatures;
+        if has_call_signatures(self.interner, type_id) {
+            return true;
+        }
+        if let Some(cid) = callable_shape_id(self.interner, type_id) {
+            let shape = self.interner.callable_shape(cid);
+            return !shape.call_signatures.is_empty() || !shape.construct_signatures.is_empty();
+        }
+        if function_shape_id(self.interner, type_id).is_some() {
+            return true;
+        }
+        false
+    }
+
     /// Explain why `source` is not assignable to `target`.
     ///
     /// This is the "slow path" - called only when `is_assignable_to` returns false
@@ -709,6 +728,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             missing_with_order.clear();
         } else {
             missing_with_order = non_symbol_missing;
+        }
+
+        // tsc treats `prototype` as implicit on callable sources (any function
+        // or class value has a `.prototype` in JS), so it never lists it as a
+        // missing property — even when comparing a plain function type against
+        // an interface like `ArrayConstructor` that declares `prototype`.
+        // Strip it here if the source has call or construct signatures.
+        if !missing_with_order.is_empty() && self.type_has_callable_signature(source) {
+            let prototype_atom = self.interner.intern_string("prototype");
+            missing_with_order.retain(|(name, _, _)| *name != prototype_atom);
         }
         let missing_props: Vec<tsz_common::interner::Atom> = missing_with_order
             .into_iter()
