@@ -356,16 +356,15 @@ impl<'a> Printer<'a> {
                             let c_pos = self.all_comments[self.comment_emit_idx].pos;
                             let c_trailing =
                                 self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                            let comment_text = crate::safe_slice::slice_or_empty(
-                                text,
-                                c_pos as usize,
-                                c_end as usize,
-                            );
-                            self.write_comment_with_reindent(comment_text, Some(c_pos));
-                            if c_trailing {
-                                self.write_line();
-                            } else if comment_text.starts_with("/*") {
-                                self.pending_block_comment_space = true;
+                            if let Ok(comment_text) =
+                                crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                            {
+                                self.write_comment_with_reindent(comment_text, Some(c_pos));
+                                if c_trailing {
+                                    self.write_line();
+                                } else if comment_text.starts_with("/*") {
+                                    self.pending_block_comment_space = true;
+                                }
                             }
                             self.comment_emit_idx += 1;
                         } else {
@@ -1350,9 +1349,10 @@ impl<'a> Printer<'a> {
             let comments = get_trailing_comment_ranges(text, pos);
             for comment in comments {
                 self.write_space();
-                let comment_text =
-                    safe_slice::slice_or_empty(text, comment.pos as usize, comment.end as usize);
-                if !comment_text.is_empty() {
+                if let Ok(comment_text) =
+                    safe_slice::slice(text, comment.pos as usize, comment.end as usize)
+                    && !comment_text.is_empty()
+                {
                     self.write_comment_with_reindent(comment_text, Some(comment.pos));
                 }
                 // Advance the global comment index past this comment so it
