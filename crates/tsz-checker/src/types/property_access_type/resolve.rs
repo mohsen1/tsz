@@ -2555,12 +2555,42 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier(self.ctx.arena, expression)?;
         let base_symbol = self.ctx.binder.get_symbol(base_sym_id)?;
 
-        if base_symbol.flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0 {
+        // When the binder resolves an import to an intermediate alias (e.g.,
+        // re-exported enums: `export { E } from './source'`), follow the
+        // alias chain to find the actual enum/namespace symbol.
+        let (resolved_sym_id, resolved_flags) = if base_symbol.flags & symbol_flags::ALIAS != 0
+            && base_symbol.flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0
+        {
+            let mut visited = crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
+            if let Some(target_id) = self.resolve_alias_symbol(base_sym_id, &mut visited) {
+                let target_flags = self
+                    .get_cross_file_symbol(target_id)
+                    .or_else(|| self.ctx.binder.get_symbol(target_id))
+                    .map_or(0, |s| s.flags);
+                (target_id, target_flags)
+            } else {
+                (base_sym_id, base_symbol.flags)
+            }
+        } else {
+            (base_sym_id, base_symbol.flags)
+        };
+
+        if resolved_flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0 {
             return None;
         }
 
-        let exports = base_symbol.exports.as_ref()?;
-        let member_sym_id = exports.get(property_name)?;
+        // Extract data from resolved symbol before taking mutable borrows below.
+        let (member_sym_id, resolved_value_decl, resolved_first_decl, resolved_is_ambient) = {
+            let resolved_symbol = self
+                .get_cross_file_symbol(resolved_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))?;
+            let exports = resolved_symbol.exports.as_ref()?;
+            let member_sym_id = exports.get(property_name)?;
+            let value_decl = resolved_symbol.value_declaration;
+            let first_decl = resolved_symbol.declarations.first().copied();
+            let is_ambient = self.is_const_enum_ambient(resolved_symbol);
+            (member_sym_id, value_decl, first_decl, is_ambient)
+        };
 
         // For namespace members, only use the fast path when the export has
         // value semantics (VARIABLE, CLASS, FUNCTION, etc.) or is an alias
@@ -2583,7 +2613,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let is_enum = base_symbol.flags & symbol_flags::ENUM != 0;
+        let is_enum = resolved_flags & symbol_flags::ENUM != 0;
 
         // TS1361/TS1362: Check if the base identifier is a type-only import.
         if let Some(local_sym_id) = self.resolve_identifier_symbol(expression)
@@ -2614,8 +2644,8 @@ impl<'a> CheckerState<'a> {
 
             // TS2748: Cannot access ambient const enums when isolatedModules is enabled.
             if self.ctx.isolated_modules()
-                && base_symbol.flags & symbol_flags::CONST_ENUM != 0
-                && self.is_const_enum_ambient(base_symbol)
+                && resolved_flags & symbol_flags::CONST_ENUM != 0
+                && resolved_is_ambient
                 && !self.is_in_type_only_position(idx)
             {
                 let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
@@ -2636,13 +2666,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2729 for namespace member access in static property initializers.
-        if base_symbol.flags & symbol_flags::VALUE_MODULE != 0
+        if resolved_flags & symbol_flags::VALUE_MODULE != 0
             && self.is_in_static_property_initializer_ast_context(expression)
             && self.find_enclosing_computed_property(expression).is_none()
         {
-            let decl_idx = if base_symbol.value_declaration.is_some() {
-                base_symbol.value_declaration
-            } else if let Some(&first_decl) = base_symbol.declarations.first() {
+            let decl_idx = if resolved_value_decl.is_some() {
+                resolved_value_decl
+            } else if let Some(first_decl) = resolved_first_decl {
                 first_decl
             } else {
                 NodeIndex::NONE
@@ -2664,7 +2694,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Resolve the member type.
-        let member_sym = self.ctx.binder.get_symbol(member_sym_id);
+        let member_sym = self
+            .get_cross_file_symbol(member_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_sym_id));
         let member_type = if let Some(member_sym) = member_sym
             && member_sym.flags & symbol_flags::INTERFACE != 0
             && member_sym.flags & symbol_flags::VARIABLE != 0
