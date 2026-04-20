@@ -633,21 +633,33 @@ impl<'a> CheckerState<'a> {
             self.check_const_assignment(initializer);
         }
 
-        // TS2322: Check element type is assignable to the variable's declared type.
-        // Skip for destructuring patterns (array/object literal expressions) — those are
-        // checked element-by-element during destructuring assignment processing, not as
-        // a whole-type assignability check. Individual mismatches (e.g., wrong default
-        // values) are caught by the assignment expression checker on each element.
-        // Only skip for array destructuring — array literal elements like `k = false`
-        // are BinaryExpressions that trigger individual assignment checks.
-        // Object destructuring still needs the whole-type check because individual
-        // property bindings don't go through the assignment expression checker.
+        // TS2322: Expression-form `for (... of ...)` should follow the same
+        // destructuring-assignment path as `({ ... } = value)`. In particular,
+        // object-literal targets must validate each binding element separately
+        // instead of synthesizing a whole-pattern assignability error.
         let is_array_destructuring_target = self
             .ctx
             .arena
             .get(initializer)
             .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+        let is_object_destructuring_target = self
+            .ctx
+            .arena
+            .get(initializer)
+            .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
         if is_for_of
+            && is_object_destructuring_target
+            && target_type != TypeId::ANY
+            && element_type != TypeId::ANY
+            && element_type != TypeId::ERROR
+            && !self.type_contains_error(target_type)
+        {
+            self.check_object_destructuring_assignment_from_source_type(
+                initializer,
+                element_type,
+                None,
+            );
+        } else if is_for_of
             && !is_array_destructuring_target
             && target_type != TypeId::ANY
             && element_type != TypeId::ANY
