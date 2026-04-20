@@ -73,6 +73,12 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// self-referential conditional types produce the same Application TypeId
     /// on each expansion, preventing the per-DefId depth counter from working.
     flag_depth_on_app_cycle: bool,
+    /// Set by `evaluate_conditional` when a conditional branch resolved to an
+    /// Application type (via tail-call expansion or direct evaluation).
+    /// `evaluate_application` reads this to store a forward display alias
+    /// so the formatter shows the intermediate alias name (e.g.
+    /// `DeepReadonlyObject<Part>`) rather than the outer alias (`DeepReadonly<Part>`).
+    pub(super) apparent_conditional_branch: Option<TypeId>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -140,6 +146,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             conditional_subtype_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
+            apparent_conditional_branch: None,
         }
     }
 }
@@ -184,6 +191,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             conditional_subtype_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
+            apparent_conditional_branch: None,
         }
     }
 
@@ -609,6 +617,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 resolved_key = ?resolved.and_then(|r| self.interner.lookup(r)),
                 "evaluate_application resolve"
             );
+            // Save any apparent branch set by an outer conditional evaluator,
+            // so nested evaluate_application calls don't steal the signal.
+            let _saved_apparent = self.apparent_conditional_branch.take();
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
@@ -875,6 +886,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 original_type_id
             };
 
+            // Read the apparent conditional branch set by evaluate_conditional for THIS
+            // application, then restore whatever was saved above for the outer caller.
+            let my_apparent_branch = self.apparent_conditional_branch.take();
+            self.apparent_conditional_branch = _saved_apparent;
+
             // Decrement per-DefId depth after evaluation
             if let Some(d) = self.def_depth.get_mut(&def_id) {
                 *d = d.saturating_sub(1);
@@ -907,6 +923,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     )
                 {
                     self.interner.store_display_alias(result, original_type_id);
+
+                    // If the conditional branch resolved to an intermediate Application
+                    // (e.g., `DeepReadonly<Part>` -> conditional -> `DeepReadonlyObject<Part>`),
+                    // store a forward display alias so the formatter shows the one-step
+                    // apparent type name that tsc displays.
+                    if let Some(branch_app) = my_apparent_branch {
+                        if branch_app != original_type_id
+                            && branch_app != result
+                            && !has_param_args
+                            && matches!(
+                                self.interner.lookup(branch_app),
+                                Some(crate::types::TypeData::Application(_))
+                            )
+                        {
+                            self.interner.store_display_alias(original_type_id, branch_app);
+                        }
+                    }
                 }
             }
 
