@@ -208,12 +208,14 @@ mod module_tracking;
 // Module Resolution Infrastructure (non-wasm targets only - requires file system access)
 #[cfg(not(target_arch = "wasm32"))]
 pub mod module_resolver;
+#[cfg(not(target_arch = "wasm32"))]
 mod resolution;
 #[cfg(not(target_arch = "wasm32"))]
 pub use module_resolver::{
     ModuleExtension, ModuleLookupError, ModuleLookupOutcome, ModuleLookupRequest,
     ModuleLookupResult, ModuleResolver, ResolutionFailure, ResolvedModule,
 };
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use resolution::helpers as module_resolver_helpers;
 
 // Import/Export Tracking
