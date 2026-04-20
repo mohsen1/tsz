@@ -53,6 +53,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut tail_seen: FxHashSet<(TypeId, TypeId, TypeId, TypeId)> = FxHashSet::default();
 
         loop {
+            // Clear any apparent branch signal from the previous iteration so stale
+            // signals don't leak into the outer evaluate_application.
+            self.apparent_conditional_branch = None;
+
             // When tail recursion reaches the limit, the type didn't converge.
             // Flag TS2589 and return ERROR to prevent stack overflow.
             // This matches tsc's tail recursion limit of 1000 (instantiationCount).
@@ -466,13 +470,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 self.interner().lookup(instantiated)
                             {
                                 let next_cond = self.interner().get_conditional(next_cond_id);
-                                current_cond = next_cond;
                                 tail_recursion_count += 1;
                                 continue;
                             }
-                            // Not a conditional — evaluate normally
+                            // Not a conditional — evaluate normally.
+                            // Signal the intermediate Application for forward display alias.
+                            self.apparent_conditional_branch = Some(substituted_true);
                             return self.evaluate(instantiated);
                         }
+                    }
+                    // Direct Application branch.
+                    if matches!(self.interner().lookup(substituted_true), Some(TypeData::Application(_))) {
+                        self.apparent_conditional_branch = Some(substituted_true);
                     }
                     return self.evaluate(substituted_true);
                 }
@@ -556,11 +565,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner().lookup(instantiated)
                         {
                             let next_cond = self.interner().get_conditional(next_cond_id);
-                            current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
+                        self.apparent_conditional_branch = Some(cond.false_type);
                         return self.evaluate(instantiated);
+                    }
+                    if matches!(self.interner().lookup(cond.false_type), Some(TypeData::Application(_))) {
+                        self.apparent_conditional_branch = Some(cond.false_type);
                     }
                 }
 
@@ -684,11 +696,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().lookup(instantiated)
                     {
                         let next_cond = self.interner().get_conditional(next_cond_id);
-                        current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
+                    self.apparent_conditional_branch = Some(result_branch);
                     return self.evaluate(instantiated);
+                }
+                if matches!(self.interner().lookup(result_branch), Some(TypeData::Application(_))) {
+                    self.apparent_conditional_branch = Some(result_branch);
                 }
             }
 
