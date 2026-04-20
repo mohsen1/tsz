@@ -1498,9 +1498,7 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         // No `exports` field: all subpaths are directly importable
                         // (pre-exports Node.js behaviour). No portability concern.
-                        if pkg_json.get("exports").is_none() {
-                            return None;
-                        }
+                        pkg_json.get("exports")?;
 
                         // Before flagging as non-portable, check whether the
                         // symbol is re-exported from a module that IS accessible
