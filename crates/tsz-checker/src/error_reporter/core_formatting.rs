@@ -1411,14 +1411,14 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
     ) -> Option<TypeId> {
         let db = self.ctx.types.as_type_database();
-        let cond = tsz_solver::type_queries::get_conditional_type(db, ty)?;
+        let cond = crate::query_boundaries::state::type_environment::get_conditional_type(db, ty)?;
         if !cond.is_distributive {
             return None;
         }
-        let param_info = tsz_solver::type_param_info(db, cond.check_type)?;
+        let param_info = crate::query_boundaries::common::type_param_info(db, cond.check_type)?;
         let branches_are_concrete =
-            !tsz_solver::type_queries::contains_type_parameters_db(db, cond.true_type)
-                && !tsz_solver::type_queries::contains_type_parameters_db(db, cond.false_type);
+            !crate::query_boundaries::common::contains_type_parameters(db, cond.true_type)
+                && !crate::query_boundaries::common::contains_type_parameters(db, cond.false_type);
         if !branches_are_concrete {
             return None;
         }
@@ -1426,18 +1426,19 @@ impl<'a> CheckerState<'a> {
             Some(c) => c,
             None => return Some(self.ctx.types.union2(cond.true_type, cond.false_type)),
         };
-        if tsz_solver::is_subtype_of(db, constraint, cond.extends_type) {
+        if crate::query_boundaries::assignability::is_fresh_subtype_of(
+            db,
+            constraint,
+            cond.extends_type,
+        ) {
             return None;
         }
         let extends_members: Vec<TypeId> =
-            if let Some(members) = tsz_solver::type_queries::get_union_members(db, cond.extends_type) {
-                members.to_vec()
-            } else {
-                vec![cond.extends_type]
-            };
-        let has_overlap = extends_members
-            .iter()
-            .any(|&m| tsz_solver::is_subtype_of(db, m, constraint));
+            crate::query_boundaries::common::union_members(db, cond.extends_type)
+                .unwrap_or_else(|| vec![cond.extends_type]);
+        let has_overlap = extends_members.iter().any(|&m| {
+            crate::query_boundaries::assignability::is_fresh_subtype_of(db, m, constraint)
+        });
         if has_overlap {
             Some(self.ctx.types.union2(cond.true_type, cond.false_type))
         } else {
