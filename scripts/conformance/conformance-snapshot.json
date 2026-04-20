@@ -3,7 +3,7 @@
   "git_sha": "bc9109bb46741942e36caf1fe1b35a5820cde587",
   "summary": {
     "total_tests": 12581,
-    "passed": 12036,
+    "passed": 11994,
     "failed": 545,
     "pass_rate": 95.7
   },
