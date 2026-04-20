@@ -1757,6 +1757,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let target = self.evaluate_type_for_assignability(target);
+        if target == TypeId::UNDEFINED || target == TypeId::NULL {
+            return true;
+        }
         self.is_literal_sensitive_assignment_target_inner(target)
     }
 
