@@ -244,7 +244,6 @@ FAIL TypeScript/tests/cases/conformance/classes/classStaticBlock/classStaticBloc
 FAIL TypeScript/tests/cases/conformance/classes/members/instanceAndStaticMembers/typeOfThisInStaticMembers9.ts | expected:[TS2335,TS2660] actual:[TS2335,TS2660]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameInInExpression.ts | expected:[TS1451,TS2339,TS2406,TS2407,TS2571,TS18016,TS18047] actual:[TS2339,TS2405,TS2407,TS2571,TS2719]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameJsBadAssignment.ts | expected:[TS2304,TS2339,TS18016] actual:[TS2304,TS2339,TS18016]
-FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodClassExpression.ts | expected:[TS18013] actual:[TS18013]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts | expected:[TS2322,TS18013] actual:[TS2322,TS18013]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesIncompatibleModifiersJs.ts | expected:[TS18010] actual:[TS18010]
 FAIL TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesUnique-4.ts | expected:[TS2564,TS2741] actual:[TS2564,TS2741]
@@ -552,7 +551,6 @@ FAIL TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts | expected
 FAIL TypeScript/tests/cases/projects/ReferenceResolution/src/ts/foo/foo.ts | expected:[TS6053] actual:[TS6053]
 FAIL TypeScript/tests/cases/projects/declarations_MultipleTimesImport/useModule.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
 FAIL TypeScript/tests/cases/projects/privacyCheck-SimpleReference/test.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
-FAIL TypeScript/tests/cases/transpile/declarationBasicSyntax.ts | expected:[TS2564,TS2854,TS5024] actual:[TS2554,TS2564,TS2854,TS5024]
 FAIL TypeScript/tests/cases/transpile/declarationComputedPropertyNames.ts | expected:[TS1166,TS1169,TS1170,TS2304] actual:[TS1166,TS1169,TS1170,TS2304]
 FAIL TypeScript/tests/cases/unittests/matchFiles.ts | expected:[TS2304,TS2339,TS2593,TS2694,TS6053,TS7006] actual:[TS2304,TS2339,TS2593,TS2694,TS6053,TS7006]
 PASS TypeScript/tests/cases/compiler/2dArrays.ts
@@ -7337,6 +7335,7 @@ PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateName
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodAssignment.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodAsync.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodCallExpression.ts
+PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodClassExpression.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodInStaticFieldInit.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameMethodsDerivedClasses.ts
 PASS TypeScript/tests/cases/conformance/classes/members/privateNames/privateNameNestedClassAccessorsShadowing.ts
@@ -12560,6 +12559,7 @@ PASS TypeScript/tests/cases/projects/relative-nested/main/consume.ts
 PASS TypeScript/tests/cases/projects/rootDirectory/FolderA/FolderB/FolderC/fileC.ts
 PASS TypeScript/tests/cases/projects/rootDirectory/FolderA/FolderB/fileB.ts
 PASS TypeScript/tests/cases/transpile/declarationAsyncAndGeneratorFunctions.ts
+PASS TypeScript/tests/cases/transpile/declarationBasicSyntax.ts
 PASS TypeScript/tests/cases/transpile/declarationCrossFileInferences.ts
 PASS TypeScript/tests/cases/transpile/declarationEmitPartialNodeReuse.ts
 PASS TypeScript/tests/cases/transpile/declarationFunctionDeclarations.ts
