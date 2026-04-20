@@ -1169,6 +1169,20 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx)
             && node.kind == SyntaxKind::Identifier as u16
         {
+            // TS1212: An identifier used as an assignment target (LHS of `=`)
+            // bypasses get_type_of_identifier_with_request, so the strict-mode
+            // reserved-name check there never fires for cases like `let = 30;`
+            // in strict mode. Mirror that diagnostic here so reassigning a
+            // reserved word like `let`/`yield`/`interface` is flagged.
+            if let Some(ident) = self.ctx.arena.get_identifier(node)
+                && crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text)
+                && self.is_strict_mode_for_node(idx)
+                && self.ctx.checking_computed_property_name.is_none()
+            {
+                let name = ident.escaped_text.clone();
+                self.emit_strict_mode_reserved_word_error(idx, &name, true);
+            }
+
             if self.ctx.in_destructuring_target
                 && self.resolve_identifier_symbol_for_write(idx).is_none()
                 && let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent)
