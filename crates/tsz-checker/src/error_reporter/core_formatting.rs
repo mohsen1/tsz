@@ -131,10 +131,8 @@ impl<'a> CheckerState<'a> {
             && def.type_params.is_empty()
         {
             if let Some(body) = def.body {
-                if self.assignability_display_has_own_signature_type_params(body) {
-                    let evaluated = self.evaluate_type_with_env(ty);
-                    return self.format_type_diagnostic(evaluated);
-                }
+                // Only expand computed bodies. For generic function type aliases like
+                // `type bar = <U>(source: ...) => void`, tsc shows the alias name.
                 if self.ctx.definition_store.is_computed_body(body) {
                     let evaluated = self.evaluate_type_with_env(ty);
                     return self.format_type_diagnostic(evaluated);
@@ -143,9 +141,6 @@ impl<'a> CheckerState<'a> {
             // Evaluate and check if the result wraps a generic application.
             // tsc shows `Id<{...}>` not `Foo` for `type Foo = Id<{...}>`.
             let evaluated = self.evaluate_type_with_env(ty);
-            if is_generic_callable(self, evaluated) {
-                return format_with_def_store(self, evaluated);
-            }
             if evaluated != ty && self.ctx.types.get_display_alias(evaluated).is_some() {
                 return self.format_type_for_assignability_message(evaluated);
             }
@@ -184,8 +179,18 @@ impl<'a> CheckerState<'a> {
             return "false".to_string();
         }
 
+        // For deferred conditional types, check if the conditional is ambiguous
+        // (tsc shows the branch union rather than the alias form).
+        let is_cond = crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty);
+        if is_cond {
+            if let Some(branch_union) = self.compute_ambiguous_conditional_display(ty) {
+                return self.format_type_for_assignability_message(branch_union);
+            }
+        }
+
         let evaluated = self.evaluate_type_for_assignability(ty);
-        if self.should_use_evaluated_assignability_display(ty, evaluated) {
+        let use_eval = self.should_use_evaluated_assignability_display(ty, evaluated);
+        if use_eval {
             return self.format_type_for_assignability_message(evaluated);
         }
 
@@ -1336,21 +1341,9 @@ impl<'a> CheckerState<'a> {
             false
         };
         let is_function = if !is_object && !is_union {
-            if let Some(fn_shape) =
-                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
-            {
-                // Skip function types that have their own type parameters — these
-                // are generic functions (including JSDoc @template callbacks) where
-                // the DefInfo may report empty type_params even though the body is
-                // generic. Using the alias name would lose the instantiated form.
-                if !fn_shape.type_params.is_empty() {
-                    return None;
-                }
-                true
-            } else {
-                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty).is_some()
+                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
                     .is_some()
-            }
         } else {
             false
         };
@@ -1364,10 +1357,6 @@ impl<'a> CheckerState<'a> {
         if self.ctx.types.get_display_alias(ty).is_some_and(|alias| {
             crate::query_boundaries::common::type_application(self.ctx.types, alias).is_some()
         }) {
-            return None;
-        }
-
-        if self.assignability_display_has_own_signature_type_params(ty) {
             return None;
         }
 
@@ -1415,5 +1404,44 @@ impl<'a> CheckerState<'a> {
         }
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
+    }
+
+    pub(in crate::error_reporter) fn compute_ambiguous_conditional_display(
+        &mut self,
+        ty: TypeId,
+    ) -> Option<TypeId> {
+        let db = self.ctx.types.as_type_database();
+        let cond = tsz_solver::type_queries::get_conditional_type(db, ty)?;
+        if !cond.is_distributive {
+            return None;
+        }
+        let param_info = tsz_solver::type_param_info(db, cond.check_type)?;
+        let branches_are_concrete =
+            !tsz_solver::type_queries::contains_type_parameters_db(db, cond.true_type)
+                && !tsz_solver::type_queries::contains_type_parameters_db(db, cond.false_type);
+        if !branches_are_concrete {
+            return None;
+        }
+        let constraint = match param_info.constraint {
+            Some(c) => c,
+            None => return Some(self.ctx.types.union2(cond.true_type, cond.false_type)),
+        };
+        if tsz_solver::is_subtype_of(db, constraint, cond.extends_type) {
+            return None;
+        }
+        let extends_members: Vec<TypeId> =
+            if let Some(members) = tsz_solver::type_queries::get_union_members(db, cond.extends_type) {
+                members.to_vec()
+            } else {
+                vec![cond.extends_type]
+            };
+        let has_overlap = extends_members
+            .iter()
+            .any(|&m| tsz_solver::is_subtype_of(db, m, constraint));
+        if has_overlap {
+            Some(self.ctx.types.union2(cond.true_type, cond.false_type))
+        } else {
+            None
+        }
     }
 }

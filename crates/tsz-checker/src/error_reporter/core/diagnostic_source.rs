@@ -1295,7 +1295,14 @@ impl<'a> CheckerState<'a> {
                 }
                 return self.format_type(resolved);
             }
+            // For generic type aliases whose conditional body is ambiguous
+            // (e.g. `IsArray<T>` where T extends `object`), skip annotation text.
+            let eval_for_ambiguous = self.evaluate_type_for_assignability(display_type);
+            let is_ambiguous_conditional_alias = self
+                .compute_ambiguous_conditional_display(eval_for_ambiguous)
+                .is_some();
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
+                && !is_ambiguous_conditional_alias
                 && !display.starts_with("keyof ")
                 && !display.starts_with("typeof ")
                 && !display.contains("[P in ")
