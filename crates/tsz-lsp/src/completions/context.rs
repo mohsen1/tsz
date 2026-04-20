@@ -33,9 +33,7 @@ impl<'a> Completions<'a> {
     /// This indicates a spread operator or syntax error, not member access.
     pub(super) fn is_after_double_dot(&self, offset: u32) -> bool {
         if offset >= 2 {
-            let text_before =
-                Self::strip_trailing_fourslash_marker(&self.source_text[..offset as usize]);
-            let trimmed = text_before.trim_end();
+            let trimmed = self.source_text[..offset as usize].trim_end();
             // Check for ".." but not "..." (spread operator — which should get
             // completions for the spread argument)
             trimmed.ends_with("..") && !trimmed.ends_with("...")
@@ -55,13 +53,7 @@ impl<'a> Completions<'a> {
         // for specific token/parent-kind combinations. Our heuristic approximates this
         // by checking AST context and text patterns.
 
-        let node_idx = if let Some(marker_start) =
-            Self::fourslash_marker_comment_start(self.source_text, offset)
-        {
-            self.find_completions_node(root, marker_start.saturating_sub(1))
-        } else {
-            self.find_completions_node(root, offset)
-        };
+        let node_idx = self.find_completions_node(root, offset);
 
         // Check if we're inside a JSX context - most JSX positions return false
         if self.is_in_jsx_context(node_idx) {
@@ -134,21 +126,18 @@ impl<'a> Completions<'a> {
         // Text-based heuristic for the context token
         let text = &self.source_text[..offset as usize];
         let trimmed = text.trim_end();
-        let trimmed_without_marker = Self::strip_trailing_fourslash_marker(trimmed);
-        if trimmed_without_marker.is_empty() {
+        if trimmed.is_empty() {
             return false;
         }
-        if trimmed_without_marker.ends_with('.')
-            && self.is_dotted_namespace_name_context(trimmed_without_marker)
-        {
+        if trimmed.ends_with('.') && self.is_dotted_namespace_name_context(trimmed) {
             return true;
         }
 
         // Find the last word before cursor
-        let last_word_start = trimmed_without_marker
+        let last_word_start = trimmed
             .rfind(|c: char| !c.is_alphanumeric() && c != '_')
             .map_or(0, |p| p + 1);
-        let last_word = &trimmed_without_marker[last_word_start..];
+        let last_word = &trimmed[last_word_start..];
 
         // Keywords after which we are creating a new identifier (name declaration position).
         if matches!(
@@ -182,7 +171,7 @@ impl<'a> Completions<'a> {
         }
 
         // Check the last non-whitespace character for common expression-start operators.
-        let last_char = trimmed_without_marker.as_bytes().last().copied();
+        let last_char = trimmed.as_bytes().last().copied();
         match last_char {
             // After `=` in variable declarations and property assignments,
             // but NOT after `==`, `===`, `!=`, `>=`, `<=`
@@ -191,7 +180,7 @@ impl<'a> Completions<'a> {
                 if self.is_in_parameter_list(offset) {
                     return false;
                 }
-                let before = &trimmed_without_marker[..trimmed_without_marker.len() - 1];
+                let before = &trimmed[..trimmed.len() - 1];
                 let prev = before.as_bytes().last().copied();
                 if prev != Some(b'=')
                     && prev != Some(b'!')
@@ -224,19 +213,19 @@ impl<'a> Completions<'a> {
             }
             // After `[` - only in specific contexts (array literal, binding pattern)
             // NOT in element access expressions.
-            Some(b'[') if !self.is_element_access_context(trimmed_without_marker) => {
+            Some(b'[') if !self.is_element_access_context(trimmed) => {
                 return true;
             }
             // After `<` - only for type parameter lists, NOT for JSX or comparison.
             // Type parameter: `<T, |` or `func<|`.
-            Some(b'<') if self.is_type_parameter_context(trimmed_without_marker) => {
+            Some(b'<') if self.is_type_parameter_context(trimmed) => {
                 return true;
             }
             _ => {}
         }
 
         // After `${` in template literal expressions
-        if trimmed_without_marker.ends_with("${") {
+        if trimmed.ends_with("${") {
             return true;
         }
         // Dotted namespace/module declaration names are identifier-definition
@@ -247,10 +236,10 @@ impl<'a> Completions<'a> {
 
         // If the user is typing an identifier prefix in expression/member-declaration
         // context, treat this as a new identifier location.
-        if let Some(prev) = trimmed_without_marker.chars().last()
+        if let Some(prev) = trimmed.chars().last()
             && (prev == '_' || prev == '$' || prev.is_ascii_alphanumeric())
         {
-            let bytes = trimmed_without_marker.as_bytes();
+            let bytes = trimmed.as_bytes();
             let mut idx = bytes.len();
             while idx > 0 {
                 let ch = bytes[idx - 1] as char;
@@ -260,7 +249,7 @@ impl<'a> Completions<'a> {
                     break;
                 }
             }
-            let current_word = &trimmed_without_marker[idx..];
+            let current_word = &trimmed[idx..];
             if current_word
                 .chars()
                 .next()
@@ -356,45 +345,9 @@ impl<'a> Completions<'a> {
         false
     }
 
-    pub(super) fn fourslash_marker_comment_start(
-        source_text: &str,
-        base_offset: u32,
-    ) -> Option<u32> {
-        let bytes = source_text.as_bytes();
-        let len = bytes.len() as u32;
-        if len < 4 {
-            return None;
-        }
-        let offset = base_offset.min(len.saturating_sub(1));
-        let search_start = offset.saturating_sub(8);
-        let search_end = (offset + 1).min(len.saturating_sub(2));
-        for start in search_start..=search_end {
-            if bytes[start as usize] != b'/' || bytes[(start + 1) as usize] != b'*' {
-                continue;
-            }
-            let mut end = start + 2;
-            while end + 1 < len && end - start <= 8 {
-                if bytes[end as usize] == b'*' && bytes[(end + 1) as usize] == b'/' {
-                    let digits = &bytes[(start + 2) as usize..end as usize];
-                    let is_fourslash_marker =
-                        digits.is_empty() || digits.iter().all(u8::is_ascii_digit);
-                    if is_fourslash_marker {
-                        let comment_end = end + 1;
-                        if offset >= start && offset <= comment_end {
-                            return Some(start);
-                        }
-                    }
-                    break;
-                }
-                end += 1;
-            }
-        }
-        None
-    }
-
     pub(super) fn is_dotted_namespace_completion_context(&self, offset: u32) -> bool {
         let text = &self.source_text[..offset as usize];
-        let trimmed = Self::strip_trailing_fourslash_marker(text.trim_end());
+        let trimmed = text.trim_end();
         let line_start = trimmed.rfind('\n').map_or(0, |idx| idx + 1);
         let line = trimmed[line_start..].trim_start();
         if let Some(rest) = line.strip_prefix("namespace ") {
@@ -416,28 +369,6 @@ impl<'a> Completions<'a> {
             return !rest.is_empty();
         }
         false
-    }
-
-    pub(super) fn strip_trailing_fourslash_marker(text: &str) -> &str {
-        let trimmed = text.trim_end();
-        if let Some(start) = trimmed.rfind("/*") {
-            let after = &trimmed[start + 2..];
-            if !after.contains("*/") {
-                return trimmed[..start].trim_end();
-            }
-        }
-        if !trimmed.ends_with("*/") {
-            return trimmed;
-        }
-        let Some(start) = trimmed.rfind("/*") else {
-            return trimmed;
-        };
-        let marker = &trimmed[start + 2..trimmed.len() - 2];
-        if marker.is_empty() || marker.bytes().all(|b| b.is_ascii_digit()) {
-            trimmed[..start].trim_end()
-        } else {
-            trimmed
-        }
     }
 
     /// Check if the current node is inside a JSX element/attribute context
@@ -651,13 +582,7 @@ impl<'a> Completions<'a> {
     }
 
     pub(super) fn should_offer_constructor_keyword(&self, offset: u32) -> bool {
-        let node_idx = if let Some(marker_start) =
-            Self::fourslash_marker_comment_start(self.source_text, offset)
-        {
-            crate::utils::find_node_at_offset(self.arena, marker_start.saturating_sub(1))
-        } else {
-            crate::utils::find_node_at_offset(self.arena, offset)
-        };
+        let node_idx = crate::utils::find_node_at_offset(self.arena, offset);
         let in_class_body = node_idx.is_some() && self.is_in_class_body_context(node_idx);
         if !in_class_body && !self.text_likely_in_class_body(offset) {
             return false;
@@ -667,7 +592,7 @@ impl<'a> Completions<'a> {
         let text = &self.source_text[..end];
         let line_start = text.rfind('\n').map_or(0, |idx| idx + 1);
         let line = &text[line_start..];
-        let prefix = Self::strip_trailing_fourslash_marker(line).trim_end();
+        let prefix = line.trim_end();
         if prefix.is_empty() {
             return true;
         }

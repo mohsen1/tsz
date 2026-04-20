@@ -960,9 +960,6 @@ impl Project {
 
     pub(crate) fn auto_imports_allowed_for_file(&self, from_file: &str) -> bool {
         let Some((_, compiler_options)) = self.nearest_compiler_options_for_file(from_file) else {
-            if let Some(allow) = self.auto_imports_allowed_from_fourslash_directives(from_file) {
-                return allow;
-            }
             return self.auto_imports_allowed_without_tsconfig;
         };
 
@@ -978,51 +975,6 @@ impl Project {
             .get("target")
             .and_then(serde_json::Value::as_str)
             .is_some_and(target_supports_import_syntax)
-    }
-
-    fn auto_imports_allowed_from_fourslash_directives(&self, from_file: &str) -> Option<bool> {
-        self.files
-            .get(from_file)
-            .and_then(|file| Self::fourslash_auto_import_directive_result(file.source_text()))
-            .or_else(|| {
-                self.files.values().find_map(|file| {
-                    (file.file_name != from_file)
-                        .then(|| Self::fourslash_auto_import_directive_result(file.source_text()))
-                        .flatten()
-                })
-            })
-    }
-
-    fn fourslash_auto_import_directive_result(source_text: &str) -> Option<bool> {
-        let mut saw_module = false;
-        let mut module_none = false;
-        let mut saw_target = false;
-        let mut target_supports_imports = false;
-
-        for line in source_text.lines().take(64) {
-            let trimmed = line.trim_start();
-            if let Some(rest) = trimmed.strip_prefix("// @module:") {
-                saw_module = true;
-                module_none = rest.split(',').map(str::trim).any(|value| {
-                    value.eq_ignore_ascii_case("none") || value.parse::<i64>().ok() == Some(0)
-                });
-                continue;
-            }
-
-            if let Some(rest) = trimmed.strip_prefix("// @target:") {
-                saw_target = true;
-                target_supports_imports = rest
-                    .split(',')
-                    .map(str::trim)
-                    .any(target_supports_import_syntax);
-            }
-        }
-
-        if saw_module && module_none {
-            return Some(saw_target && target_supports_imports);
-        }
-
-        None
     }
 
     fn relative_module_specifier_from_files(
@@ -3394,40 +3346,6 @@ mod tests {
         );
 
         assert!(project.auto_imports_allowed_for_file("/index.ts"));
-    }
-
-    #[test]
-    fn auto_imports_disabled_from_fourslash_directives_for_module_none_es5() {
-        let mut project = Project::new();
-        project.set_file(
-            "/index.ts".to_string(),
-            "// @module: none\n// @target: es5\nx".to_string(),
-        );
-
-        assert!(!project.auto_imports_allowed_for_file("/index.ts"));
-    }
-
-    #[test]
-    fn auto_imports_enabled_from_fourslash_directives_for_module_none_es2015() {
-        let mut project = Project::new();
-        project.set_file(
-            "/index.ts".to_string(),
-            "// @module: none\n// @target: es2015\nx".to_string(),
-        );
-
-        assert!(project.auto_imports_allowed_for_file("/index.ts"));
-    }
-
-    #[test]
-    fn auto_imports_disabled_from_fourslash_directives_in_sibling_file() {
-        let mut project = Project::new();
-        project.set_file(
-            "/fourslash.ts".to_string(),
-            "// @module: none\n// @target: es5\n".to_string(),
-        );
-        project.set_file("/index.ts".to_string(), "x".to_string());
-
-        assert!(!project.auto_imports_allowed_for_file("/index.ts"));
     }
 
     #[test]

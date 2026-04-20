@@ -1,8 +1,31 @@
-//! Fourslash-style test framework for LSP features.
+//! Fourslash-style test harness for LSP features.
 //!
 //! Provides a declarative test DSL inspired by TypeScript's fourslash test format.
 //! Tests use markers (`/*name*/`) in source text to identify cursor positions,
 //! then verify LSP features like hover, definition, completions, references, etc.
+//!
+//! # Architectural boundary
+//!
+//! This module is a **test harness only**. It owns all knowledge of fourslash
+//! marker syntax.
+//!
+//! The harness is responsible for translating a marker-annotated source string
+//! into:
+//!
+//! 1. A *cleaned* source string with the marker comments stripped out, and
+//! 2. A set of marker positions expressed as plain `(file, line, character)`
+//!    tuples in the cleaned coordinates.
+//!
+//! **Production LSP provider modules (`completions`, `hover`, `signature_help`,
+//! `navigation`, `rename`, `diagnostics`, `project`, ...) must not import from,
+//! depend on, or inspect anything in this module.** They must not branch on
+//! marker-like comments, recognize marker names, reorder results to match
+//! fourslash expectations, or read fourslash-specific directives.
+//!
+//! Any request sent from a fourslash test into LSP code is first converted to
+//! the ordinary LSP inputs: file URI, document text, and cursor offset/range.
+//! The LSP code behaves exactly as it would for a user-typed file opened in an
+//! editor.
 //!
 //! # Example
 //!

@@ -6,7 +6,9 @@
 use super::CompletionItemKind;
 
 /// JavaScript/TypeScript keywords for completion.
-/// Matches tsserver's `globalKeywords` list.
+///
+/// Ordered by tsserver convention so completions are sorted consistently with
+/// the TypeScript language service.
 pub(super) const KEYWORDS: &[&str] = &[
     "abstract",
     "any",
@@ -76,7 +78,6 @@ pub(super) const KEYWORDS: &[&str] = &[
 ];
 
 /// Keywords valid inside a function body (subset without top-level-only keywords).
-/// Matches tsserver's `globalKeywordsInsideFunction`.
 pub(super) const KEYWORDS_INSIDE_FUNCTION: &[&str] = &[
     "as",
     "async",
@@ -127,8 +128,8 @@ pub(super) const KEYWORDS_INSIDE_FUNCTION: &[&str] = &[
     "yield",
 ];
 
-/// Global variable names from lib.d.ts that should appear in completions.
-/// Matches tsserver's `globalsVars` list.
+/// Global variable names declared by the default ECMAScript lib files
+/// (lib.es*.d.ts) that should always appear in global completions.
 pub(super) const GLOBAL_VARS: &[(&str, CompletionItemKind)] = &[
     ("Array", CompletionItemKind::Variable),
     ("ArrayBuffer", CompletionItemKind::Variable),

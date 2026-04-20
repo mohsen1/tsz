@@ -57,6 +57,9 @@ mod code_actions_tests;
 #[path = "../tests/fourslash_tests.rs"]
 mod fourslash_tests;
 #[cfg(test)]
+#[path = "../tests/marker_lookalike_tests.rs"]
+mod marker_lookalike_tests;
+#[cfg(test)]
 #[path = "../tests/project_tests.rs"]
 mod project_tests;
 #[cfg(test)]
