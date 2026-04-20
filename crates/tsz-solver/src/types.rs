@@ -358,23 +358,28 @@ impl RelationCacheConfig {
         }
     }
 
-    /// Bridge for callers that still hold a packed `u16` (the legacy
-    /// `pack_relation_flags()` surface). Truncates any out-of-range bits —
-    /// the documented `FLAG_*` constants all fit in `u16`.
-    pub const fn from_legacy_flags_u16(legacy: u16) -> Self {
+    /// Bridge for callers that still hold a packed `u16` bitmask from the
+    /// checker's `pack_relation_flags()` surface.
+    ///
+    /// This is **not** a general-purpose "legacy" conversion — it is *only* a
+    /// temporary adapter while `pack_relation_flags()` continues to return
+    /// `u16`. It asserts in debug builds that the input only carries bits
+    /// that the typed [`RelationFlags`] API knows about, so that unknown
+    /// bits cannot silently survive a round trip and partition the cache
+    /// wrongly. The any-mode defaults to [`CachedAnyMode::All`]; callers
+    /// that need a different any-mode must use [`RelationCacheConfig::new`]
+    /// with [`RelationCacheConfig::with_any_mode`].
+    pub const fn from_checker_flags_u16(legacy: u16) -> Self {
+        // Debug-only guard: any bit above the documented `u16` layout would
+        // be a caller bug, not a truncation we should silently absorb.
+        debug_assert!(
+            (legacy as u32) & !RelationFlags::all().bits() == 0,
+            "from_checker_flags_u16 received a bit outside the typed RelationFlags layout"
+        );
         Self {
             flags: RelationFlags::from_bits_truncate(legacy as u32),
             any_mode: CachedAnyMode::All,
         }
-    }
-
-    /// Legacy `u16` projection for callers interoperating with older code
-    /// paths (e.g. `CompatChecker::apply_flags`). Only the low 16 bits that
-    /// exist in the legacy layout are returned; Lawyer-only bits are
-    /// silently dropped because the legacy flag protocol cannot express
-    /// them.
-    pub const fn legacy_flags_u16(self) -> u16 {
-        (self.flags.bits() & 0xFFFF) as u16
     }
 
     /// Fluent builder override.
@@ -512,11 +517,30 @@ impl RelationCacheKey {
 impl CachedAnyMode {
     /// Decode the packed `u8` layout historically used by the subtype
     /// checker's `make_cache_key`: `0 => All`, `1 => TopLevelOnly @ top`,
-    /// anything else => `TopLevelOnly` nested.
+    /// `2 => TopLevelOnly` nested.
+    ///
+    /// Only those three values are valid. Debug builds assert; release
+    /// builds pin unknown values to [`Self::TopLevelOnlyNested`] — the most
+    /// conservative option, because it is the only variant that disables
+    /// any-suppression entirely and therefore can never silently accept a
+    /// cached result that was computed under different semantics.
+    ///
+    /// New code should not call this; construct a [`CachedAnyMode`]
+    /// directly. The function is retained solely so the
+    /// `RelationCacheKey::subtype` / `::assignability` legacy shims keep
+    /// working.
     pub const fn from_legacy_u8(raw: u8) -> Self {
+        debug_assert!(
+            raw <= 2,
+            "CachedAnyMode::from_legacy_u8 received an out-of-range value; \
+             only 0 (All), 1 (TopLevelOnlyAtTop), or 2 (TopLevelOnlyNested) are valid"
+        );
         match raw {
             0 => Self::All,
             1 => Self::TopLevelOnlyAtTop,
+            // `2` and any other value (in release) fall through to the
+            // conservative nested variant so a miscoded caller cannot
+            // collide with top-level cache slots.
             _ => Self::TopLevelOnlyNested,
         }
     }
