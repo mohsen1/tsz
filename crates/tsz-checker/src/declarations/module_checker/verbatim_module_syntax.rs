@@ -79,7 +79,7 @@ impl<'a> CheckerState<'a> {
                 if type_only
                     && option_name == "isolatedModules"
                     && (self.is_local_symbol_imported_as_type_only(&source_name)
-                        || self.is_local_symbol_from_type_only_chain(&source_name))
+                        || self.is_local_symbol_from_type_only_reexport_chain(&source_name))
                 {
                     false
                 } else {
@@ -228,6 +228,30 @@ impl<'a> CheckerState<'a> {
             {
                 let import_name = sym.import_name.as_deref().unwrap_or(name);
                 return self.is_export_type_only_across_binders(module_spec, import_name);
+            }
+        }
+        false
+    }
+
+    /// Like `is_local_symbol_from_type_only_chain`, but only returns true when
+    /// the chain includes explicit `export type { ... }` syntax (where `is_type_only`
+    /// is set on the export symbol). Does NOT return true for plain type declarations
+    /// like `export type T = number`. This distinction is important for choosing
+    /// between TS1205 (re-exporting a type) and TS1448 (type-only re-export chain).
+    pub(super) fn is_local_symbol_from_type_only_reexport_chain(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+        {
+            if sym.is_type_only {
+                return false;
+            }
+            if (sym.flags & symbol_flags::ALIAS) != 0
+                && let Some(ref module_spec) = sym.import_module
+            {
+                let import_name = sym.import_name.as_deref().unwrap_or(name);
+                return self.is_export_type_only_syntax_across_binders(module_spec, import_name);
             }
         }
         false

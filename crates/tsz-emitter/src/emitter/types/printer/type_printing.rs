@@ -6,7 +6,7 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::types::TypeId;
-use tsz_solver::visitor;
+use tsz_solver::{remove_undefined, visitor};
 
 use super::{TypePrinter, needs_property_name_quoting_with_flag, quote_property_name};
 
@@ -255,6 +255,12 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
+    /// For optional parameters, strip `| undefined` from the display type.
+    /// tsc omits `| undefined` when the parameter has `?` since it's implied.
+    fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+        remove_undefined(self.interner, type_id)
+    }
+
     pub(crate) fn property_is_accessor(&self, property: &tsz_solver::types::PropertyInfo) -> bool {
         if property.is_class_prototype {
             return true;
@@ -491,7 +497,12 @@ impl<'a> TypePrinter<'a> {
                 }
                 result.push_str(": ");
             }
-            result.push_str(&scoped.print_type(param.type_id));
+            let display_type = if param.optional {
+                scoped.optional_param_display_type(param.type_id)
+            } else {
+                param.type_id
+            };
+            result.push_str(&scoped.print_type(display_type));
         }
         result.push(')');
 
@@ -654,7 +665,12 @@ impl<'a> TypePrinter<'a> {
                 param_str.push_str(": ");
             }
 
-            param_str.push_str(&scoped.print_type(param.type_id));
+            let display_type = if param.optional {
+                scoped.optional_param_display_type(param.type_id)
+            } else {
+                param.type_id
+            };
+            param_str.push_str(&scoped.print_type(display_type));
 
             params.push(param_str);
         }
@@ -839,7 +855,12 @@ impl<'a> TypePrinter<'a> {
                 }
                 param_str.push_str(": ");
             }
-            param_str.push_str(&scoped.print_type(param.type_id));
+            let display_type = if param.optional {
+                scoped.optional_param_display_type(param.type_id)
+            } else {
+                param.type_id
+            };
+            param_str.push_str(&scoped.print_type(display_type));
             params.push(param_str);
         }
 
@@ -891,7 +912,12 @@ impl<'a> TypePrinter<'a> {
                 }
                 param_str.push_str(": ");
             }
-            param_str.push_str(&scoped.print_type(param.type_id));
+            let display_type = if param.optional {
+                scoped.optional_param_display_type(param.type_id)
+            } else {
+                param.type_id
+            };
+            param_str.push_str(&scoped.print_type(display_type));
             params.push(param_str);
         }
 
@@ -942,7 +968,12 @@ impl<'a> TypePrinter<'a> {
                 }
                 param_str.push_str(": ");
             }
-            param_str.push_str(&scoped.print_type(param.type_id));
+            let display_type = if param.optional {
+                scoped.optional_param_display_type(param.type_id)
+            } else {
+                param.type_id
+            };
+            param_str.push_str(&scoped.print_type(display_type));
             params.push(param_str);
         }
 
