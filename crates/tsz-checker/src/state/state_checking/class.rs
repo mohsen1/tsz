@@ -458,22 +458,29 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if member_has_abstract {
-                        // TS1244 for methods/accessors, TS1253 for properties
+                        // TS1244 for methods/accessors, TS1253 for properties.
+                        // tsc anchors at the start of the declaration (including
+                        // the `abstract` modifier), not at the member name.
+                        // error_at_node trims to the name, so use
+                        // error_at_position with the raw member-node span.
                         let is_method = matches!(
                             member_node.kind,
                             syntax_kind_ext::METHOD_DECLARATION
                                 | syntax_kind_ext::GET_ACCESSOR
                                 | syntax_kind_ext::SET_ACCESSOR
                         );
+                        let (start, length) = (member_node.pos, member_node.end - member_node.pos);
                         if is_method {
-                            self.error_at_node(
-                                member_idx,
+                            self.error_at_position(
+                                start,
+                                length,
                                 "Abstract methods can only appear within an abstract class.",
                                 diagnostic_codes::ABSTRACT_METHODS_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
                             );
                         } else {
-                            self.error_at_node(
-                                member_idx,
+                            self.error_at_position(
+                                start,
+                                length,
                                 "Abstract properties can only appear within an abstract class.",
                                 diagnostic_codes::ABSTRACT_PROPERTIES_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
                             );
@@ -926,18 +933,24 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::GET_ACCESSOR
                             | syntax_kind_ext::SET_ACCESSOR
                     );
+                    // tsc anchors TS1244/TS1253 at the start of the
+                    // declaration (including the `abstract` modifier),
+                    // not at the member name.
+                    let (start, length) = (member_node.pos, member_node.end - member_node.pos);
                     if is_method {
-                        self.error_at_node(
-                                member_idx,
-                                "Abstract methods can only appear within an abstract class.",
-                                diagnostic_codes::ABSTRACT_METHODS_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
-                            );
+                        self.error_at_position(
+                            start,
+                            length,
+                            "Abstract methods can only appear within an abstract class.",
+                            diagnostic_codes::ABSTRACT_METHODS_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                        );
                     } else {
-                        self.error_at_node(
-                                member_idx,
-                                "Abstract properties can only appear within an abstract class.",
-                                diagnostic_codes::ABSTRACT_PROPERTIES_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
-                            );
+                        self.error_at_position(
+                            start,
+                            length,
+                            "Abstract properties can only appear within an abstract class.",
+                            diagnostic_codes::ABSTRACT_PROPERTIES_CAN_ONLY_APPEAR_WITHIN_AN_ABSTRACT_CLASS,
+                        );
                     }
                 }
             }
