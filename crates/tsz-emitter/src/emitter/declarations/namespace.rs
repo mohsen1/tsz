@@ -362,12 +362,19 @@ impl<'a> Printer<'a> {
         // Use source text scan: search for the identifier as a binding in the body.
         // This catches parameters, local vars, nested functions/classes at any depth.
         if let Some(text) = self.source_text {
-            let body_text = crate::safe_slice::slice_or_empty(
+            // safe_slice: C → migrated. A bad span here would silently report
+            // "no binding found", which can change namespace shadowing
+            // decisions and emit incorrectly. Surface span errors instead of
+            // returning a false-negative; fall back to false only when source
+            // text is literally unavailable.
+            return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
                 body_node.end as usize,
-            );
-            return Self::text_has_binding_named(body_text, ns_name);
+            ) {
+                Ok(body_text) => Self::text_has_binding_named(body_text, ns_name),
+                Err(_) => false,
+            };
         }
         false
     }

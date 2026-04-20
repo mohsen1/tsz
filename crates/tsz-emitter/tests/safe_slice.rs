@@ -118,3 +118,23 @@ fn slice_error_display_is_informative() {
     assert!(msg.contains("10"), "msg={msg}");
     assert!(msg.contains("out of bounds"), "msg={msg}");
 }
+
+#[test]
+fn shim_fallback_counter_increments_only_on_silent_swallow() {
+    // The counter is process-global, so other tests may bump it concurrently.
+    // Assert only that the count is monotonic and that a failed call adds at
+    // least 1, while a successful call adds 0 — both race-free claims.
+
+    let before_ok = fallback_count();
+    let _ = slice_or_empty("hello", 0, 5);
+    // We cannot assert equality because parallel tests may bump the count;
+    // we can only assert the counter never decreases.
+    assert!(fallback_count() >= before_ok);
+
+    let before_err = fallback_count();
+    let _ = slice_or_empty("hello", 100, 200);
+    assert!(
+        fallback_count() > before_err,
+        "silent fallback must bump the counter"
+    );
+}
