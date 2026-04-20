@@ -103,8 +103,6 @@ FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx 
 FAIL TypeScript/tests/cases/compiler/keyRemappingKeyofResult.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/keyofIsLiteralContexualType.ts | expected:[TS2322,TS2339] actual:[TS2322,TS2339]
 FAIL TypeScript/tests/cases/compiler/lambdaArgCrash.ts | expected:[TS2304,TS2345] actual:[TS2304,TS2345]
-FAIL TypeScript/tests/cases/compiler/letAsIdentifier.ts | expected:[TS1212,TS2300] actual:[TS1212,TS2300]
-FAIL TypeScript/tests/cases/compiler/letAsIdentifierInStrictMode.ts | expected:[TS1212,TS2300] actual:[TS1212,TS2300]
 FAIL TypeScript/tests/cases/compiler/limitDeepInstantiations.ts | expected:[TS2344,TS2589] actual:[TS2344,TS2589]
 FAIL TypeScript/tests/cases/compiler/literalFreshnessPropagationOnNarrowing.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/literalTypeNameAssertionNotTriggered.ts | expected:[TS2307,TS2345] actual:[TS2307,TS2345]
@@ -4388,7 +4386,9 @@ PASS TypeScript/tests/cases/compiler/lateBoundDestructuringImplicitAnyError.ts
 PASS TypeScript/tests/cases/compiler/lateBoundFunctionMemberAssignmentDeclarations.ts
 PASS TypeScript/tests/cases/compiler/lateBoundMethodNameAssigmentJS.ts
 PASS TypeScript/tests/cases/compiler/letAndVarRedeclaration.ts
+PASS TypeScript/tests/cases/compiler/letAsIdentifier.ts
 PASS TypeScript/tests/cases/compiler/letAsIdentifier2.ts
+PASS TypeScript/tests/cases/compiler/letAsIdentifierInStrictMode.ts
 PASS TypeScript/tests/cases/compiler/letConstInCaseClauses.ts
 PASS TypeScript/tests/cases/compiler/letConstMatchingParameterNames.ts
 PASS TypeScript/tests/cases/compiler/letDeclarations-access.ts
