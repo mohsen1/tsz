@@ -439,9 +439,37 @@ impl<'a> CheckerState<'a> {
                 }
                 type_tag_count += 1;
                 if type_tag_count >= 2 {
-                    // Emit TS8033 at this @type tag position
-                    let error_pos = comment.pos + match_pos as u32;
-                    let error_len = "@type".len() as u32;
+                    // tsc anchors TS8033 at the current token *after* parsing
+                    // the second `@type {...}` argument — i.e. just past the
+                    // closing `}` of that tag. Mirror that: find the `{...}`
+                    // block that follows this `@type` and anchor the
+                    // diagnostic at the position just past `}`.
+                    let tag_text = &comment_text[after..];
+                    let anchor_offset = if let Some(brace_rel) = tag_text.find('{') {
+                        // Match the closing `}` that balances this `{`,
+                        // respecting nesting so `@type {{ ... }}` works too.
+                        let mut depth = 0i32;
+                        let mut end = None;
+                        for (i, ch) in tag_text[brace_rel..].char_indices() {
+                            if ch == '{' {
+                                depth += 1;
+                            } else if ch == '}' {
+                                depth -= 1;
+                                if depth == 0 {
+                                    end = Some(brace_rel + i + 1);
+                                    break;
+                                }
+                            }
+                        }
+                        end.map(|e| after + e)
+                    } else {
+                        None
+                    };
+                    let (error_pos, error_len) = if let Some(end_off) = anchor_offset {
+                        (comment.pos + end_off as u32, 0u32)
+                    } else {
+                        (comment.pos + match_pos as u32, "@type".len() as u32)
+                    };
                     self.ctx.error(
                         error_pos,
                         error_len,
