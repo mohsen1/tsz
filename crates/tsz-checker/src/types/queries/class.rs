@@ -411,7 +411,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = self.ctx.arena.get_identifier(candidate)
             {
                 let name_str = ident.escaped_text.as_str();
-                for (j, (param_name, _, _)) in params.iter().enumerate() {
+                for (j, (param_name, _, _, _)) in params.iter().enumerate() {
                     if !used[j] && param_name == name_str {
                         used[j] = true;
                     }
@@ -420,7 +420,7 @@ impl<'a> CheckerState<'a> {
         }
 
         for type_expr in Self::jsdoc_type_expressions(raw_comment) {
-            for (j, (param_name, _, _)) in params.iter().enumerate() {
+            for (j, (param_name, _, _, _)) in params.iter().enumerate() {
                 if !used[j] && Self::jsdoc_type_expr_mentions_name(type_expr, param_name) {
                     used[j] = true;
                 }
@@ -446,7 +446,7 @@ impl<'a> CheckerState<'a> {
                 }
                 let comment_text = comment.get_text(source_text);
                 for type_expr in Self::jsdoc_type_expressions(comment_text) {
-                    for (j, (param_name, _, _)) in params.iter().enumerate() {
+                    for (j, (param_name, _, _, _)) in params.iter().enumerate() {
                         if !used[j] && Self::jsdoc_type_expr_mentions_name(type_expr, param_name) {
                             used[j] = true;
                         }
@@ -455,40 +455,47 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Group params by their @template tag (identified by same start position).
-        // If ALL params from a single @template tag are unused, emit TS6205
-        // ("All type parameters are unused.") for the whole tag.
-        // Otherwise, emit TS6133 for each individually unused param.
+        // Group params by their `@template` tag (identified by the tag's
+        // start offset). tsc anchors the diagnostic differently depending on
+        // whether the whole tag is "all unused" or only some of its params:
+        //   - Multi-param tag, all unused  → TS6205 at the `@template` keyword
+        //   - Single-param tag, unused     → TS6133 at the `@template` keyword
+        //   - Multi-param tag, some unused → TS6133 at each unused name
+        // Length-wise tsc uses `@template` (9 chars) for the tag anchor.
         use rustc_hash::FxHashMap;
         let mut tag_groups: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
-        for (j, (_name, start, _length)) in params.iter().enumerate() {
-            tag_groups.entry(*start).or_default().push(j);
+        for (j, (_name, _name_pos, _name_len, tag_start)) in params.iter().enumerate() {
+            tag_groups.entry(*tag_start).or_default().push(j);
         }
 
-        for group_indices in tag_groups.values() {
+        const TEMPLATE_KEYWORD_LEN: u32 = "@template".len() as u32;
+        for (tag_start, group_indices) in tag_groups.iter() {
             let all_unused = group_indices.iter().all(|&j| !used[j]);
             if all_unused && group_indices.len() > 1 {
-                // TS6205: All type parameters are unused.
-                // Use the last param's span to cover the entire @template declaration.
-                let last_idx = *group_indices.last().expect("group_indices is non-empty");
-                let (_, start, length) = &params[last_idx];
-                self.error_all_type_parameters_unused(*start, *length);
+                self.error_all_type_parameters_unused(*tag_start, TEMPLATE_KEYWORD_LEN);
+            } else if all_unused && group_indices.len() == 1 {
+                let j = group_indices[0];
+                let (name, _name_pos, _name_len, _) = &params[j];
+                self.error_declared_but_never_read(name, *tag_start, TEMPLATE_KEYWORD_LEN);
             } else {
-                // TS6133 for each individually unused param.
                 for &j in group_indices {
                     if !used[j] {
-                        let (name, start, length) = &params[j];
-                        self.error_declared_but_never_read(name, *start, *length);
+                        let (name, name_pos, name_len, _) = &params[j];
+                        self.error_declared_but_never_read(name, *name_pos, *name_len);
                     }
                 }
             }
         }
     }
 
+    /// Returns `(name, name_pos, name_length, tag_start)` for each JSDoc
+    /// `@template` parameter in `raw_comment`. `tag_start` identifies which
+    /// `@template` tag the parameter belongs to, so callers can detect when
+    /// *all* parameters in a single tag are unused (TS6205 vs. TS6133).
     fn jsdoc_template_param_declarations(
         raw_comment: &str,
         comment_pos: u32,
-    ) -> Vec<(String, u32, u32)> {
+    ) -> Vec<(String, u32, u32, u32)> {
         let mut params = Vec::new();
         let mut cursor = 0usize;
         while let Some(rel) = raw_comment[cursor..].find("@template") {
@@ -522,11 +529,16 @@ impl<'a> CheckerState<'a> {
                     }
                     let name = &raw_comment[start..idx];
                     if !name.starts_with('_') {
-                        params.push((
-                            name.to_string(),
-                            comment_pos + tag_start as u32,
-                            idx.saturating_sub(tag_start) as u32,
-                        ));
+                        // Anchor each parameter at its own identifier, not at
+                        // the `@template` tag keyword. tsc emits TS6133 at the
+                        // individual name (e.g. `V` at col 16 in
+                        // `@template T,V,X`), but the grouping key below still
+                        // needs to identify params that share the same tag, so
+                        // track the absolute `@template` position separately.
+                        let name_pos = comment_pos + start as u32;
+                        let name_len = (idx - start) as u32;
+                        let tag_abs = comment_pos + tag_start as u32;
+                        params.push((name.to_string(), name_pos, name_len, tag_abs));
                     }
                     continue;
                 }

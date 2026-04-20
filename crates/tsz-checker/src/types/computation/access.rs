@@ -235,6 +235,15 @@ impl<'a> CheckerState<'a> {
             .get_literal_index_from_node(access.name_or_argument)
             .or(numeric_string_index);
 
+        // Visit the index expression up front so identifier diagnostics
+        // (TS2304 etc.) fire even when the object type short-circuits through
+        // the any/error/never/nullish paths below. tsc always resolves the
+        // bracket argument regardless of the receiver's type.
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+        let index_type = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
+        self.ctx.preserve_literal_types = prev_preserve;
+
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
         // back to the flow-narrowed receiver so subtype-based writes still work.
@@ -444,6 +453,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Defensively visit the index expression for diagnostics (TS2304 on
+        // unresolved identifiers, etc.) BEFORE short-circuiting on an
+        // ANY/ERROR receiver. tsc still flags `a[b]` — both unresolved — as
+        // two separate errors; if we return on the receiver being ERROR we'd
+        // miss diagnostics on the index. Skip for string/numeric literal
+        // indices — those don't contain identifiers to resolve.
+        if (object_type == TypeId::ANY || object_type == TypeId::ERROR)
+            && literal_string.is_none()
+            && literal_index.is_none()
+        {
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let _ = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
+            self.ctx.preserve_literal_types = prev_preserve;
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid.
         if object_type == TypeId::ANY {
@@ -484,11 +509,6 @@ impl<'a> CheckerState<'a> {
         {
             self.report_nullish_object(access.expression, cause, false);
         }
-
-        let prev_preserve = self.ctx.preserve_literal_types;
-        self.ctx.preserve_literal_types = true;
-        let index_type = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
-        self.ctx.preserve_literal_types = prev_preserve;
 
         // Preserve the write target when the index expression already errored.
         if index_type == TypeId::ERROR {
