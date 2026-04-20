@@ -1,4 +1,4 @@
-use super::super::core::*;
+use crate::core::*;
 
 #[test]
 fn test_js_constructor_branch_property_visible_cross_file() {
@@ -350,6 +350,10 @@ namedFoo.toExponential(2);
         "Expected TS2339 to report against the full export= object surface. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Multi-file helpers for cross-file type-only export tests
+// ---------------------------------------------------------------------------
 
 fn compile_two_files_get_diagnostics_with_options(
     a_source: &str,

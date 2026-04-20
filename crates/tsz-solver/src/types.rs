@@ -1079,6 +1079,65 @@ impl PropertyInfo {
     }
 }
 
+/// Normalize display-only properties for diagnostic storage.
+///
+/// Unlike canonical object properties, display properties should preserve
+/// source-facing member order rather than name order. Explicit declaration
+/// orders come first; any unordered trailing members keep their existing
+/// sequence after the ordered segment. The final dense renumbering gives later
+/// display-time merges a stable ordering signal.
+pub fn normalize_display_property_order(props: &mut [PropertyInfo]) {
+    props.sort_by(
+        |a, b| match (a.declaration_order > 0, b.declaration_order > 0) {
+            (true, true) => a.declaration_order.cmp(&b.declaration_order),
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (false, false) => std::cmp::Ordering::Equal,
+        },
+    );
+
+    for (idx, prop) in props.iter_mut().enumerate() {
+        prop.declaration_order = idx as u32 + 1;
+    }
+}
+
+/// Merge display-only properties from multiple intersection members while
+/// preserving first-seen source order.
+pub fn merge_display_properties_for_intersection(
+    db: &dyn crate::TypeDatabase,
+    members: &[TypeId],
+) -> Vec<PropertyInfo> {
+    let mut merged: Vec<PropertyInfo> = Vec::new();
+    let mut prop_indices: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
+
+    for &member in members {
+        let Some(props) = db.get_display_properties(member) else {
+            continue;
+        };
+
+        for prop in props.as_ref() {
+            if let Some(&idx) = prop_indices.get(&prop.name) {
+                let existing: &mut PropertyInfo = &mut merged[idx];
+                if existing.type_id != prop.type_id {
+                    existing.type_id = db.intersect_types_raw2(existing.type_id, prop.type_id);
+                }
+                if existing.write_type != prop.write_type {
+                    existing.write_type =
+                        db.intersect_types_raw2(existing.write_type, prop.write_type);
+                }
+            } else {
+                prop_indices.insert(prop.name, merged.len());
+                merged.push(prop.clone());
+            }
+        }
+    }
+
+    for (idx, prop) in merged.iter_mut().enumerate() {
+        prop.declaration_order = idx as u32 + 1;
+    }
+    merged
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PropertyLookup {
     Found(usize),
