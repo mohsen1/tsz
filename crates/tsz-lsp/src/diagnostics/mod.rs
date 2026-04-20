@@ -2,7 +2,8 @@
 //!
 //! This module provides:
 //! - `LspDiagnostic` - the LSP-native diagnostic format (used by LSP clients)
-//! - `TsDiagnostic` - the tsserver-compatible diagnostic format (used by fourslash tests)
+//! - `TsDiagnostic` - the tsserver-compatible diagnostic format (for tsserver
+//!   protocol clients that expect the wire format below)
 //! - Conversion functions between checker diagnostics and both output formats
 //! - Filtering helpers for semantic, syntactic, and suggestion diagnostics
 //!
