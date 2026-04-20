@@ -1104,6 +1104,29 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic_widened(ty);
         }
 
+        // Generic Application target (e.g., `Record<Keys, unknown>`): tsc shows
+        // the Application form in excess-property messages. Either the type is
+        // an Application directly, or it's the evaluated result carrying a
+        // display_alias back to the Application. In both cases, route through
+        // the standard diagnostic formatter so the Application syntax is used.
+        let is_application =
+            crate::query_boundaries::common::type_application(self.ctx.types, ty).is_some();
+        let evaluated_application = if is_application {
+            None
+        } else if let Some(alias) = self.ctx.types.get_display_alias(ty) {
+            crate::query_boundaries::common::type_application(self.ctx.types, alias).map(|_| alias)
+        } else {
+            None
+        };
+        if is_application || evaluated_application.is_some() {
+            let mut formatter = self
+                .ctx
+                .create_diagnostic_type_formatter()
+                .with_display_properties()
+                .with_skip_application_alias_names();
+            return formatter.format(ty).into_owned();
+        }
+
         // For already-evaluated types, check if a type alias name can be recovered
         // via body_to_alias or type_to_def. This handles cases where the Lazy
         // reference was resolved before reaching this function.
