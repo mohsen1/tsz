@@ -801,6 +801,16 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             if let Some(type_id) = self.jsdoc_type_annotation_for_node_direct(current) {
+                // When `current` is a CommonJS module-exports assignment (e.g.
+                // `/** @type {string} */ module.exports = 0;`), the `@type`
+                // describes the declared export type, not the source RHS type.
+                // Returning the annotated type as the source display yields
+                // "Type 'string' is not assignable to type 'string'" where the
+                // RHS is actually a `number`. Skip the rewrite in that case so
+                // the real source type (e.g., `number`) is displayed.
+                if self.is_jsdoc_declared_target_assignment(current) {
+                    return None;
+                }
                 let display_type = self.widen_function_like_display_type(type_id);
                 return Some(self.format_assignability_type_for_message(display_type, target));
             }
@@ -813,6 +823,65 @@ impl<'a> CheckerState<'a> {
             let paren = self.ctx.arena.get_parenthesized(node)?;
             current = paren.expression;
         }
+    }
+
+    /// Determine whether `node` is the LHS (or the whole binary expression) of
+    /// a CommonJS `module.exports = X` / `exports = X` assignment in a JS file.
+    /// For these forms a leading JSDoc `@type` annotation declares the target
+    /// type, not the source type, and must not drive source-side display.
+    fn is_jsdoc_declared_target_assignment(&self, node: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        if !self.is_js_file() {
+            return false;
+        }
+        let Some(node_data) = self.ctx.arena.get(node) else {
+            return false;
+        };
+        // Resolve the enclosing assignment binary expression.  The JSDoc
+        // annotation may have been attached to the wrapping ExpressionStatement,
+        // so accept that form too (`/** @type {string} */ module.exports = 0;`).
+        let binary_idx = match node_data.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => node,
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                let Some(stmt) = self.ctx.arena.get_expression_statement(node_data) else {
+                    return false;
+                };
+                stmt.expression
+            }
+            _ => {
+                // If `node` is the LHS of an assignment, walk to the parent.
+                let Some(parent_idx) = self
+                    .ctx
+                    .arena
+                    .node_info(node)
+                    .map(|info| info.parent)
+                    .filter(|idx| idx.is_some())
+                else {
+                    return false;
+                };
+                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    return false;
+                };
+                if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                    return false;
+                }
+                parent_idx
+            }
+        };
+
+        let Some(binary_node) = self.ctx.arena.get(binary_idx) else {
+            return false;
+        };
+        if binary_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(binary_node) else {
+            return false;
+        };
+        if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
+            return false;
+        }
+        self.is_commonjs_module_exports_assignment(binary.left)
     }
 
     fn empty_array_literal_source_type_display(&self, expr_idx: NodeIndex) -> Option<String> {
