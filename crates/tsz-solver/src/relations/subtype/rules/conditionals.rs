@@ -5,6 +5,8 @@
 //! - Distributive conditional types
 //! - Branch compatibility checking
 
+use std::sync::Arc;
+
 use crate::types::{ConditionalType, TypeData, TypeId};
 use crate::visitor::{contains_type_parameter_named, type_param_info};
 
@@ -132,20 +134,66 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   0 | "" <: number | string ✓
         //
         // This matches tsc's getConstraintOfDistributiveConditionalType().
+        //
+        // IMPORTANT: Skip when the conditional is "non-deterministic" given the
+        // constraint. A conditional T extends E ? X : Y is non-deterministic if:
+        //   - constraint is NOT a subtype of E (not the "always-true" case), AND
+        //   - some member of E IS a subtype of constraint
+        //     (meaning some subtypes of constraint can satisfy E and others can't).
+        //
+        // Example: IsArray<T extends object> = T extends unknown[] ? true : false
+        //   - `object` is not a subtype of `unknown[]` (not always-true)
+        //   - `unknown[]` IS a subtype of `object` (arrays are objects)
+        //   → non-deterministic: IsArray<string[]> = true, IsArray<object> = false
+        //   → Strategy 1.5 would give IsArray<object> = false, incorrectly passing
+        //     `false <: false` when T could be string[] giving true.
         if cond.is_distributive
             && let Some(param_info) = type_param_info(self.interner, cond.check_type)
             && let Some(constraint) = param_info.constraint
             && !contains_type_parameter_named(self.interner, constraint, param_info.name)
         {
-            use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-            let mut sub = TypeSubstitution::new();
-            sub.insert(param_info.name, constraint);
-            let cond_type_id = self.interner.conditional(*cond);
-            let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
-            if instantiated != cond_type_id {
-                let evaluated = self.evaluate_type(instantiated);
-                if evaluated != cond_type_id && self.check_subtype(evaluated, target).is_true() {
-                    return SubtypeResult::True;
+            // Check if the conditional is deterministic for this constraint:
+            // (a) constraint <: extends_type → always the true branch, deterministic
+            // (b) no member of extends_type <: constraint → extends_type can never be
+            //     satisfied by any subtype of constraint, always the false branch, deterministic
+            // (c) otherwise → non-deterministic, skip Strategy 1.5
+            let constraint_subtype_of_extends =
+                self.check_subtype(constraint, cond.extends_type).is_true();
+            let is_non_deterministic = if constraint_subtype_of_extends {
+                false // always-true branch — deterministic
+            } else if matches!(self.interner.lookup(constraint), Some(TypeData::Union(_))) {
+                // Union constraint: distribution over each member is always deterministic.
+                // e.g. ZeroOf<T extends number | string>: instantiate T→(number|string),
+                // distribute → ZeroOf<number>|ZeroOf<string> = 0|"". Always correct.
+                false
+            } else {
+                // Non-union constraint: check if some member of extends_type is a subtype
+                // of constraint. If so, some subtypes of constraint could satisfy the
+                // extends check while others can't (non-deterministic).
+                let extends_type = cond.extends_type;
+                match self.interner.lookup(extends_type) {
+                    Some(TypeData::Union(union_id)) => {
+                        let members: Arc<[TypeId]> = self.interner.type_list(union_id);
+                        members
+                            .iter()
+                            .any(|&m| self.check_subtype(m, constraint).is_true())
+                    }
+                    _ => self.check_subtype(extends_type, constraint).is_true(),
+                }
+            };
+
+            if !is_non_deterministic {
+                use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+                let mut sub = TypeSubstitution::new();
+                sub.insert(param_info.name, constraint);
+                let cond_type_id = self.interner.conditional(*cond);
+                let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
+                if instantiated != cond_type_id {
+                    let evaluated = self.evaluate_type(instantiated);
+                    if evaluated != cond_type_id && self.check_subtype(evaluated, target).is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
                 }
             }
         }
