@@ -679,10 +679,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             u32,
             Option<tsz_binder::SymbolId>,
         )> = Vec::new();
+        let mut seen_names: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+            rustc_hash::FxHashSet::default();
         for t_prop in target_props {
             if !t_prop.optional {
                 let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
-                if s_prop.is_none() {
+                if s_prop.is_none() && seen_names.insert(t_prop.name) {
                     missing_with_order.push((
                         t_prop.name,
                         t_prop.declaration_order,
@@ -716,19 +718,32 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             },
         );
-        let non_symbol_missing: Vec<_> = missing_with_order
+        let has_non_symbol_missing = missing_with_order
             .iter()
-            .copied()
-            .filter(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name))
-            .collect();
-        if non_symbol_missing.is_empty() {
+            .any(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name));
+        if !has_non_symbol_missing {
             // All missing properties are late-bound symbols (e.g. [Symbol.iterator]).
             // tsc does not list symbol-only missing properties in TS2739/TS2741 messages;
             // clear so we fall through to property type checking or TypeMismatch.
             missing_with_order.clear();
-        } else {
-            missing_with_order = non_symbol_missing;
+        } else if matches!(
+            crate::type_queries::extended::classify_array_like(self.interner, target),
+            crate::type_queries::extended::ArrayLikeKind::Array(_)
+                | crate::type_queries::extended::ArrayLikeKind::Tuple
+                | crate::type_queries::extended::ArrayLikeKind::Readonly(_)
+        ) {
+            // For array-like targets, tsc treats `[Symbol.iterator]` /
+            // `[Symbol.unscopables]` as implicitly satisfied by any object
+            // source (via the iteration protocol fallback), and omits them
+            // from the TS2739/TS2740 missing list. Keep this behavior so that
+            // e.g. `Type 'I1' is missing the following properties from type
+            // 'any[]': length, pop, push, concat, and 25 more` — not 27.
+            missing_with_order
+                .retain(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name));
         }
+        // For non-array targets (e.g. `ArrayConstructor`), tsc lists both named
+        // and symbol-keyed properties in TS2739/TS2741 (e.g. `isArray, from,
+        // of, [Symbol.species]`). Keep the full list in that case.
 
         // tsc treats `prototype` as implicit on callable sources (any function
         // or class value has a `.prototype` in JS), so it never lists it as a
