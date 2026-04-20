@@ -470,6 +470,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 self.interner().lookup(instantiated)
                             {
                                 let next_cond = self.interner().get_conditional(next_cond_id);
+                                current_cond = next_cond;
                                 tail_recursion_count += 1;
                                 continue;
                             }
@@ -565,6 +566,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner().lookup(instantiated)
                         {
                             let next_cond = self.interner().get_conditional(next_cond_id);
+                            current_cond = next_cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -696,6 +698,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().lookup(instantiated)
                     {
                         let next_cond = self.interner().get_conditional(next_cond_id);
+                        current_cond = next_cond;
                         tail_recursion_count += 1;
                         continue;
                     }
