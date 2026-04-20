@@ -154,6 +154,18 @@ impl<'a> CheckerState<'a> {
             {
                 return annotation_display;
             }
+            // When the inferred display is an anonymous object but the annotation names a
+            // concrete type (starts with an identifier or `typeof`), prefer the annotation.
+            // This preserves `Record<K, V>`, `Partial<T>`, `Foo`, etc. in excess property
+            // messages instead of expanding them to their structural form.
+            if inferred_display.starts_with('{')
+                && annotation_display
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
+                return annotation_display;
+            }
         }
         inferred_display
     }

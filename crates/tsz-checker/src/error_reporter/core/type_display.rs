@@ -1520,6 +1520,13 @@ impl<'a> CheckerState<'a> {
                         self.sanitize_type_annotation_text_for_diagnostic(text, true)
                     });
                 }
+                // Check for inline JSDoc @satisfies annotation on the object literal
+                // e.g. `/** @satisfies {Record<Keys, unknown>} */ ({ x: 1 })`
+                if let Some(jsdoc_satisfies_text) =
+                    self.jsdoc_satisfies_type_text_for_node(parent_idx)
+                {
+                    return Some(jsdoc_satisfies_text);
+                }
                 return None;
             }
             current = parent_idx;

@@ -829,6 +829,18 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Extract the type expression text from a leading `@satisfies {TypeExpr}` JSDoc comment
+    /// on `idx` or an ancestor. Returns the raw type text (e.g. `Record<Keys, unknown>`).
+    pub(crate) fn jsdoc_satisfies_type_text_for_node(&self, idx: NodeIndex) -> Option<String> {
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)?;
+        let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
+        Some(type_expr.to_owned())
+    }
+
     /// Try to find a leading `JSDoc` comment before a given position.
     pub(crate) fn try_leading_jsdoc(
         &self,
