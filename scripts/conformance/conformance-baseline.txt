@@ -26,7 +26,6 @@ FAIL TypeScript/tests/cases/compiler/decoratorUsedBeforeDeclaration.ts | expecte
 FAIL TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/destructuringTuple.ts | expected:[TS2488,TS2769] actual:[]
 FAIL TypeScript/tests/cases/compiler/destructuringUnspreadableIntoRest.ts | expected:[TS2339] actual:[TS2339]
-FAIL TypeScript/tests/cases/compiler/didYouMeanElaborationsForExpressionsWhichCouldBeCalled.ts | expected:[TS2322,TS2345,TS2740,TS2741] actual:[TS2322,TS2345,TS2740,TS2741]
 FAIL TypeScript/tests/cases/compiler/dissallowSymbolAsWeakType.ts | expected:[TS2345,TS2769] actual:[TS2345,TS2769]
 FAIL TypeScript/tests/cases/compiler/distributiveConditionalTypeConstraints.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/divergentAccessorsVisibility1.ts | expected:[TS2341,TS2445,TS2808] actual:[TS2341,TS2445,TS2808]
@@ -63,6 +62,7 @@ FAIL TypeScript/tests/cases/compiler/genericsWithoutTypeParameters1.ts | expecte
 FAIL TypeScript/tests/cases/compiler/identifierStartAfterNumericLiteral.ts | expected:[TS1005,TS1124,TS1351,TS1352] actual:[TS1005,TS1124,TS1351,TS1352]
 FAIL TypeScript/tests/cases/compiler/ignoredJsxAttributes.tsx | expected:[TS2322,TS2741] actual:[TS2322,TS2741]
 FAIL TypeScript/tests/cases/compiler/impliedNodeFormatInterop1.ts | expected:[TS2300] actual:[]
+FAIL TypeScript/tests/cases/compiler/importAssertionsDeprecated.ts | expected:[TS2880] actual:[TS2322,TS2880]
 FAIL TypeScript/tests/cases/compiler/importDeclRefereingExternalModuleWithNoResolve.ts | expected:[TS2307,TS2664] actual:[TS2307,TS2664]
 FAIL TypeScript/tests/cases/compiler/importedEnumMemberMergedWithExportedAliasIsError.ts | expected:[TS2395,TS2440] actual:[]
 FAIL TypeScript/tests/cases/compiler/inDoesNotOperateOnPrimitiveTypes.ts | expected:[TS2322] actual:[TS2322]
@@ -192,7 +192,6 @@ FAIL TypeScript/tests/cases/compiler/spellingSuggestionLeadingUnderscores01.ts |
 FAIL TypeScript/tests/cases/compiler/spliceTuples.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/strictFunctionTypesErrors.ts | expected:[TS2322,TS2328] actual:[TS2322,TS2328]
 FAIL TypeScript/tests/cases/compiler/strictModeReservedWord.ts | expected:[TS1212,TS1213,TS2300,TS2349,TS2480,TS2503,TS2507,TS2552,TS7006] actual:[TS1005,TS1109,TS1139,TS1144]
-FAIL TypeScript/tests/cases/compiler/strictModeReservedWord2.ts | expected:[TS1212,TS7006,TS7010,TS7051] actual:[TS1212,TS7006,TS7010,TS7051]
 FAIL TypeScript/tests/cases/compiler/strictModeReservedWordInClassDeclaration.ts | expected:[TS1212,TS1213,TS2304,TS2702,TS7006] actual:[TS1139,TS1212,TS1213,TS2300,TS2304,TS7006,TS7051]
 FAIL TypeScript/tests/cases/compiler/strictOptionalProperties1.ts | expected:[TS2322,TS2375,TS2411,TS2412,TS2451] actual:[TS2322,TS2345,TS2375,TS2411,TS2451]
 FAIL TypeScript/tests/cases/compiler/strictOptionalProperties3.ts | expected:[TS2375] actual:[TS2375]
@@ -231,7 +230,6 @@ FAIL TypeScript/tests/cases/compiler/unusedPrivateStaticMembers.ts | expected:[T
 FAIL TypeScript/tests/cases/compiler/unusedTypeParameters_templateTag2.ts | expected:[TS6133,TS6205] actual:[TS6133,TS6205]
 FAIL TypeScript/tests/cases/compiler/useBeforeDeclaration_classDecorators.2.ts | expected:[TS1206,TS2449,TS5024] actual:[TS1206,TS2449,TS5024]
 FAIL TypeScript/tests/cases/compiler/useBeforeDeclaration_jsx.tsx | expected:[TS2729,TS7026] actual:[TS2729,TS7026]
-FAIL TypeScript/tests/cases/compiler/useBeforeDeclaration_superClass.ts | expected:[TS2729] actual:[TS2729]
 FAIL TypeScript/tests/cases/compiler/variableDeclarationInStrictMode1.ts | expected:[TS1100,TS2300] actual:[TS1100,TS2300]
 FAIL TypeScript/tests/cases/compiler/varianceAnnotationValidation.ts | expected:[TS2322,TS2636] actual:[TS2322,TS2636]
 FAIL TypeScript/tests/cases/compiler/varianceReferences.ts | expected:[TS2322,TS2637] actual:[TS2322,TS2637]
@@ -251,6 +249,7 @@ FAIL TypeScript/tests/cases/conformance/classes/mixinAccessModifiers.ts | expect
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessors3.ts | expected:[TS2611] actual:[TS2509]
 FAIL TypeScript/tests/cases/conformance/classes/nestedClassDeclaration.ts | expected:[TS1005,TS1068,TS1128] actual:[TS1005,TS1068,TS1128]
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts | expected:[TS1029,TS1030,TS1070,TS1243,TS1275,TS1276,TS2307,TS2882] actual:[TS1029,TS1030,TS2307,TS2882]
+FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/redeclaredProperty.ts | expected:[TS2729] actual:[]
 FAIL TypeScript/tests/cases/conformance/controlFlow/assertionTypePredicates1.ts | expected:[TS1228,TS2775,TS2776,TS7027] actual:[TS1005,TS1228]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowAliasing.ts | expected:[TS2322,TS2339,TS2448,TS2454] actual:[TS2322,TS2339,TS2448,TS2454]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowBindingPatternOrder.ts | expected:[TS2322] actual:[TS2322]
@@ -2441,6 +2440,7 @@ PASS TypeScript/tests/cases/compiler/detachedCommentAtStartOfFunctionBody1.ts
 PASS TypeScript/tests/cases/compiler/detachedCommentAtStartOfFunctionBody2.ts
 PASS TypeScript/tests/cases/compiler/detachedCommentAtStartOfLambdaFunction1.ts
 PASS TypeScript/tests/cases/compiler/detachedCommentAtStartOfLambdaFunction2.ts
+PASS TypeScript/tests/cases/compiler/didYouMeanElaborationsForExpressionsWhichCouldBeCalled.ts
 PASS TypeScript/tests/cases/compiler/didYouMeanStringLiteral.ts
 PASS TypeScript/tests/cases/compiler/didYouMeanSuggestionErrors.ts
 PASS TypeScript/tests/cases/compiler/differentTypesWithSameName.ts
@@ -3620,7 +3620,6 @@ PASS TypeScript/tests/cases/compiler/importAndVariableDeclarationConflict3.ts
 PASS TypeScript/tests/cases/compiler/importAndVariableDeclarationConflict4.ts
 PASS TypeScript/tests/cases/compiler/importAsBaseClass.ts
 PASS TypeScript/tests/cases/compiler/importAssertionNonstring.ts
-PASS TypeScript/tests/cases/compiler/importAssertionsDeprecated.ts
 PASS TypeScript/tests/cases/compiler/importAssertionsDeprecatedIgnored.ts
 PASS TypeScript/tests/cases/compiler/importDecl.ts
 PASS TypeScript/tests/cases/compiler/importDeclFromTypeNodeInJsSource.ts
@@ -6021,6 +6020,7 @@ PASS TypeScript/tests/cases/compiler/strictBooleanMemberAssignability.ts
 PASS TypeScript/tests/cases/compiler/strictFunctionTypes1.ts
 PASS TypeScript/tests/cases/compiler/strictModeEnumMemberNameReserved.ts
 PASS TypeScript/tests/cases/compiler/strictModeInConstructor.ts
+PASS TypeScript/tests/cases/compiler/strictModeReservedWord2.ts
 PASS TypeScript/tests/cases/compiler/strictModeReservedWordInDestructuring.ts
 PASS TypeScript/tests/cases/compiler/strictModeReservedWordInImportEqualDeclaration.ts
 PASS TypeScript/tests/cases/compiler/strictModeReservedWordInModuleDeclaration.ts
@@ -6759,6 +6759,7 @@ PASS TypeScript/tests/cases/compiler/useBeforeDeclaration.ts
 PASS TypeScript/tests/cases/compiler/useBeforeDeclaration_classDecorators.1.ts
 PASS TypeScript/tests/cases/compiler/useBeforeDeclaration_destructuring.ts
 PASS TypeScript/tests/cases/compiler/useBeforeDeclaration_propertyAssignment.ts
+PASS TypeScript/tests/cases/compiler/useBeforeDeclaration_superClass.ts
 PASS TypeScript/tests/cases/compiler/useBeforeDefinitionInDeclarationFiles.ts
 PASS TypeScript/tests/cases/compiler/useDefineForClassFieldsFlagDefault.ts
 PASS TypeScript/tests/cases/compiler/useStrictLikePrologueString01.ts
@@ -7481,7 +7482,6 @@ PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/prope
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesAccessors5.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesAccessors6.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/propertyOverridesMethod.ts
-PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/redeclaredProperty.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/redefinedPararameterProperty.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/staticAndNonStaticPropertiesSameName.ts
 PASS TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/staticAutoAccessors.ts
