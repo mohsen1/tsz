@@ -775,4 +775,3 @@ fn test_template_infer_no_match() {
     let result = evaluate_conditional(&interner, &cond);
     assert_eq!(result, TypeId::NEVER);
 }
-

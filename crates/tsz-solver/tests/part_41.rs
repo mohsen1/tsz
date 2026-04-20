@@ -942,4 +942,3 @@ fn test_parameters_union_of_functions_with_different_arities() {
         _ => panic!("Expected Union type"),
     }
 }
-

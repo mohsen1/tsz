@@ -1211,4 +1211,3 @@ fn test_conditional_infer_function_param_non_distributive_union_input() {
     let expected = TypeId::NEVER;
     assert_eq!(result, expected);
 }
-

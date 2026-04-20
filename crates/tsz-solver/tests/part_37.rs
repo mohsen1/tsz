@@ -1052,4 +1052,3 @@ fn test_conditional_chain_boolean() {
     // boolean extends neither string nor number, but extends boolean -> "boolean"
     assert!(result == lit_boolean || result != TypeId::ERROR);
 }
-

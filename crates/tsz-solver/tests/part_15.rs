@@ -899,4 +899,3 @@ fn test_conditional_infer_extract_state_pattern() {
     // With Application type expansion working, we can now correctly extract the state type.
     assert_eq!(result, concrete_state);
 }
-

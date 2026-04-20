@@ -596,4 +596,3 @@ fn test_indexed_access_with_optional_property() {
     let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
     assert_eq!(result, expected);
 }
-

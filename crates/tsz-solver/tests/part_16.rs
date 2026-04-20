@@ -1224,4 +1224,3 @@ fn test_application_ref_expansion_with_readonly_property() {
         "ReadonlyBox<number> should expand to {{ readonly value: number }}"
     );
 }
-

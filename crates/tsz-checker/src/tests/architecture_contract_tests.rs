@@ -125,6 +125,12 @@ fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+#[path = "architecture_contract_tests/canonical_relation.rs"]
+mod canonical_relation;
+#[path = "architecture_contract_tests/evaluation_quarantine.rs"]
+mod evaluation_quarantine;
+#[path = "architecture_contract_tests/phase2_compatibility.rs"]
+mod phase2_compatibility;
 #[path = "architecture_contract_tests/prompt_4_1.rs"]
 mod prompt_4_1;
 #[path = "architecture_contract_tests/prompt_4_2.rs"]
@@ -133,13 +139,7 @@ mod prompt_4_2;
 mod prompt_4_3;
 #[path = "architecture_contract_tests/prompt_4_4.rs"]
 mod prompt_4_4;
-#[path = "architecture_contract_tests/canonical_relation.rs"]
-mod canonical_relation;
-#[path = "architecture_contract_tests/phase2_compatibility.rs"]
-mod phase2_compatibility;
 #[path = "architecture_contract_tests/ratchet_guards.rs"]
 mod ratchet_guards;
-#[path = "architecture_contract_tests/evaluation_quarantine.rs"]
-mod evaluation_quarantine;
 #[path = "architecture_contract_tests/stable_identity.rs"]
 mod stable_identity;

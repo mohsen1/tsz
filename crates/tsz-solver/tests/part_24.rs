@@ -590,4 +590,3 @@ fn test_extract_intersection() {
 // ============================================================================
 // NoInfer<T> is an identity type that blocks type inference at specific sites.
 // It evaluates to T but prevents that position from contributing to inference.
-

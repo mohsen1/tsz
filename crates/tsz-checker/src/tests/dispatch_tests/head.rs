@@ -1695,4 +1695,3 @@ class Bar extends Foo {
         ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
-

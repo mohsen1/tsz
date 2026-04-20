@@ -724,4 +724,3 @@ fn test_pick_basic() {
 
     assert_eq!(result, expected);
 }
-

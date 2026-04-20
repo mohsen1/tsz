@@ -777,4 +777,3 @@ fn test_conditional_infer_array_element_with_constraint() {
     // Union: string | never = string
     assert_eq!(result, TypeId::STRING);
 }
-

@@ -678,4 +678,3 @@ fn test_distributive_with_any_in_union() {
     // any has special behavior - extends everything
     assert!(result != TypeId::ERROR);
 }
-

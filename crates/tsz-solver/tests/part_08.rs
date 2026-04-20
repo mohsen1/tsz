@@ -517,4 +517,3 @@ fn test_index_access_type_param_no_constraint_deferred() {
         other => panic!("Expected deferred IndexAccess, got {other:?}"),
     }
 }
-

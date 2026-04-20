@@ -1796,4 +1796,3 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
     ]);
     assert_eq!(result, expected);
 }
-

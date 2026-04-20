@@ -506,4 +506,3 @@ fn test_keyof_union_with_unknown() {
     // keyof unknown is never
     assert_eq!(result, TypeId::NEVER);
 }
-

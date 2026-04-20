@@ -798,4 +798,3 @@ fn test_conditional_infer_object_property() {
     let result = evaluate_conditional(&interner, &cond);
     assert_eq!(result, TypeId::STRING);
 }
-

@@ -738,4 +738,3 @@ fn test_distribution_with_any_check_type() {
     let expected = interner.union(vec![lit_yes, lit_no]);
     assert!(result == expected || result == lit_yes || result == lit_no);
 }
-

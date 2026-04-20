@@ -564,4 +564,3 @@ fn test_bigint_literal_union() {
         _ => panic!("Expected union"),
     }
 }
-

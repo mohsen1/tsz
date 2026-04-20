@@ -485,4 +485,3 @@ fn test_index_access_tuple_second() {
     let result = evaluate_index_access(&interner, tuple, one);
     assert_eq!(result, TypeId::NUMBER);
 }
-

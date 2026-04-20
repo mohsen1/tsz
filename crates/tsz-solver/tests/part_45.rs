@@ -851,4 +851,3 @@ fn test_mapped_type_nested_mapped() {
     let result = evaluate_mapped(&interner, &mapped);
     assert!(result != TypeId::ERROR);
 }
-

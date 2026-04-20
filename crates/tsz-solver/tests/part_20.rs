@@ -1150,4 +1150,3 @@ fn test_parameters_rest_param_function() {
     let expected = interner.array(TypeId::STRING);
     assert_eq!(result, expected);
 }
-

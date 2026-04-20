@@ -884,4 +884,3 @@ fn test_typeof_const_tuple_readonly() {
 
     assert_eq!(result, readonly_tuple);
 }
-

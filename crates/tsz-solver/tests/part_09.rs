@@ -429,4 +429,3 @@ fn test_index_access_tuple_negative_string_literal() {
     let result = evaluate_index_access(&interner, tuple, negative);
     assert_eq!(result, TypeId::UNDEFINED);
 }
-

@@ -921,4 +921,3 @@ fn test_mapped_type_add_both_modifiers_on_source() {
 
     assert_eq!(result, expected);
 }
-

@@ -1187,4 +1187,3 @@ fn test_conditional_unknown_extends_unknown() {
 
     assert_eq!(result, lit_true, "unknown extends unknown should be true");
 }
-

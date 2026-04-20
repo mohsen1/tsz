@@ -645,4 +645,3 @@ fn test_mapped_type_string_index_signature() {
         other => panic!("Expected object type, got {other:?}"),
     }
 }
-

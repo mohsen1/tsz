@@ -1051,4 +1051,3 @@ fn test_infer_ignores_readonly() {
     // Should still infer T = number (readonly doesn't affect inference)
     assert!(result == TypeId::NUMBER || result != TypeId::ERROR);
 }
-

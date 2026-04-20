@@ -1085,4 +1085,3 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
 
     assert_eq!(result, TypeId::NEVER);
 }
-

@@ -1213,4 +1213,3 @@ fn test_conditional_infer_readonly_array_element_extraction() {
 
     assert_eq!(result, expected);
 }
-

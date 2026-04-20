@@ -1115,4 +1115,3 @@ fn test_awaited_union_of_promises() {
     let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
-

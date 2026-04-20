@@ -7,9 +7,9 @@ use crate::types::{
     PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,
 };
 
-mod basics;
-mod aggregate_types;
-mod composed_types;
 mod advanced_types;
+mod aggregate_types;
+mod basics;
 mod callable_types;
+mod composed_types;
 mod optional_and_special;

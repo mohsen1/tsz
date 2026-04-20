@@ -1003,4 +1003,3 @@ fn test_distributive_with_literal_numbers() {
     let expected = interner.union(vec![lit_low, lit_high]);
     assert_eq!(result, expected);
 }
-

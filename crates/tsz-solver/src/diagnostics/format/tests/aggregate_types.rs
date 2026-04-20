@@ -499,4 +499,3 @@ fn format_object_with_index_many_properties_truncated() {
         "Expected tail symbol property preservation in indexed-object truncation, got: {result}"
     );
 }
-

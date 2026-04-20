@@ -1,13 +1,13 @@
-//! Tests for Checker - Type checker using `NodeArena` and Solver
-//!
-//! This module contains comprehensive type checking tests organized into categories:
-//! - Basic type checking (creation, intrinsic types, type interning)
-//! - Type compatibility and assignability
-//! - Excess property checking
-//! - Function overloads and call resolution
-//! - Generic types and type inference
-//! - Control flow analysis
-//! - Error diagnostics
+// Tests for Checker - Type checker using `NodeArena` and Solver
+//
+// This module contains comprehensive type checking tests organized into categories:
+// - Basic type checking (creation, intrinsic types, type interning)
+// - Type compatibility and assignability
+// - Excess property checking
+// - Function overloads and call resolution
+// - Generic types and type inference
+// - Control flow analysis
+// - Error diagnostics
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
@@ -431,4 +431,3 @@ const viaAlias = Alias["value"];
     assert_eq!(checker.get_type_of_symbol(direct_sym), literal_1);
     assert_eq!(checker.get_type_of_symbol(alias_sym), literal_1);
 }
-

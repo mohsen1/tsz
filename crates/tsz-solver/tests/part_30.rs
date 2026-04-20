@@ -799,4 +799,3 @@ fn test_infer_optional_property_with_undefined() {
     // Should infer P = string | undefined
     assert!(result != TypeId::ERROR);
 }
-

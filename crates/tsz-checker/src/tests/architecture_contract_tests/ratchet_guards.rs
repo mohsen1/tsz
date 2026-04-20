@@ -13,7 +13,8 @@ fn test_temporarily_allowed_bypass_list_does_not_grow() {
     // The authoritative list lives in test_solver_imports_go_through_query_boundaries.
     // We cannot inspect it at runtime, so we count the items in source.
     let src = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/architecture_contract_tests/prompt_4_1.rs"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/tests/architecture_contract_tests/prompt_4_1.rs"),
     )
     .expect("failed to read architecture_contract_tests/prompt_4_1.rs");
 

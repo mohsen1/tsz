@@ -814,4 +814,3 @@ fn test_recursive_type_json_value() {
         _ => panic!("Expected Union type"),
     }
 }
-

@@ -643,4 +643,3 @@ fn test_record_with_object_value() {
         _ => panic!("Expected ObjectWithIndex type"),
     }
 }
-

@@ -789,4 +789,3 @@ fn test_distributive_extract_utility() {
     let expected = interner.union(vec![lit_a, lit_b]);
     assert_eq!(result, expected);
 }
-

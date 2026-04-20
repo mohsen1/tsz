@@ -1103,4 +1103,3 @@ fn test_distributive_infer_return_type() {
     let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(result, expected);
 }
-

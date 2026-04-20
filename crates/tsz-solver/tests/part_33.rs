@@ -609,4 +609,3 @@ fn test_satisfies_excess_property_check_fails() {
     // Note: Excess property checking is a separate, expression-level check
     assert!(checker.is_subtype_of(source, target));
 }
-

@@ -1170,4 +1170,3 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
     ]);
     assert_eq!(result, expected);
 }
-

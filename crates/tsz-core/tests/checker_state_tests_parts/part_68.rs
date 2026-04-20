@@ -1,13 +1,13 @@
-//! Tests for Checker - Type checker using `NodeArena` and Solver
-//!
-//! This module contains comprehensive type checking tests organized into categories:
-//! - Basic type checking (creation, intrinsic types, type interning)
-//! - Type compatibility and assignability
-//! - Excess property checking
-//! - Function overloads and call resolution
-//! - Generic types and type inference
-//! - Control flow analysis
-//! - Error diagnostics
+// Tests for Checker - Type checker using `NodeArena` and Solver
+//
+// This module contains comprehensive type checking tests organized into categories:
+// - Basic type checking (creation, intrinsic types, type interning)
+// - Type compatibility and assignability
+// - Excess property checking
+// - Function overloads and call resolution
+// - Generic types and type inference
+// - Control flow analysis
+// - Error diagnostics
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
@@ -362,4 +362,3 @@ fn test_ts1194_no_error_in_dts_file() {
         "Should NOT emit TS1194 in .d.ts file, got: {diagnostics:?}"
     );
 }
-

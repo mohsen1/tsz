@@ -448,4 +448,3 @@ fn format_application_two_args() {
         "Expected '<string, number>', got: {result}"
     );
 }
-

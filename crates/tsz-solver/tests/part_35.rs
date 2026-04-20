@@ -443,4 +443,3 @@ fn test_intrinsic_types_distinct() {
     assert_ne!(TypeId::ANY, TypeId::UNKNOWN);
     assert_ne!(TypeId::UNKNOWN, TypeId::OBJECT);
 }
-

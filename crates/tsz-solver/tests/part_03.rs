@@ -1165,4 +1165,3 @@ fn test_conditional_infer_nested_object_property_union_value() {
 
     assert_eq!(result, b_union);
 }
-

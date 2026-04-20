@@ -660,4 +660,3 @@ fn test_never_filtering_extract_pattern() {
     // Result should be "a" | "b"
     assert!(result != TypeId::ERROR && result != TypeId::NEVER);
 }
-

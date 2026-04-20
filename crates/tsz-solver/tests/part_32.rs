@@ -612,4 +612,3 @@ fn test_template_infer_two_parts() {
     let expected_second = interner.literal_string("second");
     assert_eq!(result_second, expected_second);
 }
-

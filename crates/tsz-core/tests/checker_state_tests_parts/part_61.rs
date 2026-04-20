@@ -1,13 +1,13 @@
-//! Tests for Checker - Type checker using `NodeArena` and Solver
-//!
-//! This module contains comprehensive type checking tests organized into categories:
-//! - Basic type checking (creation, intrinsic types, type interning)
-//! - Type compatibility and assignability
-//! - Excess property checking
-//! - Function overloads and call resolution
-//! - Generic types and type inference
-//! - Control flow analysis
-//! - Error diagnostics
+// Tests for Checker - Type checker using `NodeArena` and Solver
+//
+// This module contains comprehensive type checking tests organized into categories:
+// - Basic type checking (creation, intrinsic types, type interning)
+// - Type compatibility and assignability
+// - Excess property checking
+// - Function overloads and call resolution
+// - Generic types and type inference
+// - Control flow analysis
+// - Error diagnostics
 use crate::binder::BinderState;
 use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
@@ -495,4 +495,3 @@ async function test() {
         "Expected 1 TS2495 error for for-await-of on number (AsyncIterator lib missing). All codes: {codes:?}"
     );
 }
-

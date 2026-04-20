@@ -510,4 +510,3 @@ fn test_keyof_mixed_optional_required() {
     let expected = interner.union(vec![key_a, key_b, key_c]);
     assert_eq!(result, expected);
 }
-

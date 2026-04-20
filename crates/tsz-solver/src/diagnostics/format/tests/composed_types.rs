@@ -409,4 +409,3 @@ fn format_conditional_type_nested() {
     assert!(result.contains("?"));
     assert!(result.contains(":"));
 }
-

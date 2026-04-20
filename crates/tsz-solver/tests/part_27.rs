@@ -826,4 +826,3 @@ fn test_instance_type_simple() {
         _ => panic!("Expected Function type"),
     }
 }
-

@@ -491,4 +491,3 @@ fn test_object_trifecta_keyof_object_interface() {
         other => panic!("Expected union, got {other:?}"),
     }
 }
-

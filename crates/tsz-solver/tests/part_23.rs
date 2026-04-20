@@ -708,4 +708,3 @@ fn test_iterable_with_symbol_iterator() {
         _ => panic!("Expected Object type"),
     }
 }
-

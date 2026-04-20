@@ -1003,4 +1003,3 @@ fn test_template_literal_extract_index_from_array_key() {
     ]);
     assert_eq!(result, expected);
 }
-
