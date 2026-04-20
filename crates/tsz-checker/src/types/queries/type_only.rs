@@ -362,7 +362,26 @@ impl<'a> CheckerState<'a> {
             export_equals_binder.get_symbol_with_libs(resolved_export_equals, &lib_binders)
         {
             if (export_symbol.flags & symbol_flags::VALUE) == 0 {
-                return true;
+                // For merged class+namespace types, the namespace exports may yield a
+                // TYPE-only symbol (e.g. `interface B`) while the class members table
+                // holds a VALUE symbol with the same name (e.g. `static B: number`).
+                // When such a VALUE companion exists in the parent's members, the
+                // export= target is NOT type-only — it carries a runtime value.
+                // Use export_equals_binder (the target file's own binder) for the
+                // parent lookup to avoid cross-binder sym_id collisions.
+                let sym_name = export_symbol.escaped_name.clone();
+                let parent_id = export_symbol.parent;
+                let has_value_companion = parent_id.is_some()
+                    && export_equals_binder
+                        .get_symbol(parent_id)
+                        .and_then(|p| p.members.as_ref())
+                        .and_then(|m| m.get(&sym_name))
+                        .and_then(|mid| export_equals_binder.get_symbol(mid))
+                        .is_some_and(|m| (m.flags & symbol_flags::VALUE) != 0);
+                if !has_value_companion {
+                    return true;
+                }
+                return false; // VALUE companion exists — not type-only.
             }
 
             if (export_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
@@ -1264,42 +1283,61 @@ impl<'a> CheckerState<'a> {
 
         let lib_binders = self.get_lib_binders();
 
-        // Check the export= symbol in the main binder (merged arena)
-        if let Some(eq_sym) = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(export_eq_sym_id, &lib_binders)
-        {
-            if eq_sym.is_type_only {
+        // Use target_binder (not self.ctx.binder) to look up export_eq_sym_id.
+        // export_eq_sym_id comes from target_binder's module_exports; using the
+        // current-file binder causes sym_id collisions (each file's binder allocates
+        // IDs starting from 0, so the same numeric ID refers to a completely
+        // different symbol in another file's binder).
+        let Some(eq_sym) = target_binder.get_symbol_with_libs(export_eq_sym_id, &lib_binders)
+        else {
+            return false;
+        };
+
+        if eq_sym.is_type_only {
+            return true;
+        }
+
+        // Check if the export= target is a pure type (type alias / interface).
+        // Before returning true, verify there is no VALUE companion in the parent's
+        // members table (handles `export = C.B` where C is a merged class+namespace
+        // and B exists as both a static property (VALUE) and an interface (TYPE)).
+        if (eq_sym.flags & PURE_TYPE) != 0 && (eq_sym.flags & VALUE) == 0 {
+            let sym_name = eq_sym.escaped_name.clone();
+            let parent_id = eq_sym.parent;
+            let has_value_companion = parent_id.is_some()
+                && target_binder
+                    .get_symbol(parent_id)
+                    .and_then(|p| p.members.as_ref())
+                    .and_then(|m| m.get(&sym_name))
+                    .and_then(|mid| target_binder.get_symbol(mid))
+                    .is_some_and(|m| (m.flags & symbol_flags::VALUE) != 0);
+            if !has_value_companion {
                 return true;
             }
-            // Check if the export= target is a pure type (type alias / interface)
-            if (eq_sym.flags & PURE_TYPE) != 0 && (eq_sym.flags & VALUE) == 0 {
-                return true;
-            }
-            // Follow the alias: if export= points to a type-only import, propagate
-            if eq_sym.flags & symbol_flags::ALIAS != 0 {
-                let mut visited = AliasCycleTracker::new();
-                if let Some(resolved) = self.resolve_alias_symbol(export_eq_sym_id, &mut visited) {
-                    // Check any intermediate alias in the chain
-                    for alias_id in &visited {
-                        if let Some(alias_sym) =
-                            self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
-                            && alias_sym.is_type_only
-                        {
-                            return true;
-                        }
-                    }
-                    // Check the final target
-                    if let Some(target_sym) =
-                        self.ctx.binder.get_symbol_with_libs(resolved, &lib_binders)
+            return false; // VALUE companion exists — not type-only.
+        }
+
+        // Follow the alias: if export= points to a type-only import, propagate.
+        if eq_sym.flags & symbol_flags::ALIAS != 0 {
+            let mut visited = AliasCycleTracker::new();
+            if let Some(resolved) = self.resolve_alias_symbol(export_eq_sym_id, &mut visited) {
+                // Check any intermediate alias in the chain
+                for alias_id in &visited {
+                    if let Some(alias_sym) =
+                        target_binder.get_symbol_with_libs(alias_id, &lib_binders)
+                        && alias_sym.is_type_only
                     {
-                        if target_sym.is_type_only {
-                            return true;
-                        }
-                        if (target_sym.flags & PURE_TYPE) != 0 && (target_sym.flags & VALUE) == 0 {
-                            return true;
-                        }
+                        return true;
+                    }
+                }
+                // Check the final target
+                if let Some(target_sym) = target_binder.get_symbol_with_libs(resolved, &lib_binders)
+                {
+                    if target_sym.is_type_only {
+                        return true;
+                    }
+                    if (target_sym.flags & PURE_TYPE) != 0 && (target_sym.flags & VALUE) == 0 {
+                        return true;
                     }
                 }
             }

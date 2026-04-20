@@ -1,6 +1,7 @@
 use crate::query_boundaries::common::{callable_shape_for_type, function_shape_for_type};
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -1014,7 +1015,34 @@ impl<'a> CheckerState<'a> {
                 .find_map(|(_, &sym_id)| self.ctx.resolve_symbol_file_index(sym_id));
 
             let mut export_equals_type = exports_table.get("export=").map(|export_equals_sym| {
-                let export_equals_type = self.get_type_of_symbol(export_equals_sym);
+                // When `export = C.B` resolves to a type-only symbol (e.g., `interface B` from a
+                // merged class+namespace), the binder puts the namespace export in the exports
+                // table. The actual runtime VALUE lives in the parent's members table. Substitute
+                // the VALUE companion so the module value type reflects the runtime type.
+                let effective_sym = target_file_idx
+                    .and_then(|idx| self.ctx.get_binder_for_file(idx))
+                    .and_then(|binder| {
+                        let sym = binder.get_symbol(export_equals_sym)?;
+                        if (sym.flags & symbol_flags::VALUE) != 0 {
+                            return None;
+                        }
+                        let sym_name = sym.escaped_name.clone();
+                        let parent_id = sym.parent;
+                        if !parent_id.is_some() {
+                            return None;
+                        }
+                        binder
+                            .get_symbol(parent_id)
+                            .and_then(|parent| parent.members.as_ref())
+                            .and_then(|members| members.get(&sym_name))
+                            .filter(|&mid| {
+                                binder
+                                    .get_symbol(mid)
+                                    .is_some_and(|m| (m.flags & symbol_flags::VALUE) != 0)
+                            })
+                    })
+                    .unwrap_or(export_equals_sym);
+                let export_equals_type = self.get_type_of_symbol(effective_sym);
                 self.widen_type_for_display(export_equals_type)
             });
             // TypeScript allows `export { X as "module.exports" }` in ESM modules.
