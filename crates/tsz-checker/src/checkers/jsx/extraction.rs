@@ -172,9 +172,12 @@ impl<'a> CheckerState<'a> {
             // type references in complex conditional types like React's
             // LibraryManagedAttributes), fall back to the raw props type rather than
             // using a broken evaluation result that would cause false TS2322 diagnostics.
-            if evaluated != TypeId::ERROR
-                && crate::query_boundaries::common::contains_error_type(self.ctx.types, evaluated)
-            {
+            // Use contains_error_type_in_args which checks Application.base as well,
+            // matching the formatter's own error-detection logic.
+            if crate::query_boundaries::common::contains_error_type_in_args(
+                self.ctx.types,
+                evaluated,
+            ) {
                 return props_type;
             }
             evaluated

@@ -364,7 +364,10 @@ impl<'a> CheckerState<'a> {
         // Skip attribute-vs-props checking for any/error props.
         let skip_prop_checks = props_type == TypeId::ANY
             || props_type == TypeId::ERROR
-            || crate::query_boundaries::common::contains_error_type(self.ctx.types, props_type);
+            || crate::query_boundaries::common::contains_error_type_in_args(
+                self.ctx.types,
+                props_type,
+            );
 
         let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
             return;
@@ -1546,9 +1549,9 @@ impl<'a> CheckerState<'a> {
             provided_attrs.push((self.get_jsx_children_prop_name(), children.synthesized_type));
         }
 
-        // Skip union check when there are no concrete attributes to check,
-        // or when spread attributes are involved (handled separately).
-        if provided_attrs.is_empty() || has_spread {
+        // Skip union check when spread attributes are involved (handled separately).
+        // When no attributes are provided, still proceed so we can detect missing required props.
+        if has_spread {
             return;
         }
 
