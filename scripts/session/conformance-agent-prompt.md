@@ -70,10 +70,20 @@ The top error codes in fingerprint-only failures:
 
 ## Delivery Mode
 
-- If running under `scripts/session/AGENT_PROTOCOL.md` as a campaign worker:
-  **push to `campaign/<name>`**, let `scripts/session/integrate.sh` merge.
-- If running as a standalone fixer or integrator: validate locally and push to `main`.
-- When in doubt, prefer the campaign-worker rule.
+- **Always push to a feature branch and open a pull request targeting `main`.**
+  Never push directly to `main`.
+- Campaign workers push to `campaign/<name>` and open a PR; `scripts/session/integrate.sh`
+  validates the PR before the integrator merges it.
+- Standalone fixers push to a descriptive branch (e.g. `fix/<short-name>`) and open a PR.
+- Only the integrator is authorised to merge PRs into `main`, and only after validation.
+
+**PR description:** when the change affects how a TypeScript program is
+checked, narrowed, inferred, or emitted, include a short TypeScript code
+example in the PR body (fenced ```ts block) showing the divergence and the
+behaviour after the fix. Prefer a minimal snippet over the full conformance
+test, and show before/after behaviour (expected diagnostic or inferred type)
+when relevant. Skip the snippet only for purely mechanical changes where it
+would add no information.
 
 ---
 
@@ -481,6 +491,7 @@ scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 scripts/session/campaign-checkpoint.sh <campaign> --status
 scripts/session/campaign-checkpoint.sh <campaign>
 
-# Push
-git push origin campaign/<your-campaign>
+# Push and open a PR (never push to main)
+git push -u origin campaign/<your-campaign>
+# Then open a pull request targeting main via the web UI or your PR tooling.
 ```

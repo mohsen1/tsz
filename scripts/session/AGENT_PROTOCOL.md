@@ -248,7 +248,18 @@ Tests fixed: ~30
 
 **NOT**: `fix: make test xyz pass` or `fix TS2322 in foo.ts`
 
-Push to `campaign/<your-campaign>`. The integrator merges to main.
+Push to `campaign/<your-campaign>` and open a pull request targeting `main`.
+The integrator reviews/validates the PR; do not merge or push to `main` yourself.
+
+### PR description
+
+When the fix changes how a TypeScript program is checked, narrowed, inferred,
+or emitted, **include a short TypeScript code example** in the PR body that
+illustrates the divergence and the behavior after the fix. Use fenced
+```ts blocks. Prefer a minimal snippet over the full conformance test. Show
+before/after behaviour (e.g. expected diagnostic or inferred type) when
+relevant. Skip the snippet only for purely mechanical changes (renames,
+formatting, doc-only edits) where it would add no information.
 
 ---
 
@@ -284,7 +295,8 @@ Multi-crate changes are normal. Do NOT reroll for "broad-surface" targets
 | Add checker heuristics to suppress errors | Architecture violation | Fix in solver/boundary |
 | Declare the campaign "complete" | Only integrator can | Run checkpoint |
 | Re-investigate known dead ends | Wasted session | Read progress file first |
-| Push to main directly | Regressions break all agents | Push to campaign branch |
+| Push to main directly | Regressions break all agents | Push to campaign branch and open a PR |
+| Merge your own PR | Only the integrator validates and merges | Let integrator review and merge |
 | Run full conformance for research | Takes minutes, wasteful | Use offline query tools |
 | Reroll for multi-crate changes (Tier 1/2) | That IS the work | Follow the root cause |
 | Track progress by overall % | Hides the real frontier | Track your campaign's KPI |

@@ -211,7 +211,7 @@ scripts/session/campaign-checkpoint.sh <campaign-name>            # record check
 # Launch agents with staggered starts (prevents rate limit cascade):
 scripts/session/launch-agents.sh --max 3 --stagger 120
 
-# Integrator: validate and merge campaign branches:
+# Integrator: validate campaign branches and open pull requests (never pushes to main):
 scripts/session/integrate.sh --auto
 
 # Clean up disk (stale worktrees, old targets):

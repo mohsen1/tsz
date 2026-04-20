@@ -204,7 +204,7 @@ scripts/session/campaign-checkpoint.sh <campaign-name>
 # Launch agents with staggered starts
 scripts/session/launch-agents.sh --max 3 --stagger 120
 
-# Validate and merge campaign branches
+# Validate campaign branches and open pull requests (never pushes to main)
 scripts/session/integrate.sh --auto
 
 # Clean up stale worktrees and targets

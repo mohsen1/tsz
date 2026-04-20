@@ -325,8 +325,10 @@ campaigns:
 
   integrator:
     mission: >
-      Merge queue manager. Does NOT write code. Validates campaign branches
-      against main, merges if conformance holds, rejects if regressions.
+      PR-queue manager. Does NOT write code. Validates campaign branches
+      against main and opens a pull request if conformance holds; rejects
+      if regressions. Never pushes to main directly — merging into main
+      happens through the GitHub PR review flow.
     role: integration
     loop_command: |
       /loop 30m run scripts/session/integrate.sh --auto && python3 scripts/conformance/query-conformance.py --dashboard
