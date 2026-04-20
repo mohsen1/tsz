@@ -2558,6 +2558,11 @@ impl<'a> CheckerState<'a> {
         // When the binder resolves an import to an intermediate alias (e.g.,
         // re-exported enums: `export { E } from './source'`), follow the
         // alias chain to find the actual enum/namespace symbol.
+        //
+        // For merged alias + namespace (`import { E } from './e'; namespace E { ... }`),
+        // the base symbol carries both ALIAS and VALUE_MODULE flags. Prefer the
+        // base symbol's own exports first, then fall back to the alias target's
+        // exports so that enum members from the aliased source remain reachable.
         let (resolved_sym_id, resolved_flags) = if base_symbol.flags & symbol_flags::ALIAS != 0
             && base_symbol.flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0
         {
@@ -2580,16 +2585,44 @@ impl<'a> CheckerState<'a> {
         }
 
         // Extract data from resolved symbol before taking mutable borrows below.
+        // If the member is missing from the resolved symbol's own exports and the
+        // original base symbol is a merged alias + namespace, follow the alias to
+        // consult the aliased target's exports (const-enum members accessible via
+        // a re-exported + locally-merged namespace).
+        let base_has_alias = base_symbol.flags & symbol_flags::ALIAS != 0;
         let (member_sym_id, resolved_value_decl, resolved_first_decl, resolved_is_ambient) = {
             let resolved_symbol = self
                 .get_cross_file_symbol(resolved_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))?;
-            let exports = resolved_symbol.exports.as_ref()?;
-            let member_sym_id = exports.get(property_name)?;
+            let own_member = resolved_symbol
+                .exports
+                .as_ref()
+                .and_then(|e| e.get(property_name));
             let value_decl = resolved_symbol.value_declaration;
             let first_decl = resolved_symbol.declarations.first().copied();
             let is_ambient = self.is_const_enum_ambient(resolved_symbol);
-            (member_sym_id, value_decl, first_decl, is_ambient)
+            (own_member, value_decl, first_decl, is_ambient)
+        };
+        let (member_sym_id, resolved_flags, resolved_is_ambient) = if let Some(id) = member_sym_id {
+            (id, resolved_flags, resolved_is_ambient)
+        } else if base_has_alias && resolved_sym_id == base_sym_id {
+            // Merged alias + namespace: the namespace's own exports don't have
+            // this member. Follow the alias to the aliased target.
+            let mut visited = crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
+            let alias_target = self.resolve_alias_symbol(base_sym_id, &mut visited)?;
+            let (alias_member, alias_flags, alias_is_ambient) = {
+                let alias_sym = self
+                    .get_cross_file_symbol(alias_target)
+                    .or_else(|| self.ctx.binder.get_symbol(alias_target))?;
+                let id = alias_sym.exports.as_ref()?.get(property_name)?;
+                (id, alias_sym.flags, self.is_const_enum_ambient(alias_sym))
+            };
+            if alias_flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0 {
+                return None;
+            }
+            (alias_member, alias_flags, alias_is_ambient)
+        } else {
+            return None;
         };
 
         // For namespace members, only use the fast path when the export has
