@@ -71,7 +71,7 @@ function renderMeanChart(results) {
       <span class="bench-bar-time">${tszMean.toFixed(1)}ms</span>
     </div>
     <div class="bench-bar-row">
-      <span class="bench-bar-label">TSGO</span>
+      <span class="bench-bar-label">tsgo</span>
       <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
       <span class="bench-bar-time">${tsgoMean.toFixed(1)}ms</span>
       <span class="bench-winner">tsz ${factor.toFixed(2)}x faster</span>

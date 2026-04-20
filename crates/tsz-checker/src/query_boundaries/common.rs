@@ -356,6 +356,10 @@ pub(crate) fn object_shape_for_type(
     tsz_solver::type_queries::get_object_shape(db, type_id)
 }
 
+pub(crate) fn normalize_display_property_order(props: &mut [tsz_solver::PropertyInfo]) {
+    tsz_solver::normalize_display_property_order(props)
+}
+
 pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_array_element_type(db, type_id)
 }
@@ -1357,6 +1361,18 @@ pub(crate) fn get_application_lazy_def_id(
 
 pub(crate) fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::get_base_constraint_of_type(db, type_id)
+}
+
+/// Recursively reduce a type to its base constraint for display purposes.
+///
+/// Handles type parameters, intersections, and unions: for an intersection
+/// like `T & U` where the members have constraints, returns the intersection
+/// of the constraints (further simplified via the interner). This matches
+/// tsc's `getBaseConstraintOfType` for instantiable intersections and is used
+/// in error messages to display the reduced form instead of the raw generic
+/// intersection.
+pub(crate) fn get_base_constraint_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::get_base_constraint_for_display(db, type_id)
 }
 
 pub(crate) fn get_call_signatures(

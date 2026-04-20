@@ -5,9 +5,9 @@ page_class: home
 permalink: /index.html
 ---
 
-# Project Zang
+# `tsz`
 
-<p class="subtitle">Project Zang (<code>tsz</code>) is an ambitious project to write a complete TypeScript type checker and language service in Rust that is faster than <code>tsgo</code>.</p>
+<p class="subtitle"><code>tsz</code> is a TypeScript checker and language service in Rust. It is faster than <code>tsgo</code>. On top of being fast <code>tsz</code> aims to offer a <a href="/sound-mode">Sound Mode</a> for stricter type-checking.</p>
 
 <blockquote class="wip-warning">
 <p><strong>Work in progress.</strong> This project is not ready for general use yet. Many TypeScript features are still being implemented.</p>
@@ -51,23 +51,3 @@ Currently targeting **TypeScript `{{ metrics.ts_version }}`**
 
 Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match `tsc` in error code, file, line, column, and message.
 
-## Install
-
-<div class="install-block">
-  <span class="prompt">$</span>
-  <span class="cmd">npm install -g @mohsen-azimi/tsz-dev</span>
-</div>
-
-Or with Cargo:
-
-<div class="install-block">
-  <span class="prompt">$</span>
-  <span class="cmd">cargo install tsz-cli</span>
-</div>
-
-Then run it just like `tsc`:
-
-<div class="install-block">
-  <span class="prompt">$</span>
-  <span class="cmd">tsz --project ./tsconfig.json</span>
-</div>

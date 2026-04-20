@@ -667,11 +667,24 @@ impl<'a> CheckerState<'a> {
         }
         // Only widen object-like types (to convert literal properties to primitives).
         // For literal/primitive receiver types (e.g., `""`, `42`), tsc preserves the
-        // literal in TS2339 messages (e.g., `'""'` not `'string'`).
+        // literal in TS2339 messages (e.g., `'""'` not `'string'`).  Unions whose
+        // every member is a literal are also preserved (e.g., `"foo" | "bar"`) —
+        // widening them to `string` loses discriminative information tsc keeps in
+        // property-existence diagnostics.
         let is_literal_or_primitive =
             crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
                 || crate::query_boundaries::common::is_primitive_type(self.ctx.types, ty);
-        let ty = if is_literal_or_primitive {
+        let is_union_of_literals = !is_literal_or_primitive
+            && crate::query_boundaries::common::union_members(self.ctx.types, ty).is_some_and(
+                |members| {
+                    !members.is_empty()
+                        && members.iter().all(|&m| {
+                            crate::query_boundaries::common::literal_value(self.ctx.types, m)
+                                .is_some()
+                        })
+                },
+            );
+        let ty = if is_literal_or_primitive || is_union_of_literals {
             ty
         } else {
             self.widen_type_for_display(ty)
@@ -1073,6 +1086,18 @@ impl<'a> CheckerState<'a> {
             })
         {
             return self.format_assignability_type_for_message(source, target);
+        }
+
+        // Generic intersection source reduction: when the source is an intersection
+        // containing type parameters (e.g., `T & U`), tsc displays the reduced base
+        // constraint instead of the raw generic intersection.  For example,
+        // `T extends string | number | undefined` and `U extends string | null | undefined`
+        // display as `string | undefined` rather than `T & U`.
+        //
+        // This matches tsc's `getBaseConstraintOfType` behavior for intersection types
+        // in error messages.
+        if let Some(reduced) = self.generic_intersection_source_display_substitution(source) {
+            return self.format_type_for_assignability_message(reduced);
         }
 
         // For Lazy(DefId) source types representing named interfaces (non-generic),
@@ -2315,5 +2340,43 @@ impl<'a> CheckerState<'a> {
             .diagnostics
             .iter()
             .any(|diag| diag.code == code && diag.start >= start && diag.start < end)
+    }
+
+    /// When the source of an assignment is a generic intersection (e.g., `T & U`
+    /// where at least one member is a type parameter with a constraint), return
+    /// the reduced base-constraint form for display.  Returns `None` when no
+    /// reduction applies (source is not an intersection, or no members have
+    /// usable constraints, or the reduction yields the same type).
+    ///
+    /// This matches tsc's `getBaseConstraintOfType` behavior for intersection
+    /// types: the base constraint of `T & U` is `constraint(T) & constraint(U)`,
+    /// which the interner further simplifies via distribution.
+    pub(in crate::error_reporter) fn generic_intersection_source_display_substitution(
+        &self,
+        source: TypeId,
+    ) -> Option<TypeId> {
+        let members = crate::query_boundaries::common::intersection_members(
+            self.ctx.types.as_type_database(),
+            source,
+        )?;
+        // Only rewrite when at least one member is a bare type parameter with a
+        // constraint — otherwise there's no reduction and this would just hide
+        // the intersection unnecessarily.
+        let has_constrained_type_param = members.iter().any(|&m| {
+            crate::query_boundaries::common::type_param_info(self.ctx.types.as_type_database(), m)
+                .and_then(|info| info.constraint)
+                .is_some()
+        });
+        if !has_constrained_type_param {
+            return None;
+        }
+        let reduced = crate::query_boundaries::common::get_base_constraint_for_display(
+            self.ctx.types.as_type_database(),
+            source,
+        );
+        if reduced == source {
+            return None;
+        }
+        Some(reduced)
     }
 }

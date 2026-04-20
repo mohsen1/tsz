@@ -807,12 +807,13 @@ impl<'a> CheckerState<'a> {
             module_name,
             Some(self.ctx.current_file_idx),
         ) {
-            let exports_table_target = exports_table
+            let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
+            let exports_table_target = ordered_exports
                 .iter()
-                .find_map(|(_, &export_sym_id)| self.ctx.resolve_symbol_file_index(export_sym_id))
+                .find_map(|(_, export_sym_id)| self.ctx.resolve_symbol_file_index(*export_sym_id))
                 .or(target_idx);
             let mut props = Vec::new();
-            for (name, &export_sym_id) in exports_table.iter() {
+            for &(name, export_sym_id) in &ordered_exports {
                 if let Some(owner_file_idx) = exports_table_target {
                     self.ctx
                         .register_symbol_file_target(export_sym_id, owner_file_idx);
@@ -899,6 +900,11 @@ impl<'a> CheckerState<'a> {
                 }
                 let prop_type =
                     self.namespace_import_export_property_type(module_name, export_sym_id);
+                let declaration_order = if name == "default" {
+                    1
+                } else {
+                    props.len() as u32 + 2
+                };
                 props.push(PropertyInfo {
                     name: self.ctx.types.intern_string(name),
                     type_id: prop_type,
@@ -909,7 +915,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: 0,
+                    declaration_order,
                     is_string_named: false,
                 });
             }
@@ -919,6 +925,7 @@ impl<'a> CheckerState<'a> {
                 &exports_table,
                 &mut props,
             );
+            Self::normalize_namespace_export_declaration_order(&mut props);
             let namespace_type = self.ctx.types.factory().object(props);
             self.ctx.namespace_module_names.insert(
                 namespace_type,

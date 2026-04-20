@@ -156,7 +156,7 @@ function generateCharts(data) {
         r.winner === "tsz"
           ? `tsz ${r.factor?.toFixed(1)}x faster`
           : r.winner === "tsgo"
-            ? `TSGO ${r.factor?.toFixed(1)}x faster`
+            ? `tsgo ${r.factor?.toFixed(1)}x faster`
             : "";
 
       html += `  <div class="bench-row">
@@ -169,7 +169,7 @@ function generateCharts(data) {
         <span class="bench-bar-time">${r.tsz_ms.toFixed(0)}ms</span>
       </div>
       <div class="bench-bar-row">
-        <span class="bench-bar-label">TSGO</span>
+        <span class="bench-bar-label">tsgo</span>
         <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
         <span class="bench-bar-time">${r.tsgo_ms.toFixed(0)}ms</span>
         ${winnerLabel ? `<span class="bench-winner">${winnerLabel}</span>` : ""}

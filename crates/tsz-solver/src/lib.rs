@@ -253,7 +253,7 @@ pub use types::{
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
     PropertyInfo, PropertyLookup, SymbolRef, TypeApplication, TypeApplicationId, TypeData, TypeId,
-    TypeListId, Visibility, is_compiler_managed_type,
+    TypeListId, Visibility, is_compiler_managed_type, normalize_display_property_order,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 pub use widening::*;

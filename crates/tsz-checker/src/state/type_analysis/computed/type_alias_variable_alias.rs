@@ -786,9 +786,10 @@ impl<'a> CheckerState<'a> {
                         let module_is_non_module_entity = self
                             .ctx
                             .module_resolves_to_non_module_entity(&module_specifier);
+                        let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
                         // Record cross-file symbol targets so delegate_cross_arena_symbol_resolution
                         // can find the correct arena for symbols from ambient modules.
-                        for (name, &sym_id) in exports_table.iter() {
+                        for &(name, sym_id) in &ordered_exports {
                             self.record_cross_file_symbol_if_needed(
                                 sym_id,
                                 name,
@@ -796,8 +797,8 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                         let exports_table_target =
-                            exports_table.iter().find_map(|(_, &export_sym_id)| {
-                                self.ctx.resolve_symbol_file_index(export_sym_id)
+                            ordered_exports.iter().find_map(|(_, export_sym_id)| {
+                                self.ctx.resolve_symbol_file_index(*export_sym_id)
                             });
                         let mut export_equals_type =
                             exports_table.get("export=").map(|export_equals_sym| {
@@ -827,9 +828,7 @@ impl<'a> CheckerState<'a> {
                                 .as_ref()
                                 .map(|s| s.named_exports.clone())
                                 .unwrap_or_default();
-                            for (order, prop) in named_exports.iter_mut().enumerate() {
-                                prop.declaration_order = order as u32;
-                            }
+                            Self::normalize_namespace_export_declaration_order(&mut named_exports);
                             if let Some(surface_direct_type) =
                                 surface.as_ref().and_then(|s| s.direct_export_type)
                             {
@@ -838,7 +837,7 @@ impl<'a> CheckerState<'a> {
                             named_exports
                         } else {
                             let mut props: Vec<PropertyInfo> = Vec::new();
-                            for (name, &sym_id) in exports_table.iter() {
+                            for &(name, sym_id) in &ordered_exports {
                                 if self.should_skip_namespace_export_name(
                                     &exports_table,
                                     name,
@@ -913,6 +912,7 @@ impl<'a> CheckerState<'a> {
                                 });
                             }
                         }
+                        Self::normalize_namespace_export_declaration_order(&mut props);
                         let namespace_has_no_runtime_props = props.is_empty();
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
@@ -1132,8 +1132,9 @@ impl<'a> CheckerState<'a> {
                         declaring_file_idx,
                     );
                     if let Some(exports_table) = exports_table {
+                        let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
                         // Record cross-file symbol targets for all symbols in the table
-                        for (name, &sym_id) in exports_table.iter() {
+                        for &(name, sym_id) in &ordered_exports {
                             self.record_cross_file_symbol_if_needed(sym_id, name, module_name);
                         }
 
@@ -1141,8 +1142,8 @@ impl<'a> CheckerState<'a> {
                         let module_is_non_module_entity =
                             self.ctx.module_resolves_to_non_module_entity(module_name);
                         let exports_table_target =
-                            exports_table.iter().find_map(|(_, &export_sym_id)| {
-                                self.ctx.resolve_symbol_file_index(export_sym_id)
+                            ordered_exports.iter().find_map(|(_, export_sym_id)| {
+                                self.ctx.resolve_symbol_file_index(*export_sym_id)
                             });
                         let mut export_equals_type =
                             exports_table.get("export=").map(|export_equals_sym| {
@@ -1174,9 +1175,7 @@ impl<'a> CheckerState<'a> {
                                 .as_ref()
                                 .map(|s| s.named_exports.clone())
                                 .unwrap_or_default();
-                            for (order, prop) in named_exports.iter_mut().enumerate() {
-                                prop.declaration_order = order as u32;
-                            }
+                            Self::normalize_namespace_export_declaration_order(&mut named_exports);
                             if export_equals_type.is_none() {
                                 export_equals_type =
                                     surface.as_ref().and_then(|s| s.direct_export_type);
@@ -1184,7 +1183,7 @@ impl<'a> CheckerState<'a> {
                             named_exports
                         } else {
                             let mut props: Vec<PropertyInfo> = Vec::new();
-                            for (name, &export_sym_id) in exports_table.iter() {
+                            for &(name, export_sym_id) in &ordered_exports {
                                 if self.should_skip_namespace_export_name(
                                     &exports_table,
                                     name,
@@ -1330,11 +1329,20 @@ impl<'a> CheckerState<'a> {
                                 props.iter().any(|p| p.name == default_atom);
                             let synthetic_default_type =
                                 if can_use_cjs_namespace_default && has_named_default_prop {
-                                    Some(factory.object(props.clone()))
+                                    let mut synthetic_props = props.clone();
+                                    Self::normalize_namespace_export_declaration_order(
+                                        &mut synthetic_props,
+                                    );
+                                    Some(factory.object(synthetic_props))
                                 } else {
                                     export_equals_type.or_else(|| {
-                                        can_use_cjs_namespace_default
-                                            .then(|| factory.object(props.clone()))
+                                        can_use_cjs_namespace_default.then(|| {
+                                            let mut synthetic_props = props.clone();
+                                            Self::normalize_namespace_export_declaration_order(
+                                                &mut synthetic_props,
+                                            );
+                                            factory.object(synthetic_props)
+                                        })
                                     })
                                 };
                             if let Some(eq_type) = synthetic_default_type {
@@ -1356,13 +1364,14 @@ impl<'a> CheckerState<'a> {
                                         is_class_prototype: false,
                                         visibility: Visibility::Public,
                                         parent_id: None,
-                                        declaration_order: 0,
+                                        declaration_order: 1,
                                         is_string_named: false,
                                     });
                                 }
                             }
                         }
 
+                        Self::normalize_namespace_export_declaration_order(&mut props);
                         let namespace_has_no_runtime_props = props.is_empty();
                         let namespace_type = factory.object(props);
                         // Store display name for error messages: TSC shows namespace
@@ -1476,6 +1485,7 @@ impl<'a> CheckerState<'a> {
 
                     if let Some(exports_table) = self.resolve_effective_module_exports(module_name)
                     {
+                        let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
                         if exports_table.has("export=")
                             && let Some(export_eq_sym) = exports_table.get("export=")
                         {
@@ -1493,7 +1503,7 @@ impl<'a> CheckerState<'a> {
 
                         use tsz_solver::PropertyInfo;
                         let mut props: Vec<PropertyInfo> = Vec::new();
-                        for (name, &export_sym_id) in exports_table.iter() {
+                        for &(name, export_sym_id) in &ordered_exports {
                             if self.should_skip_namespace_export_name(
                                 &exports_table,
                                 name,
@@ -1522,6 +1532,7 @@ impl<'a> CheckerState<'a> {
                                 is_string_named: false,
                             });
                         }
+                        Self::normalize_namespace_export_declaration_order(&mut props);
                         let module_type = factory.object(props);
                         self.ctx.namespace_module_names.insert(
                             module_type,
@@ -1726,9 +1737,11 @@ impl<'a> CheckerState<'a> {
                             let exports_table = self.resolve_effective_module_exports(module_name);
 
                             if let Some(exports_table) = exports_table {
+                                let ordered_exports =
+                                    self.ordered_namespace_export_entries(&exports_table);
                                 use tsz_solver::PropertyInfo;
                                 let mut props: Vec<PropertyInfo> = Vec::new();
-                                for (name, &export_sym_id) in exports_table.iter() {
+                                for &(name, export_sym_id) in &ordered_exports {
                                     if self.should_skip_namespace_export_name(
                                         &exports_table,
                                         name,
@@ -1757,6 +1770,7 @@ impl<'a> CheckerState<'a> {
                                         is_string_named: false,
                                     });
                                 }
+                                Self::normalize_namespace_export_declaration_order(&mut props);
                                 let module_type = factory.object(props);
                                 self.ctx.namespace_module_names.insert(
                                     module_type,

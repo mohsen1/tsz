@@ -595,14 +595,20 @@ impl<'a> CheckerState<'a> {
                 .get("export=")
                 .or_else(|| exports_table.get("module.exports"))
                 .map(|export_equals_sym| self.get_type_of_symbol(export_equals_sym));
+            let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
 
             // Create an object type with all module exports
             let mut props: Vec<PropertyInfo> = Vec::new();
-            for (name, &export_sym_id) in exports_table.iter() {
+            for &(name, export_sym_id) in &ordered_exports {
                 if name == "export=" {
                     continue;
                 }
                 let prop_type = self.get_type_of_symbol(export_sym_id);
+                let declaration_order = if name == "default" {
+                    1
+                } else {
+                    props.len() as u32 + 2
+                };
                 let name_atom = self.ctx.types.intern_string(name);
                 props.push(PropertyInfo {
                     name: name_atom,
@@ -614,7 +620,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: 0,
+                    declaration_order,
                     is_string_named: false,
                 });
             }
@@ -678,12 +684,13 @@ impl<'a> CheckerState<'a> {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: 0,
+                        declaration_order: 1,
                         is_string_named: false,
                     });
                 }
             }
 
+            Self::normalize_namespace_export_declaration_order(&mut props);
             let factory = self.ctx.types.factory();
             let module_type = factory.object(props);
             let display_module_name =

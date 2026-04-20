@@ -51,7 +51,9 @@ from pathlib import Path
 DETAIL_FILE = Path(__file__).parent / "conformance-detail.json"
 
 # =============================================================================
-# Campaign definitions — aligned with campaigns.yaml v2
+# Failure-category definitions (used by --campaign / --campaigns).
+# These are offline analysis buckets; the session-level campaign system
+# itself has been removed. See scripts/session/conformance-agent-prompt.md.
 # =============================================================================
 
 CAMPAIGNS = {
