@@ -2666,7 +2666,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2729 for namespace member access in static property initializers.
+        // Methods are hoisted and don't need initialization, so skip them.
+        let member_is_method = self
+            .get_cross_file_symbol(member_sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
+            .is_some_and(|s| s.flags & symbol_flags::METHOD != 0);
         if resolved_flags & symbol_flags::VALUE_MODULE != 0
+            && !member_is_method
             && self.is_in_static_property_initializer_ast_context(expression)
             && self.find_enclosing_computed_property(expression).is_none()
         {
