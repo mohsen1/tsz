@@ -36,7 +36,6 @@ FAIL TypeScript/tests/cases/compiler/elidedJSImport1.ts | expected:[TS2300,TS259
 FAIL TypeScript/tests/cases/compiler/emitCapturingThisInTupleDestructuring1.ts | expected:[TS2493,TS7010,TS7017,TS7041] actual:[TS2493,TS7010,TS7017,TS7041]
 FAIL TypeScript/tests/cases/compiler/emitClassExpressionInDeclarationFile2.ts | expected:[TS4094] actual:[TS4094]
 FAIL TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType03.ts | expected:[TS2339,TS2702,TS2713,TS2749] actual:[TS2339,TS2702,TS2713,TS2749]
-FAIL TypeScript/tests/cases/compiler/errorInUnnamedClassExpression.ts | expected:[TS1253,TS2715,TS7008] actual:[TS1253,TS2715,TS7008]
 FAIL TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/es6ImportDefaultBindingFollowedWithNamedImport1.ts | expected:[TS2614] actual:[TS2614]
 FAIL TypeScript/tests/cases/compiler/es6ImportNamedImportParsingError.ts | expected:[TS1003,TS1005,TS1109,TS1128,TS1434] actual:[TS1003,TS1005,TS1109,TS1128,TS1434]
@@ -126,7 +125,6 @@ FAIL TypeScript/tests/cases/compiler/modularizeLibrary_ErrorFromUsingES6Features
 FAIL TypeScript/tests/cases/compiler/moduleElementsInWrongContext.ts | expected:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258,TS2305,TS2307] actual:[TS1184,TS1231,TS1232,TS1233,TS1234,TS1235,TS1258]
 FAIL TypeScript/tests/cases/compiler/moduleNodeDefaultImports.ts | expected:[TS2349] actual:[TS2339,TS2349,TS2367]
 FAIL TypeScript/tests/cases/compiler/modulePreserve4.ts | expected:[TS8002] actual:[TS1192,TS1295,TS2305,TS2339,TS2591,TS8002]
-FAIL TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_unexpected.ts | expected:[] actual:[TS1003,TS1434,TS1435]
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithSymlinks.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithSymlinks_preserveSymlinks.ts | expected:[TS2307,TS2322] actual:[TS2307,TS2322]
 FAIL TypeScript/tests/cases/compiler/moduleResolutionWithSymlinks_withOutDir.ts | expected:[TS2322,TS2454,TS2564] actual:[TS2322,TS2454,TS2564]
@@ -256,7 +254,6 @@ FAIL TypeScript/tests/cases/conformance/classes/mixinAccessModifiers.ts | expect
 FAIL TypeScript/tests/cases/conformance/classes/mixinAccessors3.ts | expected:[TS2611] actual:[TS2509]
 FAIL TypeScript/tests/cases/conformance/classes/nestedClassDeclaration.ts | expected:[TS1005,TS1068,TS1128] actual:[TS1005,TS1068,TS1128]
 FAIL TypeScript/tests/cases/conformance/classes/propertyMemberDeclarations/autoAccessorDisallowedModifiers.ts | expected:[TS1029,TS1030,TS1070,TS1243,TS1275,TS1276,TS2307,TS2882] actual:[TS1029,TS1030,TS2307,TS2882]
-FAIL TypeScript/tests/cases/conformance/constEnums/importElisionConstEnumMerge1.ts | expected:[TS2440] actual:[TS2339,TS2440]
 FAIL TypeScript/tests/cases/conformance/controlFlow/assertionTypePredicates1.ts | expected:[TS1228,TS2775,TS2776,TS7027] actual:[TS1005,TS1228]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowAliasing.ts | expected:[TS2322,TS2339,TS2448,TS2454] actual:[TS2322,TS2339,TS2448,TS2454]
 FAIL TypeScript/tests/cases/conformance/controlFlow/controlFlowBindingPatternOrder.ts | expected:[TS2322] actual:[TS2322]
@@ -557,6 +554,7 @@ FAIL TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts | expected
 FAIL TypeScript/tests/cases/projects/ReferenceResolution/src/ts/foo/foo.ts | expected:[TS6053] actual:[TS6053]
 FAIL TypeScript/tests/cases/projects/declarations_MultipleTimesImport/useModule.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
 FAIL TypeScript/tests/cases/projects/privacyCheck-SimpleReference/test.ts | expected:[TS1202,TS2307] actual:[TS1202,TS2307]
+FAIL TypeScript/tests/cases/transpile/declarationBasicSyntax.ts | expected:[TS2564,TS2854,TS5024] actual:[TS2554,TS2564,TS2854,TS5024]
 FAIL TypeScript/tests/cases/transpile/declarationComputedPropertyNames.ts | expected:[TS1166,TS1169,TS1170,TS2304] actual:[TS1166,TS1169,TS1170,TS2304]
 FAIL TypeScript/tests/cases/unittests/matchFiles.ts | expected:[TS2304,TS2339,TS2593,TS2694,TS6053,TS7006] actual:[TS2304,TS2339,TS2593,TS2694,TS6053,TS7006]
 PASS TypeScript/tests/cases/compiler/2dArrays.ts
@@ -2731,6 +2729,7 @@ PASS TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType01.ts
 PASS TypeScript/tests/cases/compiler/errorForUsingPropertyOfTypeAsType02.ts
 PASS TypeScript/tests/cases/compiler/errorForwardReferenceForwadingConstructor.ts
 PASS TypeScript/tests/cases/compiler/errorHandlingInInstanceOf.ts
+PASS TypeScript/tests/cases/compiler/errorInUnnamedClassExpression.ts
 PASS TypeScript/tests/cases/compiler/errorLocationForInterfaceExtension.ts
 PASS TypeScript/tests/cases/compiler/errorMessageOnIntersectionsWithDiscriminants01.ts
 PASS TypeScript/tests/cases/compiler/errorMessageOnObjectLiteralType.ts
@@ -4703,6 +4702,7 @@ PASS TypeScript/tests/cases/compiler/moduleResolutionPackageIdWithRelativeAndAbs
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_notSupported.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_notSupported2.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_notSupported3.ts
+PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_unexpected.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_unexpected2.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_withAmbientPresent.ts
 PASS TypeScript/tests/cases/compiler/moduleResolutionWithExtensions_withPaths.ts
@@ -7511,6 +7511,7 @@ PASS TypeScript/tests/cases/conformance/constEnums/constEnumNoObjectPrototypePro
 PASS TypeScript/tests/cases/conformance/constEnums/constEnumPropertyAccess1.ts
 PASS TypeScript/tests/cases/conformance/constEnums/constEnumPropertyAccess2.ts
 PASS TypeScript/tests/cases/conformance/constEnums/constEnumPropertyAccess3.ts
+PASS TypeScript/tests/cases/conformance/constEnums/importElisionConstEnumMerge1.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/assertionTypePredicates2.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/constLocalsInFunctionExpressions.ts
 PASS TypeScript/tests/cases/conformance/controlFlow/controlFlowAliasing2.ts
@@ -12559,7 +12560,6 @@ PASS TypeScript/tests/cases/projects/relative-nested/main/consume.ts
 PASS TypeScript/tests/cases/projects/rootDirectory/FolderA/FolderB/FolderC/fileC.ts
 PASS TypeScript/tests/cases/projects/rootDirectory/FolderA/FolderB/fileB.ts
 PASS TypeScript/tests/cases/transpile/declarationAsyncAndGeneratorFunctions.ts
-PASS TypeScript/tests/cases/transpile/declarationBasicSyntax.ts
 PASS TypeScript/tests/cases/transpile/declarationCrossFileInferences.ts
 PASS TypeScript/tests/cases/transpile/declarationEmitPartialNodeReuse.ts
 PASS TypeScript/tests/cases/transpile/declarationFunctionDeclarations.ts
