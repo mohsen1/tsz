@@ -165,83 +165,46 @@ Skill usage rules:
 - Reuse scripts/assets/templates from skill directories when available.
 - If blocked/missing, state issue briefly and proceed with best fallback.
 
-## 20.25) Multi-Session Work (Campaign System — v3 Post-93% Fingerprint Era)
+## 20.25) Conformance Work — Entry Point
 - **Always use `ultrathink` at the start of every agent prompt.**
-- **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
-- **Fingerprint parity is the #1 priority.** 617 tests (73.6% of failures) emit right codes but wrong message/position/count.
-- **Multi-crate changes are EXPECTED.** Do not reroll because a fix touches solver + checker + boundary.
-- Read `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
-- Read `scripts/session/conformance-agent-prompt.md` for detailed campaign guidance.
+- **Read `scripts/session/conformance-agent-prompt.md` first.** It is the single
+  source of truth for how to pick, diagnose, fix, test, and ship conformance work.
+- **Pick a random failure** with `scripts/session/quick-pick.sh` and work on
+  what it gives you. Do not reroll to avoid hard targets.
+- **Fix the root cause, not the symptom.** Multi-crate changes are expected.
+  Checker symptoms often have solver or boundary-helper root causes.
+- **Every fix ships with a unit test** in the owning crate (`tsz-solver`,
+  `tsz-checker`, etc.) plus no-regression verification on conformance.
+- **Architecture first.** Follow §3, §4, §11, §12, §22 of this file. Never
+  bypass `query_boundaries/assignability`; never pattern-match solver
+  internals from the checker.
+- **Open a pull request.** Never push directly to `main`.
+- **Do not bail.** If you understand the root cause, fix it. If the fix spans
+  solver + checker + boundary, make the fix.
 
-### Campaign Tiers and Agent Allocation
-| Tier | Allocation | Campaigns | Focus |
-|------|-----------|-----------|-------|
-| **1** | 50% of agents | type-display-parity, diagnostic-count | Fingerprint parity: match tsc's error message text and diagnostic counts (~440 tests) |
-| **2** | 30% of agents | big3-unification, narrowing-boundary, request-transport | Wrong-code: relation kernel, context transport, boundary cleanup (~174 tests) |
-| **3** | 20% of agents | crash-zero, diagnostic-position, parser-diagnostics, module-resolution | Subsystem and leaf work (~130 tests) |
-
-### KPIs (Track These, Not Overall %)
-| KPI | Command | Target |
-|-----|---------|--------|
-| **Fingerprint-only count** | `query-conformance.py --dashboard` | Reduce from 617 |
-| FP-only for TS2322+TS2345+TS2339 | `query-conformance.py --fingerprint-only` | Reduce from 410 |
-| Big3 wrong-code count | `query-conformance.py --dashboard` | Reduce from 71 |
-| Crash count | `query-conformance.py --dashboard` | Zero (44) |
-| Tests per fix commit | git log analysis | >1.0 (currently 0.32) |
-
-### Quick Reference
+### Quick reference
 ```bash
-# KPI dashboard (primary daily signal):
+# Pick one random failure (prints path + codes + a verbose-run command):
+scripts/session/quick-pick.sh
+
+# Offline research (never run the full suite for research):
 python3 scripts/conformance/query-conformance.py --dashboard
 
-# Health check (run before starting any campaign work):
-scripts/session/healthcheck.sh
+# Verify a specific test:
+./scripts/conformance/conformance.sh run --filter "<name>" --verbose
 
-# See campaign status (what's claimed vs available):
-scripts/session/check-status.sh
+# Unit tests for the crates you changed:
+cargo nextest run --package tsz-checker --lib
+cargo nextest run --package tsz-solver --lib
 
-# Claim a campaign and create a worktree:
-scripts/session/start-campaign.sh <campaign-name>
+# Full conformance (heavy — use the safe-run wrapper):
+scripts/safe-run.sh ./scripts/conformance/conformance.sh run
 
-# Check/record session progress (MANDATORY before claiming session done):
-scripts/session/campaign-checkpoint.sh <campaign-name> --status   # read progress
-scripts/session/campaign-checkpoint.sh <campaign-name> --init     # initialize
-scripts/session/campaign-checkpoint.sh <campaign-name>            # record checkpoint
+# Refresh offline snapshot after a batch of fixes:
+scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 
-# Launch agents with staggered starts (prevents rate limit cascade):
-scripts/session/launch-agents.sh --max 3 --stagger 120
-
-# Integrator: validate campaign branches and open pull requests (never pushes to main):
-scripts/session/integrate.sh --auto
-
-# Clean up disk (stale worktrees, old targets):
-scripts/session/cleanup.sh --auto
-
-# Setup a new machine:
-scripts/session/setup-machine.sh
-```
-
-### Key Rules
-- **Fingerprint parity is the #1 lever.** 73.6% of remaining failures need display/count/position fixes, not code changes.
-- **Batch, don't scatter.** One printer fix that flips 20 tests > 20 individual tweaks. Target >1.0 tests per commit.
-- **Campaign work is default.** Leaf fixes are only for Tier 3 agents.
-- **Follow root causes across crate boundaries.** Campaigns define missions, not file ownership.
-- **Multi-crate changes are normal.** Do NOT reroll for "broad-surface" targets (Tier 1/2).
-- **Track KPIs, not overall %.** Each campaign has a specific KPI in campaigns.yaml.
-- **Never declare a campaign "complete."** Only the integrator can. Run the checkpoint script.
-- **Read the progress file before starting.** Don't re-investigate known dead ends.
-- **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
-
-### Periodic coordination via /loop
-```bash
-# Worker agents — rebase and check status:
-/loop 30m run scripts/session/check-status.sh and rebase on origin/main if needed
-
-# Integrator — validate, merge, and report KPIs:
-/loop 30m run scripts/session/integrate.sh --auto && python3 scripts/conformance/query-conformance.py --dashboard
-
-# Cleanup — free disk space:
-/loop 4h run scripts/session/cleanup.sh --auto
+# Push and open a PR (never push to main):
+git push -u origin <your-branch>
 ```
 
 ## 20.5) Conformance Analysis Tools
