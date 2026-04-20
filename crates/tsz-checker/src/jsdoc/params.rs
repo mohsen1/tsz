@@ -1052,6 +1052,31 @@ impl<'a> CheckerState<'a> {
             effective_type_expr
         };
 
+        // Empty generic type parameter list inside the braces, e.g.
+        // `@param {<} x`. tsc reports TS1098 at the `<` and TS1139 at the
+        // `}`, and typechecks as if the type were unknown. Position
+        // conversion uses `+ 4` to account for `/** ` (3 + leading space),
+        // matching the convention used below for TS2314 emission.
+        if effective_type_expr.trim() == "<"
+            && let Some(comment_start) = jsdoc_comment_start
+        {
+            let lt_pos = comment_start + type_expr_offset as u32 + 4;
+            let close_brace_pos = lt_pos + 1;
+            self.error_at_position(
+                lt_pos,
+                1,
+                crate::diagnostics::diagnostic_messages::TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY,
+                crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY,
+            );
+            self.error_at_position(
+                close_brace_pos,
+                1,
+                crate::diagnostics::diagnostic_messages::TYPE_PARAMETER_DECLARATION_EXPECTED,
+                crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_DECLARATION_EXPECTED,
+            );
+            return Some(tsz_solver::TypeId::ERROR);
+        }
+
         // Generic JSDoc type references like {C} should emit TS2314 when C
         // requires type arguments and none were provided.
         let base_type_expr = effective_type_expr.as_str();
