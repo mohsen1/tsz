@@ -890,6 +890,22 @@ impl<'a> CheckerState<'a> {
             }
         }
         if index_type == TypeId::ANY {
+            // tsc defers indexed-access validation in generic contexts.
+            // When the object type still contains type parameters (or IS
+            // a type parameter), `any` as an index is fine — the concrete
+            // check will happen at instantiation time.
+            if object_type_for_check == TypeId::ANY
+                || crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    object_type_for_check,
+                )
+                || crate::query_boundaries::common::is_index_access_type(
+                    self.ctx.types,
+                    object_type_for_check,
+                )
+            {
+                return;
+            }
             let supports_string_index =
                 self.is_element_indexable(object_type_for_check, true, false);
             let supports_number_index =
