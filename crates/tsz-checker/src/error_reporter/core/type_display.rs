@@ -66,6 +66,13 @@ impl<'a> CheckerState<'a> {
         let mut text = text.trim().trim_start_matches(':').trim().to_string();
         if let Some(nl) = text.find('\n') {
             text = text[..nl].trim_end().to_string();
+            // After newline truncation, reject if braces are unbalanced
+            // (e.g., multi-line `{\n  foo: bar;\n}` gets truncated to `{`)
+            let open_brace = text.chars().filter(|&c| c == '{').count();
+            let close_brace = text.chars().filter(|&c| c == '}').count();
+            if open_brace != close_brace {
+                return None;
+            }
         }
         if text.ends_with('=') {
             text.pop();
