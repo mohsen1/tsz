@@ -602,6 +602,10 @@ pub fn get_base_type_for_comparison(db: &dyn crate::TypeDatabase, type_id: TypeI
 /// Used for binary operator error messages where tsc shows widened types
 /// for literal operands but preserves enum type names.
 pub fn widen_literal_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
+        return TypeId::BOOLEAN;
+    }
+
     match db.lookup(type_id) {
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
