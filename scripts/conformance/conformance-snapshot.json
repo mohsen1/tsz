@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-04-20T12:32:37Z",
+  "timestamp": "2026-04-20T21:33:14Z",
   "git_sha": "1eece8275d26c00ffa1f8c33e86c56f005311cbd",
   "summary": {
     "total_tests": 12581,
-    "passed": 12048,
-    "failed": 533,
-    "pass_rate": 95.8
+    "passed": 12015,
+    "failed": 566,
+    "pass_rate": 95.5
   },
   "areas_by_pass_rate": [
     {
