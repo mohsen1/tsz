@@ -201,6 +201,9 @@ scripts/session/start-campaign.sh <campaign-name>
 # Record progress checkpoint
 scripts/session/campaign-checkpoint.sh <campaign-name>
 
+# Launch agents with staggered starts
+scripts/session/launch-agents.sh --max 3 --stagger 120
+
 # Validate and merge campaign branches
 scripts/session/integrate.sh --auto
 
@@ -209,8 +212,6 @@ scripts/session/cleanup.sh --auto
 ```
 
 See `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
-
-Open the created worktree in a Claude or Codex session to do the campaign work; the old headless launcher flow is no longer maintained.
 
 ## Pre-commit Hook Details
 

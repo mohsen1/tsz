@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Pick random conformance failures to work on.
+"""Pick a random conformance failure to work on.
 
 Reads scripts/conformance/conformance-detail.json and selects one or more
-failing tests. Supports both uniform selection and the campaign tier weighting
-used by the session protocol.
+failing tests uniformly at random. Supports both coarse category filters
+(`wrong-code`, `fingerprint-only`, etc.) and narrow diff filters
+(`--one-missing`, `--extra-code`, `--close`).
 """
 
 from __future__ import annotations
@@ -16,17 +17,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DETAIL_PATH = REPO_ROOT / "scripts" / "conformance" / "conformance-detail.json"
-
-TIER_OF = {
-    "fingerprint-only": 1,
-    "wrong-code": 2,
-    "only-missing": 2,
-    "only-extra": 2,
-    "all-missing": 3,
-    "false-positive": 3,
-}
-
-TIER_WEIGHT = {1: 0.50, 2: 0.30, 3: 0.20}
 
 
 def load_failures() -> dict[str, dict]:
@@ -64,13 +54,10 @@ def diff(entry: dict) -> int:
 
 
 def matches(entry: dict, args: argparse.Namespace) -> bool:
-    category = classify(entry)
     missing = entry.get("m", [])
     extra = entry.get("x", [])
 
-    if args.category != "any" and category != args.category:
-        return False
-    if args.tier is not None and TIER_OF[category] != args.tier:
+    if args.category != "any" and classify(entry) != args.category:
         return False
     if args.one_missing and not (len(missing) == 1 and len(extra) == 0):
         return False
@@ -94,75 +81,6 @@ def matches(entry: dict, args: argparse.Namespace) -> bool:
     return True
 
 
-def build_payload(path: str, entry: dict, category: str, pool_size: int) -> dict:
-    return {
-        "path": path,
-        "category": category,
-        "tier": TIER_OF[category],
-        "expected": entry.get("e", []),
-        "actual": entry.get("a", []),
-        "missing": entry.get("m", []),
-        "extra": entry.get("x", []),
-        "diff": diff(entry),
-        "pool_size": pool_size,
-    }
-
-
-def print_payload(payload: dict, *, json_output: bool, paths_only: bool) -> None:
-    if paths_only:
-        print(payload["path"])
-        return
-
-    if json_output:
-        print(json.dumps(payload))
-        return
-
-    expected = ",".join(payload["expected"]) or "-"
-    actual = ",".join(payload["actual"]) or "-"
-    missing = ",".join(payload["missing"]) or "-"
-    extra = ",".join(payload["extra"]) or "-"
-
-    print(f"path:     {payload['path']}")
-    print(f"category: {payload['category']}")
-    print(f"tier:     {payload['tier']}")
-    print(f"expected: {expected}")
-    print(f"actual:   {actual}")
-    print(f"missing:  {missing}")
-    print(f"extra:    {extra}")
-    print(f"diff:     {payload['diff']}")
-    print(f"pool:     {payload['pool_size']}")
-    print()
-
-
-def choose_picks(
-    candidates: list[tuple[str, dict, str]], args: argparse.Namespace, rng: random.Random
-) -> list[dict]:
-    count = min(args.count, len(candidates))
-
-    if not args.weighted_tier:
-        picks = rng.sample(candidates, count)
-        return [
-            build_payload(path, entry, category, len(candidates))
-            for path, entry, category in picks
-        ]
-
-    buckets: dict[int, list[tuple[str, dict, str]]] = {1: [], 2: [], 3: []}
-    for candidate in candidates:
-        buckets[TIER_OF[candidate[2]]].append(candidate)
-
-    picks = []
-    for _ in range(count):
-        tiers = [tier for tier, bucket in buckets.items() if bucket]
-        weights = [TIER_WEIGHT[tier] for tier in tiers]
-        tier = rng.choices(tiers, weights=weights, k=1)[0]
-        bucket = buckets[tier]
-        index = rng.randrange(len(bucket))
-        path, entry, category = bucket.pop(index)
-        picks.append(build_payload(path, entry, category, len(bucket) + 1))
-
-    return picks
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -181,17 +99,6 @@ def main() -> int:
             "false-positive",
         ],
         help="restrict to one failure category",
-    )
-    parser.add_argument(
-        "--tier",
-        type=int,
-        choices=[1, 2, 3],
-        help="restrict to one campaign tier",
-    )
-    parser.add_argument(
-        "--weighted-tier",
-        action="store_true",
-        help="pick using campaign tier weights instead of uniform sampling",
     )
     parser.add_argument("--close", type=int, help="only failures with diff <= N")
     parser.add_argument(
@@ -225,11 +132,6 @@ def main() -> int:
         action="store_true",
         help="print test paths only",
     )
-    parser.add_argument(
-        "--json",
-        action="store_true",
-        help="print each pick as one JSON object per line",
-    )
     args = parser.parse_args()
 
     failures = load_failures()
@@ -242,10 +144,26 @@ def main() -> int:
         sys.exit("no failures match the requested filters")
 
     rng = random.Random(args.seed)
-    picks = choose_picks(candidates, args, rng)
+    picks = rng.sample(candidates, min(args.count, len(candidates)))
 
-    for payload in picks:
-        print_payload(payload, json_output=args.json, paths_only=args.paths_only)
+    for path, entry, category in picks:
+        if args.paths_only:
+            print(path)
+            continue
+
+        expected = ",".join(entry.get("e", [])) or "-"
+        actual = ",".join(entry.get("a", [])) or "-"
+        missing = ",".join(entry.get("m", [])) or "-"
+        extra = ",".join(entry.get("x", [])) or "-"
+
+        print(f"path:     {path}")
+        print(f"category: {category}")
+        print(f"expected: {expected}")
+        print(f"actual:   {actual}")
+        print(f"missing:  {missing}")
+        print(f"extra:    {extra}")
+        print(f"diff:     {diff(entry)}")
+        print()
 
     print(f"{len(candidates)} candidates matched; picked {len(picks)}", file=sys.stderr)
     return 0

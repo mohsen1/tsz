@@ -91,9 +91,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
 
-            // Note: TS2538 ("type cannot be used as index type") is emitted by
-            // check_indexed_access_type (via type_alias_checking), not here. Emitting it
-            // here would duplicate errors for each invalid index constituent.
+            // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
+            if let Some(invalid_member) = self.get_invalid_index_type_member(index_type)
+                && let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
+            {
+                let mut formatter = self.ctx.create_type_formatter();
+                let index_type_str = formatter.format(invalid_member);
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                    &[&index_type_str],
+                );
+                self.ctx
+                    .error(inode.pos, inode.end - inode.pos, message, 2538);
+            }
 
             if let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
                 && let Some(index_value) = self
