@@ -786,6 +786,22 @@ impl<'a> CheckerState<'a> {
                 );
                 return true;
             }
+            // If the AsyncIterator/AsyncIterable globals aren't in scope (e.g. `@lib: es5`
+            // with no es2018.asynciterable lib entry), tsc can't talk about
+            // `[Symbol.asyncIterator]()` at all and falls back to the ES5-style
+            // "not an array type or a string type" check. Mirror that: if neither
+            // AsyncIterator nor AsyncIterable resolves in the current program, treat
+            // the `for await ... of` like a plain `for ... of` in ES5 mode.
+            let async_iter_available = self.resolve_lib_type_by_name("AsyncIterator").is_some()
+                || self.resolve_lib_type_by_name("AsyncIterable").is_some();
+            if !async_iter_available {
+                if self.is_array_or_tuple_or_string(expr_type) {
+                    return true;
+                }
+                let allows_strings = !self.has_string_constituent(expr_type);
+                self.emit_es5_not_iterable_error(expr_type, expr_type, expr_idx, allows_strings);
+                return false;
+            }
             // Not async iterable - emit TS2504
             if let Some((start, end)) = self.get_node_span(expr_idx) {
                 let type_str = self.format_type(expr_type);
