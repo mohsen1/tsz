@@ -810,6 +810,46 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
 
+            // Source intersection base-constraint reduction:
+            // When source is an intersection containing type parameters (e.g., `T & U`
+            // where `T extends A` and `U extends B`), tsc computes the base constraint
+            // as `A & B` (set-theoretic intersection of the constraints). If the
+            // reduced constraint is assignable to the target union, the original
+            // intersection is too.
+            //
+            // This mirrors tsc's getBaseConstraintOfType for intersections:
+            //   getBaseConstraintOfType(T & U) = getIntersectionType([
+            //       getBaseConstraintOfType(T),   // = constraint of T
+            //       getBaseConstraintOfType(U),   // = constraint of U
+            //   ])
+            //
+            // Example: `T extends string | number | undefined` & `U extends string | null | undefined`
+            //   reduced constraint = `(string | number | undefined) & (string | null | undefined)`
+            //                      = `string | undefined` (after distribution).
+            //   `string | undefined <: string | undefined` → True.
+            if let Some(s_list) = intersection_list_id(self.interner, source) {
+                let s_member_list = self.interner.type_list(s_list);
+                let has_type_params = s_member_list
+                    .iter()
+                    .any(|&m| type_param_info(self.interner, m).is_some());
+                if has_type_params {
+                    let constraint_members: Vec<TypeId> = s_member_list
+                        .iter()
+                        .map(|&m| {
+                            if let Some(info) = type_param_info(self.interner, m) {
+                                info.constraint.unwrap_or(TypeId::UNKNOWN)
+                            } else {
+                                m
+                            }
+                        })
+                        .collect();
+                    let reduced = self.interner.intersection(constraint_members);
+                    if reduced != source && self.check_subtype(reduced, target).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
+
             // Trace: Source is not a subtype of any union member
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::NoUnionMemberMatches {
@@ -836,8 +876,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Note: property merging (e.g., { a: string } & { b: number } <: { a: string; b: number })
         // is still handled by the visitor's visit_intersection (reached when no individual
         // member matches and no type-specific handler intercepts).
+        //
+        // Exception: for direct object-like targets, skip this shortcut so that
+        // property merging (visit_intersection) can catch conflicting concrete
+        // members. Without this, `T & { a: boolean } <: { a?: string }` would
+        // incorrectly pass because `T <: { a?: string }` succeeds under generic
+        // weak-type generosity, even though the `{ a: boolean }` member forces a
+        // concrete property conflict. tsc reports TS2322 here by property-merging
+        // the intersection source before comparing against the object target.
         if let Some(members) = intersection_list_id(self.interner, source) {
             let member_list = self.interner.type_list(members);
+            // When target is object-like, skip type-parameter members from the
+            // shortcut: a type parameter may "generously" pass a weak-type target
+            // via type-parameter relaxation, but concrete members of the same
+            // intersection (e.g., `{ a: boolean }` in `T & { a: boolean }`) may
+            // have properties that conflict with the target. In that case the
+            // intersection as a whole must fail, not silently pass via the
+            // generic member. Concrete members keep the shortcut so cases like
+            // `{ a: string } & { b: number } <: { a: string }` still pass.
+            // When target is not object-like (e.g., type parameter, primitive,
+            // union, application), keep all members — those targets don't have
+            // the weak-type generosity concern.
+            let target_is_object_like = object_shape_id(self.interner, target).is_some()
+                || object_with_index_shape_id(self.interner, target).is_some();
             // Reset `in_intersection_member_check` for source member checks.
             // When we reach here from a target intersection loop, the flag is true
             // which suppresses weak type checks (TS2559). But the source member checks
@@ -849,6 +910,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let saved_intersection_check = self.in_intersection_member_check;
             self.in_intersection_member_check = false;
             for &member in member_list.iter() {
+                if target_is_object_like && type_param_info(self.interner, member).is_some() {
+                    continue;
+                }
                 if self.check_subtype(member, target).is_true() {
                     self.in_intersection_member_check = saved_intersection_check;
                     return SubtypeResult::True;

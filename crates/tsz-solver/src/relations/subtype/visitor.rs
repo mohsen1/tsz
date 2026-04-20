@@ -328,7 +328,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // This handles patterns like `T & {} <: string` where `T extends string | undefined`:
         // The constraint intersection `(string | undefined) & {}` simplifies to `string`,
         // and `string <: string` succeeds.
-        {
+        //
+        // Skip this fallback when the target is object-like: substituting the
+        // constraint (e.g., `object` or an interface) can introduce a "generous"
+        // member that would generously satisfy the weak-type/object target even
+        // though the original intersection has a concrete conflicting property
+        // (e.g., `T extends object & { a: boolean } <: { a?: string }` must fail
+        // because `{ a: boolean }` conflicts with `a?: string`, but substituting
+        // T → object yields `object & { a: boolean }` and `object` alone passes
+        // the weak target, making the recursive shortcut spuriously succeed).
+        // Property merging above already handles the object-like-target case.
+        if !target_is_object_like {
             let member_list = self.checker.interner.type_list(TypeListId(list_id));
             let has_type_params = member_list
                 .iter()
