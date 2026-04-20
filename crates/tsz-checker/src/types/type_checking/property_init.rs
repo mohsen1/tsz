@@ -62,6 +62,13 @@ impl<'a> CheckerState<'a> {
                     || target.is_abstract
                     || target.has_no_initializer;
                 if should_error {
+                    // If an ancestor class declares the same name with an
+                    // initializer, base construction already ran and
+                    // `this.x` sees the base value — not an error. Matches
+                    // tsc's behavior for `class D extends C { old_x = this.x; x = 1 }`.
+                    if self.ancestor_class_initializes_property(&name) {
+                        continue;
+                    }
                     self.error_at_node(
                         access_node_idx,
                         &format!("Property '{name}' is used before its initialization."),
@@ -76,6 +83,51 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Walk up the enclosing class's base chain and check whether any
+    /// ancestor declares an instance property with the given name.
+    /// If an ancestor initializes `name`, a `this.name` access in a child
+    /// field initializer is safe — base construction ran first.
+    fn ancestor_class_initializes_property(&self, name: &str) -> bool {
+        use rustc_hash::FxHashSet;
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
+        let mut current = self.get_base_class_idx(class_info.class_idx);
+        while let Some(class_idx) = current {
+            if !visited.insert(class_idx) {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(class_idx) else {
+                break;
+            };
+            let Some(class) = self.ctx.arena.get_class(node) else {
+                break;
+            };
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                    continue;
+                }
+                if self.is_static_property(member_idx) {
+                    continue;
+                }
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                if let Some(prop_name) = self.get_property_name(prop.name)
+                    && prop_name == name
+                {
+                    return true;
+                }
+            }
+            current = self.get_base_class_idx(class_idx);
+        }
+        false
     }
 
     /// Check if a member is a static property (has static modifier).
