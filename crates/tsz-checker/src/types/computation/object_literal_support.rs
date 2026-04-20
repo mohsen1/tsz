@@ -272,7 +272,9 @@ impl<'a> CheckerState<'a> {
                                 }
                             })
                             .collect();
-                        display_props.sort_by_key(|a| a.name);
+                        crate::query_boundaries::common::normalize_display_property_order(
+                            &mut display_props,
+                        );
                         self.ctx
                             .types
                             .store_display_properties(type_id, display_props);

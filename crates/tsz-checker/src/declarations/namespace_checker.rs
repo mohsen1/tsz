@@ -327,7 +327,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.symbol_instance_types.insert(sym_id, placeholder);
         self.ctx.symbol_resolution_depth.set(depth + 1);
         let mut props: Vec<PropertyInfo> = Vec::new();
-        for (name, &member_id) in exports.iter() {
+        for (name, member_id) in self.ordered_namespace_export_entries(&exports) {
             if self.ctx.symbol_resolution_set.contains(&member_id) {
                 continue;
             }
@@ -378,6 +378,11 @@ impl<'a> CheckerState<'a> {
             {
                 member_type = self.get_enum_namespace_type_for_value(member_type);
             }
+            let declaration_order = if name == "default" {
+                1
+            } else {
+                props.len() as u32 + 2
+            };
             let name_atom = self.ctx.types.intern_string(name);
             props.push(PropertyInfo {
                 name: name_atom,
@@ -389,11 +394,12 @@ impl<'a> CheckerState<'a> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order: 0,
+                declaration_order,
                 is_string_named: false,
             });
         }
         self.ctx.symbol_resolution_depth.set(depth);
+        Self::normalize_namespace_export_declaration_order(&mut props);
         // Use object_with_flags_and_symbol to preserve the namespace's SymbolId.
         // This enables the type formatter to detect the namespace and display
         // it as `typeof M` instead of expanding to the structural object shape.

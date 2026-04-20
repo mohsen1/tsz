@@ -68,6 +68,30 @@ pub struct JsExportSurface {
 }
 
 impl JsExportSurface {
+    fn normalize_property_declaration_order(props: &mut [PropertyInfo]) {
+        props.sort_by(
+            |a, b| match (a.declaration_order > 0, b.declaration_order > 0) {
+                (true, true) => a.declaration_order.cmp(&b.declaration_order),
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                (false, false) => std::cmp::Ordering::Equal,
+            },
+        );
+
+        for (idx, prop) in props.iter_mut().enumerate() {
+            prop.declaration_order = idx as u32 + 1;
+        }
+    }
+
+    fn merged_declaration_order(existing: u32, overlay: u32) -> u32 {
+        match (existing > 0, overlay > 0) {
+            (true, true) => existing.min(overlay),
+            (true, false) => existing,
+            (false, true) => overlay,
+            (false, false) => 0,
+        }
+    }
+
     fn merge_property_info(
         checker: &mut CheckerState<'_>,
         existing: &PropertyInfo,
@@ -92,7 +116,10 @@ impl JsExportSurface {
             is_class_prototype: existing.is_class_prototype || overlay.is_class_prototype,
             visibility: existing.visibility,
             parent_id: existing.parent_id.or(overlay.parent_id),
-            declaration_order: existing.declaration_order.min(overlay.declaration_order),
+            declaration_order: Self::merged_declaration_order(
+                existing.declaration_order,
+                overlay.declaration_order,
+            ),
             is_string_named: false,
         }
     }
@@ -127,9 +154,7 @@ impl JsExportSurface {
                 }
             }
             merged_props.extend(overlay_by_name.into_values());
-            for (idx, prop) in merged_props.iter_mut().enumerate() {
-                prop.declaration_order = idx as u32;
-            }
+            Self::normalize_property_declaration_order(&mut merged_props);
             merged_shape.properties = merged_props;
             return Some(checker.ctx.types.factory().callable(merged_shape));
         }
@@ -147,9 +172,7 @@ impl JsExportSurface {
                 }
             }
             merged_props.extend(overlay_by_name.into_values());
-            for (idx, prop) in merged_props.iter_mut().enumerate() {
-                prop.declaration_order = idx as u32;
-            }
+            Self::normalize_property_declaration_order(&mut merged_props);
 
             let merged_shape = ObjectShape {
                 flags: shape.flags,
@@ -223,7 +246,9 @@ impl JsExportSurface {
         });
 
         let namespace_type = if can_merge_named_exports && !self.named_exports.is_empty() {
-            Some(factory.object(self.named_exports.clone()))
+            let mut named_exports = self.named_exports.clone();
+            Self::normalize_property_declaration_order(&mut named_exports);
+            Some(factory.object(named_exports))
         } else {
             None
         };
@@ -335,13 +360,12 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
 
-        shape
-            .properties
+        let mut props = shape.properties;
+        JsExportSurface::normalize_property_declaration_order(&mut props);
+        props
             .into_iter()
-            .enumerate()
-            .map(|(idx, mut prop)| {
+            .map(|mut prop| {
                 prop.optional = force_optional;
-                prop.declaration_order = idx as u32;
                 prop
             })
             .collect()
@@ -410,7 +434,7 @@ impl<'a> CheckerState<'a> {
             .enumerate()
             .filter_map(|(idx, name)| {
                 pending.remove(&name).map(|mut prop| {
-                    prop.declaration_order = idx as u32;
+                    prop.declaration_order = idx as u32 + 1;
                     prop
                 })
             })
@@ -552,6 +576,7 @@ impl<'a> CheckerState<'a> {
             &mut props,
             None,
         );
+        JsExportSurface::normalize_property_declaration_order(&mut props);
         surface.named_exports = props;
 
         // 3. Collect prototype property assignments for constructor functions
@@ -712,7 +737,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: idx as u32,
+                    declaration_order: idx as u32 + 1,
                     is_string_named: false,
                 });
             }
@@ -763,5 +788,53 @@ impl<'a> CheckerState<'a> {
         let ctor_name = ctor_ident.escaped_text.clone();
 
         Some((ctor_name, member_name))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JsExportSurface;
+    use tsz_solver::{PropertyInfo, TypeId, TypeInterner, Visibility};
+
+    fn prop(db: &TypeInterner, name: &str, declaration_order: u32) -> PropertyInfo {
+        PropertyInfo {
+            name: db.intern_string(name),
+            type_id: TypeId::ANY,
+            write_type: TypeId::ANY,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order,
+            is_string_named: false,
+        }
+    }
+
+    #[test]
+    fn normalize_property_declaration_order_preserves_existing_source_order() {
+        let db = TypeInterner::new();
+        let mut props = vec![prop(&db, "configs", 3), prop(&db, "default", 1)];
+
+        JsExportSurface::normalize_property_declaration_order(&mut props);
+
+        assert_eq!(db.resolve_atom_ref(props[0].name).as_ref(), "default");
+        assert_eq!(props[0].declaration_order, 1);
+        assert_eq!(db.resolve_atom_ref(props[1].name).as_ref(), "configs");
+        assert_eq!(props[1].declaration_order, 2);
+    }
+
+    #[test]
+    fn normalize_property_declaration_order_prioritizes_explicit_members_before_unset_members() {
+        let db = TypeInterner::new();
+        let mut props = vec![prop(&db, "configs", 0), prop(&db, "default", 1)];
+
+        JsExportSurface::normalize_property_declaration_order(&mut props);
+
+        assert_eq!(db.resolve_atom_ref(props[0].name).as_ref(), "default");
+        assert_eq!(props[0].declaration_order, 1);
+        assert_eq!(db.resolve_atom_ref(props[1].name).as_ref(), "configs");
+        assert_eq!(props[1].declaration_order, 2);
     }
 }

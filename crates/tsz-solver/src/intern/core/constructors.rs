@@ -11,6 +11,7 @@ use crate::types::{
     CallableShape, ConditionalType, FunctionShape, IntrinsicKind, LiteralValue, MappedType,
     ObjectFlags, ObjectShape, ObjectShapeId, OrderedFloat, PropertyInfo, SymbolRef, TemplateSpan,
     TupleElement, TypeApplication, TypeData, TypeId, TypeParamInfo,
+    normalize_display_property_order,
 };
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
@@ -1283,14 +1284,8 @@ impl TypeInterner {
         widened_properties: Vec<PropertyInfo>,
         display_properties: Vec<PropertyInfo>,
     ) -> TypeId {
-        // Capture display property declaration order before interning
         let mut display_props = display_properties;
-        for (i, prop) in display_props.iter_mut().enumerate() {
-            if prop.declaration_order == 0 {
-                prop.declaration_order = (i + 1) as u32;
-            }
-        }
-        display_props.sort_by_key(|a| a.name);
+        normalize_display_property_order(&mut display_props);
 
         // Intern the widened properties as the canonical type
         let type_id = self.object_with_flags(widened_properties, ObjectFlags::FRESH_LITERAL);
