@@ -928,8 +928,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // (e.g., `DeepReadonly<Part>` -> conditional -> `DeepReadonlyObject<Part>`),
                     // store a forward display alias so the formatter shows the one-step
                     // apparent type name that tsc displays.
-                    if let Some(branch_app) = my_apparent_branch {
-                        if branch_app != original_type_id
+                    if let Some(branch_app) = my_apparent_branch
+                        && branch_app != original_type_id
                             && branch_app != result
                             && !has_param_args
                             && matches!(
@@ -940,7 +940,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner
                                 .store_display_alias(original_type_id, branch_app);
                         }
-                    }
                 }
             }
 
