@@ -167,7 +167,7 @@ Skill usage rules:
 
 ## 20.25) Multi-Session Work (Campaign System — v3 Post-93% Fingerprint Era)
 - **Always use `ultrathink` at the start of every agent prompt.**
-- **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
+- **Max 3 concurrent Claude/Codex sessions** to avoid rate limit cascades.
 - **Fingerprint parity is the #1 priority.** 617 tests (73.6% of failures) emit right codes but wrong message/position/count.
 - **Multi-crate changes are EXPECTED.** Do not reroll because a fix touches solver + checker + boundary.
 - Read `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
@@ -208,17 +208,11 @@ scripts/session/campaign-checkpoint.sh <campaign-name> --status   # read progres
 scripts/session/campaign-checkpoint.sh <campaign-name> --init     # initialize
 scripts/session/campaign-checkpoint.sh <campaign-name>            # record checkpoint
 
-# Launch agents with staggered starts (prevents rate limit cascade):
-scripts/session/launch-agents.sh --max 3 --stagger 120
-
 # Integrator: validate and merge campaign branches:
 scripts/session/integrate.sh --auto
 
 # Clean up disk (stale worktrees, old targets):
 scripts/session/cleanup.sh --auto
-
-# Setup a new machine:
-scripts/session/setup-machine.sh
 ```
 
 ### Key Rules
@@ -230,7 +224,7 @@ scripts/session/setup-machine.sh
 - **Track KPIs, not overall %.** Each campaign has a specific KPI in campaigns.yaml.
 - **Never declare a campaign "complete."** Only the integrator can. Run the checkpoint script.
 - **Read the progress file before starting.** Don't re-investigate known dead ends.
-- **Max 3 concurrent agents** to avoid rate limit cascades. Use `launch-agents.sh`.
+- **Max 3 concurrent Claude/Codex sessions** to avoid rate limit cascades.
 
 ### Periodic coordination via /loop
 ```bash
