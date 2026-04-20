@@ -31893,9 +31893,14 @@ const [[a]] = [num];  // TS2488: inner array contains non-iterable number
 // Async Iterator Protocol Tests (TS2504)
 // =============================================================================
 
-/// Test that for-await-of with a non-async-iterable number type emits TS2504
+/// Test that for-await-of with a non-async-iterable number type emits an error.
+///
+/// The shared test-fixture lib chain loads only `es5.d.ts` + the es2015 lib
+/// set, so `AsyncIterator`/`AsyncIterable` are not in scope. Matching tsc,
+/// tsz falls back to the ES5-style "not an array type or a string type"
+/// check and emits TS2495 rather than TS2504 in this configuration.
 #[test]
-fn test_async_iterator_for_await_of_number_emits_ts2504() {
+fn test_async_iterator_for_await_of_number_emits_ts2495_without_asynciter_lib() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
@@ -31930,14 +31935,14 @@ async function test() {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let ts2504_count = codes
+    let ts2495_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR)
+        .filter(|&&c| c == diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE)
         .count();
 
     assert_eq!(
-        ts2504_count, 1,
-        "Expected 1 TS2504 error for for-await-of on number. All codes: {codes:?}"
+        ts2495_count, 1,
+        "Expected 1 TS2495 error for for-await-of on number (AsyncIterator lib missing). All codes: {codes:?}"
     );
 }
 
@@ -31991,7 +31996,7 @@ async function test() {
 
 /// Test that for-await-of with a boolean type emits TS2504
 #[test]
-fn test_async_iterator_for_await_of_boolean_emits_ts2504() {
+fn test_async_iterator_for_await_of_boolean_emits_ts2495_without_asynciter_lib() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
@@ -32026,20 +32031,23 @@ async function test() {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let ts2504_count = codes
+    let ts2495_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR)
+        .filter(|&&c| c == diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE)
         .count();
 
     assert_eq!(
-        ts2504_count, 1,
-        "Expected 1 TS2504 error for for-await-of on boolean. All codes: {codes:?}"
+        ts2495_count, 1,
+        "Expected 1 TS2495 error for for-await-of on boolean (AsyncIterator lib missing). All codes: {codes:?}"
     );
 }
 
-/// Test that for-await-of with an object type (non-iterable) emits TS2504
+/// Test that for-await-of with an object type (non-iterable) emits an error.
+///
+/// With only the es5/es2015 lib set loaded, `AsyncIterator`/`AsyncIterable`
+/// aren't available, so tsc (and now tsz) emit TS2495 rather than TS2504.
 #[test]
-fn test_async_iterator_for_await_of_object_emits_ts2504() {
+fn test_async_iterator_for_await_of_object_emits_ts2495_without_asynciter_lib() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
@@ -32074,14 +32082,14 @@ async function test() {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    let ts2504_count = codes
+    let ts2495_count = codes
         .iter()
-        .filter(|&&c| c == diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR)
+        .filter(|&&c| c == diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE)
         .count();
 
     assert_eq!(
-        ts2504_count, 1,
-        "Expected 1 TS2504 error for for-await-of on object. All codes: {codes:?}"
+        ts2495_count, 1,
+        "Expected 1 TS2495 error for for-await-of on object (AsyncIterator lib missing). All codes: {codes:?}"
     );
 }
 
