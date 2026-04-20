@@ -250,6 +250,12 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // literal as `x`'s children. Handles patterns like
                     // `var b; b = { foo: function() {} }`.
                     self.apply_identifier_object_assignments(&sf.statements.nodes, &mut symbols);
+                    // Walk top-level expression statements for named
+                    // class expressions nested inside call arguments
+                    // (e.g. `console.log(class Foo {})`). tsc surfaces
+                    // each named class/function expression as a
+                    // top-level nav entry regardless of nesting depth.
+                    self.apply_nested_named_expressions(&sf.statements.nodes, &mut symbols);
                     // Multiple `namespace A {}` / `namespace A.B {}`
                     // declarations merge into a single nested nav
                     // entry (matches tsc's `mergeChildren`).
@@ -1584,6 +1590,93 @@ impl<'a> DocumentSymbolProvider<'a> {
     /// members as children of the matching var / const entry. Skips
     /// owners that already have children (from an initializer or an
     /// expando promotion).
+    /// Walk top-level expression statements for named class / function
+    /// expressions at any nesting depth (most commonly inside call
+    /// arguments like `console.log(class Foo {})`). Each named class /
+    /// function expression becomes a top-level nav entry matching
+    /// tsc's behavior in `navigationBarAnonymousClassAndFunctionExpressions2`.
+    fn apply_nested_named_expressions(
+        &self,
+        statements: &[NodeIndex],
+        symbols: &mut Vec<DocumentSymbol>,
+    ) {
+        fn walk(
+            provider: &DocumentSymbolProvider,
+            expr_idx: NodeIndex,
+            out: &mut Vec<DocumentSymbol>,
+        ) {
+            if expr_idx.is_none() {
+                return;
+            }
+            let Some(node) = provider.arena.get(expr_idx) else {
+                return;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::CLASS_EXPRESSION => {
+                    // Only named class expressions surface; anonymous
+                    // ones are skipped (expected behavior per tsc).
+                    if let Some(class) = provider.arena.get_class(node)
+                        && !class.name.is_none()
+                        && let Some(name) = provider.get_name(class.name)
+                    {
+                        let range = node_range(
+                            provider.arena,
+                            provider.line_map,
+                            provider.source_text,
+                            expr_idx,
+                        );
+                        let selection_range = node_range(
+                            provider.arena,
+                            provider.line_map,
+                            provider.source_text,
+                            class.name,
+                        );
+                        let mut children = Vec::new();
+                        for &member in &class.members.nodes {
+                            children.extend(provider.collect_symbols(member, Some(&name)));
+                        }
+                        out.push(DocumentSymbol {
+                            name,
+                            detail: None,
+                            kind: SymbolKind::Class,
+                            kind_modifiers: String::new(),
+                            range,
+                            selection_range,
+                            container_name: None,
+                            children,
+                        });
+                    }
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    let Some(call) = provider.arena.get_call_expr(node) else {
+                        return;
+                    };
+                    walk(provider, call.expression, out);
+                    if let Some(args) = call.arguments.as_ref() {
+                        for &arg in &args.nodes {
+                            walk(provider, arg, out);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut new_entries = Vec::new();
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(exp_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            walk(self, exp_stmt.expression, &mut new_entries);
+        }
+        symbols.extend(new_entries);
+    }
+
     fn apply_identifier_object_assignments(
         &self,
         statements: &[NodeIndex],
