@@ -104,10 +104,6 @@ name = "ts1254_ambient_const_tests"
 path = "tests/ts1254_ambient_const_tests.rs"
 
 [[test]]
-name = "conformance_issues"
-path = "tests/conformance_issues.rs"
-
-[[test]]
 name = "binding_pattern_inference_tests"
 path = "tests/binding_pattern_inference_tests.rs"
 
@@ -150,6 +146,14 @@ path = "tests/type_arg_count_mismatch_tests.rs"
 [[test]]
 name = "commonjs_module_export_alias_tests"
 path = "tests/commonjs_module_export_alias_tests.rs"
+
+[[test]]
+name = "conformance_issues"
+path = "tests/conformance_issues.rs"
+
+[[test]]
+name = "export_equals_display_order_tests"
+path = "tests/export_equals_display_order_tests.rs"
 
 [[test]]
 name = "commonjs_require_value_tests"

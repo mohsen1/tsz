@@ -356,6 +356,10 @@ pub(crate) fn object_shape_for_type(
     tsz_solver::type_queries::get_object_shape(db, type_id)
 }
 
+pub(crate) fn normalize_display_property_order(props: &mut [tsz_solver::PropertyInfo]) {
+    tsz_solver::normalize_display_property_order(props)
+}
+
 pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_array_element_type(db, type_id)
 }
