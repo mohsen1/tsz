@@ -749,9 +749,31 @@ impl<'a> CheckerState<'a> {
 
         if object_type == TypeId::ERROR
             || index_type == TypeId::ERROR
-            || object_type == TypeId::ANY
             || index_type == TypeId::NEVER
         {
+            return;
+        }
+
+        // For `any[boolean]` and similar: even when the object is `any`, tsc still
+        // emits TS2538 for unconditionally-invalid index types (boolean, void, etc.).
+        if object_type == TypeId::ANY {
+            if let Some(invalid_member) =
+                crate::query_boundaries::common::get_invalid_index_type_member(
+                    self.ctx.types,
+                    index_type,
+                )
+            {
+                let index_type_str = self.format_type(invalid_member);
+                let message = format_message(
+                    diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                    &[&index_type_str],
+                );
+                self.error_at_node(
+                    data.index_type,
+                    &message,
+                    diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                );
+            }
             return;
         }
 
@@ -916,7 +938,7 @@ impl<'a> CheckerState<'a> {
                     &["any"],
                 );
                 self.error_at_node(
-                    error_anchor,
+                    concrete_error_anchor,
                     &message_2538,
                     diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                 );

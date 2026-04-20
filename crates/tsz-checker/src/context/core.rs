@@ -1132,7 +1132,13 @@ impl<'a> CheckerContext<'a> {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
             (hasher.finish() as u32, code)
-        } else if code == 2322 || code == 2411 || code == 2430 || code == 2536 || code == 4094 {
+        } else if code == 2322
+            || code == 2411
+            || code == 2430
+            || code == 2536
+            || code == 2538
+            || code == 4094
+        {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
