@@ -94,6 +94,9 @@ yarn.lock
 
 .env
 logs/
+!scripts/session/logs/
+scripts/session/logs/*.log
+scripts/session/logs/agent-pids.txt
 scripts/conformance/.tsc-cache
 
 # TSC conformance cache files (ignore generated, keep the committed one)
