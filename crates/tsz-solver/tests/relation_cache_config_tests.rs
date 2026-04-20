@@ -286,3 +286,71 @@ fn legacy_flag_constants_match_typed_bitflags() {
         RelationFlags::NO_ERASE_GENERICS.bits()
     );
 }
+
+// =============================================================================
+// 4. Hardening: lossy legacy helpers assert on invalid input in debug builds
+// =============================================================================
+
+#[test]
+fn from_checker_flags_u16_preserves_every_known_bit_verbatim() {
+    // The `u16`→typed bridge must be a pure widening for any bit the typed
+    // API knows about; it must never silently strip a bit a caller set.
+    let every_bit = RelationFlags::all();
+    assert!(
+        u32::from(u16::MAX) & every_bit.bits() == every_bit.bits(),
+        "all known RelationFlags bits must fit in u16",
+    );
+    let packed = every_bit.bits() as u16;
+    let config = RelationCacheConfig::from_checker_flags_u16(packed);
+    assert_eq!(
+        config.flags, every_bit,
+        "from_checker_flags_u16 must preserve every known bit",
+    );
+    assert_eq!(
+        config.any_mode,
+        CachedAnyMode::All,
+        "from_checker_flags_u16 must default any_mode to All",
+    );
+}
+
+#[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "debug_assert only fires in debug builds"
+)]
+#[should_panic(expected = "RelationFlags layout")]
+fn from_checker_flags_u16_panics_in_debug_on_unknown_bit() {
+    // An unknown high bit is almost certainly a caller bug (they packed a
+    // bit the typed API doesn't know about). We'd rather crash loudly in
+    // debug than silently return a config that partitions the cache wrong.
+    let stray = 1u16 << 15;
+    let _ = RelationCacheConfig::from_checker_flags_u16(stray);
+}
+
+#[test]
+#[cfg_attr(
+    not(debug_assertions),
+    ignore = "debug_assert only fires in debug builds"
+)]
+#[should_panic(expected = "out-of-range")]
+fn cached_any_mode_from_legacy_u8_panics_in_debug_on_invalid_value() {
+    // Only 0, 1, 2 are defined. Anything else would previously be silently
+    // mapped to `TopLevelOnlyNested`. Debug builds now assert so tests
+    // catch the miscoded caller.
+    let _ = CachedAnyMode::from_legacy_u8(5);
+}
+
+#[test]
+fn cached_any_mode_legacy_u8_roundtrip() {
+    for mode in [
+        CachedAnyMode::All,
+        CachedAnyMode::TopLevelOnlyAtTop,
+        CachedAnyMode::TopLevelOnlyNested,
+    ] {
+        assert_eq!(
+            CachedAnyMode::from_legacy_u8(mode.to_legacy_u8()),
+            mode,
+            "legacy u8 round-trip must be lossless for every defined variant",
+        );
+    }
+}
