@@ -1101,7 +1101,7 @@ impl<'a> CheckerState<'a> {
         // references before evaluation strips the name. The formatter handles Lazy types
         // by resolving to the definition name.
         if crate::query_boundaries::common::is_lazy_type(self.ctx.types, ty) {
-            return self.format_type_diagnostic(ty);
+            return self.format_type_diagnostic_widened(ty);
         }
 
         // For already-evaluated types, check if a type alias name can be recovered
@@ -1134,9 +1134,9 @@ impl<'a> CheckerState<'a> {
                         self.materialize_finite_mapped_type_for_display(member)
                     {
                         changed = true;
-                        self.format_type_diagnostic(materialized)
+                        self.format_type_diagnostic_widened(materialized)
                     } else {
-                        self.format_type_diagnostic(member)
+                        self.format_type_diagnostic_widened(member)
                     }
                 })
                 .collect();
@@ -1148,7 +1148,7 @@ impl<'a> CheckerState<'a> {
         let display_ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
-        self.format_type_diagnostic(display_ty)
+        self.format_type_diagnostic_widened(display_ty)
     }
 
     pub(in crate::error_reporter) fn format_extract_keyof_string_type(

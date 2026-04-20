@@ -1357,6 +1357,15 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
         }
+        let has_non_proto_missing = property_names.iter().any(|name| {
+            let s = self.ctx.types.resolve_atom_ref(*name);
+            !s.starts_with("__private_brand")
+                && if is_array_target {
+                    !is_object_prototype_method_for_array_target(&s)
+                } else {
+                    !is_object_prototype_method(&s)
+                }
+        });
         let filtered_names: Vec<_> = property_names
             .iter()
             .filter(|name| {
@@ -1366,6 +1375,8 @@ impl<'a> CheckerState<'a> {
                 }
                 if is_array_target {
                     !is_object_prototype_method_for_array_target(&s)
+                } else if has_non_proto_missing && &*s == "toLocaleString" {
+                    true
                 } else {
                     !is_object_prototype_method(&s)
                 }
