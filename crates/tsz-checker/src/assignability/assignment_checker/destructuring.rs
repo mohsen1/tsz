@@ -389,11 +389,20 @@ impl<'a> CheckerState<'a> {
         // Compute the rest type: source minus named properties
         let rest_type = self.omit_properties_from_type(source_type, &named_properties);
 
-        // Check assignability
+        // Check assignability. Anchor the diagnostic at the rest target
+        // identifier exactly — tsc reports TS2322 at `notAssignable` in
+        // `({ b, ...notAssignable } = o)`, not at the enclosing binary
+        // assignment expression. Using the plain `check_assignable_or_report`
+        // walks up to the assignment and anchors at its start (col 1 of `(`).
         self.ensure_relation_input_ready(rest_type);
         self.ensure_relation_input_ready(rest_target_type);
 
-        let _ = self.check_assignable_or_report(rest_type, rest_target_type, spread_expr);
+        let _ = self.check_assignable_or_report_at_exact_anchor(
+            rest_type,
+            rest_target_type,
+            spread_expr,
+            spread_expr,
+        );
     }
 
     /// TS2341/TS2445: Check private/protected accessibility for properties
