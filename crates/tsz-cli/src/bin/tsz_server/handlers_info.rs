@@ -64,6 +64,97 @@ fn symbol_kind_to_tsserver(
     }
 }
 
+/// Mirror tsc's navigationBar `isExternalModule` check (narrower than
+/// the binder's which also treats CommonJS indicators as making a
+/// file modular). For the nav entry's root label, tsc emits
+/// `"<file>"` module only when the file contains ES
+/// import/export/import.meta, or uses a module-only extension
+/// (.mts/.cts/.mjs/.cjs).
+fn is_es_module_for_navbar(
+    arena: &tsz::parser::node::NodeArena,
+    root: tsz::parser::NodeIndex,
+    file: &str,
+) -> bool {
+    use tsz::parser::syntax_kind_ext;
+    let lower = file.to_lowercase();
+    if lower.ends_with(".mts")
+        || lower.ends_with(".cts")
+        || lower.ends_with(".mjs")
+        || lower.ends_with(".cjs")
+    {
+        return true;
+    }
+    let Some(node) = arena.get(root) else {
+        return false;
+    };
+    let Some(sf) = arena.get_source_file(node) else {
+        return false;
+    };
+    for &stmt_idx in &sf.statements.nodes {
+        let Some(stmt) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if matches!(
+            stmt.kind,
+            k if k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+        ) {
+            return true;
+        }
+        // Top-level `export`-prefixed declaration also counts.
+        if has_export_modifier(arena, stmt_idx) {
+            return true;
+        }
+    }
+    false
+}
+
+fn has_export_modifier(
+    arena: &tsz::parser::node::NodeArena,
+    node_idx: tsz::parser::NodeIndex,
+) -> bool {
+    use tsz::parser::syntax_kind_ext;
+    use tsz_scanner::SyntaxKind;
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+    let modifiers = match node.kind {
+        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+            arena.get_function(node).and_then(|f| f.modifiers.as_ref())
+        }
+        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+            arena.get_class(node).and_then(|c| c.modifiers.as_ref())
+        }
+        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+            arena.get_interface(node).and_then(|i| i.modifiers.as_ref())
+        }
+        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => arena
+            .get_type_alias(node)
+            .and_then(|a| a.modifiers.as_ref()),
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            arena.get_enum(node).and_then(|e| e.modifiers.as_ref())
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+            arena.get_module(node).and_then(|m| m.modifiers.as_ref())
+        }
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+            arena.get_variable(node).and_then(|v| v.modifiers.as_ref())
+        }
+        _ => None,
+    };
+    let Some(mods) = modifiers else {
+        return false;
+    };
+    mods.nodes.iter().any(|&m_idx| {
+        arena
+            .get(m_idx)
+            .is_some_and(|m| m.kind == SyntaxKind::ExportKeyword as u16)
+    })
+}
+
 /// Mirror tsc's `escapeString(s, '"')` — replace control characters
 /// and backslash/double-quote with their JS escape sequences, and
 /// encode non-printable high chars as `\uNNNN`. Used on the filename
@@ -1934,8 +2025,15 @@ impl Server {
             })) {
                 return Some(native);
             }
-            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
-            let is_external_module = binder.is_external_module;
+            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            // tsc's navigationBar treats a file as "external module"
+            // only when it has ES module indicators (import/export
+            // statements). Binder's `is_external_module` additionally
+            // fires on CommonJS `exports.X` / `module.exports = …`,
+            // which makes the root render as `"<file>" module` even
+            // when tsc would emit `<global> script`. Compute a
+            // narrower check here.
+            let is_external_module = is_es_module_for_navbar(&arena, root, file);
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
             let mut symbols = provider.get_document_symbols(root);
@@ -2051,8 +2149,8 @@ impl Server {
             })) {
                 return Some(native);
             }
-            let (arena, binder, root, source_text) = self.parse_and_bind_file(file)?;
-            let is_external_module = binder.is_external_module;
+            let (arena, _binder, root, source_text) = self.parse_and_bind_file(file)?;
+            let is_external_module = is_es_module_for_navbar(&arena, root, file);
             let line_map = LineMap::build(&source_text);
             let provider = DocumentSymbolProvider::new(&arena, &line_map, &source_text);
             let mut symbols = provider.get_document_symbols(root);
