@@ -1235,6 +1235,24 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Like `is_export_type_only_across_binders` but only returns true when the
+    /// export uses `export type { ... }` syntax (where `is_type_only` is set on
+    /// the export symbol). Does NOT return true for plain type declarations like
+    /// `export type T = number`.
+    pub(crate) fn is_export_type_only_syntax_across_binders(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> bool {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.is_export_type_only_syntax_in_file(
+            self.ctx.current_file_idx,
+            module_specifier,
+            export_name,
+            &mut visited,
+        )
+    }
+
     /// Like `is_export_type_only_across_binders` but resolves the module specifier
     /// from a specific source file index. This is needed for cross-file namespace
     /// type construction where the module specifier is relative to the declaring
@@ -1697,6 +1715,116 @@ impl<'a> CheckerState<'a> {
                     export_name,
                     visited,
                 ) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Like `is_export_type_only_in_file` but only returns true when the export
+    /// uses explicit `export type { ... }` syntax (`is_type_only` flag) or goes
+    /// through a chain of type-only re-exports. Does NOT return true for plain
+    /// type declarations like `export type T = number` or `export interface I`.
+    fn is_export_type_only_syntax_in_file(
+        &self,
+        source_file_idx: usize,
+        module_specifier: &str,
+        export_name: &str,
+        visited: &mut rustc_hash::FxHashSet<(usize, String)>,
+    ) -> bool {
+        let Some(target_file_idx) = self
+            .ctx
+            .resolve_import_target_from_file(source_file_idx, module_specifier)
+        else {
+            return false;
+        };
+
+        let key = (target_file_idx, export_name.to_string());
+        if !visited.insert(key) {
+            return false;
+        }
+
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(target_file_name) = target_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+        else {
+            return false;
+        };
+
+        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+            && let Some(sym_id) = exports_table.get(export_name)
+        {
+            let sym_opt = target_binder
+                .get_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id));
+            if let Some(sym) = sym_opt {
+                if sym.is_type_only {
+                    let has_value_flags = sym.flags & symbol_flags::ALIAS != 0
+                        && sym.flags & symbol_flags::VALUE != 0;
+                    let has_value_partner = target_binder
+                        .alias_partners
+                        .get(&sym_id)
+                        .or_else(|| self.ctx.binder.alias_partners.get(&sym_id))
+                        .is_some();
+                    if !has_value_flags && !has_value_partner {
+                        return true;
+                    }
+                }
+
+                if sym.flags & symbol_flags::ALIAS != 0
+                    && let Some(ref import_module) = sym.import_module
+                {
+                    let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
+                    if self.is_export_type_only_syntax_in_file(
+                        target_file_idx,
+                        import_module,
+                        import_name,
+                        visited,
+                    ) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
+        if let Some(file_reexports) = target_binder.reexports.get(&target_file_name)
+            && let Some((source_module, original_name)) = file_reexports.get(export_name)
+        {
+            let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
+            return self.is_export_type_only_syntax_in_file(
+                target_file_idx,
+                source_module,
+                name_to_lookup,
+                visited,
+            );
+        }
+
+        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+            let source_type_only_flags = target_binder
+                .wildcard_reexports_type_only
+                .get(&target_file_name);
+
+            for (i, source_module) in source_modules.iter().enumerate() {
+                let source_is_type_only = source_type_only_flags
+                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
+                    .unwrap_or(false);
+                if source_is_type_only
+                    && self.name_exists_in_module_exports(
+                        target_file_idx,
+                        source_module,
+                        export_name,
+                        visited,
+                    )
+                {
                     return true;
                 }
             }
