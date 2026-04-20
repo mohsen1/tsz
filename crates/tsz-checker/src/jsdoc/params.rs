@@ -2197,6 +2197,46 @@ impl<'a> CheckerState<'a> {
             let leading_ws = rest.len() - trimmed.len();
             let brace_rel = template_start + "@template".len() + leading_ws;
             let after_brace = &trimmed[1..];
+
+            // tsc accepts `@template {Constraint} Name` as a type parameter
+            // with a constraint (equivalent to `Name extends Constraint`).
+            // Detect that form by finding the matching close-brace and
+            // checking whether an identifier follows it (after whitespace).
+            // If so, this is valid JSDoc syntax — skip.
+            let balanced_close_brace_offset = |s: &str| -> Option<usize> {
+                let mut depth: i32 = 1;
+                for (i, ch) in s.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some(i);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            };
+            if let Some(close_rel) = balanced_close_brace_offset(after_brace) {
+                let after_close = &after_brace[close_rel + 1..];
+                let ws_len = after_close
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .map(|c| c.len_utf8())
+                    .sum::<usize>();
+                let ident_rest = &after_close[ws_len..];
+                let has_ident = ident_rest
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c == '_' || c == '$' || c.is_ascii_alphabetic());
+                if has_ident {
+                    scan_start = brace_rel + 1 + close_rel + 1;
+                    continue;
+                }
+            }
+
             let name_len = after_brace
                 .chars()
                 .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
