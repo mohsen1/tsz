@@ -187,14 +187,34 @@ impl<'a> CheckerState<'a> {
                 && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
                 && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
             {
-                self.error_at_node(
-                    access.name_or_argument,
-                    &format!(
-                        "Property '{}' is used before its initialization.",
-                        name_ident.escaped_text
-                    ),
-                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
-                );
+                // Methods are hoisted — skip TS2729 for method members.
+                let member_is_method = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .and_then(|base_sym| {
+                        let member_name = &name_ident.escaped_text;
+                        let member_sym_id = base_sym
+                            .exports
+                            .as_ref()
+                            .and_then(|e| e.get(member_name))
+                            .or_else(|| {
+                                base_sym.members.as_ref().and_then(|m| m.get(member_name))
+                            })?;
+                        let member_sym = self.ctx.binder.get_symbol(member_sym_id)?;
+                        Some(member_sym.flags & tsz_binder::symbol_flags::METHOD != 0)
+                    })
+                    .unwrap_or(false);
+                if !member_is_method {
+                    self.error_at_node(
+                        access.name_or_argument,
+                        &format!(
+                            "Property '{}' is used before its initialization.",
+                            name_ident.escaped_text
+                        ),
+                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+                    );
+                }
             }
 
             // Note: tsc does NOT emit TS2538 for TDZ variables in computed properties.
