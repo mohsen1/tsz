@@ -1274,7 +1274,16 @@ impl<'a> CheckerState<'a> {
                 // types are preserved in the error message.
                 let (left_display, right_display) =
                     self.widen_for_ts2367_cross_family_display(left_narrow, right_narrow);
-                let (left_str, right_str) = self.format_type_pair(left_display, right_display);
+                // tsc shows unique symbols as `typeof varName` in comparison overlap errors
+                // (distinct from index-type errors like TS2538/TS7053 where it uses `unique symbol`).
+                let left_str = self.format_type_for_ts2367_display(left_display);
+                let right_str = self.format_type_for_ts2367_display(right_display);
+                let (left_str, right_str) = if left_str == right_str {
+                    // Fall back to disambiguated pair formatting when names collide
+                    self.format_type_pair(left_display, right_display)
+                } else {
+                    (left_str, right_str)
+                };
                 let message = format_message(
                     diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
                     &[&left_str, &right_str],

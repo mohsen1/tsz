@@ -1066,14 +1066,7 @@ impl<'a> TypeFormatter<'a> {
             TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)).into(),
             // NoInfer<T> is transparent in error messages - tsc displays just T
             TypeData::NoInfer(inner) => self.format(*inner),
-            TypeData::UniqueSymbol(sym_ref) => {
-                // tsc always displays unique symbols as `typeof varName`, never as `unique symbol`
-                if let Some(name) = self.resolve_symbol_ref_name(*sym_ref) {
-                    Cow::Owned(format!("typeof {name}"))
-                } else {
-                    Cow::Borrowed("unique symbol")
-                }
-            }
+            TypeData::UniqueSymbol(_) => Cow::Borrowed("unique symbol"),
             TypeData::Infer(info) => format!("infer {}", self.atom(info.name)).into(),
             TypeData::ThisType => Cow::Borrowed("this"),
             TypeData::StringIntrinsic { kind, type_arg } => {
