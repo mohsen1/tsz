@@ -88,6 +88,10 @@ pub struct TypeFormatter<'a> {
     /// Set of Application `TypeIds` currently being formatted via `display_alias`.
     /// Prevents infinite recursion when a `display_alias` chain forms a cycle.
     display_alias_visiting: FxHashSet<TypeId>,
+    /// Set of `TypeId`s currently on the formatter's recursion stack. Used to
+    /// elide self-referential composite types with `...`, mirroring tsc's
+    /// `canPossiblyExpandType` cycle detection.
+    format_visiting: FxHashSet<TypeId>,
     /// When true, preserve `Array<T>` generic syntax instead of `T[]` shorthand.
     /// tsc preserves the declared form in type-parameter constraints.
     pub(crate) preserve_array_generic_form: bool,
@@ -119,6 +123,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_optional_property_surface_syntax: false,
             use_display_properties: false,
             display_alias_visiting: FxHashSet::default(),
+            format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
@@ -146,6 +151,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_optional_property_surface_syntax: false,
             use_display_properties: false,
             display_alias_visiting: FxHashSet::default(),
+            format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
@@ -315,6 +321,9 @@ impl<'a> TypeFormatter<'a> {
     /// Returns `Cow::Borrowed` for static type names (e.g., `"never"`, `"any"`)
     /// and `Cow::Owned` for dynamically formatted types.
     pub fn format(&mut self, type_id: TypeId) -> Cow<'static, str> {
+        if self.format_visiting.contains(&type_id) {
+            return Cow::Borrowed("...");
+        }
         if self.current_depth >= self.max_depth {
             // tsc elides deep object branches as `{ ...; }` rather than raw `...`.
             if matches!(
@@ -577,7 +586,11 @@ impl<'a> TypeFormatter<'a> {
         }
 
         self.current_depth += 1;
+        let inserted_visiting = self.format_visiting.insert(type_id);
         let result = self.format_key(type_id, &key);
+        if inserted_visiting {
+            self.format_visiting.remove(&type_id);
+        }
         self.current_depth -= 1;
         result
     }
