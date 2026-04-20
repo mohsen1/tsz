@@ -915,10 +915,8 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                     &["any"],
                 );
-                // tsc anchors TS2538 at the index expression (e.g. `any` in `Shape[any]`),
-                // not the full indexed access node.
                 self.error_at_node(
-                    concrete_error_anchor,
+                    error_anchor,
                     &message_2538,
                     diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                 );
@@ -1741,6 +1739,22 @@ impl<'a> CheckerState<'a> {
             }
             let mut emitted_any = false;
             for &member in members.iter() {
+                if member == TypeId::BOOLEAN {
+                    for boolean_member in ["false", "true"] {
+                        let message = format_message(
+                            diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                            &[boolean_member],
+                        );
+                        self.error_at_node(
+                            error_anchor,
+                            &message,
+                            diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        );
+                    }
+                    emitted_any = true;
+                    continue;
+                }
+
                 emitted_any |= self.try_emit_concrete_index_access_error(
                     error_anchor,
                     concrete_object_type,
