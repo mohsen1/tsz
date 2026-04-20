@@ -1811,6 +1811,12 @@ impl<'a> CheckerState<'a> {
     /// tsc reports TS18013 with the class that **declares** the private member,
     /// not the class of the object being accessed. For example, if `#prop` is
     /// declared in `Base` and `x: Derived`, the error should say "outside class 'Base'".
+    ///
+    /// Unlike other class-name queries, TS18013 uses the literal syntactic
+    /// class name: a class expression like `const C = class { #x; }` reports
+    /// the declaring class as `"(anonymous)"`, not as the inferred variable
+    /// name `C`. This matches tsc's `getTextOfPropertyName` + declaration
+    /// lookup behavior.
     pub(crate) fn get_declaring_class_name_for_private_member(
         &self,
         object_type: TypeId,
@@ -1822,7 +1828,7 @@ impl<'a> CheckerState<'a> {
 
         while visited.insert(current) {
             if self.class_directly_declares_member(current, member_name) {
-                return Some(self.get_class_name_from_decl(current));
+                return Some(self.get_syntactic_class_name_or_anonymous(current));
             }
             match self.get_base_class_idx(current) {
                 Some(base) => current = base,
@@ -1831,7 +1837,26 @@ impl<'a> CheckerState<'a> {
         }
 
         // Fallback: use the object type's own class name
-        Some(self.get_class_name_from_decl(class_idx))
+        Some(self.get_syntactic_class_name_or_anonymous(class_idx))
+    }
+
+    /// Return the class's syntactic name, or `"(anonymous)"` if the class
+    /// expression has no name. Unlike `get_bound_class_name_from_decl`, this
+    /// does NOT fall back to an enclosing VariableDeclaration name — tsc
+    /// uses this stricter form for TS18013 messages.
+    fn get_syntactic_class_name_or_anonymous(&self, class_idx: NodeIndex) -> String {
+        self.ctx
+            .arena
+            .get(class_idx)
+            .and_then(|node| self.ctx.arena.get_class(node))
+            .and_then(|class| {
+                self.ctx
+                    .arena
+                    .get(class.name)
+                    .and_then(|n| self.ctx.arena.get_identifier(n))
+                    .map(|ident| ident.escaped_text.clone())
+            })
+            .unwrap_or_else(|| "(anonymous)".to_string())
     }
 
     pub(crate) fn get_private_identifier_declaring_class_name(
@@ -1840,8 +1865,18 @@ impl<'a> CheckerState<'a> {
         object_expr: NodeIndex,
         member_name: &str,
     ) -> String {
-        self.get_declaring_class_name_for_private_member(object_type, member_name)
-            .or_else(|| self.get_class_name_from_expression(object_expr))
+        // If we can resolve the object's class declaration, prefer the
+        // syntactic class name (or "(anonymous)" for unnamed class
+        // expressions) over heuristic fallbacks. The receiver-expression
+        // fallback infers from variable binders / new-expression chains,
+        // which would substitute an enclosing `const C = class {…}`
+        // variable name for TS18013 — tsc uses the strict syntactic name.
+        if let Some(name) =
+            self.get_declaring_class_name_for_private_member(object_type, member_name)
+        {
+            return name;
+        }
+        self.get_class_name_from_expression(object_expr)
             .or_else(|| {
                 let fallback = self.format_type_diagnostic(object_type);
                 fallback
