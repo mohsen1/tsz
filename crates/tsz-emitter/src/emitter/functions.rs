@@ -857,14 +857,20 @@ impl<'a> Printer<'a> {
                     if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                         && let Some(text) = self.source_text
                     {
-                        let name_text = crate::safe_slice::slice_or_empty(
+                        // safe_slice: C → migrated. The "this" parameter must
+                        // be skipped; a silent empty fallback would let it
+                        // through and corrupt the parameter list. On a bad
+                        // span we conservatively keep the parameter (don't
+                        // continue) but log via tracing::debug! so the bug
+                        // surfaces in dev rather than malformed output.
+                        if let Ok(name_text) = crate::safe_slice::slice(
                             text,
                             name_node.pos as usize,
                             name_node.end as usize,
-                        )
-                        .trim();
-                        if name_text == "this" {
-                            continue;
+                        ) {
+                            if name_text.trim() == "this" {
+                                continue;
+                            }
                         }
                     }
                 }
@@ -1144,13 +1150,11 @@ impl<'a> Printer<'a> {
 
         // Recovery path: malformed parameter names like `yield`/`await`
         // can be parsed as expressions. Preserve original text for JS parity.
-        if let Some(source) = self.source_text {
-            let text = crate::safe_slice::slice_or_empty(
-                source,
-                name_node.pos as usize,
-                name_node.end as usize,
-            )
-            .trim();
+        if let Some(source) = self.source_text
+            && let Ok(raw) =
+                crate::safe_slice::slice(source, name_node.pos as usize, name_node.end as usize)
+        {
+            let text = raw.trim();
             if !text.is_empty() {
                 self.write(text);
                 return;

@@ -300,12 +300,19 @@ impl<'a> Printer<'a> {
                 let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
                     lit.text == "use strict"
                 } else if let Some(text) = self.source_text {
-                    let s = crate::safe_slice::slice_or_empty(
+                    // safe_slice: B (decision-affecting). On a bad span we
+                    // treat the directive as not "use strict", which makes us
+                    // emit a duplicate rather than silently drop a directive
+                    // — the safer of the two failure modes. The fallible API
+                    // surfaces span errors via tracing::debug! for diagnosis.
+                    match crate::safe_slice::slice(
                         text,
                         expr_node.pos as usize,
                         expr_node.end as usize,
-                    );
-                    s == "\"use strict\"" || s == "'use strict'"
+                    ) {
+                        Ok(s) => s == "\"use strict\"" || s == "'use strict'",
+                        Err(_) => false,
+                    }
                 } else {
                     false
                 };

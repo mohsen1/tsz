@@ -1,13 +1,20 @@
 //! Safe string slice utilities that never panic.
 //!
-//! The public API is fallible: callers must decide how to handle an invalid
-//! slice request (out-of-bounds index, reversed range, or non-UTF-8 boundary).
-//! Returning an empty string silently hides emitter span bugs, so the main
-//! entry point surfaces a structured [`SliceError`] instead.
+//! The single entry point is the fallible [`slice`], which returns a
+//! structured [`SliceError`] when the range is invalid. Callers must decide
+//! how to handle an invalid slice request — there is no silent empty-string
+//! fallback in the public API.
 //!
-//! A [`slice_or_empty`] compatibility shim is kept temporarily for call sites
-//! where the historical "empty on invalid" behavior is still deliberate. It
-//! should be removed once every call site has been audited.
+//! Historical context: an earlier version exposed `slice_or_empty` that
+//! swallowed every invalid request into `""`. That hid emitter span bugs, so
+//! it was removed once every call site was audited and migrated. If a caller
+//! genuinely needs the old semantics, the intent must be visible at the call
+//! site:
+//!
+//! ```ignore
+//! // Make the empty fallback explicit at the call site.
+//! let text = safe_slice::slice(src, start, end).unwrap_or("");
+//! ```
 
 use tracing::debug;
 
@@ -83,19 +90,6 @@ pub fn slice(s: &str, start: usize, end: usize) -> Result<&str, SliceError> {
     }
 
     Ok(&s[start..end])
-}
-
-/// Compatibility shim that returns `""` when [`slice`] would fail.
-///
-/// This preserves the historical "silent empty on invalid" behavior for call
-/// sites where an empty fallback is intentional (e.g., best-effort comment
-/// text extraction where a bad span should simply skip the comment).
-///
-/// New code should call [`slice`] directly and handle [`SliceError`].
-///
-/// TODO(`safe_slice`): remove once every emitter call site has been audited.
-pub fn slice_or_empty(s: &str, start: usize, end: usize) -> &str {
-    slice(s, start, end).unwrap_or("")
 }
 
 #[cfg(test)]

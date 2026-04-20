@@ -730,9 +730,10 @@ impl<'a> Printer<'a> {
             let c = &self.all_comments[scan_idx];
             if c.pos >= from_pos && c.end <= to_pos {
                 // Found a comment in our range - emit it
-                let comment_text = safe_slice::slice_or_empty(text, c.pos as usize, c.end as usize);
                 let has_trailing_new_line = c.has_trailing_new_line;
-                if !comment_text.is_empty() {
+                if let Ok(comment_text) = safe_slice::slice(text, c.pos as usize, c.end as usize)
+                    && !comment_text.is_empty()
+                {
                     self.write_comment_with_reindent(comment_text, Some(c.pos));
                     if has_trailing_new_line {
                         self.write_line();
