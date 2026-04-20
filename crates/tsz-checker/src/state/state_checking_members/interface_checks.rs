@@ -52,8 +52,14 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // NOTE: TSC does NOT emit TS1212 for interface declaration names.
-        // e.g. `interface interface {}` gets TS1438 only, not TS1212.
+        // TS1212: tsc emits "Identifier expected. '<name>' is a reserved word
+        // in strict mode" for interface names that are strict-mode reserved
+        // words like `public`, `private`, `protected`, `implements`, etc.
+        // (Distinct from `interface interface {}`, where the name is a hard
+        // keyword and tsc emits grammar errors like TS1438.)
+        if iface.name.is_some() {
+            self.check_strict_mode_reserved_name_at(iface.name, iface.name);
+        }
 
         // Check for circular inheritance (TS2310)
         // Must be done before resolving types to avoid infinite recursion
