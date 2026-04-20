@@ -66,7 +66,13 @@ impl<'a> CheckerState<'a> {
                     // initializer, base construction already ran and
                     // `this.x` sees the base value — not an error. Matches
                     // tsc's behavior for `class D extends C { old_x = this.x; x = 1 }`.
-                    if self.ancestor_class_initializes_property(&name) {
+                    //
+                    // Exception: when `useDefineForClassFields` is true and the
+                    // current class redeclares the property WITHOUT an initializer,
+                    // `Object.defineProperty` overwrites the base's value with
+                    // `undefined`. The ancestor's initializer no longer applies.
+                    let redeclared_without_init = use_define && target.has_no_initializer;
+                    if !redeclared_without_init && self.ancestor_class_initializes_property(&name) {
                         continue;
                     }
                     self.error_at_node(
