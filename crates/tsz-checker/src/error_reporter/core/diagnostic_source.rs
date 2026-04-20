@@ -631,6 +631,26 @@ impl<'a> CheckerState<'a> {
         if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
             return format!("typeof import(\"{module_name}\")");
         }
+        let application_display = crate::query_boundaries::common::type_application(
+            self.ctx.types,
+            ty,
+        )
+        .map(|_| ty)
+        .or_else(|| {
+            self.ctx.types.get_display_alias(ty).filter(|&alias| {
+                crate::query_boundaries::common::type_application(self.ctx.types, alias).is_some()
+            })
+        });
+        if let Some(application_display) = application_display {
+            let display_ty =
+                self.normalize_property_receiver_application_display_type(application_display);
+            let mut formatter = self
+                .ctx
+                .create_diagnostic_type_formatter()
+                .with_display_properties()
+                .with_skip_application_alias_names();
+            return formatter.format(display_ty).into_owned();
+        }
         let has_object_shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();
         let has_def = self.ctx.definition_store.find_def_for_type(ty).is_some();

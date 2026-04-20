@@ -232,6 +232,111 @@ let p: Passport = passport.use();
 }
 
 #[test]
+fn test_keyof_array_elaboration_reports_only_invalid_literal_element() {
+    let source = r#"
+function foo<T extends { a: string, b: string }>() {
+    let b: (keyof T)[] = ["a", "b", "c"];
+}
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only one TS2322 for the invalid array element.\nActual: {diagnostics:#?}"
+    );
+
+    let expected_start = source.find("\"c\"").expect("expected c literal") as u32;
+    assert_eq!(
+        ts2322[0].start,
+        expected_start,
+        "Expected TS2322 to anchor at the invalid \"c\" element.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        ts2322[0]
+            .message_text
+            .contains("Type 'string' is not assignable to type 'keyof T'"),
+        "Expected widened keyof-target TS2322 text.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_property_receiver_display_widens_fresh_object_application_args() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+declare function pick<T, K extends keyof T>(obj: T, propNames: K[]): MyPick<T, K>;
+
+const x = pick({ a: 10, b: 20, c: 30 }, ["a", "c"]);
+x.b;
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339 for the missing property access.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    let message = diagnostic_message(&diagnostics, 2339).expect("expected TS2339");
+    assert_eq!(
+        message,
+        "Property 'b' does not exist on type 'MyPick<{ a: number; b: number; c: number; }, \"a\" | \"c\">'."
+    );
+}
+
+#[test]
+fn test_property_receiver_display_preserves_annotated_application_literals() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+
+declare const x: MyPick<{ a: 10; b: 20; c: 30 }, "a" | "c">;
+x.b;
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339 for the annotated missing property access.\nActual diagnostics: {diagnostics:#?}"
+    );
+
+    let message = diagnostic_message(&diagnostics, 2339).expect("expected TS2339");
+    assert_eq!(
+        message,
+        "Property 'b' does not exist on type 'MyPick<{ a: 10; b: 20; c: 30; }, \"a\" | \"c\">'."
+    );
+}
+
+#[test]
 fn test_cross_binder_symbol_id_collision_emits_ts2322_for_this_return() {
     let passport_dts = r#"
 declare module 'passport' {
