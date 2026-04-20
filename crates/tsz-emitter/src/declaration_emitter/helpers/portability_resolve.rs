@@ -1022,8 +1022,8 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         let Some(exports) = pkg_json.get("exports") else {
-            // No exports field: do not assume the subpath is public here.
-            return false;
+            // No exports field: all subpaths are accessible (CommonJS-style package).
+            return true;
         };
 
         let export_subpath = format!("./{subpath}");
@@ -1493,15 +1493,15 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     let pkg_json_path = package_root.join("package.json");
                     if let Ok(pkg_content) = std::fs::read_to_string(&pkg_json_path)
-                        && let Ok(_pkg_json) =
+                        && let Ok(pkg_json) =
                             serde_json::from_str::<serde_json::Value>(&pkg_content)
                     {
-                        // If the package has no "exports" field, all subpaths
-                        // are accessible via standard Node.js resolution
-                        // (pre-exports behaviour).  This applies even when the
-                        // package root is a symlink (e.g. workspace deps hoisted
-                        // by a package manager), because without an "exports"
-                        // restriction Node.js will resolve any subpath.
+                        // No `exports` field: all subpaths are directly importable
+                        // (pre-exports Node.js behaviour). No portability concern.
+                        if pkg_json.get("exports").is_none() {
+                            return None;
+                        }
+
                         // Before flagging as non-portable, check whether the
                         // symbol is re-exported from a module that IS accessible
                         // through the package's exports map.  If so, the type
