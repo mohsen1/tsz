@@ -209,11 +209,9 @@ impl<'a> CheckerState<'a> {
                     // declare module "..." -- NOT a pure namespace
                     return false;
                 }
-                // Identifier-named module declaration. Only treat as "ambient
-                // namespace" when the namespace itself is in an ambient
-                // context (declare-prefixed or inside a .d.ts file). A regular
-                // `namespace N { ... }` produces runtime code and its members
-                // still participate in TS2395 export/local consistency checks.
+                // Found an identifier-named module declaration (namespace).
+                // Only count it as "ambient" if it has the `declare` keyword or
+                // is in an ambient context (.d.ts / global declare block).
                 if self.ctx.arena.is_in_ambient_context(parent) {
                     found_ambient_namespace = true;
                 }
