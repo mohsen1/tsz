@@ -1,1775 +1,1006 @@
 use super::*;
-/// Null and undefined handling
+use crate::TypeInterner;
+use crate::def::DefId;
+use crate::{SubtypeChecker, TypeSubstitution, instantiate_type};
+/// Test distributive conditional over intersection type.
+///
+/// `(string & { length: number }) extends string ? true : false`
+/// The intersection should extend string, so result is true.
 #[test]
-fn test_null_undefined_extends() {
+fn test_conditional_intersection_check_type() {
     let interner = TypeInterner::new();
 
-    // null extends null
-    let cond_null = ConditionalType {
-        check_type: TypeId::NULL,
-        extends_type: TypeId::NULL,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
-        is_distributive: false,
-    };
-    assert_eq!(
-        evaluate_conditional(&interner, &cond_null),
-        interner.literal_boolean(true)
-    );
+    let lit_true = interner.literal_boolean(true);
+    let lit_false = interner.literal_boolean(false);
 
-    // undefined extends undefined
-    let cond_undef = ConditionalType {
-        check_type: TypeId::UNDEFINED,
-        extends_type: TypeId::UNDEFINED,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
-        is_distributive: false,
-    };
-    assert_eq!(
-        evaluate_conditional(&interner, &cond_undef),
-        interner.literal_boolean(true)
-    );
+    // Create intersection: string & { length: number }
+    let length_name = interner.intern_string("length");
+    let length_obj = interner.object(vec![PropertyInfo::new(length_name, TypeId::NUMBER)]);
+    let string_intersection = interner.intersection(vec![TypeId::STRING, length_obj]);
 
-    // null doesn't extend undefined
-    let cond_null_undef = ConditionalType {
-        check_type: TypeId::NULL,
-        extends_type: TypeId::UNDEFINED,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
-        is_distributive: false,
-    };
-    assert_eq!(
-        evaluate_conditional(&interner, &cond_null_undef),
-        interner.literal_boolean(false)
-    );
-}
-
-/// Void and undefined relationship
-#[test]
-fn test_void_undefined_relationship() {
-    let interner = TypeInterner::new();
-
-    // undefined extends void
+    // (string & { length: number }) extends string ? true : false
     let cond = ConditionalType {
-        check_type: TypeId::UNDEFINED,
-        extends_type: TypeId::VOID,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
+        check_type: string_intersection,
+        extends_type: TypeId::STRING,
+        true_type: lit_true,
+        false_type: lit_false,
         is_distributive: false,
     };
 
     let result = evaluate_conditional(&interner, &cond);
-    assert_eq!(result, interner.literal_boolean(true));
+
+    // string & {...} extends string should be true (intersection is more specific)
+    assert_eq!(
+        result, lit_true,
+        "string intersection extends string should be true"
+    );
 }
 
-/// Never is bottom type
+/// Test conditional with `never` as check type (non-distributive).
+///
+/// `never extends T ? A : B` should be `never` when distributive is false
+/// and check type is exactly `never`.
 #[test]
-fn test_never_bottom_type() {
+fn test_conditional_never_check_type_non_distributive() {
     let interner = TypeInterner::new();
 
-    // never extends any type
-    let cond_string = ConditionalType {
+    let lit_true = interner.literal_boolean(true);
+    let lit_false = interner.literal_boolean(false);
+
+    // never extends string ? true : false (non-distributive)
+    let cond = ConditionalType {
         check_type: TypeId::NEVER,
         extends_type: TypeId::STRING,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
+        true_type: lit_true,
+        false_type: lit_false,
         is_distributive: false,
     };
-    assert_eq!(
-        evaluate_conditional(&interner, &cond_string),
-        interner.literal_boolean(true)
-    );
 
-    let cond_number = ConditionalType {
-        check_type: TypeId::NEVER,
-        extends_type: TypeId::NUMBER,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
-        is_distributive: false,
-    };
+    let result = evaluate_conditional(&interner, &cond);
+
+    // With non-distributive, never extends T should evaluate normally
+    // never is assignable to everything, so true branch
     assert_eq!(
-        evaluate_conditional(&interner, &cond_number),
-        interner.literal_boolean(true)
+        result, lit_true,
+        "never extends string (non-distributive) should be true"
     );
 }
 
-/// Any and unknown are top types
+/// Test conditional with `never` extends type.
+///
+/// `string extends never ? true : false` should be `false`
+/// because string is not assignable to never.
 #[test]
-fn test_any_unknown_top_types() {
+fn test_conditional_extends_never() {
     let interner = TypeInterner::new();
 
-    // string extends any
-    let cond_any = ConditionalType {
+    let lit_true = interner.literal_boolean(true);
+    let lit_false = interner.literal_boolean(false);
+
+    // string extends never ? true : false
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::NEVER,
+        true_type: lit_true,
+        false_type: lit_false,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // string is not assignable to never, so false branch
+    assert_eq!(result, lit_false, "string extends never should be false");
+}
+
+/// Test conditional with `never` extends `never`.
+///
+/// `never extends never ? true : false` should be `true`
+/// because never is assignable to never.
+#[test]
+fn test_conditional_never_extends_never() {
+    let interner = TypeInterner::new();
+
+    let lit_true = interner.literal_boolean(true);
+    let lit_false = interner.literal_boolean(false);
+
+    // never extends never ? true : false
+    let cond = ConditionalType {
+        check_type: TypeId::NEVER,
+        extends_type: TypeId::NEVER,
+        true_type: lit_true,
+        false_type: lit_false,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // never extends never should be true
+    assert_eq!(result, lit_true, "never extends never should be true");
+}
+
+/// Test multiple `infer` in tuple pattern.
+///
+/// `[string, number] extends [infer A, infer B] ? [B, A] : never`
+/// Should extract both elements and swap them.
+#[test]
+fn test_conditional_infer_tuple_multiple_positions() {
+    let interner = TypeInterner::new();
+
+    // Create tuple: [string, number]
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Create infer placeholders for A and B
+    let a_name = interner.intern_string("A");
+    let b_name = interner.intern_string("B");
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: b_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Create extends pattern: [infer A, infer B]
+    let pattern = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_a,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: infer_b,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Create true branch: [B, A] - swapped
+    // We reference the inferred types using their positions
+    let swapped = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_b,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: infer_a,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let cond = ConditionalType {
+        check_type: tuple_type,
+        extends_type: pattern,
+        true_type: swapped,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // Expected: [number, string] (swapped)
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert_eq!(
+        result, expected,
+        "[string, number] with [infer A, infer B] should swap to [number, string]"
+    );
+}
+
+/// Test nested conditional types (conditional in true branch).
+///
+/// `T extends string ? (T extends "hello" ? "greeting" : "other") : "not string"`
+#[test]
+fn test_conditional_nested_in_true_branch() {
+    let interner = TypeInterner::new();
+
+    let hello_lit = interner.literal_string("hello");
+    let greeting_lit = interner.literal_string("greeting");
+    let other_lit = interner.literal_string("other");
+    let not_string_lit = interner.literal_string("not string");
+
+    // Inner conditional: "hello" extends "hello" ? "greeting" : "other"
+    let inner_cond = interner.conditional(ConditionalType {
+        check_type: hello_lit,
+        extends_type: hello_lit,
+        true_type: greeting_lit,
+        false_type: other_lit,
+        is_distributive: false,
+    });
+
+    // Outer: "hello" extends string ? <inner> : "not string"
+    let outer_cond = ConditionalType {
+        check_type: hello_lit,
+        extends_type: TypeId::STRING,
+        true_type: inner_cond,
+        false_type: not_string_lit,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &outer_cond);
+
+    // "hello" extends string -> true, then "hello" extends "hello" -> "greeting"
+    assert_eq!(
+        result, greeting_lit,
+        "nested conditional should resolve to 'greeting'"
+    );
+}
+
+/// Test distributive conditional with literal union.
+///
+/// `("a" | "b" | "c") extends "a" ? "yes" : "no"`
+/// Distributes to: ("a" extends "a" ? "yes" : "no") | ("b" extends "a" ? "yes" : "no") | ...
+#[test]
+fn test_conditional_distributive_literal_union() {
+    let interner = TypeInterner::new();
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let yes_lit = interner.literal_string("yes");
+    let no_lit = interner.literal_string("no");
+
+    let abc_union = interner.union(vec![lit_a, lit_b, lit_c]);
+
+    // ("a" | "b" | "c") extends "a" ? "yes" : "no"
+    let cond = ConditionalType {
+        check_type: abc_union,
+        extends_type: lit_a,
+        true_type: yes_lit,
+        false_type: no_lit,
+        is_distributive: true,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // "a" -> "yes", "b" -> "no", "c" -> "no"
+    // Result: "yes" | "no"
+    let expected = interner.union(vec![yes_lit, no_lit]);
+    assert_eq!(
+        result, expected,
+        "distributive over literal union should produce 'yes' | 'no'"
+    );
+}
+
+/// Test conditional with `any` in extends position.
+///
+/// `string extends any ? true : false` should be `true`
+/// because everything extends any.
+#[test]
+fn test_conditional_extends_any() {
+    let interner = TypeInterner::new();
+
+    let lit_true = interner.literal_boolean(true);
+    let lit_false = interner.literal_boolean(false);
+
+    // string extends any ? true : false
+    let cond = ConditionalType {
         check_type: TypeId::STRING,
         extends_type: TypeId::ANY,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
+        true_type: lit_true,
+        false_type: lit_false,
         is_distributive: false,
     };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // string extends any is always true
+    assert_eq!(result, lit_true, "string extends any should be true");
+}
+
+/// Test infer with constraint that doesn't match.
+///
+/// `{ x: number } extends { x: infer T extends string } ? T : never`
+/// The constraint `T extends string` doesn't match `number`, so false branch.
+#[test]
+fn test_conditional_infer_constraint_mismatch_edge() {
+    let interner = TypeInterner::new();
+
+    let x_name = interner.intern_string("x");
+    let t_name = interner.intern_string("T");
+
+    // Create { x: number }
+    let obj_number = interner.object(vec![PropertyInfo::new(x_name, TypeId::NUMBER)]);
+
+    // Create infer T extends string
+    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: t_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    }));
+
+    // Create pattern { x: infer T extends string }
+    let pattern = interner.object(vec![PropertyInfo::new(x_name, infer_t)]);
+
+    let cond = ConditionalType {
+        check_type: obj_number,
+        extends_type: pattern,
+        true_type: infer_t,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+
+    // number doesn't satisfy constraint `extends string`, so false branch
     assert_eq!(
-        evaluate_conditional(&interner, &cond_any),
-        interner.literal_boolean(true)
-    );
-
-    // string extends unknown
-    let cond_unknown = ConditionalType {
-        check_type: TypeId::STRING,
-        extends_type: TypeId::UNKNOWN,
-        true_type: interner.literal_boolean(true),
-        false_type: interner.literal_boolean(false),
-        is_distributive: false,
-    };
-    assert_eq!(
-        evaluate_conditional(&interner, &cond_unknown),
-        interner.literal_boolean(true)
+        result,
+        TypeId::NEVER,
+        "infer with mismatched constraint should produce never"
     );
 }
 
-// ============================================================================
-// const assertion (as const) tests
-// The as const assertion creates readonly types with literal inference
-// ============================================================================
+// =========================================================================
+// Template Literal Type Inference - Hyphen Pattern Tests
+// =========================================================================
+// Tests for template literal patterns using hyphen separators like `hello-${string}`
 
 #[test]
-fn test_const_object_literal_readonly_properties() {
-    // const x = { a: 1, b: "hello" } as const
-    // -> { readonly a: 1, readonly b: "hello" }
+fn test_template_literal_hyphen_prefix_extraction() {
     let interner = TypeInterner::new();
 
-    let one = interner.literal_number(1.0);
-    let hello = interner.literal_string("hello");
-
-    // Object with readonly properties and literal types
-    let const_obj = interner.object(vec![
-        PropertyInfo {
-            name: interner.intern_string("a"),
-            type_id: one,
-            write_type: one,
-            optional: false,
-            readonly: true, // as const makes properties readonly
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-        },
-        PropertyInfo::readonly(interner.intern_string("b"), hello),
-    ]);
-
-    // Verify the object was created
-    match interner.lookup(const_obj) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 2);
-            // All properties should be readonly
-            for prop in &shape.properties {
-                assert!(prop.readonly);
-            }
-        }
-        other => panic!("Expected Object type, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_const_object_literal_nested() {
-    // const x = { outer: { inner: 42 } } as const
-    // -> { readonly outer: { readonly inner: 42 } }
-    let interner = TypeInterner::new();
-
-    let forty_two = interner.literal_number(42.0);
-
-    // Inner object with readonly property
-    let inner = interner.object(vec![PropertyInfo::readonly(
-        interner.intern_string("inner"),
-        forty_two,
-    )]);
-
-    // Outer object with readonly property pointing to inner
-    let outer = interner.object(vec![PropertyInfo::readonly(
-        interner.intern_string("outer"),
-        inner,
-    )]);
-
-    match interner.lookup(outer) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 1);
-            assert!(shape.properties[0].readonly);
-            // The inner type should also be an object
-            let inner_type = shape.properties[0].type_id;
-            match interner.lookup(inner_type) {
-                Some(TypeData::Object(inner_shape_id)) => {
-                    let inner_shape = interner.object_shape(inner_shape_id);
-                    assert!(inner_shape.properties[0].readonly);
-                }
-                other => panic!("Expected inner Object, got {other:?}"),
-            }
-        }
-        other => panic!("Expected Object type, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_const_object_literal_vs_mutable() {
-    use crate::SubtypeChecker;
-
-    // const x = { a: 1 } as const  ->  { readonly a: 1 }
-    // let y = { a: 1 }             ->  { a: number }
-    let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
-
-    let one = interner.literal_number(1.0);
-
-    // as const version (readonly, literal type)
-    let const_obj = interner.object(vec![PropertyInfo::readonly(
-        interner.intern_string("a"),
-        one,
-    )]);
-
-    // Same object but with widened type (still readonly for comparison)
-    let widened_readonly = interner.object(vec![PropertyInfo::readonly(
-        interner.intern_string("a"),
-        TypeId::NUMBER,
-    )]);
-
-    // Literal type is subtype of base type (when readonly matches)
-    // { readonly a: 1 } is subtype of { readonly a: number }
-    assert!(checker.is_subtype_of(const_obj, widened_readonly));
-
-    // But not the other way around - number is not subtype of 1
-    assert!(!checker.is_subtype_of(widened_readonly, const_obj));
-}
-
-#[test]
-fn test_const_array_literal_tuple() {
-    // const x = [1, 2, 3] as const
-    // -> readonly [1, 2, 3]
-    let interner = TypeInterner::new();
-
-    let one = interner.literal_number(1.0);
-    let two = interner.literal_number(2.0);
-    let three = interner.literal_number(3.0);
-
-    // Create tuple with literal elements
-    let tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: one,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: two,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: three,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-
-    // Wrap in ReadonlyType for as const
-    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
-
-    match interner.lookup(readonly_tuple) {
-        Some(TypeData::ReadonlyType(inner)) => {
-            assert_eq!(inner, tuple);
-            // Verify inner is a tuple
-            match interner.lookup(inner) {
-                Some(TypeData::Tuple(list_id)) => {
-                    let elements = interner.tuple_list(list_id);
-                    assert_eq!(elements.len(), 3);
-                }
-                other => panic!("Expected Tuple, got {other:?}"),
-            }
-        }
-        other => panic!("Expected ReadonlyType, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_const_array_mixed_types() {
-    // const x = [1, "two", true] as const
-    // -> readonly [1, "two", true]
-    let interner = TypeInterner::new();
-
-    let one = interner.literal_number(1.0);
-    let two_str = interner.literal_string("two");
-    let lit_true = interner.literal_boolean(true);
-
-    let tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: one,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: two_str,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: lit_true,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-
-    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
-
-    match interner.lookup(readonly_tuple) {
-        Some(TypeData::ReadonlyType(inner)) => match interner.lookup(inner) {
-            Some(TypeData::Tuple(list_id)) => {
-                let elements = interner.tuple_list(list_id);
-                assert_eq!(elements.len(), 3);
-                assert_eq!(elements[0].type_id, one);
-                assert_eq!(elements[1].type_id, two_str);
-                assert_eq!(elements[2].type_id, lit_true);
-            }
-            other => panic!("Expected Tuple, got {other:?}"),
-        },
-        other => panic!("Expected ReadonlyType, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_const_array_nested() {
-    // const x = [[1, 2], [3, 4]] as const
-    // -> readonly [readonly [1, 2], readonly [3, 4]]
-    let interner = TypeInterner::new();
-
-    let one = interner.literal_number(1.0);
-    let two = interner.literal_number(2.0);
-    let three = interner.literal_number(3.0);
-    let four = interner.literal_number(4.0);
-
-    let inner1 = interner.tuple(vec![
-        TupleElement {
-            type_id: one,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: two,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    let inner1_readonly = interner.intern(TypeData::ReadonlyType(inner1));
-
-    let inner2 = interner.tuple(vec![
-        TupleElement {
-            type_id: three,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: four,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    let inner2_readonly = interner.intern(TypeData::ReadonlyType(inner2));
-
-    let outer = interner.tuple(vec![
-        TupleElement {
-            type_id: inner1_readonly,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: inner2_readonly,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    let outer_readonly = interner.intern(TypeData::ReadonlyType(outer));
-
-    match interner.lookup(outer_readonly) {
-        Some(TypeData::ReadonlyType(inner)) => {
-            match interner.lookup(inner) {
-                Some(TypeData::Tuple(list_id)) => {
-                    let elements = interner.tuple_list(list_id);
-                    assert_eq!(elements.len(), 2);
-                    // Each element should be ReadonlyType
-                    for elem in elements.iter() {
-                        match interner.lookup(elem.type_id) {
-                            Some(TypeData::ReadonlyType(_)) => {}
-                            other => panic!("Expected nested ReadonlyType, got {other:?}"),
-                        }
-                    }
-                }
-                other => panic!("Expected Tuple, got {other:?}"),
-            }
-        }
-        other => panic!("Expected ReadonlyType, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_const_array_vs_mutable() {
-    use crate::SubtypeChecker;
-
-    // const x = [1, 2] as const  ->  readonly [1, 2]
-    // A non-readonly tuple [1, 2] is subtype of number[]
-    let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
-
-    let one = interner.literal_number(1.0);
-    let two = interner.literal_number(2.0);
-
-    // Non-readonly tuple with literal types
-    let mutable_tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: one,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: two,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-
-    let number_array = interner.array(TypeId::NUMBER);
-
-    // Tuple [1, 2] is subtype of number[]
-    assert!(checker.is_subtype_of(mutable_tuple, number_array));
-
-    // Readonly version
-    let readonly_tuple = interner.intern(TypeData::ReadonlyType(mutable_tuple));
-    let readonly_array = interner.intern(TypeData::ReadonlyType(number_array));
-
-    // Readonly tuple is subtype of readonly number[]
-    assert!(checker.is_subtype_of(readonly_tuple, readonly_array));
-}
-
-#[test]
-fn test_readonly_type_wrapper() {
-    // ReadonlyType wraps any type to make it readonly
-    let interner = TypeInterner::new();
-
-    let arr = interner.array(TypeId::STRING);
-    let readonly_arr = interner.intern(TypeData::ReadonlyType(arr));
-
-    match interner.lookup(readonly_arr) {
-        Some(TypeData::ReadonlyType(inner)) => {
-            assert_eq!(inner, arr);
-        }
-        other => panic!("Expected ReadonlyType, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_readonly_inference_object() {
-    // Readonly<T> applied to object makes all properties readonly
-    let interner = TypeInterner::new();
-
-    let obj = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("a"),
-        TypeId::NUMBER,
-    )]);
-
-    // Wrap in ReadonlyType
-    let readonly_obj = interner.intern(TypeData::ReadonlyType(obj));
-
-    match interner.lookup(readonly_obj) {
-        Some(TypeData::ReadonlyType(inner)) => {
-            assert_eq!(inner, obj);
-        }
-        other => panic!("Expected ReadonlyType, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_readonly_keyof() {
-    // keyof readonly [1, 2, 3] should work the same as keyof [1, 2, 3]
-    let interner = TypeInterner::new();
-
-    let one = interner.literal_number(1.0);
-    let two = interner.literal_number(2.0);
-    let three = interner.literal_number(3.0);
-
-    let tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: one,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: two,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: three,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    let readonly_tuple = interner.intern(TypeData::ReadonlyType(tuple));
-
-    // keyof readonly tuple
-    let result = evaluate_keyof(&interner, readonly_tuple);
-
-    // Should include tuple indices: "0" | "1" | "2" | array methods
-    // At minimum, verify it returns a union containing the indices
-    match interner.lookup(result) {
-        Some(TypeData::Union(_)) => {} // Expected - union of keys
-        other => panic!("Expected Union from keyof readonly tuple, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_template_literal_const_basic() {
-    // const x = `hello` as const -> "hello"
-    // Template literals with no interpolations become string literals
-    let interner = TypeInterner::new();
-
-    let hello = interner.literal_string("hello");
-
-    // A simple template literal `hello` with as const is just "hello"
-    match interner.lookup(hello) {
-        Some(TypeData::Literal(LiteralValue::String(_))) => {}
-        other => panic!("Expected LiteralString, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_template_literal_const_interpolation() {
-    // const prefix = "hello" as const
-    // const x = `${prefix} world` as const -> "hello world"
-    // With known literal interpolations, result is a literal
-    let interner = TypeInterner::new();
-
-    // When all parts are literals, the result is a literal
-    let hello_world = interner.literal_string("hello world");
-
-    match interner.lookup(hello_world) {
-        Some(TypeData::Literal(LiteralValue::String(atom))) => {
-            assert_eq!(interner.resolve_atom(atom), "hello world");
-        }
-        other => panic!("Expected LiteralString, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_template_literal_type_structure() {
-    // Template literal types: `prefix${string}suffix`
-    let interner = TypeInterner::new();
-
-    let prefix = interner.intern_string("prefix");
-    let suffix = interner.intern_string("suffix");
-
-    let template = interner.template_literal(vec![
-        TemplateSpan::Text(prefix),
-        TemplateSpan::Type(TypeId::STRING),
-        TemplateSpan::Text(suffix),
-    ]);
-
-    match interner.lookup(template) {
-        Some(TypeData::TemplateLiteral(spans_id)) => {
-            let spans = interner.template_list(spans_id);
-            assert_eq!(spans.len(), 3);
-            match &spans[0] {
-                TemplateSpan::Text(atom) => assert_eq!(interner.resolve_atom(*atom), "prefix"),
-                _ => panic!("Expected Text span"),
-            }
-            match &spans[1] {
-                TemplateSpan::Type(t) => assert_eq!(*t, TypeId::STRING),
-                _ => panic!("Expected Type span"),
-            }
-            match &spans[2] {
-                TemplateSpan::Text(atom) => assert_eq!(interner.resolve_atom(*atom), "suffix"),
-                _ => panic!("Expected Text span"),
-            }
-        }
-        other => panic!("Expected TemplateLiteral, got {other:?}"),
-    }
-}
-
-#[test]
-fn test_template_literal_union_expansion() {
-    use crate::SubtypeChecker;
-
-    // `${"a" | "b"}` expands to "a" | "b"
-    let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
-
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let union = interner.union(vec![lit_a, lit_b]);
-
-    // A template with just a union interpolation equals the union
-    let template = interner.template_literal(vec![TemplateSpan::Type(union)]);
-
-    // The template should be a subtype of string
-    assert!(checker.is_subtype_of(template, TypeId::STRING));
-}
-
-#[test]
-fn test_const_enum_like_object() {
-    use crate::SubtypeChecker;
-
-    // const Direction = { Up: 0, Down: 1, Left: 2, Right: 3 } as const
-    // -> { readonly Up: 0, readonly Down: 1, readonly Left: 2, readonly Right: 3 }
-    let interner = TypeInterner::new();
-    let mut checker = SubtypeChecker::new(&interner);
-
-    let zero = interner.literal_number(0.0);
-    let one = interner.literal_number(1.0);
-    let two = interner.literal_number(2.0);
-    let three = interner.literal_number(3.0);
-
-    let direction = interner.object(vec![
-        PropertyInfo::readonly(interner.intern_string("Down"), one),
-        PropertyInfo::readonly(interner.intern_string("Left"), two),
-        PropertyInfo::readonly(interner.intern_string("Right"), three),
-        PropertyInfo::readonly(interner.intern_string("Up"), zero),
-    ]);
-
-    // Get keyof Direction = "Up" | "Down" | "Left" | "Right"
-    let keys = evaluate_keyof(&interner, direction);
-
-    // Each key literal is a subtype of string
-    match interner.lookup(keys) {
-        Some(TypeData::Union(members_id)) => {
-            let members = interner.type_list(members_id);
-            assert_eq!(members.len(), 4);
-            for member in members.iter() {
-                assert!(checker.is_subtype_of(*member, TypeId::STRING));
-            }
-        }
-        other => panic!("Expected Union, got {other:?}"),
-    }
-}
-
-// ============================================================================
-// Omit<T, K> and Pick<T, K> Utility Type Tests
-// ============================================================================
-
-/// Basic Pick<T, K> - picks specific keys from an object type
-/// Pick<{ a: number, b: string, c: boolean }, "a" | "b"> = { a: number, b: string }
-#[test]
-fn test_pick_basic() {
-    let interner = TypeInterner::new();
-
-    // Original type: { a: number, b: string, c: boolean }
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
-    let key_c = interner.intern_string("c");
-
-    let original = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-        PropertyInfo::new(key_c, TypeId::BOOLEAN),
-    ]);
-
-    // Keys to pick: "a" | "b"
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let pick_keys = interner.union(vec![lit_a, lit_b]);
-
-    // Pick<T, K> = { [P in K]: T[P] }
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(pick_keys),
+    // Pattern: T extends `hello-${infer R}` ? R : never
+    // Input: "hello-world" => R = "world"
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
         default: None,
         is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
+    }));
 
-    // Template: T[P] - index access
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: pick_keys,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: { a: number, b: string }
-    let expected = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-    ]);
-
-    assert_eq!(result, expected);
-}
-
-/// Pick single key
-/// Pick<{ x: number, y: string }, "x"> = { x: number }
-#[test]
-fn test_pick_single_key() {
-    let interner = TypeInterner::new();
-
-    let key_x = interner.intern_string("x");
-    let key_y = interner.intern_string("y");
-
-    let original = interner.object(vec![
-        PropertyInfo::new(key_x, TypeId::NUMBER),
-        PropertyInfo::new(key_y, TypeId::STRING),
-    ]);
-
-    // Pick only "x"
-    let lit_x = interner.literal_string("x");
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(lit_x),
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
         default: None,
         is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
+    }));
 
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: lit_x,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: { x: number }
-    let expected = interner.object(vec![PropertyInfo::new(key_x, TypeId::NUMBER)]);
-
-    assert_eq!(result, expected);
-}
-
-/// Pick preserves optional modifier
-/// Pick<{ a?: number, b: string }, "a"> = { a?: number }
-#[test]
-fn test_pick_preserves_optional() {
-    let interner = TypeInterner::new();
-
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
-
-    let original = interner.object(vec![
-        PropertyInfo {
-            name: key_a,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true, // optional
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-        },
-        PropertyInfo::new(key_b, TypeId::STRING),
+    // T extends `hello-${infer R}` ? R : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("hello-")),
+        TemplateSpan::Type(infer_r),
     ]);
 
-    let lit_a = interner.literal_string("a");
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(lit_a),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: lit_a,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None, // Preserves original optional status
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Result should have optional property
-    match interner.lookup(result) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 1);
-            // Note: Pick may or may not preserve optional depending on implementation
-        }
-        _ => panic!("Expected object"),
-    }
-}
-
-/// Basic Omit<T, K> - removes specific keys from an object type
-/// Omit<{ a: number, b: string, c: boolean }, "c"> = { a: number, b: string }
-#[test]
-fn test_omit_basic() {
-    let interner = TypeInterner::new();
-
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
-    let key_c = interner.intern_string("c");
-
-    let original = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-        PropertyInfo::new(key_c, TypeId::BOOLEAN),
-    ]);
-
-    // Keys to omit: "c"
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let lit_c = interner.literal_string("c");
-
-    // keyof T = "a" | "b" | "c"
-    let _all_keys = interner.union(vec![lit_a, lit_b, lit_c]);
-
-    // Exclude<keyof T, K> = Exclude<"a" | "b" | "c", "c"> = "a" | "b"
-    // For each key, if it extends "c", return never, else return the key
-    // This filters out "c"
-    let remaining_keys = interner.union(vec![lit_a, lit_b]);
-
-    // Omit<T, K> = Pick<T, Exclude<keyof T, K>>
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(remaining_keys),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: remaining_keys,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: { a: number, b: string }
-    let expected = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-    ]);
-
-    assert_eq!(result, expected);
-}
-
-/// Omit with union keys - removes multiple keys
-/// Omit<{ a: number, b: string, c: boolean, d: null }, "b" | "d"> = { a: number, c: boolean }
-#[test]
-fn test_omit_union_keys() {
-    let interner = TypeInterner::new();
-
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
-    let key_c = interner.intern_string("c");
-    let key_d = interner.intern_string("d");
-
-    let original = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-        PropertyInfo::new(key_c, TypeId::BOOLEAN),
-        PropertyInfo::new(key_d, TypeId::NULL),
-    ]);
-
-    // Keys to omit: "b" | "d"
-    let lit_a = interner.literal_string("a");
-    let lit_c = interner.literal_string("c");
-
-    // Remaining keys after exclude: "a" | "c"
-    let remaining_keys = interner.union(vec![lit_a, lit_c]);
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(remaining_keys),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: remaining_keys,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: { a: number, c: boolean }
-    let expected = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_c, TypeId::BOOLEAN),
-    ]);
-
-    assert_eq!(result, expected);
-}
-
-/// Omit single key from two-property object
-/// Omit<{ x: number, y: string }, "y"> = { x: number }
-#[test]
-fn test_omit_single_key() {
-    let interner = TypeInterner::new();
-
-    let key_x = interner.intern_string("x");
-    let key_y = interner.intern_string("y");
-
-    let original = interner.object(vec![
-        PropertyInfo::new(key_x, TypeId::NUMBER),
-        PropertyInfo::new(key_y, TypeId::STRING),
-    ]);
-
-    // Remaining after omitting "y": just "x"
-    let lit_x = interner.literal_string("x");
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(lit_x),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: lit_x,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: { x: number }
-    let expected = interner.object(vec![PropertyInfo::new(key_x, TypeId::NUMBER)]);
-
-    assert_eq!(result, expected);
-}
-
-/// Pick with conditional key filtering
-/// Uses conditional type to filter keys: Pick<T, Extract<keyof T, "a" | "b">>
-#[test]
-fn test_pick_with_conditional_keys() {
-    let interner = TypeInterner::new();
-
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
-    let key_c = interner.intern_string("c");
-
-    let original = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-        PropertyInfo::new(key_c, TypeId::BOOLEAN),
-    ]);
-
-    // Extract<keyof T, "a" | "b"> evaluates to "a" | "b"
-    // (keys that extend "a" | "b")
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let extracted_keys = interner.union(vec![lit_a, lit_b]);
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(extracted_keys),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: extracted_keys,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: { a: number, b: string }
-    let expected = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-    ]);
-
-    assert_eq!(result, expected);
-}
-
-/// Exclude pattern for Omit implementation
-/// Exclude<"a" | "b" | "c", "b"> = "a" | "c"
-#[test]
-fn test_exclude_for_omit() {
-    let interner = TypeInterner::new();
-
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let lit_c = interner.literal_string("c");
-
-    // Exclude<T, U> = T extends U ? never : T
-    // For "a": "a" extends "b" ? never : "a" = "a"
-    let cond_a = ConditionalType {
-        check_type: lit_a,
-        extends_type: lit_b,
-        true_type: TypeId::NEVER,
-        false_type: lit_a,
-        is_distributive: false,
-    };
-    let result_a = evaluate_conditional(&interner, &cond_a);
-    assert_eq!(result_a, lit_a);
-
-    // For "b": "b" extends "b" ? never : "b" = never
-    let cond_b = ConditionalType {
-        check_type: lit_b,
-        extends_type: lit_b,
-        true_type: TypeId::NEVER,
-        false_type: lit_b,
-        is_distributive: false,
-    };
-    let result_b = evaluate_conditional(&interner, &cond_b);
-    assert_eq!(result_b, TypeId::NEVER);
-
-    // For "c": "c" extends "b" ? never : "c" = "c"
-    let cond_c = ConditionalType {
-        check_type: lit_c,
-        extends_type: lit_b,
-        true_type: TypeId::NEVER,
-        false_type: lit_c,
-        is_distributive: false,
-    };
-    let result_c = evaluate_conditional(&interner, &cond_c);
-    assert_eq!(result_c, lit_c);
-
-    // Combined: "a" | never | "c" = "a" | "c"
-    let result_union = interner.union(vec![result_a, result_b, result_c]);
-    match interner.lookup(result_union) {
-        Some(TypeData::Union(list_id)) => {
-            let members = interner.type_list(list_id);
-            // Should be 2 members (never is filtered out)
-            assert_eq!(members.len(), 2);
-        }
-        _ => panic!("Expected union"),
-    }
-}
-
-/// Extract pattern for Pick implementation
-/// Extract<"a" | "b" | "c", "a" | "c"> = "a" | "c"
-#[test]
-fn test_extract_for_pick() {
-    let interner = TypeInterner::new();
-
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let lit_c = interner.literal_string("c");
-
-    let target = interner.union(vec![lit_a, lit_c]);
-
-    // Extract<T, U> = T extends U ? T : never
-    // For "a": "a" extends "a" | "c" ? "a" : never = "a"
-    let cond_a = ConditionalType {
-        check_type: lit_a,
-        extends_type: target,
-        true_type: lit_a,
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_r,
         false_type: TypeId::NEVER,
         is_distributive: false,
     };
-    let result_a = evaluate_conditional(&interner, &cond_a);
-    assert_eq!(result_a, lit_a);
 
-    // For "b": "b" extends "a" | "c" ? "b" : never = never
-    let cond_b = ConditionalType {
-        check_type: lit_b,
-        extends_type: target,
-        true_type: lit_b,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let result_b = evaluate_conditional(&interner, &cond_b);
-    assert_eq!(result_b, TypeId::NEVER);
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("hello-world"));
 
-    // For "c": "c" extends "a" | "c" ? "c" : never = "c"
-    let cond_c = ConditionalType {
-        check_type: lit_c,
-        extends_type: target,
-        true_type: lit_c,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let result_c = evaluate_conditional(&interner, &cond_c);
-    assert_eq!(result_c, lit_c);
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
 
-    // Combined: "a" | never | "c" = "a" | "c"
-    let result_union = interner.union(vec![result_a, result_b, result_c]);
-    match interner.lookup(result_union) {
-        Some(TypeData::Union(list_id)) => {
-            let members = interner.type_list(list_id);
-            assert_eq!(members.len(), 2);
-        }
-        _ => panic!("Expected union"),
-    }
-}
-
-/// Omit all keys results in empty object
-/// Omit<{ a: number }, "a"> = {}
-#[test]
-fn test_omit_all_keys() {
-    let interner = TypeInterner::new();
-
-    let key_a = interner.intern_string("a");
-
-    let original = interner.object(vec![PropertyInfo::new(key_a, TypeId::NUMBER)]);
-
-    // After omitting "a", no keys remain
-    // Mapped type with never constraint produces empty object
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(TypeId::NEVER),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: TypeId::NEVER,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: {} (empty object)
-    let expected = interner.object(vec![]);
+    let expected = interner.literal_string("world");
     assert_eq!(result, expected);
 }
 
-/// Pick no keys results in empty object
-/// Pick<{ a: number, b: string }, never> = {}
 #[test]
-fn test_pick_no_keys() {
+fn test_template_literal_hyphen_two_part_extraction() {
     let interner = TypeInterner::new();
 
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
+    // Pattern: T extends `${infer First}-${infer Rest}` ? [First, Rest] : never
+    // Input: "foo-bar-baz" => First = "foo", Rest = "bar-baz"
 
-    let original = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-    ]);
-
-    // Pick with never constraint
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(TypeId::NEVER),
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
         default: None,
         is_const: false,
+    }));
+
+    let infer_first = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("First"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("Rest"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `${infer First}-${infer Rest}` ? [First, Rest] : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Type(infer_first),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(infer_rest),
+    ]);
+
+    let true_type = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_first,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: infer_rest,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("foo-bar-baz"));
 
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: TypeId::NEVER,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
 
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Expected: {} (empty object)
-    let expected = interner.object(vec![]);
+    // TypeScript uses first-match semantics: First = "foo", Rest = "bar-baz"
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: interner.literal_string("foo"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.literal_string("bar-baz"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
     assert_eq!(result, expected);
 }
 
-/// Pick with readonly modifier
-/// Pick<{ a: number, b: string }, "a"> with readonly modifier
 #[test]
-fn test_pick_with_readonly() {
+fn test_template_literal_hyphen_suffix_pattern() {
     let interner = TypeInterner::new();
 
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
+    // Pattern: T extends `${infer R}-handler` ? R : never
+    // Input: "click-handler" => R = "click"
 
-    let original = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo::new(key_b, TypeId::STRING),
-    ]);
-
-    let lit_a = interner.literal_string("a");
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(lit_a),
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
         default: None,
         is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `${infer R}-handler` ? R : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Type(infer_r),
+        TemplateSpan::Text(interner.intern_string("-handler")),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
     };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("click-handler"));
 
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: lit_a,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: Some(MappedModifier::Add), // Add readonly
-        optional_modifier: None,
-    };
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
 
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Result should have readonly property
-    match interner.lookup(result) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 1);
-            // Property should be readonly
-            assert!(shape.properties[0].readonly);
-        }
-        _ => panic!("Expected object"),
-    }
+    let expected = interner.literal_string("click");
+    assert_eq!(result, expected);
 }
 
-/// Omit preserves readonly from original
 #[test]
-fn test_omit_preserves_readonly() {
+fn test_template_literal_hyphen_distributive_union() {
     let interner = TypeInterner::new();
 
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
+    // Pattern: T extends `event-${infer R}` ? R : never (distributive)
+    // Input: "event-click" | "event-load" => "click" | "load"
 
-    let original = interner.object(vec![
-        PropertyInfo {
-            name: key_a,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `event-${infer R}` ? R : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("event-")),
+        TemplateSpan::Type(infer_r),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let lit_click = interner.literal_string("event-click");
+    let lit_load = interner.literal_string("event-load");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.union(vec![lit_click, lit_load]));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    let expected = interner.union(vec![
+        interner.literal_string("click"),
+        interner.literal_string("load"),
+    ]);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_template_literal_hyphen_no_match_returns_never() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T extends `prefix-${infer R}` ? R : never
+    // Input: "other-value" (doesn't start with "prefix-") => never
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("R");
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `prefix-${infer R}` ? R : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix-")),
+        TemplateSpan::Type(infer_r),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("other-value"));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    // "other-value" doesn't match pattern "prefix-${infer R}", so returns never
+    assert_eq!(result, TypeId::NEVER);
+}
+
+#[test]
+fn test_template_literal_prefix_infer_suffix_extraction() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T extends `start-${infer M}-end` ? M : never
+    // Input: "start-middle-end" => M = "middle"
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("M");
+    let infer_m = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `start-${infer M}-end` ? M : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("start-")),
+        TemplateSpan::Type(infer_m),
+        TemplateSpan::Text(interner.intern_string("-end")),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_m,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("start-middle-end"));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    let expected = interner.literal_string("middle");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_template_literal_prefix_infer_suffix_multiple_hyphens() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T extends `api-${infer Route}-handler` ? Route : never
+    // Input: "api-user-profile-handler" => Route = "user-profile"
+    // The infer captures everything between "api-" and "-handler"
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("Route");
+    let infer_route = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `api-${infer Route}-handler` ? Route : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("api-")),
+        TemplateSpan::Type(infer_route),
+        TemplateSpan::Text(interner.intern_string("-handler")),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_route,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("api-user-profile-handler"));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    // Captures everything between "api-" and "-handler"
+    let expected = interner.literal_string("user-profile");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_template_literal_prefix_infer_suffix_distributive() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T extends `on-${infer E}-event` ? E : never (distributive)
+    // Input: "on-click-event" | "on-load-event" => "click" | "load"
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("E");
+    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `on-${infer E}-event` ? E : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("on-")),
+        TemplateSpan::Type(infer_e),
+        TemplateSpan::Text(interner.intern_string("-event")),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_e,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let lit_click = interner.literal_string("on-click-event");
+    let lit_load = interner.literal_string("on-load-event");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.union(vec![lit_click, lit_load]));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    let expected = interner.union(vec![
+        interner.literal_string("click"),
+        interner.literal_string("load"),
+    ]);
+    assert_eq!(result, expected);
+}
+
+// =========================================================================
+// Template Literal Type Inference - Number Extraction Pattern Tests
+// =========================================================================
+// Tests for template literal patterns that extract numeric strings
+
+#[test]
+fn test_template_literal_extract_numeric_id() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T extends `user-${infer Id}` ? Id : never
+    // Input: "user-42" => Id = "42"
+    // Common pattern for extracting numeric IDs from string keys
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string("Id");
+    let infer_id = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `user-${infer Id}` ? Id : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("user-")),
+        TemplateSpan::Type(infer_id),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_id,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("user-42"));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    // Extracts "42" as a string literal
+    let expected = interner.literal_string("42");
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_template_literal_extract_version_numbers() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T extends `v${infer Major}.${infer Minor}` ? [Major, Minor] : never
+    // Input: "v1.2" => [Major, Minor] = ["1", "2"]
+    // Common pattern for parsing version strings
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_major = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("Major"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let infer_minor = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("Minor"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // T extends `v${infer Major}.${infer Minor}` ? [Major, Minor] : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("v")),
+        TemplateSpan::Type(infer_major),
+        TemplateSpan::Text(interner.intern_string(".")),
+        TemplateSpan::Type(infer_minor),
+    ]);
+
+    let true_type = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_major,
+            name: None,
             optional: false,
-            readonly: true, // readonly
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
+            rest: false,
         },
-        PropertyInfo::new(key_b, TypeId::STRING),
-    ]);
-
-    // Omit "b", keep "a"
-    let lit_a = interner.literal_string("a");
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(lit_a),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: lit_a,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-
-    // Check result has readonly property — with the subset-based homomorphic detection,
-    // mapped types like Pick/Omit whose constraint is a subset of keyof T correctly
-    // inherit readonly from the source properties.
-    match interner.lookup(result) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 1);
-            assert!(
-                shape.properties[0].readonly,
-                "Omit/Pick should preserve readonly from source property"
-            );
-        }
-        _ => panic!("Expected object"),
-    }
-}
-
-#[test]
-fn test_omit_preserves_optional_via_subset_homomorphic() {
-    // Tests that Omit<A, 'a'> preserves optional modifiers from source type A.
-    // This validates the subset-based homomorphic mapped type detection:
-    // the constraint "b" | "c" is a subset of keyof A = "a" | "b" | "c",
-    // so the mapped type is detected as homomorphic and modifiers are inherited.
-    let interner = TypeInterner::new();
-
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
-    let key_c = interner.intern_string("c");
-
-    // Original: { a: number; b?: string; readonly c: boolean }
-    let original = interner.object(vec![
-        PropertyInfo::new(key_a, TypeId::NUMBER),
-        PropertyInfo {
-            name: key_b,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-        },
-        PropertyInfo {
-            name: key_c,
-            type_id: TypeId::BOOLEAN,
-            write_type: TypeId::BOOLEAN,
+        TupleElement {
+            type_id: infer_minor,
+            name: None,
             optional: false,
-            readonly: true,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
+            rest: false,
         },
     ]);
 
-    // Constraint: "b" | "c" (subset of keyof original, simulating Omit<A, 'a'>)
-    let lit_b = interner.literal_string("b");
-    let lit_c = interner.literal_string("c");
-    let constraint = interner.union(vec![lit_b, lit_c]);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
 
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(constraint),
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.literal_string("v1.2"));
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    // Extracts ["1", "2"]
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: interner.literal_string("1"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.literal_string("2"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn test_template_literal_extract_index_from_array_key() {
+    let interner = TypeInterner::new();
+
+    // Pattern: T extends `item[${infer Index}]` ? Index : never
+    // Input: "item[0]" | "item[1]" | "item[2]" => "0" | "1" | "2"
+    // Common pattern for extracting array indices from bracket notation
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
         default: None,
         is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
+    }));
 
-    let index_access = interner.intern(TypeData::IndexAccess(original, key_param_id));
+    let infer_name = interner.intern_string("Index");
+    let infer_index = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
 
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
+    // T extends `item[${infer Index}]` ? Index : never
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("item[")),
+        TemplateSpan::Type(infer_index),
+        TemplateSpan::Text(interner.intern_string("]")),
+    ]);
 
-    let result = evaluate_mapped(&interner, &mapped);
-
-    match interner.lookup(result) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 2, "Should have 2 properties (b, c)");
-
-            let b_prop = shape.properties.iter().find(|p| p.name == key_b).unwrap();
-            let c_prop = shape.properties.iter().find(|p| p.name == key_c).unwrap();
-
-            assert!(
-                b_prop.optional,
-                "b should remain optional (inherited from source)"
-            );
-            assert!(
-                !b_prop.readonly,
-                "b should not be readonly (not readonly in source)"
-            );
-            assert!(
-                c_prop.readonly,
-                "c should remain readonly (inherited from source)"
-            );
-            assert!(
-                !c_prop.optional,
-                "c should not be optional (not optional in source)"
-            );
-        }
-        _ => panic!("Expected object type"),
-    }
-}
-
-// =============================================================================
-// NESTED CONDITIONAL TYPE TESTS
-// =============================================================================
-
-// -----------------------------------------------------------------------------
-// Triple Nested Conditionals
-// -----------------------------------------------------------------------------
-
-/// Test triple nested conditional: T extends string ? (T extends "a" ? (T extends "a" ? 1 : 2) : 3) : 4
-/// Input: "a" - should resolve to 1 (deepest true branch)
-#[test]
-fn test_triple_nested_conditional_all_true() {
-    let interner = TypeInterner::new();
-
-    let lit_a = interner.literal_string("a");
-    let lit_1 = interner.literal_number(1.0);
-    let lit_2 = interner.literal_number(2.0);
-    let lit_3 = interner.literal_number(3.0);
-    let lit_4 = interner.literal_number(4.0);
-
-    // Innermost: T extends "a" ? 1 : 2
-    let inner_cond_id = interner.conditional(ConditionalType {
-        check_type: lit_a,
-        extends_type: lit_a,
-        true_type: lit_1,
-        false_type: lit_2,
-        is_distributive: false,
-    });
-
-    // Middle: T extends "a" ? (inner) : 3
-    let middle_cond_id = interner.conditional(ConditionalType {
-        check_type: lit_a,
-        extends_type: lit_a,
-        true_type: inner_cond_id,
-        false_type: lit_3,
-        is_distributive: false,
-    });
-
-    // Outer: T extends string ? (middle) : 4
-    let outer_cond = ConditionalType {
-        check_type: lit_a,
-        extends_type: TypeId::STRING,
-        true_type: middle_cond_id,
-        false_type: lit_4,
-        is_distributive: false,
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_index,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
     };
 
-    let result = evaluate_conditional(&interner, &outer_cond);
-    // "a" extends string, "a" extends "a", "a" extends "a" -> 1
-    assert!(result == lit_1 || result != TypeId::ERROR);
-}
+    let cond_type = interner.conditional(cond);
+    let lit_0 = interner.literal_string("item[0]");
+    let lit_1 = interner.literal_string("item[1]");
+    let lit_2 = interner.literal_string("item[2]");
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, interner.union(vec![lit_0, lit_1, lit_2]));
 
-/// Test triple nested conditional where middle fails
-/// Input: "b" - should resolve to 3 (middle false branch)
-#[test]
-fn test_triple_nested_conditional_middle_false() {
-    let interner = TypeInterner::new();
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
 
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let lit_1 = interner.literal_number(1.0);
-    let lit_2 = interner.literal_number(2.0);
-    let lit_3 = interner.literal_number(3.0);
-    let lit_4 = interner.literal_number(4.0);
-
-    // Innermost: T extends "a" ? 1 : 2
-    let inner_cond_id = interner.conditional(ConditionalType {
-        check_type: lit_b,
-        extends_type: lit_a,
-        true_type: lit_1,
-        false_type: lit_2,
-        is_distributive: false,
-    });
-
-    // Middle: T extends "a" ? (inner) : 3
-    let middle_cond_id = interner.conditional(ConditionalType {
-        check_type: lit_b,
-        extends_type: lit_a,
-        true_type: inner_cond_id,
-        false_type: lit_3,
-        is_distributive: false,
-    });
-
-    // Outer: T extends string ? (middle) : 4
-    let outer_cond = ConditionalType {
-        check_type: lit_b,
-        extends_type: TypeId::STRING,
-        true_type: middle_cond_id,
-        false_type: lit_4,
-        is_distributive: false,
-    };
-
-    let result = evaluate_conditional(&interner, &outer_cond);
-    // "b" extends string, but "b" does NOT extend "a" -> 3
-    assert!(result == lit_3 || result != TypeId::ERROR);
-}
-
-/// Test triple nested conditional where outer fails
-/// Input: 123 (number) - should resolve to 4 (outer false branch)
-#[test]
-fn test_triple_nested_conditional_outer_false() {
-    let interner = TypeInterner::new();
-
-    let lit_a = interner.literal_string("a");
-    let lit_123 = interner.literal_number(123.0);
-    let lit_1 = interner.literal_number(1.0);
-    let lit_2 = interner.literal_number(2.0);
-    let lit_3 = interner.literal_number(3.0);
-    let lit_4 = interner.literal_number(4.0);
-
-    // Innermost: T extends "a" ? 1 : 2
-    let inner_cond_id = interner.conditional(ConditionalType {
-        check_type: lit_123,
-        extends_type: lit_a,
-        true_type: lit_1,
-        false_type: lit_2,
-        is_distributive: false,
-    });
-
-    // Middle: T extends "a" ? (inner) : 3
-    let middle_cond_id = interner.conditional(ConditionalType {
-        check_type: lit_123,
-        extends_type: lit_a,
-        true_type: inner_cond_id,
-        false_type: lit_3,
-        is_distributive: false,
-    });
-
-    // Outer: T extends string ? (middle) : 4
-    let outer_cond = ConditionalType {
-        check_type: lit_123,
-        extends_type: TypeId::STRING,
-        true_type: middle_cond_id,
-        false_type: lit_4,
-        is_distributive: false,
-    };
-
-    let result = evaluate_conditional(&interner, &outer_cond);
-    // 123 does NOT extend string -> 4
-    assert!(result == lit_4 || result != TypeId::ERROR);
-}
-
-/// Test deeply nested conditional (4 levels)
-#[test]
-fn test_quadruple_nested_conditional() {
-    let interner = TypeInterner::new();
-
-    let lit_a = interner.literal_string("a");
-    let lit_1 = interner.literal_number(1.0);
-    let lit_2 = interner.literal_number(2.0);
-    let lit_3 = interner.literal_number(3.0);
-    let lit_4 = interner.literal_number(4.0);
-    let lit_5 = interner.literal_number(5.0);
-
-    // Level 4 (innermost): T extends "a" ? 1 : 2
-    let level4 = interner.conditional(ConditionalType {
-        check_type: lit_a,
-        extends_type: lit_a,
-        true_type: lit_1,
-        false_type: lit_2,
-        is_distributive: false,
-    });
-
-    // Level 3: T extends "a" ? (level4) : 3
-    let level3 = interner.conditional(ConditionalType {
-        check_type: lit_a,
-        extends_type: lit_a,
-        true_type: level4,
-        false_type: lit_3,
-        is_distributive: false,
-    });
-
-    // Level 2: T extends string ? (level3) : 4
-    let level2 = interner.conditional(ConditionalType {
-        check_type: lit_a,
-        extends_type: TypeId::STRING,
-        true_type: level3,
-        false_type: lit_4,
-        is_distributive: false,
-    });
-
-    // Level 1 (outermost): T extends unknown ? (level2) : 5
-    let level1 = ConditionalType {
-        check_type: lit_a,
-        extends_type: TypeId::UNKNOWN,
-        true_type: level2,
-        false_type: lit_5,
-        is_distributive: false,
-    };
-
-    let result = evaluate_conditional(&interner, &level1);
-    // All conditions true -> 1
-    assert!(result == lit_1 || result != TypeId::ERROR);
-}
-
-// -----------------------------------------------------------------------------
-// Conditional Chains
-// -----------------------------------------------------------------------------
-
-/// Test conditional chain pattern: if-else-if style
-/// T extends string ? "string" : T extends number ? "number" : T extends boolean ? "boolean" : "other"
-#[test]
-fn test_conditional_chain_string() {
-    let interner = TypeInterner::new();
-
-    let lit_string = interner.literal_string("string");
-    let lit_number = interner.literal_string("number");
-    let lit_boolean = interner.literal_string("boolean");
-    let lit_other = interner.literal_string("other");
-
-    let input = TypeId::STRING;
-
-    // Innermost: T extends boolean ? "boolean" : "other"
-    let inner = interner.conditional(ConditionalType {
-        check_type: input,
-        extends_type: TypeId::BOOLEAN,
-        true_type: lit_boolean,
-        false_type: lit_other,
-        is_distributive: false,
-    });
-
-    // Middle: T extends number ? "number" : (inner)
-    let middle = interner.conditional(ConditionalType {
-        check_type: input,
-        extends_type: TypeId::NUMBER,
-        true_type: lit_number,
-        false_type: inner,
-        is_distributive: false,
-    });
-
-    // Outer: T extends string ? "string" : (middle)
-    let outer = ConditionalType {
-        check_type: input,
-        extends_type: TypeId::STRING,
-        true_type: lit_string,
-        false_type: middle,
-        is_distributive: false,
-    };
-
-    let result = evaluate_conditional(&interner, &outer);
-    // string extends string -> "string"
-    assert!(result == lit_string || result != TypeId::ERROR);
-}
-
-/// Test conditional chain pattern with number input
-#[test]
-fn test_conditional_chain_number() {
-    let interner = TypeInterner::new();
-
-    let lit_string = interner.literal_string("string");
-    let lit_number = interner.literal_string("number");
-    let lit_boolean = interner.literal_string("boolean");
-    let lit_other = interner.literal_string("other");
-
-    let input = TypeId::NUMBER;
-
-    // Innermost: T extends boolean ? "boolean" : "other"
-    let inner = interner.conditional(ConditionalType {
-        check_type: input,
-        extends_type: TypeId::BOOLEAN,
-        true_type: lit_boolean,
-        false_type: lit_other,
-        is_distributive: false,
-    });
-
-    // Middle: T extends number ? "number" : (inner)
-    let middle = interner.conditional(ConditionalType {
-        check_type: input,
-        extends_type: TypeId::NUMBER,
-        true_type: lit_number,
-        false_type: inner,
-        is_distributive: false,
-    });
-
-    // Outer: T extends string ? "string" : (middle)
-    let outer = ConditionalType {
-        check_type: input,
-        extends_type: TypeId::STRING,
-        true_type: lit_string,
-        false_type: middle,
-        is_distributive: false,
-    };
-
-    let result = evaluate_conditional(&interner, &outer);
-    // number does not extend string, but number extends number -> "number"
-    assert!(result == lit_number || result != TypeId::ERROR);
-}
-
-/// Test conditional chain pattern with boolean input
-#[test]
-fn test_conditional_chain_boolean() {
-    let interner = TypeInterner::new();
-
-    let lit_string = interner.literal_string("string");
-    let lit_number = interner.literal_string("number");
-    let lit_boolean = interner.literal_string("boolean");
-    let lit_other = interner.literal_string("other");
-
-    let input = TypeId::BOOLEAN;
-
-    // Innermost: T extends boolean ? "boolean" : "other"
-    let inner = interner.conditional(ConditionalType {
-        check_type: input,
-        extends_type: TypeId::BOOLEAN,
-        true_type: lit_boolean,
-        false_type: lit_other,
-        is_distributive: false,
-    });
-
-    // Middle: T extends number ? "number" : (inner)
-    let middle = interner.conditional(ConditionalType {
-        check_type: input,
-        extends_type: TypeId::NUMBER,
-        true_type: lit_number,
-        false_type: inner,
-        is_distributive: false,
-    });
-
-    // Outer: T extends string ? "string" : (middle)
-    let outer = ConditionalType {
-        check_type: input,
-        extends_type: TypeId::STRING,
-        true_type: lit_string,
-        false_type: middle,
-        is_distributive: false,
-    };
-
-    let result = evaluate_conditional(&interner, &outer);
-    // boolean extends neither string nor number, but extends boolean -> "boolean"
-    assert!(result == lit_boolean || result != TypeId::ERROR);
+    // Extracts "0" | "1" | "2"
+    let expected = interner.union(vec![
+        interner.literal_string("0"),
+        interner.literal_string("1"),
+        interner.literal_string("2"),
+    ]);
+    assert_eq!(result, expected);
 }
 

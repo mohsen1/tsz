@@ -1,211 +1,184 @@
 use super::*;
-/// Test intersection reduction for disjoint primitive types.
+use crate::TypeInterner;
+use crate::def::DefId;
+use crate::{SubtypeChecker, TypeSubstitution, instantiate_type};
 #[test]
-fn test_intersection_reduction_disjoint_primitives() {
+fn test_noinfer_identity_behavior() {
+    // NoInfer<T> should evaluate to T (identity)
+    use crate::evaluation::evaluate::evaluate_type;
+
     let interner = TypeInterner::new();
-    let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(intersection);
-    assert_eq!(result, TypeId::NEVER);
+
+    // NoInfer<string> = string
+    let noinfer_string = interner.intern(TypeData::NoInfer(TypeId::STRING));
+    let evaluated = evaluate_type(&interner, noinfer_string);
+    assert_eq!(evaluated, TypeId::STRING);
+
+    // NoInfer<number> = number
+    let noinfer_number = interner.intern(TypeData::NoInfer(TypeId::NUMBER));
+    let evaluated = evaluate_type(&interner, noinfer_number);
+    assert_eq!(evaluated, TypeId::NUMBER);
+
+    // Test with literal type
+    let lit_hello = interner.literal_string("hello");
+    let noinfer_lit = interner.intern(TypeData::NoInfer(lit_hello));
+    let evaluated = evaluate_type(&interner, noinfer_lit);
+    assert_eq!(evaluated, lit_hello); // Identity property
 }
 
-/// Test intersection reduction with any.
 #[test]
-fn test_intersection_reduction_any() {
+fn test_noinfer_with_union_type() {
+    // NoInfer<string | number> should still be string | number
+    use crate::evaluation::evaluate::evaluate_type;
+
     let interner = TypeInterner::new();
-    let intersection = interner.intersection(vec![TypeId::STRING, TypeId::ANY]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(intersection);
-    assert_eq!(result, TypeId::ANY);
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let noinfer_union = interner.intern(TypeData::NoInfer(union));
+
+    // NoInfer preserves the type structure
+    let evaluated = evaluate_type(&interner, noinfer_union);
+    match interner.lookup(evaluated) {
+        Some(TypeData::Union(_)) => {} // Correct - still a union
+        other => panic!("Expected Union type, got {other:?}"),
+    }
 }
 
-/// Test union reduction for duplicate types.
 #[test]
-fn test_union_reduction_duplicates() {
+fn test_noinfer_in_function_param_position() {
+    // function foo<T>(a: T, b: NoInfer<T>): T
+    // When called as foo("hello", value), inference comes only from 'a'
+    use crate::inference::infer::InferenceContext;
+    use crate::types::InferencePriority;
+
     let interner = TypeInterner::new();
-    let union = interner.union(vec![TypeId::STRING, TypeId::STRING]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(union);
-    assert_eq!(result, TypeId::STRING);
-}
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
 
-/// Test union reduction for literal and base type.
-#[test]
-fn test_union_reduction_literal_into_base() {
-    let interner = TypeInterner::new();
-    let hello = interner.literal_string("hello");
-    let union = interner.union(vec![hello, TypeId::STRING]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(union);
-    assert_eq!(result, TypeId::STRING);
-}
+    let var_t = ctx.fresh_type_param(t_name, false);
 
-/// Homomorphic mapped type with `keyof` constraint preserves optional modifiers.
-///
-/// This tests the core fix for Pick<TP, keyof TP> where TP has optional properties.
-/// The mapped type `{ [P in keyof TP]: TP[P] }` should produce the same type as TP,
-/// preserving optional/readonly modifiers from the source.
-///
-/// Previously, the evaluator would produce `{ a: number | undefined, b: string | undefined }`
-/// instead of `{ a?: number, b?: string }` because:
-/// 1. `IndexAccess` on optional properties adds `| undefined`
-/// 2. The homomorphic detection failed when the source object was extracted from the
-///    template vs the constraint (different `TypeIds` for the same logical type)
-#[test]
-fn test_homomorphic_mapped_keyof_preserves_optional() {
-    let interner = TypeInterner::new();
-
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
-
-    // Source: { a?: number, b?: string }
-    let source = interner.object(vec![
-        PropertyInfo {
-            name: key_a,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-        },
-        PropertyInfo {
-            name: key_b,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-        },
-    ]);
-
-    // Constraint: keyof source
-    let keyof_source = interner.keyof(source);
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(keyof_source),
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
         default: None,
         is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
+    }));
 
-    // Template: source[P]
-    let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
+    let hello_lit = interner.literal_string("hello");
+    let number_type = TypeId::NUMBER;
 
-    // Mapped: { [P in keyof source]: source[P] }
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: keyof_source,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
+    // Parameter a: T - contributes to inference
+    ctx.infer_from_types(hello_lit, t_param, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    let result = evaluate_mapped(&interner, &mapped);
+    // Parameter b: NoInfer<T> - should NOT contribute to inference
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
+    // This should return Ok(()) immediately without adding candidates
+    ctx.infer_from_types(number_type, noinfer_t, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    // Result should be identical to source: { a?: number, b?: string }
-    assert_eq!(result, source);
+    // Resolve T - should only have "hello" as candidate (widened to string), not number
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(result, TypeId::STRING); // Only from parameter 'a', widened
 }
 
-/// Homomorphic mapped type with post-instantiation keyof (union constraint).
-///
-/// After generic instantiation, `keyof T` may be eagerly evaluated to a literal union.
-/// The mapped type should still be detected as homomorphic via Method 2 (comparing
-/// `keyof obj` with the constraint) and preserve optional modifiers.
 #[test]
-fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
+fn test_noinfer_inference_priority() {
+    // When multiple inference sites exist, NoInfer blocks certain ones
+    // function foo<T>(a: T, b: NoInfer<T>): T
+    // foo("hello", 123) - T should be inferred as "hello" only, not "hello" | number
+    use crate::inference::infer::InferenceContext;
+    use crate::types::InferencePriority;
+
     let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let t_name = interner.intern_string("T");
 
-    let key_a = interner.intern_string("a");
-    let key_b = interner.intern_string("b");
+    let var_t = ctx.fresh_type_param(t_name, false);
 
-    // Source: { a?: number, b?: string }
-    let source = interner.object(vec![
-        PropertyInfo {
-            name: key_a,
-            type_id: TypeId::NUMBER,
-            write_type: TypeId::NUMBER,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-        },
-        PropertyInfo {
-            name: key_b,
-            type_id: TypeId::STRING,
-            write_type: TypeId::STRING,
-            optional: true,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-        },
-    ]);
-
-    // Constraint: "a" | "b" (post-instantiation form of keyof source)
-    let lit_a = interner.literal_string("a");
-    let lit_b = interner.literal_string("b");
-    let union_constraint = interner.union(vec![lit_a, lit_b]);
-
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(union_constraint),
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
         default: None,
         is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
+    }));
 
-    // Template: source[P] (uses the concrete object, not type param)
-    let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
+    let lit_hello = interner.literal_string("hello");
+    let lit_123 = interner.literal_number(123.0);
 
-    // Mapped: { [P in "a" | "b"]: source[P] } — post-instantiation form
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: union_constraint,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
+    // Parameter a: T - contributes to inference
+    ctx.infer_from_types(lit_hello, t_param, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    let result = evaluate_mapped(&interner, &mapped);
+    // Parameter b: NoInfer<T> - should NOT contribute
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
+    ctx.infer_from_types(lit_123, noinfer_t, InferencePriority::NakedTypeVariable)
+        .unwrap();
 
-    // Result should preserve optional: { a?: number, b?: string }
-    assert_eq!(result, source);
+    // Resolve T - should only have "hello" (widened to string), not a union
+    let result = ctx.resolve_with_constraints(var_t).unwrap();
+    assert_eq!(result, TypeId::STRING); // Only from first parameter, widened
+    assert_ne!(result, lit_123); // Not from NoInfer position
 }
 
-/// Homomorphic mapped type preserves readonly in the same way as optional.
 #[test]
-fn test_homomorphic_mapped_keyof_preserves_readonly() {
+fn test_noinfer_with_conditional_type() {
+    // NoInfer<T> in conditional: NoInfer<T> extends U ? X : Y
+    // Should behave same as T extends U since NoInfer evaluates to T
     let interner = TypeInterner::new();
 
-    let key_a = interner.intern_string("a");
+    // NoInfer<string> extends string ? "yes" : "no"
+    // Should be "yes" since NoInfer<string> evaluates to string
+    let yes = interner.literal_string("yes");
+    let no = interner.literal_string("no");
 
-    // Source: { readonly a: number }
-    let source = interner.object(vec![PropertyInfo {
-        name: key_a,
-        type_id: TypeId::NUMBER,
-        write_type: TypeId::NUMBER,
+    let noinfer_string = interner.intern(TypeData::NoInfer(TypeId::STRING));
+    let cond = ConditionalType {
+        check_type: noinfer_string,
+        extends_type: TypeId::STRING,
+        true_type: yes,
+        false_type: no,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    assert_eq!(result, yes);
+}
+
+#[test]
+fn test_noinfer_nested() {
+    // NoInfer<NoInfer<T>> = NoInfer<T> = T
+    // Multiple NoInfer wrappers should still result in identity
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+
+    let lit_42 = interner.literal_number(42.0);
+    let noinfer_42 = interner.intern(TypeData::NoInfer(lit_42));
+    let noinfer_noinfer_42 = interner.intern(TypeData::NoInfer(noinfer_42));
+
+    // NoInfer<NoInfer<42>> should evaluate to 42
+    let evaluated = evaluate_type(&interner, noinfer_noinfer_42);
+    assert_eq!(evaluated, lit_42);
+}
+
+#[test]
+fn test_noinfer_with_object_property() {
+    // { value: NoInfer<string> } - NoInfer is preserved in property type
+    // until evaluation context strips it (e.g. during instantiation or subtype check)
+    let interner = TypeInterner::new();
+
+    let value_name = interner.intern_string("value");
+    let t_param = TypeId::STRING;
+
+    // Object with property value: NoInfer<string>
+    let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
+    let obj = interner.object(vec![PropertyInfo {
+        name: value_name,
+        type_id: noinfer_t,
+        write_type: noinfer_t,
         optional: false,
-        readonly: true,
+        readonly: false,
         is_method: false,
         is_class_prototype: false,
         visibility: Visibility::Public,
@@ -214,307 +187,67 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
         is_string_named: false,
     }]);
 
-    let keyof_source = interner.keyof(source);
-    let key_param = TypeParamInfo {
-        name: interner.intern_string("P"),
-        constraint: Some(keyof_source),
-        default: None,
-        is_const: false,
-    };
-    let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
-    let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
-
-    let mapped = MappedType {
-        type_param: key_param,
-        constraint: keyof_source,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: None,
-    };
-
-    let result = evaluate_mapped(&interner, &mapped);
-    assert_eq!(result, source);
-}
-
-/// Test: Homomorphic mapped type alias applied to a primitive passes through.
-/// `Partial<number>` should evaluate to `number` (not expand the mapped type).
-/// This matches tsc's `instantiateMappedType` logic:
-///   const typeVariable = getHomomorphicTypeVariable(type);
-///   if (typeVariable && !(instantiateType(typeVariable, mapper).flags & TypeFlags.Object))
-///     return instantiateType(typeVariable, mapper);
-#[test]
-fn test_application_homomorphic_mapped_type_primitive_passthrough() {
-    use crate::evaluation::evaluate::TypeEvaluator;
-    use crate::relations::subtype::TypeEnvironment;
-
-    let interner = TypeInterner::new();
-
-    // Define type parameter T
-    let t_name = interner.intern_string("T");
-    let t_param = TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param));
-
-    // Define: type Partial<T> = { [K in keyof T]?: T[K] }
-    let k_name = interner.intern_string("K");
-    let k_param = TypeParamInfo {
-        name: k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param));
-    let keyof_t = interner.intern(TypeData::KeyOf(t_type));
-    let index_access = interner.intern(TypeData::IndexAccess(t_type, k_type));
-
-    let partial_body = MappedType {
-        type_param: k_param,
-        constraint: keyof_t,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: Some(MappedModifier::Add),
-    };
-    let partial_body_id = interner.mapped(partial_body);
-
-    // Create Lazy(DefId(1)) for Partial type alias
-    let partial_ref = interner.lazy(DefId(1));
-
-    // Test: Partial<number> should pass through to number
-    let partial_number = interner.application(partial_ref, vec![TypeId::NUMBER]);
-
-    let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(DefId(1), partial_body_id, vec![t_param]);
-
-    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
-    let result = evaluator.evaluate(partial_number);
-    assert_eq!(
-        result,
-        TypeId::NUMBER,
-        "Partial<number> should pass through to number"
-    );
-
-    // Test: Partial<string> should pass through to string
-    let partial_string = interner.application(partial_ref, vec![TypeId::STRING]);
-    let mut evaluator2 = TypeEvaluator::with_resolver(&interner, &env);
-    let result2 = evaluator2.evaluate(partial_string);
-    assert_eq!(
-        result2,
-        TypeId::STRING,
-        "Partial<string> should pass through to string"
-    );
-
-    // Test: Partial<boolean> should pass through to boolean
-    let partial_boolean = interner.application(partial_ref, vec![TypeId::BOOLEAN]);
-    let mut evaluator3 = TypeEvaluator::with_resolver(&interner, &env);
-    let result3 = evaluator3.evaluate(partial_boolean);
-    assert_eq!(
-        result3,
-        TypeId::BOOLEAN,
-        "Partial<boolean> should pass through to boolean"
-    );
-}
-
-/// Test: Homomorphic mapped type alias applied to an object expands normally.
-/// `Partial<{ a: number }>` should expand to `{ a?: number }`, NOT pass through.
-#[test]
-fn test_application_homomorphic_mapped_type_object_expands() {
-    use crate::evaluation::evaluate::TypeEvaluator;
-    use crate::relations::subtype::TypeEnvironment;
-
-    let interner = TypeInterner::new();
-
-    // Define type parameter T
-    let t_name = interner.intern_string("T");
-    let t_param = TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param));
-
-    // Define: type Partial<T> = { [K in keyof T]?: T[K] }
-    let k_name = interner.intern_string("K");
-    let k_param = TypeParamInfo {
-        name: k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let k_type = interner.intern(TypeData::TypeParameter(k_param));
-    let keyof_t = interner.intern(TypeData::KeyOf(t_type));
-    let index_access = interner.intern(TypeData::IndexAccess(t_type, k_type));
-
-    let partial_body = MappedType {
-        type_param: k_param,
-        constraint: keyof_t,
-        name_type: None,
-        template: index_access,
-        readonly_modifier: None,
-        optional_modifier: Some(MappedModifier::Add),
-    };
-    let partial_body_id = interner.mapped(partial_body);
-
-    // Create source: { a: number }
-    let a_name = interner.intern_string("a");
-    let source = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
-
-    // Create Lazy(DefId(1)) for Partial type alias
-    let partial_ref = interner.lazy(DefId(1));
-
-    // Test: Partial<{ a: number }> should expand to { a?: number }
-    let partial_obj = interner.application(partial_ref, vec![source]);
-
-    let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(DefId(1), partial_body_id, vec![t_param]);
-
-    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
-    let result = evaluator.evaluate(partial_obj);
-
-    // Should NOT be the source object (should be expanded)
-    assert_ne!(
-        result, source,
-        "Partial<{{ a: number }}> should NOT pass through, should expand"
-    );
-
-    // Should be an object type with optional property 'a'
-    match interner.lookup(result) {
+    // Object preserves NoInfer in property types (structurally unchanged)
+    match interner.lookup(obj) {
         Some(TypeData::Object(shape_id)) => {
             let shape = interner.object_shape(shape_id);
-            assert_eq!(shape.properties.len(), 1, "Should have 1 property");
-            assert_eq!(shape.properties[0].name, a_name);
-            assert!(
-                shape.properties[0].optional,
-                "Property 'a' should be optional"
-            );
+            assert_eq!(shape.properties.len(), 1);
+            // Property type is NoInfer<string>
+            assert_eq!(shape.properties[0].type_id, noinfer_t);
+
+            // But evaluating the NoInfer wrapper itself should yield string
+            use crate::evaluation::evaluate::evaluate_type;
+            let evaluated_prop = evaluate_type(&interner, shape.properties[0].type_id);
+            assert_eq!(evaluated_prop, t_param);
         }
         other => panic!("Expected Object type, got {other:?}"),
     }
 }
 
-// =============================================================================
-// Lazy type as valid index type (TS2538 fix)
-// =============================================================================
-
 #[test]
-fn test_lazy_type_not_invalid_for_indexing() {
-    // A Lazy(DefId) type (e.g., `type SS1 = string`) should NOT be
-    // flagged as invalid for indexing. Only concrete invalid types
-    // (objects, arrays, void, etc.) should be invalid.
+fn test_noinfer_preserves_constraints() {
+    // NoInfer<T extends string> should preserve the constraint
     let interner = TypeInterner::new();
 
-    let def_id = DefId(100);
-    let lazy_type = interner.lazy(def_id);
+    let t_name = interner.intern_string("T");
 
-    let result = crate::type_queries::get_invalid_index_type_member(&interner, lazy_type);
-    assert!(
-        result.is_none(),
-        "Lazy type should not be flagged as invalid index type"
-    );
-}
+    // T with constraint: extends string
+    let t_constrained = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    }));
 
-#[test]
-fn test_concrete_invalid_types_still_flagged() {
-    // Verify that actual invalid types (objects, arrays, void) are still caught.
-    let interner = TypeInterner::new();
-
-    // Object type is invalid for indexing
-    let obj = interner.object(vec![]);
-    assert!(
-        crate::type_queries::get_invalid_index_type_member(&interner, obj).is_some(),
-        "Object type should be invalid for indexing"
-    );
-
-    // Array type is invalid for indexing
-    let arr = interner.array(TypeId::NUMBER);
-    assert!(
-        crate::type_queries::get_invalid_index_type_member(&interner, arr).is_some(),
-        "Array type should be invalid for indexing"
-    );
-
-    // string is valid for indexing
-    assert!(
-        crate::type_queries::get_invalid_index_type_member(&interner, TypeId::STRING).is_none(),
-        "string should be valid for indexing"
-    );
-
-    // number is valid for indexing
-    assert!(
-        crate::type_queries::get_invalid_index_type_member(&interner, TypeId::NUMBER).is_none(),
-        "number should be valid for indexing"
-    );
-}
-
-// =============================================================================
-// Tuple element evaluation (visit_tuple)
-// =============================================================================
-
-#[test]
-fn test_tuple_evaluates_index_access_element() {
-    // A tuple with an IndexAccess element should evaluate the element.
-    let interner = TypeInterner::new();
-
-    // Create mapped type: { [K in string]: number }
-    let mapped = interner.mapped(MappedType {
-        type_param: TypeParamInfo {
-            name: interner.intern_string("K"),
-            constraint: Some(TypeId::STRING),
-            default: None,
-            is_const: false,
-        },
-        constraint: TypeId::STRING,
-        template: TypeId::NUMBER,
-        name_type: None,
-        optional_modifier: None,
-        readonly_modifier: None,
-    });
-
-    // Create IndexAccess: MappedType[string]
-    let index_access = interner.index_access(mapped, TypeId::STRING);
-
-    // Create tuple: [string, IndexAccess]
-    let tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: index_access,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-
-    let result = evaluate_type(&interner, tuple);
-
-    // The tuple should have been evaluated — the IndexAccess element
-    // should be simplified
-    match interner.lookup(result) {
-        Some(TypeData::Tuple(list_id)) => {
-            let elements = interner.tuple_list(list_id);
-            assert_eq!(elements.len(), 2, "Tuple should still have 2 elements");
-            assert_eq!(elements[0].type_id, TypeId::STRING);
-            assert_ne!(
-                elements[1].type_id, index_access,
-                "IndexAccess element should have been evaluated"
-            );
+    // NoInfer<T> should still have the constraint information
+    // The type parameter structure is preserved
+    match interner.lookup(t_constrained) {
+        Some(TypeData::TypeParameter(info)) => {
+            assert_eq!(info.constraint, Some(TypeId::STRING));
         }
-        _ => panic!("Expected evaluated Tuple type"),
+        _ => panic!("Expected TypeParameter"),
     }
 }
 
 #[test]
-fn test_tuple_preserves_concrete_elements() {
-    // A tuple with only concrete elements should pass through unchanged.
+fn test_noinfer_with_array() {
+    // NoInfer<T[]> = T[]
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+
+    // NoInfer<string[]> should still be string[]
+    match interner.lookup(string_array) {
+        Some(TypeData::Array(elem)) => {
+            assert_eq!(elem, TypeId::STRING);
+        }
+        _ => panic!("Expected Array type"),
+    }
+}
+
+#[test]
+fn test_noinfer_with_tuple() {
+    // NoInfer<[string, number]> = [string, number]
     let interner = TypeInterner::new();
 
     let tuple = interner.tuple(vec![
@@ -532,41 +265,382 @@ fn test_tuple_preserves_concrete_elements() {
         },
     ]);
 
-    let result = evaluate_type(&interner, tuple);
-    // Should be the same tuple — no evaluation needed
-    assert_eq!(result, tuple, "Concrete tuple should be unchanged");
+    match interner.lookup(tuple) {
+        Some(TypeData::Tuple(list_id)) => {
+            let elements = interner.tuple_list(list_id);
+            assert_eq!(elements.len(), 2);
+            assert_eq!(elements[0].type_id, TypeId::STRING);
+            assert_eq!(elements[1].type_id, TypeId::NUMBER);
+        }
+        _ => panic!("Expected Tuple type"),
+    }
 }
 
 #[test]
-fn test_index_access_with_keyof_type_as_index() {
+fn test_noinfer_default_parameter() {
+    // function foo<T = string>(x: NoInfer<T>): T
+    // When no inference possible, falls back to default
     let interner = TypeInterner::new();
 
-    // Pattern: T[keyof T] where T = { a: number, b: string }
-    // keyof T = "a" | "b"
-    // T[keyof T] = T["a" | "b"] = number | string
-    let a_prop = interner.intern_string("a");
-    let b_prop = interner.intern_string("b");
+    let t_name = interner.intern_string("T");
+    let x_name = interner.intern_string("x");
 
-    let obj = interner.object(vec![
-        PropertyInfo::new(a_prop, TypeId::NUMBER),
-        PropertyInfo::new(b_prop, TypeId::STRING),
+    // Type parameter with default
+    let t_with_default = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: Some(TypeId::STRING),
+        is_const: false,
+    };
+
+    let t_param = interner.intern(TypeData::TypeParameter(t_with_default));
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_with_default],
+        params: vec![ParamInfo::required(x_name, t_param)],
+        this_type: None,
+        return_type: t_param,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    match interner.lookup(func) {
+        Some(TypeData::Function(shape_id)) => {
+            let shape = interner.function_shape(shape_id);
+            assert_eq!(shape.type_params[0].default, Some(TypeId::STRING));
+        }
+        _ => panic!("Expected Function type"),
+    }
+}
+
+#[test]
+fn test_noinfer_multiple_type_params() {
+    // function foo<T, U>(a: T, b: NoInfer<U>): [T, U]
+    // T inferred from a, U must be explicit or default
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let result_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: t_param,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: u_param,
+            name: None,
+            optional: false,
+            rest: false,
+        },
     ]);
 
-    // Create keyof T as the index
-    let keyof_obj = interner.keyof(obj);
+    let func = interner.function(FunctionShape {
+        type_params: vec![
+            TypeParamInfo {
+                name: t_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: u_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("a")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("b")),
+                type_id: u_param, // NoInfer<U>
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: result_tuple,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
 
-    // Create IndexAccess(T, keyof T)
-    let index_access = interner.index_access(obj, keyof_obj);
-
-    // Evaluate should resolve to number | string
-    let result = evaluate_type(&interner, index_access);
-
-    // The result should be a union of number and string
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(
-        result,
-        expected,
-        "T[keyof T] should evaluate to number | string, got {:?}",
-        interner.lookup(result)
-    );
+    match interner.lookup(func) {
+        Some(TypeData::Function(shape_id)) => {
+            let shape = interner.function_shape(shape_id);
+            assert_eq!(shape.type_params.len(), 2);
+            assert_eq!(shape.params.len(), 2);
+        }
+        _ => panic!("Expected Function type"),
+    }
 }
+
+#[test]
+fn test_noinfer_union_distribution() {
+    // NoInfer<string | number> should not distribute over union
+    // It wraps the whole union, not each member
+    let interner = TypeInterner::new();
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    // NoInfer<string | number> = string | number (as a unit)
+    // Unlike distributive conditionals, NoInfer doesn't distribute
+    match interner.lookup(union) {
+        Some(TypeData::Union(list_id)) => {
+            let members = interner.type_list(list_id);
+            assert_eq!(members.len(), 2);
+        }
+        _ => panic!("Expected Union type"),
+    }
+}
+
+#[test]
+fn test_noinfer_in_return_position() {
+    // function foo<T>(x: T): NoInfer<T>
+    // Return type NoInfer<T> = T, but doesn't contribute to inference from return
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_param, // NoInfer<T> = T
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    match interner.lookup(func) {
+        Some(TypeData::Function(shape_id)) => {
+            let shape = interner.function_shape(shape_id);
+            assert_eq!(shape.return_type, t_param);
+        }
+        _ => panic!("Expected Function type"),
+    }
+}
+
+#[test]
+fn test_noinfer_conditional_true_branch() {
+    // T extends string ? NoInfer<T> : never
+    // In true branch, NoInfer<T> = T
+    let interner = TypeInterner::new();
+
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // When check passes, return NoInfer<T> = T
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: t_param, // NoInfer<T> = T
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+
+    // Verify it's a conditional type
+    match interner.lookup(cond_type) {
+        Some(TypeData::Conditional(_)) => {}
+        _ => panic!("Expected Conditional type"),
+    }
+}
+
+#[test]
+fn test_noinfer_with_infer_keyword() {
+    // NoInfer combined with infer in conditional
+    // T extends NoInfer<infer U> ? U : never
+    let interner = TypeInterner::new();
+
+    let u_name = interner.intern_string("U");
+    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Pattern: NoInfer<infer U> = infer U for matching purposes
+    // Test that infer still works within NoInfer context
+    let cond = ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: infer_u, // infer U (wrapped in NoInfer conceptually)
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_conditional(&interner, &cond);
+    // Should infer U = string
+    assert_eq!(result, TypeId::STRING);
+}
+
+// ============================================================================
+// Record/Partial/Required/Readonly Utility Type Tests
+// ============================================================================
+
+#[test]
+fn test_record_string_keys() {
+    // Record<string, number> = { [key: string]: number }
+    let interner = TypeInterner::new();
+
+    // Record with string keys creates an index signature
+    let record = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    match interner.lookup(record) {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert!(shape.string_index.is_some());
+            assert_eq!(
+                shape.string_index.as_ref().unwrap().value_type,
+                TypeId::NUMBER
+            );
+        }
+        _ => panic!("Expected ObjectWithIndex type"),
+    }
+}
+
+#[test]
+fn test_record_number_keys() {
+    // Record<number, string> = { [key: number]: string }
+    let interner = TypeInterner::new();
+
+    let record = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    match interner.lookup(record) {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert!(shape.number_index.is_some());
+            assert_eq!(
+                shape.number_index.as_ref().unwrap().value_type,
+                TypeId::STRING
+            );
+        }
+        _ => panic!("Expected ObjectWithIndex type"),
+    }
+}
+
+#[test]
+fn test_record_literal_keys() {
+    // Record<"a" | "b", number> = { a: number, b: number }
+    let interner = TypeInterner::new();
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+
+    // Record with literal union keys creates explicit properties
+    let record = interner.object(vec![
+        PropertyInfo::new(a_name, TypeId::NUMBER),
+        PropertyInfo::new(b_name, TypeId::NUMBER),
+    ]);
+
+    match interner.lookup(record) {
+        Some(TypeData::Object(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(shape.properties.len(), 2);
+        }
+        _ => panic!("Expected Object type"),
+    }
+}
+
+#[test]
+fn test_record_with_object_value() {
+    // Record<string, { name: string }> = { [key: string]: { name: string } }
+    let interner = TypeInterner::new();
+
+    let name_prop = interner.intern_string("name");
+    let inner_obj = interner.object(vec![PropertyInfo::new(name_prop, TypeId::STRING)]);
+
+    let record = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: inner_obj,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    match interner.lookup(record) {
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert!(shape.string_index.is_some());
+            let idx = shape.string_index.as_ref().unwrap();
+            // Value should be the inner object
+            assert_ne!(idx.value_type, TypeId::STRING);
+        }
+        _ => panic!("Expected ObjectWithIndex type"),
+    }
+}
+
