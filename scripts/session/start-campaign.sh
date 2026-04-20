@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# start-campaign.sh — Claim a campaign and create an isolated worktree
+# start-campaign.sh — Create an isolated worktree for a campaign session
 # =============================================================================
 #
 # Usage: scripts/session/start-campaign.sh <campaign-name>
 #
 # Creates a worktree at .worktrees/<campaign> on branch campaign/<campaign>
-# branched from origin/main. Checks if the campaign is already claimed.
+# branched from origin/main. Checks if the campaign branch already exists.
 #
 # =============================================================================
 set -euo pipefail
@@ -54,8 +54,8 @@ git -C "$REPO_ROOT" fetch origin --quiet
 # --- Check if campaign branch already exists on remote ---
 if git -C "$REPO_ROOT" rev-parse --verify "origin/$BRANCH" &>/dev/null; then
     echo ""
-    echo "⚠ Branch '$BRANCH' already exists on origin."
-    echo "  This campaign may be claimed by another agent on another machine."
+    echo "WARNING: Branch '$BRANCH' already exists on origin."
+    echo "  Another session may already be using this campaign branch."
     echo ""
     echo "Options:"
     echo "  1) Continue anyway (collaborate on same campaign branch)"
@@ -113,17 +113,16 @@ echo ""
 echo "Next steps:"
 echo "  cd $WORKTREE_DIR"
 echo ""
-echo "Interactive mode:"
-echo "  opencode -m alibaba/qwen3.6-plus"
+echo "Open a Claude or Codex session rooted at:"
+echo "  $WORKTREE_DIR"
 echo ""
-echo "Headless mode:"
-echo "  opencode run 'Start the $CAMPAIGN campaign. Read scripts/session/AGENT_PROTOCOL.md.' \\"
-echo "    -m alibaba/qwen3.6-plus --dir $WORKTREE_DIR"
+echo "Suggested kickoff prompt:"
+echo "  Start the $CAMPAIGN campaign. Read scripts/session/AGENT_PROTOCOL.md and scripts/session/campaigns.yaml. Then run the health check, KPI dashboard, and checkpoint status before coding."
 echo ""
-echo "The agent will:"
+echo "That session should:"
 echo "  1. Read scripts/session/AGENT_PROTOCOL.md and campaigns.yaml"
 echo "  2. Research failures with query-conformance.py --dashboard"
 echo "  3. Plan the fix and verify against code"
 echo "  4. Implement, then run scripts/session/verify-all.sh (ALL test suites)"
-echo "  5. Push to main only after zero regressions"
+echo "  5. Record progress with campaign-checkpoint.sh before finishing"
 echo ""
