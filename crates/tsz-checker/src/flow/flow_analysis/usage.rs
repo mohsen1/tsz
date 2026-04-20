@@ -398,12 +398,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Get the variable name for the error message
+        // Get the variable name for the error message. tsc's diagnostic message
+        // preserves the identifier as written in the declaration, including
+        // unicode escape sequences (e.g., `\u0078x` rather than the decoded `xx`).
+        // Prefer the declaration name's `original_text` when present.
         let name = self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+            .declaration_display_name(sym_id)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .map(|s| s.escaped_name.clone())
+            })
+            .unwrap_or_else(|| "<unknown>".to_string());
 
         self.error_at_node(
             idx,
@@ -417,6 +424,22 @@ impl<'a> CheckerState<'a> {
         // rollback; at the end of check_source_file we re-emit any TS2454 that
         // was lost.
         self.ctx.deferred_ts2454_errors.push((idx, sym_id));
+    }
+
+    /// Return the declared name as it appears in source, preserving unicode
+    /// escape sequences (e.g., `\u0078x`). Falls back to `None` when the
+    /// symbol has no declaration or the declaration name's original text is
+    /// unavailable.
+    fn declaration_display_name(&self, sym_id: SymbolId) -> Option<String> {
+        let decl_idx = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .and_then(|s| s.declarations.first().copied())?;
+        let name_idx = self.get_declaration_name_node(decl_idx)?;
+        let name_node = self.ctx.arena.get(name_idx)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        ident.original_text.clone()
     }
 
     /// Check if a node is within a parameter's default value initializer.
