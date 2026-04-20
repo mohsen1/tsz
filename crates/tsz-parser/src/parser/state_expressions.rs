@@ -1991,12 +1991,25 @@ impl ParserState {
                         // setting THIS_NODE_HAS_ERROR on the expression identifier itself,
                         // which would suppress TS2304 for unresolved names like `List`.
                         //
-                        // `<` starts at expression_node.end; `>` ends at node.end.
-                        // NodeList.pos/end are always 0, so we can't use type_args span.
-                        let err_pos = self
-                            .arena
-                            .get(eta.expression)
-                            .map_or(node.pos, |expr_node| expr_node.end);
+                        // tsc's formula: `pos = typeArguments.pos - 1` (the `<`),
+                        // `end = skipTrivia(typeArguments.end) + 1` (past `>`). Prefer
+                        // the first type argument's start - 1 so the column points to
+                        // the `<` itself even when whitespace separates `b` from `<`.
+                        // Fall back to the expression's end when no args are available.
+                        let first_arg_pos = eta
+                            .type_arguments
+                            .as_ref()
+                            .and_then(|list| list.nodes.first())
+                            .and_then(|&idx| self.arena.get(idx))
+                            .map(|n| n.pos);
+                        let err_pos =
+                            first_arg_pos
+                                .map(|p| p.saturating_sub(1))
+                                .unwrap_or_else(|| {
+                                    self.arena
+                                        .get(eta.expression)
+                                        .map_or(node.pos, |expr_node| expr_node.end)
+                                });
                         let err_len = node.end.saturating_sub(err_pos);
                         self.parse_error_at(
                             err_pos,
