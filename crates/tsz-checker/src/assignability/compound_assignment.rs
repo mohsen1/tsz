@@ -276,22 +276,26 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
         );
         if is_arithmetic_compound && !is_function_assignment {
-            // Don't emit arithmetic errors if either operand is ERROR - prevents cascading errors
-            if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
-                let had_per_operand_error =
-                    self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
-                emitted_operator_error |= had_per_operand_error;
+            // check_arithmetic_operands skips per-side emission when that side
+            // is ERROR, so the unresolved-LHS / non-numeric-RHS case still
+            // reports TS2363 for the visible side.
+            let had_per_operand_error =
+                self.check_arithmetic_operands(left_idx, right_idx, left_read_type, right_type);
+            emitted_operator_error |= had_per_operand_error;
 
-                // TS2365: Check for bigint/number mixing in arithmetic compound assignments
-                if !had_per_operand_error && !emitted_operator_error {
-                    self.check_compound_assignment_type_compatibility(
-                        expr_idx,
-                        operator,
-                        left_read_type,
-                        right_type,
-                        &mut emitted_operator_error,
-                    );
-                }
+            // TS2365 requires both sides well-typed to compare number vs bigint.
+            if !had_per_operand_error
+                && !emitted_operator_error
+                && left_read_type != TypeId::ERROR
+                && right_type != TypeId::ERROR
+            {
+                self.check_compound_assignment_type_compatibility(
+                    expr_idx,
+                    operator,
+                    left_read_type,
+                    right_type,
+                    &mut emitted_operator_error,
+                );
             }
         }
 

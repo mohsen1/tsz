@@ -72,7 +72,11 @@ impl<'a> CheckerState<'a> {
 
         let mut emitted = false;
 
-        if !left_is_valid {
+        // Skip per-side emission when that side already resolved to ERROR
+        // (e.g. TS2304 for an undeclared identifier). tsc still validates the
+        // other side — `kj **= \`${x}\`` produces TS2304 and TS2363 for the
+        // template RHS even though `kj` is unresolved.
+        if !left_is_valid && left_type != TypeId::ERROR {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
@@ -81,7 +85,7 @@ impl<'a> CheckerState<'a> {
             emitted = true;
         }
 
-        if !right_is_valid {
+        if !right_is_valid && right_type != TypeId::ERROR {
             self.error_at_node(
                 right_idx,
                 "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.",
@@ -90,7 +94,7 @@ impl<'a> CheckerState<'a> {
             emitted = true;
         }
 
-        emitted || !left_is_valid || !right_is_valid
+        emitted
     }
 
     /// Emit TS2447 error for boolean bitwise operators (&, |, ^, &=, |=, ^=).
