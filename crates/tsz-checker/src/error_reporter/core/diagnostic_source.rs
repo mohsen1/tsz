@@ -667,11 +667,24 @@ impl<'a> CheckerState<'a> {
         }
         // Only widen object-like types (to convert literal properties to primitives).
         // For literal/primitive receiver types (e.g., `""`, `42`), tsc preserves the
-        // literal in TS2339 messages (e.g., `'""'` not `'string'`).
+        // literal in TS2339 messages (e.g., `'""'` not `'string'`).  Unions whose
+        // every member is a literal are also preserved (e.g., `"foo" | "bar"`) —
+        // widening them to `string` loses discriminative information tsc keeps in
+        // property-existence diagnostics.
         let is_literal_or_primitive =
             crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
                 || crate::query_boundaries::common::is_primitive_type(self.ctx.types, ty);
-        let ty = if is_literal_or_primitive {
+        let is_union_of_literals = !is_literal_or_primitive
+            && crate::query_boundaries::common::union_members(self.ctx.types, ty).is_some_and(
+                |members| {
+                    !members.is_empty()
+                        && members.iter().all(|&m| {
+                            crate::query_boundaries::common::literal_value(self.ctx.types, m)
+                                .is_some()
+                        })
+                },
+            );
+        let ty = if is_literal_or_primitive || is_union_of_literals {
             ty
         } else {
             self.widen_type_for_display(ty)
