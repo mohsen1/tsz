@@ -335,8 +335,8 @@ fn test_completions_member_parameter_typeof_class_includes_static_and_namespace_
 }
 
 #[test]
-fn test_completions_member_parameter_typeof_class_with_marker_comment_after_dot() {
-    let source = "class C<T> {\n    static foo(x: number) { }\n    x: T;\n}\n\nnamespace C {\n    export function f(x: typeof C) {\n        x./*1*/\n    }\n}\n";
+fn test_completions_member_parameter_typeof_class_after_dot() {
+    let source = "class C<T> {\n    static foo(x: number) { }\n    x: T;\n}\n\nnamespace C {\n    export function f(x: typeof C) {\n        x.\n    }\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let arena = parser.get_arena();
@@ -355,14 +355,12 @@ fn test_completions_member_parameter_typeof_class_with_marker_comment_after_dot(
         "test.ts".to_string(),
     );
 
+    // Cursor immediately after `x.` on line 7 (0-based), column 10.
     let position = Position::new(7, 10);
     let mut cache = None;
     let items = completions.get_completions_with_cache(root, position, &mut cache);
 
-    assert!(
-        items.is_some(),
-        "Should have marker-adjacent member completions"
-    );
+    assert!(items.is_some(), "Should have member completions after `.`");
     let items = items.unwrap();
     let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
 

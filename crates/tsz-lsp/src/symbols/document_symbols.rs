@@ -80,7 +80,7 @@ pub enum SymbolKind {
     // entries (expando property assignments where the RHS isn't a
     // function, certain JS patterns). Keep the name field populated
     // and let the navbar/navtree serializer omit the kind field when
-    // it's falsy, matching the fourslash harness JSON compare.
+    // it's an empty string to match tsserver's wire format.
     Unknown = 34,
 }
 
@@ -279,8 +279,8 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let name_node = func.name;
                     // tsc uses the literal `<function>` placeholder for
                     // name-less function declarations (parser error
-                    // recovery cases like `function;`). Keep the same
-                    // placeholder so snapshot diffs stay aligned.
+                    // recovery cases like `function;`). Emit the same
+                    // placeholder so the LSP wire format matches tsserver.
                     let name = self
                         .get_name(name_node)
                         .unwrap_or_else(|| "<function>".to_string());

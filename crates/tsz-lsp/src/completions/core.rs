@@ -144,9 +144,7 @@ impl<'a> Completions<'a> {
             .line_map
             .position_to_offset(position, self.source_text)?;
         let node_idx = self.find_completions_node(root, offset);
-        let member_target = self
-            .member_completion_target(node_idx, offset)
-            .or_else(|| self.marker_comment_member_completion_target(offset));
+        let member_target = self.member_completion_target(node_idx, offset);
         let is_dotted_namespace = self.is_dotted_namespace_completion_context(offset);
         let is_member =
             !is_dotted_namespace && (member_target.is_some() || self.is_member_context(offset));
@@ -258,11 +256,7 @@ impl<'a> Completions<'a> {
         }
 
         // 4b. Resolve member completion targets before lexical suppression checks.
-        // Fourslash marker comments (e.g. `obj./**/`) often place the cursor inside
-        // comment trivia where no-completion filters would otherwise short-circuit.
-        let member_target = self
-            .member_completion_target(node_idx, offset)
-            .or_else(|| self.marker_comment_member_completion_target(offset));
+        let member_target = self.member_completion_target(node_idx, offset);
         if let Some(expr_idx) = member_target {
             if let Some(items) = self.get_member_completions(expr_idx, type_cache.as_deref_mut()) {
                 if !items.is_empty() {
@@ -441,7 +435,7 @@ impl<'a> Completions<'a> {
         }
 
         // 9. Add global variables (globalThis, Array, etc.)
-        //    These are always available and match fourslash globalsVars order.
+        //    These are declared by the configured lib files and are always visible.
         let inside_func = if global_this_member_fallback {
             false
         } else {
@@ -913,7 +907,7 @@ impl<'a> Completions<'a> {
 
     fn get_meta_property_completions(&self, offset: u32) -> Option<Vec<CompletionItem>> {
         let end = (offset as usize).min(self.source_text.len());
-        let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
+        let prefix = self.source_text[..end].trim_end();
         let before_dot = prefix.strip_suffix('.')?;
         let expr = before_dot.trim_end();
         if expr.ends_with("import.meta") {
@@ -963,7 +957,7 @@ impl<'a> Completions<'a> {
         offset: u32,
     ) -> Option<Vec<CompletionItem>> {
         let end = (offset as usize).min(self.source_text.len());
-        let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
+        let prefix = self.source_text[..end].trim_end();
         if !prefix.ends_with("typeof") {
             return None;
         }
@@ -1098,137 +1092,6 @@ impl<'a> Completions<'a> {
                 }
             }
 
-            let ext = self.arena.get_extended(current)?;
-            current = ext.parent;
-        }
-
-        None
-    }
-
-    fn marker_comment_member_completion_target(&self, offset: u32) -> Option<NodeIndex> {
-        let bytes = self.source_text.as_bytes();
-        let len = bytes.len() as u32;
-        if len == 0 {
-            return None;
-        }
-        let mut cursor = offset.min(len);
-
-        loop {
-            // If cursor is inside a block comment (`/*...*/`), jump back to the
-            // marker start so member-context detection can inspect the preceding
-            // `.`/`?.` token.
-            let scan_end = cursor as usize;
-            let prefix = &self.source_text[..scan_end];
-            if let Some(block_start) = prefix.rfind("/*") {
-                let block_body = &self.source_text[block_start + 2..scan_end];
-                if !block_body.contains("*/") {
-                    cursor = block_start as u32;
-                    continue;
-                }
-            }
-
-            while cursor > 0 && bytes[(cursor - 1) as usize].is_ascii_whitespace() {
-                cursor -= 1;
-            }
-
-            if cursor >= 2
-                && bytes[(cursor - 2) as usize] == b'*'
-                && bytes[(cursor - 1) as usize] == b'/'
-            {
-                cursor -= 2;
-                while cursor >= 2 {
-                    if bytes[(cursor - 2) as usize] == b'/' && bytes[(cursor - 1) as usize] == b'*'
-                    {
-                        cursor -= 2;
-                        break;
-                    }
-                    cursor -= 1;
-                }
-                continue;
-            }
-
-            break;
-        }
-
-        let line_start = self.source_text[..cursor as usize]
-            .rfind('\n')
-            .map_or(0, |idx| idx + 1);
-        let line_prefix = &self.source_text[line_start..cursor as usize];
-        if line_prefix.contains("//") {
-            let comment_pos = line_prefix.find("//").unwrap_or(usize::MAX);
-            if !(comment_pos == 0 && line_prefix.starts_with("////")) {
-                return None;
-            }
-        }
-
-        if cursor == 0 {
-            return None;
-        }
-        // Check for `.` or `?.` (optional chaining)
-        if bytes[(cursor - 1) as usize] != b'.' {
-            return None;
-        }
-
-        let dot = cursor - 1;
-        // Skip the `?` in `?.` (optional chaining)
-        let scan_from = if dot > 0 && bytes[(dot - 1) as usize] == b'?' {
-            dot - 1
-        } else {
-            dot
-        };
-        if scan_from > 0 {
-            let node_idx = find_node_at_offset(self.arena, scan_from - 1);
-            if node_idx.is_some()
-                && let Some(node) = self.arena.get(node_idx)
-                && node.kind == SyntaxKind::RegularExpressionLiteral as u16
-            {
-                return Some(node_idx);
-            }
-        }
-        let mut ident_end = scan_from;
-        while ident_end > 0 && bytes[(ident_end - 1) as usize].is_ascii_whitespace() {
-            ident_end -= 1;
-        }
-        let mut ident_start = ident_end;
-        while ident_start > 0 {
-            let ch = bytes[(ident_start - 1) as usize];
-            if ch == b'_' || ch == b'$' || ch.is_ascii_alphanumeric() {
-                ident_start -= 1;
-            } else {
-                break;
-            }
-        }
-        if ident_start >= ident_end {
-            return None;
-        }
-
-        let mut current = find_node_at_offset(self.arena, ident_end.saturating_sub(1));
-        while current.is_some() {
-            let node = self.arena.get(current)?;
-            if node.kind == SyntaxKind::Identifier as u16
-                && node.pos <= ident_start
-                && node.end >= ident_end
-            {
-                if let Some(ext) = self.arena.get_extended(current)
-                    && let Some(parent) = self.arena.get(ext.parent)
-                    && parent.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    && let Some(access) = self.arena.get_access_expr(parent)
-                    && access.name_or_argument == current
-                {
-                    return Some(ext.parent);
-                }
-                return Some(current);
-            }
-            let ext = self.arena.get_extended(current)?;
-            current = ext.parent;
-        }
-
-        let mut current = find_node_at_offset(self.arena, ident_end.saturating_sub(1));
-        while current.is_some() {
-            let node = self.arena.get(current)?;
-            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION && node.end == ident_end {
-                return Some(current);
-            }
             let ext = self.arena.get_extended(current)?;
             current = ext.parent;
         }
