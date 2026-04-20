@@ -1193,7 +1193,7 @@ impl<'a> Completions<'a> {
 
     fn meta_property_parent_type_name(&self, offset: u32) -> Option<String> {
         let end = (offset as usize).min(self.source_text.len());
-        let prefix = Self::strip_trailing_fourslash_marker(&self.source_text[..end]).trim_end();
+        let prefix = self.source_text[..end].trim_end();
         let before_dot = prefix.strip_suffix('.')?;
         let expr = before_dot.trim_end();
         if expr.ends_with("import.meta") {
@@ -1251,11 +1251,6 @@ impl<'a> Completions<'a> {
     ) {
         let members = apparent_primitive_members(interner, kind);
         for member in members {
-            if kind == IntrinsicKind::String
-                && !Self::is_baseline_string_completion_member(member.name)
-            {
-                continue;
-            }
             let type_id = match member.kind {
                 ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
             };
@@ -1268,34 +1263,6 @@ impl<'a> Completions<'a> {
                 is_method,
             );
         }
-    }
-
-    fn is_baseline_string_completion_member(name: &str) -> bool {
-        matches!(
-            name,
-            "toString"
-                | "charAt"
-                | "charCodeAt"
-                | "concat"
-                | "indexOf"
-                | "lastIndexOf"
-                | "localeCompare"
-                | "match"
-                | "replace"
-                | "search"
-                | "slice"
-                | "split"
-                | "substring"
-                | "toLowerCase"
-                | "toLocaleLowerCase"
-                | "toUpperCase"
-                | "toLocaleUpperCase"
-                | "toLocaleString"
-                | "trim"
-                | "length"
-                | "substr"
-                | "valueOf"
-        )
     }
 
     pub(super) const fn literal_intrinsic_kind(

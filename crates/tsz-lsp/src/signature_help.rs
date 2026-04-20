@@ -794,9 +794,9 @@ impl<'a> SignatureHelpProvider<'a> {
                 current = self.arena.get_extended(current)?.parent;
             }
         } else {
-            // Comment-marker cursors can sit outside any concrete syntax node.
-            // In that case, recover by locating the tightest variable declaration
-            // initializer span containing the cursor.
+            // When a cursor sits in trivia (whitespace, comments) the AST lookup
+            // can return no node. Recover by locating the tightest variable
+            // declaration whose initializer span contains the cursor.
             let mut best_len = u32::MAX;
             for (idx, node) in self.arena.nodes.iter().enumerate() {
                 if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
@@ -4631,8 +4631,11 @@ mod signature_help_internal_tests {
     }
 
     #[test]
-    fn contextual_variable_initializer_inside_comment_still_has_help() {
-        let source = "const cb2: () => void = (/*contextualFunctionType*/)";
+    fn contextual_variable_initializer_gives_function_type_help() {
+        // Cursor sits inside the empty parens of a parenthesized expression that
+        // is the initializer of a variable with a contextual function type.
+        let source = "const cb2: () => void = ()";
+        let cursor_offset = (source.rfind('(').expect("open paren") + 1) as u32;
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
@@ -4650,12 +4653,11 @@ mod signature_help_internal_tests {
             "test.ts".to_string(),
         );
 
-        let marker = source.find("/*contextualFunctionType*/").expect("marker");
-        let position = line_map.offset_to_position(marker as u32, source);
+        let position = line_map.offset_to_position(cursor_offset, source);
         let mut cache = None;
         let help = provider
             .get_signature_help(root, position, &mut cache)
-            .expect("function type contextual signature help in comments");
+            .expect("function type contextual signature help");
         assert_eq!(
             help.signatures[help.active_signature as usize].label,
             "cb2(): void"
@@ -4664,7 +4666,10 @@ mod signature_help_internal_tests {
 
     #[test]
     fn textual_type_argument_trigger_skips_function_declaration_name() {
-        let source = "function f</**/\nx";
+        // After `<` in a function declaration head we are naming a new type
+        // parameter, which must not trigger signature help.
+        let source = "function f<\nx";
+        let cursor_offset = (source.find('<').expect("less than") + 1) as u32;
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
@@ -4682,19 +4687,22 @@ mod signature_help_internal_tests {
             "test.ts".to_string(),
         );
 
-        let marker = source.find("/**/").expect("marker") as u32;
-        let position = line_map.offset_to_position(marker, source);
+        let position = line_map.offset_to_position(cursor_offset, source);
         let mut cache = None;
         let help = provider.get_signature_help(root, position, &mut cache);
         assert!(
             help.is_none(),
-            "declaration marker should not produce signature help"
+            "type parameter declaration position should not produce signature help"
         );
     }
 
     #[test]
     fn contextual_object_literal_method_from_typed_initializer() {
-        let source = "interface Obj { optionalMethod?: (current: any) => any; }\nconst o: Obj = {\n  optionalMethod(/*m*/) { return {}; }\n};";
+        // Cursor sits inside the parameter list of a method in an object literal
+        // whose contextual type has a matching method signature.
+        let source = "interface Obj { optionalMethod?: (current: any) => any; }\nconst o: Obj = {\n  optionalMethod() { return {}; }\n};";
+        let cursor_offset =
+            (source.find("optionalMethod()").expect("call") + "optionalMethod(".len()) as u32;
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
 
@@ -4712,8 +4720,7 @@ mod signature_help_internal_tests {
             "test.ts".to_string(),
         );
 
-        let marker = source.find("/*m*/").expect("marker") as u32;
-        let position = line_map.offset_to_position(marker, source);
+        let position = line_map.offset_to_position(cursor_offset, source);
         let mut cache = None;
         let help = provider
             .get_signature_help(root, position, &mut cache)

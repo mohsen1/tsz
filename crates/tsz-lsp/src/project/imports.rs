@@ -806,7 +806,7 @@ impl Project {
             || node_stripped
                 .is_some_and(|candidate| existing_imported_packages.contains(candidate));
 
-        // Guard against stale parser snapshots in edit-heavy server tests:
+        // Guard against stale parser snapshots after incremental edits:
         // only trust existing-import evidence when the package literal is
         // still present in the current source text.
         let quoted_in_source = cached_quoted_literal_match(package_name)
