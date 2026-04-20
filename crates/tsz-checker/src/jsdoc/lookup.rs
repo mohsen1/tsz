@@ -636,24 +636,32 @@ impl<'a> CheckerState<'a> {
             })
             .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
             .unwrap_or_default();
-        let type_params =
+        // Track whether the resolved params came from a JSDoc `@typedef` alias.
+        // tsc formats TS2314 without a `<T, U>` suffix for JSDoc-defined aliases
+        // (`Generic type 'Everything' requires 5 type argument(s).`) but *does*
+        // include it for real TS declarations (`Generic type 'Array<T>' requires
+        // 1 type argument(s).`). Preserve that distinction.
+        let (type_params, is_jsdoc_typedef) =
             if let Some((_, type_params)) = self.resolve_global_jsdoc_typedef_info(base_name) {
-                type_params
+                (type_params, true)
             } else if !symbol_constraints.is_empty() {
-                symbol_constraints
+                (symbol_constraints, false)
             } else if base_name.starts_with("import(") {
                 // Handle import type base names: import('./module').Foo
                 if let Some((module_specifier, Some(member_name))) =
                     Self::parse_jsdoc_import_type(base_name)
                 {
-                    self.resolve_jsdoc_import_member(&module_specifier, &member_name)
-                        .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
-                        .unwrap_or_default()
+                    (
+                        self.resolve_jsdoc_import_member(&module_specifier, &member_name)
+                            .map(|sym_id| self.type_reference_symbol_type_with_params(sym_id).1)
+                            .unwrap_or_default(),
+                        false,
+                    )
                 } else {
-                    Vec::new()
+                    (Vec::new(), false)
                 }
             } else {
-                Vec::new()
+                (Vec::new(), false)
             };
         if type_params.is_empty() {
             return;
@@ -674,11 +682,25 @@ impl<'a> CheckerState<'a> {
             .filter(|param| param.default.is_none())
             .count();
         if got < min_required || got > max_expected {
+            // tsc renders the name with its type parameters in TS2314/TS2707
+            // for real TS declarations — e.g. `Generic type 'Array<T>' requires
+            // 1 type argument(s).` — but *without* the suffix for JSDoc
+            // `@typedef` aliases (`Generic type 'Everything' requires 5 type
+            // argument(s).`). Preserve that asymmetry.
+            let display_name = if is_jsdoc_typedef {
+                base_name.to_string()
+            } else {
+                Self::format_generic_display_name_with_interner(
+                    base_name,
+                    &type_params,
+                    self.ctx.types,
+                )
+            };
             let message = if min_required < max_expected {
                 format_message(
                     diagnostic_messages::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
                     &[
-                        base_name,
+                        &display_name,
                         &min_required.to_string(),
                         &max_expected.to_string(),
                     ],
@@ -686,7 +708,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 format_message(
                     diagnostic_messages::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
-                    &[base_name, &max_expected.to_string()],
+                    &[&display_name, &max_expected.to_string()],
                 )
             };
             self.error_at_position(
