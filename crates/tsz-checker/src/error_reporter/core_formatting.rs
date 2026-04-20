@@ -743,6 +743,30 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        // When `other` is a generic type (type parameter or intersection of type
+        // parameters), reduce it to its base constraint and check if that
+        // contains null/undefined.  tsc preserves the full target union when
+        // the source's base constraint is nullable.  Example:
+        //   source `T & U` where constraints are `string | ... | undefined`
+        //   target `string | null` must stay `string | null` (not `string`).
+        let other_base = crate::query_boundaries::common::get_base_constraint_for_display(
+            self.ctx.types.as_type_database(),
+            other,
+        );
+        if other_base != other
+            && let Some(other_base_members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, other_base)
+            && other_base_members
+                .iter()
+                .any(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
+        {
+            return None;
+        }
+        // Also handle direct TypeId::NULL/UNDEFINED in the reduced base (e.g.,
+        // T extends undefined reduces to `undefined`).
+        if other_base == TypeId::NULL || other_base == TypeId::UNDEFINED {
+            return None;
+        }
         let filtered: Vec<TypeId> = members
             .iter()
             .copied()
