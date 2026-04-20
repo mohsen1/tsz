@@ -653,8 +653,17 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(ty);
         }
         if has_object_shape && !has_def && !has_alias && !has_display_alias {
-            let widened = self.widen_fresh_object_literal_properties_for_display(ty);
-            return self.format_type_diagnostic_widened(widened);
+            // Only widen literal properties of *fresh* object literal types
+            // (e.g., the type of `{ x: 1 }` expression). Declared object
+            // annotations like `let a: { __foo: 10 }` preserve their literal
+            // property types in property-access diagnostics, matching tsc.
+            let display_ty =
+                if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, ty) {
+                    self.widen_fresh_object_literal_properties_for_display(ty)
+                } else {
+                    ty
+                };
+            return self.format_type_diagnostic_widened(display_ty);
         }
         // Only widen object-like types (to convert literal properties to primitives).
         // For literal/primitive receiver types (e.g., `""`, `42`), tsc preserves the
