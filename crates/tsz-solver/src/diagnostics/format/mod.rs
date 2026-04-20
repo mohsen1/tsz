@@ -14,7 +14,7 @@ use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
     get_message_template,
 };
-use crate::types::{IntrinsicKind, StringIntrinsicKind, TypeData, TypeId};
+use crate::types::{IntrinsicKind, StringIntrinsicKind, TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -858,9 +858,66 @@ impl<'a> TypeFormatter<'a> {
                     }
                 }
 
-                let args: Vec<Cow<'static, str>> =
-                    app.args.iter().map(|&arg| self.format(arg)).collect();
-                let result = format!("{}<{}>", base_str, args.join(", "));
+                // Elide trailing type arguments that equal their parameter's
+                // default. tsc renders `AsyncIterable<number, any, any>` as
+                // `AsyncIterable<number>` when the second and third type
+                // parameters default to `any`. tsc only applies this to the
+                // four iterable globals — see `typeReferenceToTypeNode` in
+                // checker.ts: "Maybe we should do this for more types, but for
+                // now we only elide type arguments that are identical to their
+                // associated type parameters' defaults for `Iterable`,
+                // `IterableIterator`, `AsyncIterable`, and
+                // `AsyncIterableIterator` to provide backwards-compatible .d.ts
+                // emit due to each now having three type parameters instead of
+                // only one." Applying elision unconditionally would e.g. turn
+                // `Generator<number, any, any>` into `Generator<number>`, which
+                // tsc doesn't do.
+                let should_elide_defaults = matches!(
+                    base_str.as_ref(),
+                    "Iterable" | "IterableIterator" | "AsyncIterable" | "AsyncIterableIterator"
+                );
+                let def_type_params: Option<Vec<TypeParamInfo>> = if !should_elide_defaults {
+                    None
+                } else if let Some(TypeData::Lazy(def_id)) = base_key {
+                    self.def_store.and_then(|ds| ds.get_type_params(def_id))
+                } else if let Some(def_store) = self.def_store {
+                    def_store
+                        .find_def_for_type(app.base)
+                        .and_then(|id| def_store.get_type_params(id))
+                } else {
+                    None
+                };
+
+                let visible_arg_count = if let Some(params) = def_type_params.as_ref()
+                    && params.len() == app.args.len()
+                {
+                    let mut n = app.args.len();
+                    while n > 0 {
+                        let idx = n - 1;
+                        let Some(default) = params[idx].default else {
+                            break;
+                        };
+                        if app.args[idx] != default {
+                            break;
+                        }
+                        n -= 1;
+                    }
+                    n
+                } else {
+                    app.args.len()
+                };
+
+                let args: Vec<Cow<'static, str>> = app
+                    .args
+                    .iter()
+                    .take(visible_arg_count)
+                    .map(|&arg| self.format(arg))
+                    .collect();
+                let result = if args.is_empty() {
+                    base_str.to_string()
+                } else {
+                    format!("{}<{}>", base_str, args.join(", "))
+                };
                 trace!(result = %result, "Application formatted");
                 result.into()
             }
