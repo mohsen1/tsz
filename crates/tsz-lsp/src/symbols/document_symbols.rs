@@ -256,6 +256,11 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // each named class/function expression as a
                     // top-level nav entry regardless of nesting depth.
                     self.apply_nested_named_expressions(&sf.statements.nodes, &mut symbols);
+                    // CommonJS `exports.a = exports.b = exports.c = 0`
+                    // → tsc surfaces a nested `a > b > c` tree rather
+                    // than three siblings. Detect chained
+                    // `exports.X = …` assignments and emit them nested.
+                    self.apply_commonjs_exports_chain(&sf.statements.nodes, &mut symbols);
                     // Multiple `namespace A {}` / `namespace A.B {}`
                     // declarations merge into a single nested nav
                     // entry (matches tsc's `mergeChildren`).
@@ -1590,6 +1595,101 @@ impl<'a> DocumentSymbolProvider<'a> {
     /// members as children of the matching var / const entry. Skips
     /// owners that already have children (from an initializer or an
     /// expando promotion).
+    /// Detect CommonJS chained `exports.X = exports.Y = … = value`
+    /// assignments and emit a nested nav tree (X → Y → …). tsc models
+    /// these as declaration merging for the CommonJS module
+    /// namespace. Handles only simple `exports.<name>` LHS forms.
+    fn apply_commonjs_exports_chain(
+        &self,
+        statements: &[NodeIndex],
+        symbols: &mut Vec<DocumentSymbol>,
+    ) {
+        // Walk an assignment, collecting (name, stmt_idx) in order.
+        // Returns None if the chain breaks (non-exports LHS or wrong
+        // shape). `value_idx` is the innermost RHS for span purposes.
+        fn walk(
+            provider: &DocumentSymbolProvider,
+            expr_idx: NodeIndex,
+            out: &mut Vec<String>,
+        ) -> bool {
+            let Some(expr) = provider.arena.get(expr_idx) else {
+                return false;
+            };
+            if expr.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return true; // non-assignment terminator — OK (end of chain)
+            }
+            let Some(bin) = provider.arena.get_binary_expr(expr) else {
+                return false;
+            };
+            if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+                return false;
+            }
+            // LHS must be exports.<name>
+            let Some(lhs) = provider.arena.get(bin.left) else {
+                return false;
+            };
+            if lhs.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                return false;
+            }
+            let Some(access) = provider.arena.get_access_expr(lhs) else {
+                return false;
+            };
+            let Some(root) = provider.arena.get(access.expression) else {
+                return false;
+            };
+            if root.kind != SyntaxKind::Identifier as u16 {
+                return false;
+            }
+            if provider.get_name(access.expression).as_deref() != Some("exports") {
+                return false;
+            }
+            let Some(name) = provider.get_name(access.name_or_argument) else {
+                return false;
+            };
+            out.push(name);
+            walk(provider, bin.right, out)
+        }
+
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(exp_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let mut names: Vec<String> = Vec::new();
+            if !walk(self, exp_stmt.expression, &mut names) || names.is_empty() {
+                continue;
+            }
+            // Build nested chain: names[0] is outermost, names[n-1]
+            // innermost. tsc renders them all as `const`.
+            let range = node_range(self.arena, self.line_map, self.source_text, stmt_idx);
+            let mut inner: Option<DocumentSymbol> = None;
+            for name in names.iter().rev() {
+                let mut children = Vec::new();
+                if let Some(child) = inner.take() {
+                    children.push(child);
+                }
+                inner = Some(DocumentSymbol {
+                    name: name.clone(),
+                    detail: None,
+                    kind: SymbolKind::Constant,
+                    kind_modifiers: String::new(),
+                    range,
+                    selection_range: range,
+                    container_name: None,
+                    children,
+                });
+            }
+            if let Some(top) = inner {
+                symbols.push(top);
+            }
+        }
+    }
+
     /// Walk top-level expression statements for named class / function
     /// expressions at any nesting depth (most commonly inside call
     /// arguments like `console.log(class Foo {})`). Each named class /
