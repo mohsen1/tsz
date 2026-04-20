@@ -1195,6 +1195,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let (code, message) = self.excess_property_diagnostic_message(prop_name, target, idx);
+        // Drill into the source expression to anchor the diagnostic at the
+        // offending property name token (tsc underlines `b` in
+        // `{ a: '', b: 123 }`, not `{` of the containing literal or the
+        // enclosing `||`/`? :` expression).
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        if let Some((start, length)) = self.find_excess_property_anchor(idx, prop_atom) {
+            self.error(start, length, message, code);
+            return;
+        }
         self.emit_render_request(
             idx,
             DiagnosticRenderRequest::simple(DiagnosticAnchorKind::PropertyToken, code, message),

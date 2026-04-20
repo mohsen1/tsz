@@ -194,7 +194,28 @@ impl ParserState {
                             == SyntaxKind::InKeyword
                     })
             });
-            if left_is_jsx_expression || left_is_await_expression || left_is_in_expression {
+            // Update expressions (`x++`, `x--`, `++x`, `--x`) are not
+            // LeftHandSideExpressions and therefore cannot be targets of
+            // assignment. Preserve the parsed update expression so
+            // statement-level recovery reports `';' expected` at `=`, matching
+            // tsc's parseAssignmentExpressionOrHigher LHS gate.
+            let left_is_update_expression =
+                self.arena.get(left).is_some_and(|node| match node.kind {
+                    syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => true,
+                    syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                        self.arena.get_unary_expr(node).is_some_and(|data| {
+                            let op = SyntaxKind::try_from_u16(data.operator)
+                                .unwrap_or(SyntaxKind::Unknown);
+                            matches!(op, SyntaxKind::PlusPlusToken | SyntaxKind::MinusMinusToken)
+                        })
+                    }
+                    _ => false,
+                });
+            if left_is_jsx_expression
+                || left_is_await_expression
+                || left_is_in_expression
+                || left_is_update_expression
+            {
                 if deferred_failed_async_arrow_colon_recovery
                     && !self.is_token(SyntaxKind::ColonToken)
                 {

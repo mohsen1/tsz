@@ -183,7 +183,10 @@ impl<'a> CheckerState<'a> {
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let (code, message) =
                     self.excess_property_diagnostic_message(&prop_name, target, idx);
-                Diagnostic::error(file_name, start, length, message, code)
+                let (excess_start, excess_length) = self
+                    .find_excess_property_anchor(idx, *property_name)
+                    .unwrap_or((start, length));
+                Diagnostic::error(file_name, excess_start, excess_length, message, code)
             }
             SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
@@ -1913,5 +1916,119 @@ impl<'a> CheckerState<'a> {
             }
             diag
         }
+    }
+
+    /// Locate the span of an excess property name within a source expression.
+    ///
+    /// Walks any surrounding parenthesized expression, `||`/`??`/`,` combinator,
+    /// or conditional `? :` to reach the object literal that declares the
+    /// property and returns the span of that property's name token. tsc
+    /// underlines the property (e.g. `b` in `{ a: '', b: 123 } || ...`) rather
+    /// than the containing literal's `{`; preserving that anchor is required
+    /// for TS2353 fingerprint parity.
+    pub(crate) fn find_excess_property_anchor(
+        &self,
+        idx: NodeIndex,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<(u32, u32)> {
+        use tsz_parser::parser::syntax_kind_ext;
+        const MAX_DEPTH: u32 = 8;
+        // Stack holds (node, depth). Popping left-before-right requires pushing
+        // right first (LIFO) so the leftmost operand is inspected first — matches
+        // tsc's left-to-right property enumeration for `||` / `??` / `,`.
+        let mut stack: Vec<(NodeIndex, u32)> = vec![(idx, 0)];
+        while let Some((current, depth)) = stack.pop() {
+            if depth > MAX_DEPTH {
+                continue;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                if let Some(span) =
+                    self.excess_property_name_span_in_literal(current, property_name)
+                {
+                    return Some(span);
+                }
+                continue;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                stack.push((paren.expression, depth + 1));
+                continue;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+            {
+                stack.push((bin.right, depth + 1));
+                stack.push((bin.left, depth + 1));
+                continue;
+            }
+            if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
+            {
+                stack.push((cond.when_false, depth + 1));
+                stack.push((cond.when_true, depth + 1));
+                continue;
+            }
+        }
+        None
+    }
+
+    fn excess_property_name_span_in_literal(
+        &self,
+        literal_idx: NodeIndex,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<(u32, u32)> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let node = self.ctx.arena.get(literal_idx)?;
+        let literal = self.ctx.arena.get_literal_expr(node)?;
+        for &elem in &literal.elements.nodes {
+            let elem_node = self.ctx.arena.get(elem)?;
+            if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                && let Some(prop) = self.ctx.arena.get_property_assignment(elem_node)
+                && self.property_name_matches_atom(prop.name, property_name)
+            {
+                return self.property_name_span(prop.name);
+            }
+            if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                && let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node)
+                && self.property_name_matches_atom(prop.name, property_name)
+            {
+                return self.property_name_span(prop.name);
+            }
+            if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method) = self.ctx.arena.get_method_decl(elem_node)
+                && self.property_name_matches_atom(method.name, property_name)
+            {
+                return self.property_name_span(method.name);
+            }
+        }
+        None
+    }
+
+    fn property_name_matches_atom(
+        &self,
+        name_idx: NodeIndex,
+        target: tsz_common::interner::Atom,
+    ) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        let resolved = self.ctx.types.resolve_atom_ref(target);
+        let target_str: &str = &resolved;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return ident.escaped_text.as_str() == target_str;
+        }
+        if let Some(literal) = self.ctx.arena.get_literal(name_node) {
+            return literal.text.as_str() == target_str;
+        }
+        false
+    }
+
+    fn property_name_span(&self, name_idx: NodeIndex) -> Option<(u32, u32)> {
+        let node = self.ctx.arena.get(name_idx)?;
+        Some((node.pos, node.end.saturating_sub(node.pos)))
     }
 }
