@@ -1235,7 +1235,34 @@ impl<'a> CheckerState<'a> {
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
                     if marker_this_type.is_none() && self.current_this_type().is_none() {
-                        if let Some(receiver_this_type) = contextual_receiver_this_type {
+                        // Prefer the method's contextual `this` type (e.g., from an
+                        // interface declaration `(this: { options: T }) => R`) over the
+                        // outer object's contextual type. This ensures that in Round 2 of
+                        // call inference, when type params are instantiated, the method
+                        // body sees concrete `this` types (fixing TS2783 for spreads of
+                        // `this.options.suggestion` where Options = { suggestion: Foo }).
+                        let method_ctx_this = method_request.contextual_type.and_then(|ctx_ty| {
+                            let ctx_helper =
+                                tsz_solver::ContextualTypeContext::with_expected_and_options(
+                                    self.ctx.types,
+                                    ctx_ty,
+                                    self.ctx.compiler_options.no_implicit_any,
+                                );
+                            ctx_helper.get_this_type()
+                        });
+                        if let Some(mut method_this) = method_ctx_this {
+                            if crate::query_boundaries::common::contains_type_parameters(
+                                self.ctx.types,
+                                method_this,
+                            ) || crate::query_boundaries::common::contains_lazy_or_recursive(
+                                self.ctx.types,
+                                method_this,
+                            ) {
+                                method_this = self.evaluate_type_with_env(method_this);
+                            }
+                            self.ctx.this_type_stack.push(method_this);
+                            pushed_contextual_this = true;
+                        } else if let Some(receiver_this_type) = contextual_receiver_this_type {
                             self.ctx.this_type_stack.push(receiver_this_type);
                             pushed_contextual_this = true;
                         } else if let Some(ctx_type) = contextual_type {
@@ -2305,10 +2332,9 @@ impl<'a> CheckerState<'a> {
                         // TS2783: Check if any earlier named properties will be
                         // overwritten by required properties from this spread.
                         // Only when strict null checks are enabled.
-                        // Skip for generic spreads — the constraint properties
-                        // are approximations and may include properties that
-                        // aren't actually present in the concrete type.
-                        if self.ctx.strict_null_checks() && !is_generic_spread {
+                        // TSC checks constraint properties even for generic spreads,
+                        // so we do too (unlike type construction, approximations are fine here).
+                        if self.ctx.strict_null_checks() {
                             for sp in &spread_props {
                                 if !sp.optional
                                     && let Some((prop_node, prop_name)) =

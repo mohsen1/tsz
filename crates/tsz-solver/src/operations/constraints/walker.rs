@@ -659,16 +659,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             );
 
                             // Infer template (T) from property value types.
-                            // Use MappedType priority so that candidates from different
-                            // properties are combined via union (matching tsc's
-                            // PriorityImpliesCombination for MappedTypeConstraint).
+                            // Instantiate the iteration variable P with each concrete property
+                            // key before constraining so that IndexAccess targets like T[P]
+                            // can be evaluated (e.g. ExtensionConfig<O>[P] → O).
+                            // Use MappedType priority so candidates from different properties
+                            // combine via union (matches tsc PriorityImpliesCombination for
+                            // MappedTypeConstraint).
+                            let iter_param_name = mapped.type_param.name;
                             let template_priority = crate::types::InferencePriority::MappedType;
                             for prop in &source_obj.properties {
+                                let key_literal = self.interner.literal_string_atom(prop.name);
+                                let mut subst = TypeSubstitution::new();
+                                subst.insert(iter_param_name, key_literal);
+                                let instantiated_template =
+                                    instantiate_type(self.interner, mapped.template, &subst);
                                 self.constrain_types(
                                     ctx,
                                     var_map,
                                     prop.type_id,
-                                    mapped.template,
+                                    instantiated_template,
                                     template_priority,
                                 );
                             }
