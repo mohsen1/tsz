@@ -1,0 +1,1958 @@
+use super::*;
+
+impl<'a> CompatChecker<'a, NoopResolver> {
+    /// Create a new compatibility checker without a resolver.
+    /// Note: Callers should configure `strict_function_types` explicitly via `set_strict_function_types()`
+    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
+        CompatChecker {
+            interner,
+            query_db: None,
+            subtype: SubtypeChecker::new(interner),
+            lawyer: AnyPropagationRules::new(),
+            // Default to false (legacy TypeScript behavior) for compatibility
+            // Callers should set this explicitly based on compiler options
+            strict_function_types: false,
+            strict_null_checks: true,
+            no_unchecked_indexed_access: false,
+            exact_optional_property_types: false,
+            strict_subtype_checking: false,
+            skip_weak_type_checks: false,
+            cache: FxHashMap::default(),
+        }
+    }
+}
+
+impl<'a, R: TypeResolver> CompatChecker<'a, R> {
+    fn function_like_weak_type_properties(
+        &self,
+        mut props: Vec<PropertyInfo>,
+        has_call_signatures: bool,
+        has_construct_signatures: bool,
+    ) -> Vec<PropertyInfo> {
+        let mut ensure_prop = |name: &str| {
+            let atom = self.interner.intern_string(name);
+            if !props.iter().any(|prop| prop.name == atom) {
+                props.push(PropertyInfo::new(atom, TypeId::ANY));
+            }
+        };
+
+        if has_call_signatures {
+            // Function-like values expose Function members even when the callable
+            // shape itself does not materialize them. Weak-type overlap checks need
+            // to see those stable property names so unrelated weak object targets
+            // don't incorrectly accept function/class values.
+            ensure_prop("call");
+            ensure_prop("apply");
+        }
+
+        if has_construct_signatures {
+            ensure_prop("prototype");
+        }
+
+        props
+    }
+
+    fn weak_type_source_properties(&self, source: TypeId) -> Option<(Vec<PropertyInfo>, bool)> {
+        if source == TypeId::FUNCTION {
+            return Some((
+                self.function_like_weak_type_properties(Vec::new(), true, false),
+                false,
+            ));
+        }
+
+        match self.interner.lookup(source) {
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                let props = self.function_like_weak_type_properties(
+                    shape.properties.clone(),
+                    !shape.call_signatures.is_empty(),
+                    !shape.construct_signatures.is_empty(),
+                );
+                Some((
+                    props,
+                    shape.string_index.is_some() || shape.number_index.is_some(),
+                ))
+            }
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                let props = self.function_like_weak_type_properties(
+                    Vec::new(),
+                    !shape.is_constructor,
+                    shape.is_constructor,
+                );
+                Some((props, false))
+            }
+            _ => {
+                let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+                let source_shape_id = extractor.extract(source)?;
+                let source_shape = self
+                    .interner
+                    .object_shape(crate::types::ObjectShapeId(source_shape_id));
+                Some((
+                    source_shape.properties.clone(),
+                    source_shape.string_index.is_some() || source_shape.number_index.is_some(),
+                ))
+            }
+        }
+    }
+
+    fn normalize_assignability_operand(&mut self, mut type_id: TypeId) -> TypeId {
+        // Keep normalization bounded to avoid infinite resolver/evaluator cycles.
+        for _ in 0..8 {
+            let next = match self.interner.lookup(type_id) {
+                Some(TypeData::Lazy(def_id)) => self
+                    .subtype
+                    .resolver
+                    .resolve_lazy(def_id, self.interner)
+                    .unwrap_or(type_id),
+                Some(TypeData::Mapped(_) | TypeData::Application(_) | TypeData::KeyOf(_)) => {
+                    self.subtype.evaluate_type(type_id)
+                }
+                _ => type_id,
+            };
+
+            if next == type_id {
+                break;
+            }
+            type_id = next;
+        }
+        type_id
+    }
+
+    pub(crate) fn normalize_assignability_operands(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> (TypeId, TypeId) {
+        (
+            self.normalize_assignability_operand(source),
+            self.normalize_assignability_operand(target),
+        )
+    }
+
+    const fn uses_generic_failure_surface(reason: &SubtypeFailureReason) -> bool {
+        matches!(
+            reason,
+            SubtypeFailureReason::TypeMismatch { .. }
+                | SubtypeFailureReason::NoCommonProperties { .. }
+                | SubtypeFailureReason::NoUnionMemberMatches { .. }
+                | SubtypeFailureReason::NoIntersectionMemberMatches { .. }
+        )
+    }
+
+    fn remap_failure_surface(
+        reason: SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+    ) -> SubtypeFailureReason {
+        match reason {
+            SubtypeFailureReason::MissingProperty { property_name, .. } => {
+                SubtypeFailureReason::MissingProperty {
+                    property_name,
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::MissingProperties { property_names, .. } => {
+                SubtypeFailureReason::MissingProperties {
+                    property_names,
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::NoCommonProperties { .. } => {
+                SubtypeFailureReason::NoCommonProperties {
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::NoUnionMemberMatches {
+                target_union_members,
+                ..
+            } => SubtypeFailureReason::NoUnionMemberMatches {
+                source_type: source,
+                target_union_members,
+            },
+            SubtypeFailureReason::NoIntersectionMemberMatches { .. } => {
+                SubtypeFailureReason::NoIntersectionMemberMatches {
+                    source_type: source,
+                    target_type: target,
+                }
+            }
+            SubtypeFailureReason::TypeMismatch { .. } => SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            },
+            other => other,
+        }
+    }
+
+    /// Detect whether a type is the global `Object` interface from lib.d.ts.
+    ///
+    /// Checks via resolver boxed type lookup, Lazy DefId matching, and structural
+    /// detection (an `ObjectShape` with `constructor`, `toString`, `valueOf`,
+    /// `hasOwnProperty`, and `isPrototypeOf` properties).
+    pub(crate) fn is_global_object_interface_target(&self, target: TypeId) -> bool {
+        if self
+            .subtype
+            .resolver
+            .is_boxed_type_id(target, IntrinsicKind::Object)
+            || self
+                .subtype
+                .resolver
+                .get_boxed_type(IntrinsicKind::Object)
+                .is_some_and(|boxed| boxed == target)
+        {
+            return true;
+        }
+        if lazy_def_id(self.interner, target).is_some_and(|def_id| {
+            self.subtype
+                .resolver
+                .is_boxed_def_id(def_id, IntrinsicKind::Object)
+        }) {
+            return true;
+        }
+        match self.interner.lookup(target) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                // Object interface has exactly 7 properties (constructor, toString,
+                // toLocaleString, valueOf, hasOwnProperty, isPrototypeOf,
+                // propertyIsEnumerable). Use tight cap to avoid matching derived
+                // types like Boolean (8 props) or Number (~10 props).
+                if shape.properties.len() > 7 {
+                    return false;
+                }
+                let constructor = self.interner.intern_string("constructor");
+                let has_own = self.interner.intern_string("hasOwnProperty");
+                let is_proto = self.interner.intern_string("isPrototypeOf");
+                let prop_is_enum = self.interner.intern_string("propertyIsEnumerable");
+                shape.properties.iter().any(|p| p.name == constructor)
+                    && shape.properties.iter().any(|p| p.name == has_own)
+                    && shape.properties.iter().any(|p| p.name == is_proto)
+                    && shape.properties.iter().any(|p| p.name == prop_is_enum)
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a source type is a type parameter (possibly wrapped in unions/intersections).
+    ///
+    /// Type parameters must not use the Object interface fast path because an
+    /// unconstrained `T` could be instantiated with `null`, `undefined`, or `void`,
+    /// none of which are assignable to `Object`.
+    fn is_type_parameter_source(&self, source: TypeId) -> bool {
+        match self.interner.lookup(source) {
+            Some(TypeData::TypeParameter(_)) => true,
+            Some(TypeData::Union(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                members.iter().any(|&m| self.is_type_parameter_source(m))
+            }
+            Some(TypeData::Intersection(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                members.iter().any(|&m| self.is_type_parameter_source(m))
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if the source has any property whose type conflicts with the Object
+    /// interface's property of the same name.
+    ///
+    /// For example, `{ toString: number }` conflicts because Object requires
+    /// `toString: () => string`. But `{ x: number }` doesn't conflict because
+    /// `x` is not a property of Object.
+    fn has_conflicting_properties_with_object(
+        &mut self,
+        source: TypeId,
+        object_target: TypeId,
+    ) -> bool {
+        let source_shape_id = match self.interner.lookup(source) {
+            Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
+            _ => return false,
+        };
+        let target_shape_id = match self.interner.lookup(object_target) {
+            Some(TypeData::Object(s) | TypeData::ObjectWithIndex(s)) => s,
+            _ => return false,
+        };
+
+        let source_props: Vec<_> = self
+            .interner
+            .object_shape(source_shape_id)
+            .properties
+            .clone();
+        let target_props: Vec<_> = self
+            .interner
+            .object_shape(target_shape_id)
+            .properties
+            .clone();
+
+        for source_prop in &source_props {
+            if let Some(target_prop) = target_props.iter().find(|p| p.name == source_prop.name) {
+                // Source has a property with the same name as an Object property.
+                // Check if the types are compatible.
+                self.configure_subtype(self.strict_function_types);
+                if !self
+                    .subtype
+                    .is_subtype_of(source_prop.type_id, target_prop.type_id)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_function_target_member(&self, member: TypeId) -> bool {
+        let is_function_object_shape = match self.interner.lookup(member) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                // Function interface has ~15 properties (own + inherited Object).
+                // Cap at 20 to avoid false positives on large interfaces.
+                if shape.properties.len() > 20 {
+                    false
+                } else {
+                    let apply = self.interner.intern_string("apply");
+                    let call = self.interner.intern_string("call");
+                    let bind = self.interner.intern_string("bind");
+                    shape.properties.iter().any(|prop| prop.name == apply)
+                        && shape.properties.iter().any(|prop| prop.name == call)
+                        && shape.properties.iter().any(|prop| prop.name == bind)
+                }
+            }
+            _ => false,
+        };
+
+        intrinsic_kind(self.interner, member) == Some(IntrinsicKind::Function)
+            || is_function_object_shape
+            || self
+                .subtype
+                .resolver
+                .get_boxed_type(IntrinsicKind::Function)
+                .is_some_and(|boxed| boxed == member)
+            || lazy_def_id(self.interner, member).is_some_and(|def_id| {
+                self.subtype
+                    .resolver
+                    .is_boxed_def_id(def_id, IntrinsicKind::Function)
+            })
+    }
+
+    /// Create a new compatibility checker with a resolver.
+    /// Note: Callers should configure `strict_function_types` explicitly via `set_strict_function_types()`
+    pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        CompatChecker {
+            interner,
+            query_db: None,
+            subtype: SubtypeChecker::with_resolver(interner, resolver),
+            lawyer: AnyPropagationRules::new(),
+            // Default to false (legacy TypeScript behavior) for compatibility
+            // Callers should set this explicitly based on compiler options
+            strict_function_types: false,
+            strict_null_checks: true,
+            no_unchecked_indexed_access: false,
+            exact_optional_property_types: false,
+            strict_subtype_checking: false,
+            skip_weak_type_checks: false,
+            cache: FxHashMap::default(),
+        }
+    }
+
+    /// Set the query database for Salsa-backed memoization.
+    /// Propagates to the internal `SubtypeChecker`.
+    pub fn set_query_db(&mut self, db: &'a dyn QueryDatabase) {
+        self.query_db = Some(db);
+        self.subtype.query_db = Some(db);
+    }
+
+    /// Set the inheritance graph for nominal class subtype checking.
+    /// Propagates to the internal `SubtypeChecker`.
+    pub const fn set_inheritance_graph(
+        &mut self,
+        graph: Option<&'a crate::classes::inheritance::InheritanceGraph>,
+    ) {
+        self.subtype.inheritance_graph = graph;
+    }
+
+    /// Configure strict function parameter checking.
+    /// See <https://github.com/microsoft/TypeScript/issues/18654>.
+    pub fn set_strict_function_types(&mut self, strict: bool) {
+        if self.strict_function_types != strict {
+            self.strict_function_types = strict;
+            self.cache.clear();
+        }
+    }
+
+    /// Configure strict null checks (legacy null/undefined assignability).
+    pub fn set_strict_null_checks(&mut self, strict: bool) {
+        if self.strict_null_checks != strict {
+            self.strict_null_checks = strict;
+            self.cache.clear();
+        }
+    }
+
+    /// Configure unchecked indexed access (include `undefined` in `T[K]`).
+    pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
+        if self.no_unchecked_indexed_access != enabled {
+            self.no_unchecked_indexed_access = enabled;
+            self.cache.clear();
+        }
+    }
+
+    /// Configure exact optional property types.
+    /// See <https://github.com/microsoft/TypeScript/issues/13195>.
+    pub fn set_exact_optional_property_types(&mut self, exact: bool) {
+        if self.exact_optional_property_types != exact {
+            self.exact_optional_property_types = exact;
+            self.cache.clear();
+        }
+    }
+
+    /// Configure strict mode for `any` propagation.
+    /// Configure strict subtype checking mode for lib.d.ts type checking.
+    ///
+    /// When enabled, applies additional strictness rules that reject borderline
+    /// cases allowed by TypeScript's legacy behavior. This includes disabling
+    /// method bivariance for soundness.
+    pub fn set_strict_subtype_checking(&mut self, strict: bool) {
+        if self.strict_subtype_checking != strict {
+            self.strict_subtype_checking = strict;
+            self.cache.clear();
+        }
+    }
+
+    pub fn set_assume_related_on_cycle(&mut self, assume: bool) {
+        if self.subtype.assume_related_on_cycle != assume {
+            self.subtype.assume_related_on_cycle = assume;
+            self.cache.clear();
+        }
+    }
+
+    /// Enable generic erasure for function subtype checks.
+    ///
+    /// When true, non-generic functions can match generic targets by erasing
+    /// target type parameters to their constraints. This matches tsc's
+    /// `eraseGenerics` behavior used in the comparable relation and base type
+    /// structural checks (TS2415/TS2417).
+    pub fn set_erase_generics(&mut self, erase: bool) {
+        if self.subtype.erase_generics != erase {
+            self.subtype.erase_generics = erase;
+            self.cache.clear();
+        }
+    }
+
+    /// Skip weak type checks (TS2559) during assignability.
+    ///
+    /// In tsc, `isTypeAssignableTo` does not include the weak type check.
+    /// The weak type check is only applied at specific diagnostic sites.
+    /// This flag matches tsc's `isTypeAssignableTo` behavior.
+    pub fn set_skip_weak_type_checks(&mut self, skip: bool) {
+        if self.skip_weak_type_checks != skip {
+            self.skip_weak_type_checks = skip;
+            self.cache.clear();
+        }
+    }
+
+    /// Apply compiler options from a bitmask flags value.
+    ///
+    /// The flags correspond to `RelationCacheKey` bits:
+    /// - bit 0: `strict_null_checks`
+    /// - bit 1: `strict_function_types`
+    /// - bit 2: `exact_optional_property_types`
+    /// - bit 3: `no_unchecked_indexed_access`
+    /// - bit 4: `disable_method_bivariance` (`strict_subtype_checking`)
+    /// - bit 5: `allow_void_return`
+    /// - bit 6: `allow_bivariant_rest`
+    /// - bit 7: `allow_bivariant_param_count`
+    ///
+    /// This is used by `QueryCache::is_assignable_to_with_flags` to ensure
+    /// cached results respect the compiler configuration.
+    pub fn apply_flags(&mut self, flags: u16) {
+        // Apply flags to CompatChecker's own fields
+        let strict_null_checks = (flags & (1 << 0)) != 0;
+        let strict_function_types = (flags & (1 << 1)) != 0;
+        let exact_optional_property_types = (flags & (1 << 2)) != 0;
+        let no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
+        let disable_method_bivariance = (flags & (1 << 4)) != 0;
+
+        self.set_strict_null_checks(strict_null_checks);
+        self.set_strict_function_types(strict_function_types);
+        self.set_exact_optional_property_types(exact_optional_property_types);
+        self.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        self.set_strict_subtype_checking(disable_method_bivariance);
+
+        // Also apply flags to the internal SubtypeChecker
+        // We do this directly since apply_flags() uses a builder pattern
+        self.subtype.strict_null_checks = strict_null_checks;
+        self.subtype.strict_function_types = strict_function_types;
+        self.subtype.exact_optional_property_types = exact_optional_property_types;
+        self.subtype.no_unchecked_indexed_access = no_unchecked_indexed_access;
+        self.subtype.disable_method_bivariance = disable_method_bivariance;
+        self.subtype.allow_void_return = (flags & (1 << 5)) != 0;
+        self.subtype.allow_bivariant_rest = (flags & (1 << 6)) != 0;
+        self.subtype.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+    }
+
+    ///
+    /// When strict mode is enabled, `any` does NOT silence structural mismatches.
+    /// This means the type checker will still report errors even when `any` is involved,
+    /// if there's a real structural mismatch.
+    pub fn set_strict_any_propagation(&mut self, strict: bool) {
+        self.lawyer.set_allow_any_suppression(!strict);
+        self.cache.clear();
+    }
+
+    /// Get a reference to the lawyer layer for `any` propagation rules.
+    pub const fn lawyer(&self) -> &AnyPropagationRules {
+        &self.lawyer
+    }
+
+    /// Apply configuration from `JudgeConfig`.
+    ///
+    /// This is used to configure the `CompatChecker` with settings from
+    /// the `CompilerOptions` (passed through `JudgeConfig`).
+    pub fn apply_config(&mut self, config: &crate::judge::JudgeConfig) {
+        self.strict_function_types = config.strict_function_types;
+        self.strict_null_checks = config.strict_null_checks;
+        self.exact_optional_property_types = config.exact_optional_property_types;
+        self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+
+        // Propagate to internal SubtypeChecker so explain/failure analysis
+        // uses the same strictNullChecks/strictFunctionTypes/exactOptionalPropertyTypes
+        // as the compat layer. Without this, the SubtypeChecker defaults to
+        // strict_null_checks=true and produces incorrect `| undefined` in error
+        // messages when strictNullChecks is off.
+        self.subtype.strict_null_checks = config.strict_null_checks;
+        self.subtype.strict_function_types = config.strict_function_types;
+        self.subtype.exact_optional_property_types = config.exact_optional_property_types;
+        self.subtype.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+
+        // In tsc, `any` is always assignable to and from all types regardless of
+        // strictFunctionTypes. The strictFunctionTypes flag only affects contravariance
+        // of function parameters. Sound mode is the opt-in for stricter `any` behavior.
+        self.lawyer.allow_any_suppression = !config.sound_mode;
+
+        // Clear cache as configuration changed
+        self.cache.clear();
+    }
+
+    /// Check if `source` is assignable to `target` using TS compatibility rules.
+    pub fn is_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Fast identity check — avoids hash map lookup and is_assignable_impl entirely.
+        if source == target {
+            return true;
+        }
+        // Without strictNullChecks, null and undefined are assignable to and from any type.
+        // This check is at the top-level only (not in subtype member iteration) to avoid
+        // incorrectly accepting types within union member comparisons.
+        if !self.strict_null_checks && target.is_nullish() {
+            return true;
+        }
+
+        let key = (source, target);
+        if let Some(&cached) = self.cache.get(&key) {
+            return cached;
+        }
+
+        let result = self.is_assignable_impl(source, target, self.strict_function_types);
+        self.cache.insert(key, result);
+        result
+    }
+
+    /// Check for excess properties in object literal assignment (TS2353).
+    ///
+    /// This implements the "Lawyer" layer rule where fresh object literals
+    /// cannot have properties that don't exist in the target type, unless the
+    /// target has an index signature.
+    ///
+    /// # Arguments
+    /// * `source` - The source type (should be a fresh object literal)
+    /// * `target` - The target type
+    ///
+    /// # Returns
+    /// `true` if no excess properties found, `false` if TS2353 should be reported
+    fn check_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
+        use crate::relations::freshness::is_fresh_object_type;
+        use crate::visitor::{ObjectTypeKind, classify_object_type};
+
+        // Only check fresh object literals
+        if !is_fresh_object_type(self.interner, source) {
+            return true;
+        }
+
+        // Get source shape
+        let source_shape_id = match classify_object_type(self.interner, source) {
+            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
+                shape_id
+            }
+            ObjectTypeKind::NotObject => return true,
+        };
+
+        let source_shape = self.interner.object_shape(source_shape_id);
+
+        let (has_string_index, has_number_index) = self.check_index_signatures(target);
+
+        // If target has string index signature, skip excess property check entirely
+        if has_string_index {
+            return true;
+        }
+
+        // Collect all target properties (including base types if intersection)
+        let target_properties = self.collect_target_properties(target);
+
+        // TypeScript forgives excess properties when the target type is completely empty
+        // (like `{}`, an empty interface, or an empty class) because it accepts any non-primitive.
+        if target_properties.is_empty() && !has_number_index {
+            return true;
+        }
+
+        // Check each source property
+        for prop_info in &source_shape.properties {
+            if !target_properties.contains(&prop_info.name) {
+                // If target has a numeric index signature, numeric-named properties are allowed
+                if has_number_index {
+                    let name_str = self.interner.resolve_atom(prop_info.name);
+                    if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
+                // Excess property found!
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Find the first excess property in object literal assignment.
+    ///
+    /// Returns `Some(property_name)` if an excess property is found, `None` otherwise.
+    /// This is used by `explain_failure` to generate TS2353 diagnostics.
+    fn find_excess_property(&mut self, source: TypeId, target: TypeId) -> Option<Atom> {
+        use crate::relations::freshness::is_fresh_object_type;
+        use crate::visitor::{ObjectTypeKind, classify_object_type};
+
+        // Only check fresh object literals
+        if !is_fresh_object_type(self.interner, source) {
+            return None;
+        }
+
+        // Get source shape
+        let source_shape_id = match classify_object_type(self.interner, source) {
+            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
+                shape_id
+            }
+            ObjectTypeKind::NotObject => return None,
+        };
+
+        let source_shape = self.interner.object_shape(source_shape_id);
+
+        // Get target shape - resolve Lazy, Mapped, and Application types
+        let target_key = self.interner.lookup(target);
+        let resolved_target = match target_key {
+            Some(TypeData::Lazy(def_id)) => {
+                // Try to resolve the Lazy type
+                self.subtype.resolver.resolve_lazy(def_id, self.interner)?
+            }
+            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
+                // Evaluate mapped and application types
+                self.subtype.evaluate_type(target)
+            }
+            _ => target,
+        };
+
+        let (has_string_index, has_number_index) = self.check_index_signatures(resolved_target);
+
+        // If target has string index signature, skip excess property check entirely
+        if has_string_index {
+            return None;
+        }
+
+        // Collect all target properties (including base types if intersection)
+        let target_properties = self.collect_target_properties(resolved_target);
+
+        // TypeScript forgives excess properties when the target type is completely empty
+        if target_properties.is_empty() && !has_number_index {
+            return None;
+        }
+
+        // Check each source property
+        for prop_info in &source_shape.properties {
+            if !target_properties.contains(&prop_info.name) {
+                // If target has a numeric index signature, numeric-named properties are allowed
+                if has_number_index {
+                    let name_str = self.interner.resolve_atom(prop_info.name);
+                    if name_str.parse::<f64>().is_ok() {
+                        continue;
+                    }
+                }
+                // Excess property found!
+                return Some(prop_info.name);
+            }
+        }
+
+        None
+    }
+
+    /// Collect all property names from a type into a set (handles intersections and unions).
+    ///
+    /// For both intersections and unions: property exists if it's in ANY member.
+    /// This matches tsc's `isKnownProperty` semantics for excess property checking.
+    ///
+    /// Check if a type or any of its composite members has a string or numeric index signature.
+    /// Returns `(has_string_index, has_number_index)`.
+    fn check_index_signatures(&mut self, type_id: TypeId) -> (bool, bool) {
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return (true, true);
+        }
+
+        // The `object` type (like `{}`) conceptually accepts any properties —
+        // when it appears in a union, excess property checking should be suppressed.
+        if type_id == TypeId::OBJECT {
+            return (true, false);
+        }
+
+        // The global `Object` interface (capital O from lib.d.ts) also accepts any
+        // properties, just like `object`/`{}`. When it appears as a union member
+        // (e.g., `Object | string`), excess property checking should be suppressed.
+        if self.is_global_object_interface_target(type_id) {
+            return (true, false);
+        }
+
+        let type_id = match self.interner.lookup(type_id) {
+            Some(TypeData::Lazy(def_id)) => self
+                .subtype
+                .resolver
+                .resolve_lazy(def_id, self.interner)
+                .unwrap_or(type_id),
+            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
+                self.subtype.evaluate_type(type_id)
+            }
+            _ => type_id,
+        };
+
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return (true, true);
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                (shape.string_index.is_some(), shape.number_index.is_some())
+            }
+            Some(TypeData::Intersection(members_id)) | Some(TypeData::Union(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                let mut has_str = false;
+                let mut has_num = false;
+                for &member in members.iter() {
+                    let (s, n) = self.check_index_signatures(member);
+                    has_str |= s;
+                    has_num |= n;
+                }
+                (has_str, has_num)
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                // For unresolved conditional types, check both branches for index
+                // signatures. If either branch has one, it's considered present.
+                let cond = self.interner.get_conditional(cond_id);
+                let (ts, tn) = self.check_index_signatures(cond.true_type);
+                let (fs, fn_) = self.check_index_signatures(cond.false_type);
+                (ts || fs, tn || fn_)
+            }
+            _ => (false, false),
+        }
+    }
+
+    fn collect_target_properties(&mut self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
+        // Handle Mapped, Application, Lazy, and Conditional types by evaluating/resolving
+        // them to concrete types before property collection.
+        let type_id = match self.interner.lookup(type_id) {
+            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
+                self.subtype.evaluate_type(type_id)
+            }
+            Some(TypeData::Lazy(def_id)) => self
+                .subtype
+                .resolver
+                .resolve_lazy(def_id, self.interner)
+                .unwrap_or(type_id),
+            _ => type_id,
+        };
+
+        let mut properties = rustc_hash::FxHashSet::default();
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Intersection(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                // Property exists if it's in ANY member of intersection
+                for &member in members.iter() {
+                    let member_props = self.collect_target_properties(member);
+                    properties.extend(member_props);
+                }
+            }
+            Some(TypeData::Union(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                // For excess property checking, a property is "known" if it exists
+                // in ANY member of the union (same as tsc's isKnownProperty).
+                // The source only needs to be assignable to one constituent.
+                for &member in members.iter() {
+                    let member_props = self.collect_target_properties(member);
+                    properties.extend(member_props);
+                }
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                for prop_info in &shape.properties {
+                    properties.insert(prop_info.name);
+                }
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                // For unresolved conditional types (e.g. T extends U ? X : Y where T
+                // is a type parameter), a property is "known" if it exists in either
+                // branch. This matches tsc's isKnownProperty behavior — excess property
+                // checking should not reject properties that may be valid once the
+                // conditional resolves.
+                let cond = self.interner.get_conditional(cond_id);
+                let true_props = self.collect_target_properties(cond.true_type);
+                let false_props = self.collect_target_properties(cond.false_type);
+                properties.extend(true_props);
+                properties.extend(false_props);
+            }
+            Some(TypeData::Mapped(mapped_id)) => {
+                if let Some(mapped_props) =
+                    crate::type_queries::collect_finite_mapped_property_names(
+                        self.interner,
+                        mapped_id,
+                    )
+                {
+                    properties.extend(mapped_props);
+                }
+            }
+            _ => {}
+        }
+
+        properties
+    }
+
+    /// Internal implementation of assignability check.
+    /// Extracted to share logic between `is_assignable` and `is_assignable_strict`.
+    fn is_assignable_impl(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        strict_function_types: bool,
+    ) -> bool {
+        let (source, target) = self.normalize_assignability_operands(source, target);
+
+        // Fast path checks
+        if let Some(result) = self.check_assignable_fast_path(source, target) {
+            return result;
+        }
+
+        // Enum nominal typing check (Lawyer layer implementation)
+        // This provides enum member distinction even without checker context
+        if let Some(result) = self.enum_assignability_override(source, target) {
+            return result;
+        }
+
+        // Weak type checks (TS2559)
+        // Skipped when skip_weak_type_checks is set, matching tsc's
+        // isTypeAssignableTo which does not include weak type detection.
+        if !self.skip_weak_type_checks {
+            if self.violates_weak_union(source, target) {
+                return false;
+            }
+            if self.violates_weak_type(source, target) {
+                return false;
+            }
+        }
+
+        // Excess property checking (TS2353) - Lawyer layer
+        if !self.check_excess_properties(source, target) {
+            return false;
+        }
+
+        // Empty object target or top-like union `{}` | null | undefined
+        if let Some((allow_null, allow_undefined)) = self.empty_object_with_nullish_target(target) {
+            return self.is_assignable_to_empty_object_or_nullish(
+                source,
+                allow_null,
+                allow_undefined,
+            );
+        }
+
+        // Empty object target
+        if self.is_empty_object_target(target) {
+            return self.is_assignable_to_empty_object(source);
+        }
+
+        // Check mapped-to-mapped structural comparison before full subtype check.
+        if let (Some(TypeData::Mapped(s_mapped_id)), Some(TypeData::Mapped(t_mapped_id))) =
+            (self.interner.lookup(source), self.interner.lookup(target))
+        {
+            let result = self.check_mapped_to_mapped_assignability(s_mapped_id, t_mapped_id);
+            if let Some(assignable) = result {
+                return assignable;
+            }
+        }
+
+        // Object interface check
+        // Type parameters are excluded: an unconstrained T could be instantiated
+        // with null/undefined/void, so T is NOT assignable to Object.
+        // For constrained type parameters, delegate to the constraint check
+        // instead of short-circuiting here.
+        if !source.is_nullable() && !self.is_type_parameter_source(source) {
+            let object_target = if self.is_global_object_interface_target(target) {
+                Some(target)
+            } else if let Some(TypeData::Union(members_id)) = self.interner.lookup(target) {
+                let members = self.interner.type_list(members_id);
+                members
+                    .iter()
+                    .find(|&&m| self.is_global_object_interface_target(m))
+                    .copied()
+            } else {
+                None
+            };
+            if let Some(obj_target) = object_target
+                && !self.has_conflicting_properties_with_object(source, obj_target)
+            {
+                return true;
+            }
+        }
+
+        // Function interface
+        if self.is_function_target_member(target)
+            && crate::type_queries::is_callable_type(self.interner, source)
+        {
+            return true;
+        }
+
+        // TS2859 complexity guard: check constituent-count cross-product before
+        // running the full structural comparison. This mirrors tsc's overflow
+        // detection which triggers when comparing large union/intersection types.
+        //
+        // We must evaluate/resolve types before counting, since type aliases
+        // (Lazy references) are opaque (count = 1) until resolved. Evaluating
+        // expands template literals, resolves Lazy(DefId), etc.
+        {
+            let resolved_source = self.subtype.evaluate_type(source);
+            let resolved_target = self.subtype.evaluate_type(target);
+            let source_count =
+                crate::type_queries::data::constituent_count(self.interner, resolved_source);
+            let target_count =
+                crate::type_queries::data::constituent_count(self.interner, resolved_target);
+            if source_count.saturating_mul(target_count) > 1_000_000 {
+                // Guard: if any intersection member of the evaluated source
+                // equals the evaluated target, the relation is trivially true
+                // and tsc would not overflow.
+                let trivially_related = if let Some(members_id) =
+                    crate::visitor::intersection_list_id(self.interner, resolved_source)
+                {
+                    let members = self.interner.type_list(members_id);
+                    members.contains(&resolved_target)
+                } else {
+                    false
+                };
+                if !trivially_related {
+                    self.subtype.guard.mark_exceeded();
+                    return false;
+                }
+            }
+        }
+
+        // Default to structural subtype checking
+        self.configure_subtype(strict_function_types);
+        self.subtype.is_subtype_of(source, target)
+    }
+
+    /// Check if two mapped types are assignable via structural template comparison.
+    ///
+    /// When both source and target are mapped types with the same constraint
+    /// (e.g., both iterate over `keyof T`), compare their templates directly.
+    /// This handles cases like `Readonly<T>` assignable to `Partial<T>` where
+    /// the mapped types can't be concretely expanded because T is generic.
+    ///
+    /// Returns `Some(true/false)` if determination was made, `None` to fall through.
+    fn check_mapped_to_mapped_assignability(
+        &mut self,
+        s_mapped_id: crate::types::MappedTypeId,
+        t_mapped_id: crate::types::MappedTypeId,
+    ) -> Option<bool> {
+        use crate::relations::subtype::rules::generics::flatten_mapped_chain;
+        use crate::types::MappedModifier;
+        use crate::visitor::mapped_type_id;
+
+        // Try the flattened chain approach first: this handles nested homomorphic
+        // mapped types like Partial<Readonly<T>> vs Readonly<Partial<T>>.
+        if let (Some(s_flat), Some(t_flat)) = (
+            flatten_mapped_chain(self.interner, s_mapped_id),
+            flatten_mapped_chain(self.interner, t_mapped_id),
+        ) {
+            let sources_match = if s_flat.source == t_flat.source {
+                true
+            } else {
+                self.configure_subtype(self.strict_function_types);
+                self.subtype.is_subtype_of(s_flat.source, t_flat.source)
+            };
+
+            if sources_match {
+                // Source has optional but target doesn't → reject
+                if s_flat.has_optional && !t_flat.has_optional {
+                    return Some(false);
+                }
+                return Some(true);
+            }
+        }
+
+        // Fallback: single-level mapped type comparison
+        let s_mapped = self.interner.get_mapped(s_mapped_id);
+        let t_mapped = self.interner.get_mapped(t_mapped_id);
+
+        // Both must have the same constraint (e.g., both `keyof T`).
+        // First try identity, then evaluate to normalize (e.g., keyof(Readonly<T>) → keyof(T)).
+        let constraints_match = if s_mapped.constraint == t_mapped.constraint {
+            true
+        } else {
+            let s_eval = self.subtype.evaluate_type(s_mapped.constraint);
+            let t_eval = self.subtype.evaluate_type(t_mapped.constraint);
+            s_eval == t_eval
+        };
+
+        if !constraints_match {
+            return None;
+        }
+
+        let source_template = s_mapped.template;
+        let mut target_template = t_mapped.template;
+
+        // If the target adds optional (`?`), the target template effectively
+        // becomes `template | undefined` since optional properties accept undefined.
+        let target_adds_optional = t_mapped.optional_modifier == Some(MappedModifier::Add);
+        let source_adds_optional = s_mapped.optional_modifier == Some(MappedModifier::Add);
+
+        if target_adds_optional && !source_adds_optional {
+            target_template = self.interner.union2(target_template, TypeId::UNDEFINED);
+        }
+
+        // If the target removes optional (Required) but source doesn't,
+        // fall through to full structural check.
+        let target_removes_optional = t_mapped.optional_modifier == Some(MappedModifier::Remove);
+        if target_removes_optional && !source_adds_optional && s_mapped.optional_modifier.is_none()
+        {
+            return None;
+        }
+
+        // If both templates are themselves mapped types, recurse
+        if let (Some(s_inner), Some(t_inner)) = (
+            mapped_type_id(self.interner, source_template),
+            mapped_type_id(self.interner, target_template),
+        ) {
+            return self.check_mapped_to_mapped_assignability(s_inner, t_inner);
+        }
+
+        // Compare templates using the subtype checker
+        self.configure_subtype(self.strict_function_types);
+        Some(self.subtype.is_subtype_of(source_template, target_template))
+    }
+
+    /// Check fast-path assignability conditions.
+    /// Returns Some(result) if fast path applies, None if need to do full check.
+    fn check_assignable_fast_path(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
+            && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
+            && resolved_target != target
+        {
+            return self.check_assignable_fast_path(source, resolved_target);
+        }
+
+        // Same type
+        if source == target {
+            return Some(true);
+        }
+
+        // Any at the top-level is assignable to/from everything
+        // UNLESS strict any propagation is enabled (disables suppression)
+        if source == TypeId::ANY || target == TypeId::ANY {
+            // North Star Fix: any should not silence structural mismatches.
+            // We only allow any to match any here, and fall through to structural
+            // checking for mixed pairs.
+            if source == target {
+                return Some(true);
+            }
+            // tsc: any is NOT assignable to never (the bottom type).
+            // `isSimpleTypeRelatedTo`: `if (s & TypeFlags.Any) return !(t & TypeFlags.Never);`
+            if source == TypeId::ANY && target == TypeId::NEVER {
+                return Some(false);
+            }
+            // If legacy suppression is allowed, we still return true here.
+            if self.lawyer.allow_any_suppression {
+                return Some(true);
+            }
+            // Fall through to structural checking for unsound pairs
+            return None;
+        }
+
+        // Null/undefined in non-strict null check mode.
+        // Without strictNullChecks, null/undefined are assignable to all types
+        // including type parameters. In tsc, the non-strict mode treats null
+        // and undefined as being in the domain of every type.
+        // Exception: `null` is not assignable to `void` — only `undefined` is.
+        if !self.strict_null_checks && source.is_nullish() {
+            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
+            if !null_to_void {
+                return Some(true);
+            }
+        }
+
+        // unknown is top
+        if target == TypeId::UNKNOWN {
+            return Some(true);
+        }
+
+        // never is bottom
+        if source == TypeId::NEVER {
+            return Some(true);
+        }
+
+        // Error types are assignable to/from everything (like `any`).
+        // In tsc, errorType silences further errors to prevent cascading diagnostics.
+        if source == TypeId::ERROR || target == TypeId::ERROR {
+            return Some(true);
+        }
+
+        // unknown is not assignable to non-top types, UNLESS the target is
+        // the decomposed form of unknown: `{} | null | undefined`.
+        // In TypeScript, `unknown === {} | null | undefined`, so unknown must
+        // be assignable to any union that covers all three constituents.
+        if source == TypeId::UNKNOWN {
+            if self.empty_object_with_nullish_target(target).is_some() {
+                return Some(true);
+            }
+            return Some(false);
+        }
+
+        // Compatibility: unions containing `Function` should accept callable sources.
+        // Example: `setTimeout(() => {}, 0)` where first arg is `string | Function`.
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(members_id);
+            if members
+                .iter()
+                .any(|&member| self.is_function_target_member(member))
+                && crate::type_queries::is_callable_type(self.interner, source)
+            {
+                return Some(true);
+            }
+        }
+
+        None // Need full check
+    }
+
+    pub fn is_assignable_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(target)
+            && let Some(resolved_target) = self.subtype.resolver.resolve_lazy(def_id, self.interner)
+            && resolved_target != target
+        {
+            return self.is_assignable_strict(source, resolved_target);
+        }
+
+        // Always use strict function types
+        if source == target {
+            return true;
+        }
+        // Without strictNullChecks, null/undefined are assignable to all types
+        // including type parameters. Exception: `null` is not assignable to
+        // `void` — only `undefined` is.
+        if !self.strict_null_checks && source.is_nullish() {
+            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
+            if !null_to_void {
+                return true;
+            }
+        }
+        // Without strictNullChecks, null and undefined are assignable to and from any type.
+        // This check is at the top-level only (not in subtype member iteration).
+        if !self.strict_null_checks && target.is_nullish() {
+            return true;
+        }
+        if target == TypeId::UNKNOWN {
+            return true;
+        }
+        if source == TypeId::NEVER {
+            return true;
+        }
+        // Error types are assignable to/from everything (like `any` in tsc)
+        if source == TypeId::ERROR || target == TypeId::ERROR {
+            return true;
+        }
+        if source == TypeId::UNKNOWN {
+            return false;
+        }
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(members_id);
+            if members
+                .iter()
+                .any(|&member| self.is_function_target_member(member))
+                && crate::type_queries::is_callable_type(self.interner, source)
+            {
+                return true;
+            }
+        }
+        if self.is_empty_object_target(target) {
+            return self.is_assignable_to_empty_object(source);
+        }
+
+        let prev = self.subtype.strict_function_types;
+        self.configure_subtype(true);
+        let result = self.subtype.is_subtype_of(source, target);
+        self.subtype.strict_function_types = prev;
+        result
+    }
+
+    /// Explain why `source` is not assignable to `target` using TS compatibility rules.
+    pub fn explain_failure(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeFailureReason> {
+        // Fast path: if assignable, no failure to explain
+        if source == target {
+            return None;
+        }
+        if target == TypeId::UNKNOWN {
+            return None;
+        }
+        // Without strictNullChecks, null/undefined are assignable to all types
+        // including type parameters. Exception: `null` is not assignable to `void`.
+        if !self.strict_null_checks && source.is_nullish() {
+            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
+            if !null_to_void {
+                return None;
+            }
+        }
+        // Without strictNullChecks, null and undefined are assignable to and from any type.
+        if !self.strict_null_checks && (target == TypeId::NULL || target == TypeId::UNDEFINED) {
+            return None;
+        }
+        if source == TypeId::NEVER {
+            return None;
+        }
+        if source == TypeId::UNKNOWN {
+            return Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+
+        // Error types are assignable to/from everything (like `any` in tsc)
+        // No failure to explain — suppress cascading diagnostics
+        if source == TypeId::ERROR || target == TypeId::ERROR {
+            return None;
+        }
+
+        // Weak type violations — must respect skip_weak_type_checks,
+        // matching the guard in is_assignable_impl (TS2559 suppression).
+        if !self.skip_weak_type_checks {
+            let violates = self.violates_weak_union(source, target);
+            if violates {
+                return Some(SubtypeFailureReason::TypeMismatch {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+            if self.violates_weak_type(source, target) {
+                return Some(SubtypeFailureReason::NoCommonProperties {
+                    source_type: source,
+                    target_type: target,
+                });
+            }
+        }
+
+        // Excess property checking (TS2353)
+        if let Some(excess_prop) = self.find_excess_property(source, target) {
+            return Some(SubtypeFailureReason::ExcessProperty {
+                property_name: excess_prop,
+                target_type: target,
+            });
+        }
+
+        // Private brand incompatibility: remember the result but don't short-circuit.
+        // Let the structural explain path run first — it may find real missing properties
+        // (not just brands) that produce TS2741 instead of generic TS2322.
+        // Only use the brand result as a fallback if the structural path returns None.
+        let brand_fails = matches!(
+            self.private_brand_assignability_override(source, target),
+            Some(false)
+        );
+
+        // Empty object target or top-like union `{}` | null | undefined
+        if let Some((allow_null, allow_undefined)) = self.empty_object_with_nullish_target(target)
+            && self.is_assignable_to_empty_object_or_nullish(source, allow_null, allow_undefined)
+        {
+            return None;
+        }
+
+        // Empty object target
+        if self.is_empty_object_target(target) && self.is_assignable_to_empty_object(source) {
+            return None;
+        }
+
+        self.configure_subtype(self.strict_function_types);
+        let mut structural_result = self.subtype.explain_failure(source, target);
+
+        if structural_result
+            .as_ref()
+            .is_none_or(Self::uses_generic_failure_surface)
+        {
+            let (normalized_source, normalized_target) =
+                self.normalize_assignability_operands(source, target);
+            if normalized_source != source || normalized_target != target {
+                let normalized_result = self
+                    .subtype
+                    .explain_failure(normalized_source, normalized_target);
+                if let Some(normalized_reason) = normalized_result
+                    && !Self::uses_generic_failure_surface(&normalized_reason)
+                {
+                    structural_result = Some(Self::remap_failure_surface(
+                        normalized_reason,
+                        source,
+                        target,
+                    ));
+                }
+            }
+        }
+
+        // If the structural path found a useful reason, use it.
+        // Otherwise, fall back to the brand mismatch result.
+        match (&structural_result, brand_fails) {
+            // Structural path found something — prefer it over brand mismatch
+            (Some(_), _) => structural_result,
+            // No structural result but brand fails — use TypeMismatch
+            (None, true) => Some(SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            }),
+            // No structural result, no brand issue
+            (None, false) => None,
+        }
+    }
+
+    const fn configure_subtype(&mut self, strict_function_types: bool) {
+        self.subtype.strict_function_types = strict_function_types;
+        self.subtype.allow_void_return = true;
+        self.subtype.allow_bivariant_rest = true;
+        self.subtype.exact_optional_property_types = self.exact_optional_property_types;
+        self.subtype.strict_null_checks = self.strict_null_checks;
+        self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+        // Propagate weak type enforcement into nested structural comparisons.
+        // This ensures TS2559 is detected not just at the top-level assignment,
+        // but also when comparing nested property types (e.g., { a: { y: string } }
+        // assigned to { a: { x?: number } }).
+        self.subtype.enforce_weak_types = true;
+        // Any propagation is controlled by the Lawyer's allow_any_suppression flag
+        // Standard TypeScript allows any to propagate through arrays/objects regardless
+        // of strictFunctionTypes - it only affects function parameter variance
+        self.subtype.any_propagation = self.lawyer.any_propagation_mode();
+        // In strict mode, disable method bivariance for soundness
+        self.subtype.disable_method_bivariance = self.strict_subtype_checking;
+    }
+
+    /// Check if a type is a "weak type" in the tsc sense.
+    /// A weak type is an object type with all optional properties, no call/construct
+    /// signatures, and no index signatures. For intersections, ALL members must be
+    /// weak types. Non-object types (primitives, etc.) are never weak.
+    fn is_weak_type(&self, type_id: TypeId) -> bool {
+        // Intersections are weak only if ALL members are weak
+        if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            return !members.is_empty() && members.iter().all(|m| self.is_weak_type(*m));
+        }
+
+        // Try to extract object shape
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+        let Some(shape_id) = extractor.extract(type_id) else {
+            return false;
+        };
+        let shape = self
+            .interner
+            .object_shape(crate::types::ObjectShapeId(shape_id));
+
+        // Must have properties, all optional, no index signatures
+        !shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.properties.iter().all(|p| p.optional)
+    }
+
+    fn violates_weak_type(&self, source: TypeId, target: TypeId) -> bool {
+        // For intersection targets, ALL members must be weak types.
+        // e.g., `string & { opt?: number }` is NOT weak because `string` is not weak.
+        // This matches tsc's isWeakType() which checks every() for intersections.
+        if let Some(TypeData::Intersection(list_id)) = self.interner.lookup(target) {
+            let members = self.interner.type_list(list_id);
+            if members.iter().any(|m| !self.is_weak_type(*m)) {
+                return false;
+            }
+        }
+
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+
+        let Some(target_shape_id) = extractor.extract(target) else {
+            return false;
+        };
+
+        let target_shape = self
+            .interner
+            .object_shape(crate::types::ObjectShapeId(target_shape_id));
+
+        // ObjectWithIndex with index signatures is not a weak type
+        if let Some(TypeData::ObjectWithIndex(_)) = self.interner.lookup(target)
+            && (target_shape.string_index.is_some() || target_shape.number_index.is_some())
+        {
+            return false;
+        }
+
+        let target_props = target_shape.properties.as_slice();
+        if target_props.is_empty() || target_props.iter().any(|prop| !prop.optional) {
+            return false;
+        }
+
+        // Target is a weak type (all optional properties). Check source.
+        // Array/Tuple types are objects (not primitives) but the ShapeExtractor
+        // can't extract their shape. In tsc, arrays have properties like `length`,
+        // `push`, etc. that are checked against the weak type's properties.
+        // When the source is an array/tuple type, check if the weak target has
+        // any property that arrays also have. If not, it's a weak type violation.
+        //
+        // IMPORTANT: Only apply this when the target is a standalone weak type
+        // (Object/ObjectWithIndex), NOT when it's part of an intersection.
+        // Intersections like `{ a?: string } & number[]` should not trigger
+        // weak type violations because the intersection includes array properties.
+        if self.is_array_or_tuple_type(source) {
+            // Only trigger the array weak-type check when the target is a
+            // standalone object shape, not an intersection or other compound type.
+            let target_is_standalone_object = matches!(
+                self.interner.lookup(target),
+                Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_))
+            );
+            if target_is_standalone_object {
+                if self.target_has_array_like_property(target_props) {
+                    return false; // Target accepts arrays
+                }
+                // Skip for empty arrays/tuples — they have no own properties
+                // to check, but tsc allows assigning empty arrays to types
+                // extending empty tuples (e.g., `interface X extends [] { p?: any }`)
+                let source_is_empty = match self.interner.lookup(source) {
+                    Some(TypeData::Tuple(tid)) => self.interner.tuple_list(tid).is_empty(),
+                    Some(TypeData::Array(elem)) => elem == TypeId::NEVER,
+                    _ => false,
+                };
+                if source_is_empty {
+                    return false;
+                }
+                return true; // Non-empty array, target lacks array-like props → violation
+            }
+            // For intersection/other compound targets, skip the array check
+            // and fall through to the standard weak type check.
+        }
+
+        self.violates_weak_type_with_target_props(source, target_props)
+    }
+
+    fn violates_weak_union(&self, source: TypeId, target: TypeId) -> bool {
+        // Don't resolve the target - check it directly for union type
+        // (resolve_weak_type_ref was converting unions to objects, which is wrong)
+        let target_key = match self.interner.lookup(target) {
+            Some(TypeData::Union(members)) => members,
+            _ => {
+                return false;
+            }
+        };
+
+        let members = self.interner.type_list(target_key);
+        if members.is_empty() {
+            return false;
+        }
+
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+        let mut has_weak_member = false;
+
+        for member in members.iter() {
+            let resolved_member = self.resolve_weak_type_ref(*member);
+            // Weak-union checks only apply when ALL union members are object-like.
+            // If any member is primitive/non-object (e.g. `string | Function`),
+            // TypeScript does not apply TS2559-style weak-type rejection.
+            let Some(member_shape_id) = extractor.extract(resolved_member) else {
+                return false;
+            };
+
+            let member_shape = self
+                .interner
+                .object_shape(crate::types::ObjectShapeId(member_shape_id));
+
+            if member_shape.properties.is_empty()
+                || member_shape.string_index.is_some()
+                || member_shape.number_index.is_some()
+            {
+                return false;
+            }
+
+            if member_shape.properties.iter().all(|prop| prop.optional) {
+                has_weak_member = true;
+            }
+        }
+
+        if !has_weak_member {
+            return false;
+        }
+
+        self.source_lacks_union_common_property(source, members.as_ref())
+    }
+
+    pub fn is_weak_union_violation(&self, source: TypeId, target: TypeId) -> bool {
+        self.violates_weak_union(source, target)
+    }
+
+    fn violates_weak_type_with_target_props(
+        &self,
+        source: TypeId,
+        target_props: &[PropertyInfo],
+    ) -> bool {
+        // Handle Union types explicitly before visitor
+        if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
+            let members = self.interner.type_list(members);
+            return members
+                .iter()
+                .all(|member| self.violates_weak_type_with_target_props(*member, target_props));
+        }
+
+        // The global Object type is exempt from weak type checks.
+        // People treat Object as equivalent to {}, even though it declares
+        // properties (constructor, toString, etc.). See TypeScript PR #16047.
+        if self.is_global_object_interface_target(source) {
+            return false;
+        }
+
+        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        else {
+            // No extractable object/function-like shape. For primitive types
+            // (string/number/boolean/bigint/symbol literals, enum members, etc.),
+            // tsc emits TS2559 because primitives have no user-defined properties
+            // in common with weak types.
+            //
+            // We check if the target's weak type properties could overlap with
+            // well-known primitive prototype properties (e.g., `length` for strings).
+            // If no overlap, it's a weak type violation.
+            return self.primitive_violates_weak_type(source, target_props);
+        };
+
+        if has_index_signature {
+            return false;
+        }
+
+        // Empty objects are assignable to weak types (all optional properties).
+        // Only trigger weak type violation if source has properties that don't overlap.
+        !source_props.is_empty() && !self.has_common_property(source_props.as_slice(), target_props)
+    }
+
+    /// Check if a primitive source type violates a weak type target by having
+    /// no properties in common.
+    ///
+    /// In tsc, primitives have apparent types (e.g., `string` has the `String`
+    /// interface with `length`, `charAt`, etc.). When checking a primitive
+    /// against a weak type, tsc checks if ANY of the weak type's properties
+    /// exist on the primitive's apparent type.
+    ///
+    /// We approximate this by checking target properties against a set of
+    /// well-known primitive prototype properties.
+    fn primitive_violates_weak_type(&self, source: TypeId, target_props: &[PropertyInfo]) -> bool {
+        // Determine if source is a primitive type
+        let is_primitive = if source.is_intrinsic() {
+            matches!(
+                source,
+                TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+            )
+        } else {
+            matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::Intrinsic(_))
+            )
+        };
+
+        if !is_primitive {
+            // Not a primitive — fall back to the original behavior (no violation
+            // because we can't determine the source's properties).
+            return false;
+        }
+
+        // Determine which primitive category the source belongs to
+        let is_string_like = source == TypeId::STRING
+            || matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(LiteralValue::String(_)))
+            )
+            || self.is_string_enum_member(source);
+
+        let is_number_like = source == TypeId::NUMBER
+            || matches!(
+                self.interner.lookup(source),
+                Some(TypeData::Literal(LiteralValue::Number(_)))
+            )
+            || self.is_numeric_enum_member(source);
+
+        // Check if any target property matches a well-known primitive property.
+        // If so, the primitive's apparent type shares a property with the weak
+        // target and this is NOT a violation.
+        for prop in target_props {
+            let name = self.interner.resolve_atom_ref(prop.name);
+            // Properties common to all primitives (from Object.prototype)
+            if matches!(
+                name.as_ref(),
+                "toString"
+                    | "valueOf"
+                    | "constructor"
+                    | "toLocaleString"
+                    | "hasOwnProperty"
+                    | "isPrototypeOf"
+                    | "propertyIsEnumerable"
+            ) {
+                return false;
+            }
+            // String-specific properties
+            if is_string_like
+                && matches!(
+                    name.as_ref(),
+                    "length"
+                        | "charAt"
+                        | "charCodeAt"
+                        | "concat"
+                        | "indexOf"
+                        | "lastIndexOf"
+                        | "match"
+                        | "replace"
+                        | "search"
+                        | "slice"
+                        | "split"
+                        | "substring"
+                        | "toLowerCase"
+                        | "toUpperCase"
+                        | "trim"
+                        | "trimStart"
+                        | "trimEnd"
+                        | "padStart"
+                        | "padEnd"
+                        | "startsWith"
+                        | "endsWith"
+                        | "includes"
+                        | "repeat"
+                        | "normalize"
+                        | "at"
+                )
+            {
+                return false;
+            }
+            // Number-specific properties
+            if is_number_like
+                && matches!(name.as_ref(), "toFixed" | "toExponential" | "toPrecision")
+            {
+                return false;
+            }
+        }
+
+        // None of the target's properties match the primitive's apparent type
+        true
+    }
+
+    /// Check if a type is a string enum member.
+    fn is_string_enum_member(&self, type_id: TypeId) -> bool {
+        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
+            matches!(
+                self.interner.lookup(member_type),
+                Some(TypeData::Literal(LiteralValue::String(_)))
+            ) || member_type == TypeId::STRING
+        } else {
+            false
+        }
+    }
+
+    /// Check if a type is a numeric enum member.
+    fn is_numeric_enum_member(&self, type_id: TypeId) -> bool {
+        if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
+            matches!(
+                self.interner.lookup(member_type),
+                Some(TypeData::Literal(LiteralValue::Number(_)))
+            ) || member_type == TypeId::NUMBER
+        } else {
+            false
+        }
+    }
+
+    fn source_lacks_union_common_property(
+        &self,
+        source: TypeId,
+        target_members: &[TypeId],
+    ) -> bool {
+        let source = self.resolve_weak_type_ref(source);
+
+        // Handle Union explicitly
+        if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
+            let members = self.interner.type_list(members);
+            return members
+                .iter()
+                .all(|member| self.source_lacks_union_common_property(*member, target_members));
+        }
+
+        // The global Object type is exempt from weak type checks (same as violates_weak_type).
+        if self.is_global_object_interface_target(source) {
+            return false;
+        }
+
+        // Handle TypeParameter explicitly
+        if let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source) {
+            return match param.constraint {
+                Some(constraint) => {
+                    self.source_lacks_union_common_property(constraint, target_members)
+                }
+                None => false,
+            };
+        }
+
+        // Use visitor for Object types
+        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        else {
+            // Array/Tuple types are objects but not extractable. They rarely
+            // share property names with arbitrary union members, so treat as
+            // lacking common properties (matching tsc's getPropertiesOfType
+            // behavior for arrays in weak type detection).
+            if self.is_array_or_tuple_type(source) {
+                return true;
+            }
+            return false;
+        };
+
+        if has_index_signature {
+            return false;
+        }
+
+        if source_props.is_empty() {
+            return false;
+        }
+
+        let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
+        let mut has_common = false;
+        for member in target_members {
+            let resolved_member = self.resolve_weak_type_ref(*member);
+            let member_shape_id = match extractor.extract(resolved_member) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let member_shape = self
+                .interner
+                .object_shape(crate::types::ObjectShapeId(member_shape_id));
+            if member_shape.string_index.is_some() || member_shape.number_index.is_some() {
+                return false;
+            }
+            if self.has_common_property(source_props.as_slice(), member_shape.properties.as_slice())
+            {
+                has_common = true;
+                break;
+            }
+        }
+
+        !has_common
+    }
+
+    fn has_common_property(
+        &self,
+        source_props: &[PropertyInfo],
+        target_props: &[PropertyInfo],
+    ) -> bool {
+        crate::utils::has_common_property_name(source_props, target_props)
+    }
+
+    /// Check if a type is an Array or Tuple type.
+    /// These are object types but the `ShapeExtractor` can't extract their shape.
+    fn is_array_or_tuple_type(&self, type_id: TypeId) -> bool {
+        matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::Array(_)) | Some(TypeData::Tuple(_))
+        )
+    }
+
+    /// Check if any property in the target weak type has a name commonly found
+    /// on Array types (e.g. `length`). This prevents false weak-type violations
+    /// for cases like `{ length?: number } | number[]`.
+    fn target_has_array_like_property(&self, target_props: &[PropertyInfo]) -> bool {
+        // Known property names that exist on Array.prototype / Array instances.
+        // We only need to check the most commonly used ones that could appear
+        // as optional properties on weak types intended to accept arrays.
+        target_props.iter().any(|prop| {
+            let name = self.interner.resolve_atom(prop.name);
+            matches!(
+                name.as_str(),
+                "length"
+                    | "push"
+                    | "pop"
+                    | "shift"
+                    | "unshift"
+                    | "concat"
+                    | "join"
+                    | "reverse"
+                    | "slice"
+                    | "sort"
+                    | "splice"
+                    | "indexOf"
+                    | "lastIndexOf"
+                    | "every"
+                    | "some"
+                    | "forEach"
+                    | "map"
+                    | "filter"
+                    | "reduce"
+                    | "reduceRight"
+                    | "find"
+                    | "findIndex"
+                    | "fill"
+                    | "copyWithin"
+                    | "entries"
+                    | "keys"
+                    | "values"
+                    | "includes"
+                    | "flatMap"
+                    | "flat"
+                    | "at"
+                    | "toString"
+                    | "toLocaleString"
+            )
+        })
+    }
+
+    fn resolve_weak_type_ref(&self, type_id: TypeId) -> TypeId {
+        self.subtype.resolve_lazy_type(type_id)
+    }
+
+    /// Check if a type is an empty object target.
+    /// Uses the visitor pattern from `solver::visitor`.
+    fn is_empty_object_target(&self, target: TypeId) -> bool {
+        is_empty_object_type_through_type_constraints(self.interner, target)
+    }
+
+    fn empty_object_with_nullish_target(&self, target: TypeId) -> Option<(bool, bool)> {
+        let TypeData::Union(members) = self.interner.lookup(target)? else {
+            return None;
+        };
+        let members = self.interner.type_list(members);
+        let mut saw_empty_object = false;
+        let mut allow_null = false;
+        let mut allow_undefined = false;
+        for &member in members.iter() {
+            if self.is_empty_object_target(member) {
+                saw_empty_object = true;
+                continue;
+            }
+            match member {
+                TypeId::NULL => allow_null = true,
+                TypeId::UNDEFINED => allow_undefined = true,
+                _ => return None,
+            }
+        }
+        (saw_empty_object && allow_null && allow_undefined).then_some((allow_null, allow_undefined))
+    }
+
+    fn is_assignable_to_empty_object_or_nullish(
+        &self,
+        source: TypeId,
+        allow_null: bool,
+        allow_undefined: bool,
+    ) -> bool {
+        if allow_null && allow_undefined {
+            return true;
+        }
+        match source {
+            TypeId::NULL => return allow_null,
+            TypeId::UNDEFINED => return allow_undefined,
+            _ => {}
+        }
+        self.is_assignable_to_empty_object(source)
+    }
+
+    fn is_assignable_to_empty_object(&self, source: TypeId) -> bool {
+        if source == TypeId::ANY || source == TypeId::NEVER {
+            return true;
+        }
+        // Error types are assignable to everything (like `any` in tsc)
+        if source == TypeId::ERROR {
+            return true;
+        }
+        if !self.strict_null_checks && source.is_nullish() {
+            return true;
+        }
+        if source == TypeId::UNKNOWN
+            || source == TypeId::NULL
+            || source == TypeId::UNDEFINED
+            || source == TypeId::VOID
+        {
+            return false;
+        }
+
+        let key = match self.interner.lookup(source) {
+            Some(key) => key,
+            None => return false,
+        };
+
+        match key {
+            TypeData::Union(members) => {
+                let members = self.interner.type_list(members);
+                members
+                    .iter()
+                    .all(|member| self.is_assignable_to_empty_object(*member))
+            }
+            TypeData::Intersection(members) => {
+                let members = self.interner.type_list(members);
+                members
+                    .iter()
+                    .any(|member| self.is_assignable_to_empty_object(*member))
+            }
+            TypeData::IndexAccess(object_type, _) => {
+                let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, source);
+                if evaluated != source {
+                    return self.is_assignable_to_empty_object(evaluated);
+                }
+
+                !crate::type_queries::is_type_parameter_like(self.interner, object_type)
+            }
+            TypeData::TypeParameter(param) => match param.constraint {
+                Some(constraint) => self.is_assignable_to_empty_object(constraint),
+                None => false,
+            },
+            _ => true,
+        }
+    }
+
+    /// Whether the underlying subtype checker exceeded its recursion depth limit.
+    ///
+    /// When true, the relation result is unreliable because the checker gave up
+    /// before reaching a definitive answer. The caller should emit TS2859
+    /// ("Excessive complexity comparing types").
+    pub const fn depth_exceeded(&self) -> bool {
+        self.subtype.depth_exceeded()
+    }
+}
+
+impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
+    fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable(source, target)
+    }
+
+    fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_strict(source, target)
+    }
+
+    fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
+        // Bypass the cache and perform a one-off check with non-strict function variance.
+        // Bivariant callback checking disables strict_function_types for parameter TYPE
+        // bivariance, but the parameter COUNT check must still apply — a callback with
+        // more required params than the target accepts is always an error (TS2345).
+        self.is_assignable_impl(source, target, false)
+    }
+
+    fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        self.subtype.evaluate_type(type_id)
+    }
+}
