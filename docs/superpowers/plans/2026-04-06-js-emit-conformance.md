@@ -171,7 +171,9 @@ scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep "FINAL"
 scripts/safe-run.sh ./scripts/conformance/conformance.sh snapshot
 ```
 
-- [ ] **Step 4: Push to main**
+- [ ] **Step 4: Push the branch and open a pull request**
 ```bash
-git push origin main
+# Push your working branch (NOT main) and open a PR targeting main.
+git push -u origin "$(git rev-parse --abbrev-ref HEAD)"
 ```
+Do not push directly to `main`; the integrator validates and merges the PR.

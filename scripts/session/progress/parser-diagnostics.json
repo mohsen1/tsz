@@ -1,9 +1,0 @@
-{
-  "campaign": "parser-diagnostics",
-  "baseline_at_creation": 11761,
-  "status": "active",
-  "sessions": [],
-  "known_dead_ends": [],
-  "promising_leads": [],
-  "cross_cutting_blockers": []
-}
