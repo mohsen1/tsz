@@ -730,4 +730,3 @@ fn test_tail_recursive_conditional() {
     // Without tail-recursion elimination, this would hit MAX_EVALUATE_DEPTH (50)
     assert_eq!(result, TypeId::STRING);
 }
-

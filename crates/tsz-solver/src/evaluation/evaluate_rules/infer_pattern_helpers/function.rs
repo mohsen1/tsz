@@ -569,5 +569,4 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => false,
         }
     }
-
 }

@@ -21,9 +21,9 @@ use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 
-mod shared;
-mod function;
 mod constructor_callable;
+mod function;
 mod object;
-mod union;
+mod shared;
 mod template;
+mod union;

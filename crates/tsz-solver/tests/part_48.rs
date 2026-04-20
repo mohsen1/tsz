@@ -592,4 +592,3 @@ fn test_template_literal_infer_with_special_chars() {
     let expected = interner.literal_string("value");
     assert_eq!(result, expected);
 }
-

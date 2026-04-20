@@ -339,7 +339,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             def_id,
         )
     }
-
 }
 
 mod structural;
