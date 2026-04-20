@@ -5570,7 +5570,11 @@ fn test_explain_normalized_mapped_application_missing_property() {
 }
 
 #[test]
-fn test_explain_prefers_named_missing_property_over_late_bound_symbols() {
+fn test_explain_includes_late_bound_symbols_for_non_array_target() {
+    // For non-array-like targets (e.g., ArrayConstructor), tsc includes
+    // symbol-keyed names in the missing-property list alongside named
+    // properties. The checker must report all missing properties so the
+    // emitted TS2322 message matches tsc.
     let interner = TypeInterner::new();
 
     let length = interner.intern_string("length");
@@ -5588,16 +5592,16 @@ fn test_explain_prefers_named_missing_property_over_late_bound_symbols() {
     let reason = checker.explain_failure(source, target);
 
     match reason {
-        Some(SubtypeFailureReason::MissingProperty {
-            property_name,
+        Some(SubtypeFailureReason::MissingProperties {
+            property_names,
             source_type,
             target_type,
         }) => {
-            assert_eq!(property_name, length);
+            assert_eq!(property_names, vec![length, iterator, unscopables]);
             assert_eq!(source_type, source);
             assert_eq!(target_type, target);
         }
-        other => panic!("Expected MissingProperty for 'length', got {other:?}"),
+        other => panic!("Expected MissingProperties for all three, got {other:?}"),
     }
 }
 
