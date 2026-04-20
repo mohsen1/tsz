@@ -444,6 +444,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Defensively visit the index expression for diagnostics (TS2304 on
+        // unresolved identifiers, etc.) BEFORE short-circuiting on an
+        // ANY/ERROR receiver. tsc still flags `a[b]` — both unresolved — as
+        // two separate errors; if we return on the receiver being ERROR we'd
+        // miss diagnostics on the index. Skip for string/numeric literal
+        // indices — those don't contain identifiers to resolve.
+        if (object_type == TypeId::ANY || object_type == TypeId::ERROR)
+            && literal_string.is_none()
+            && literal_index.is_none()
+        {
+            let prev_preserve = self.ctx.preserve_literal_types;
+            self.ctx.preserve_literal_types = true;
+            let _ = self.get_type_of_node_with_request(access.name_or_argument, &read_request);
+            self.ctx.preserve_literal_types = prev_preserve;
+        }
+
         // Don't report errors for any/error types - check BEFORE accessibility
         // to prevent cascading errors when the object type is already invalid.
         if object_type == TypeId::ANY {
