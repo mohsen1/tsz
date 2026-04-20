@@ -4,6 +4,7 @@ description = "Common types and utilities for the tsz TypeScript compiler"
 version.workspace = true
 edition.workspace = true
 autotests = false
+build = "build.rs"
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
