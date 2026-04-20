@@ -1150,13 +1150,11 @@ impl<'a> Printer<'a> {
 
         // Recovery path: malformed parameter names like `yield`/`await`
         // can be parsed as expressions. Preserve original text for JS parity.
-        if let Some(source) = self.source_text {
-            let text = crate::safe_slice::slice_or_empty(
-                source,
-                name_node.pos as usize,
-                name_node.end as usize,
-            )
-            .trim();
+        if let Some(source) = self.source_text
+            && let Ok(raw) =
+                crate::safe_slice::slice(source, name_node.pos as usize, name_node.end as usize)
+        {
+            let text = raw.trim();
             if !text.is_empty() {
                 self.write(text);
                 return;
