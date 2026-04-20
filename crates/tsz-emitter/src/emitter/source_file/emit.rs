@@ -258,15 +258,12 @@ impl<'a> Printer<'a> {
                             // Check for blank line between reference end and erased
                             // stmt start. If there's a blank line, the reference is
                             // "detached" (file-level) and should be preserved.
-                            let gap = crate::safe_slice::slice_or_empty(
-                                text,
-                                c.end as usize,
-                                fep as usize,
-                            );
-                            if gap.contains("\n\n") || gap.contains("\r\n\r\n") {
-                                return true;
-                            }
-                            return false;
+                            let has_blank_line =
+                                crate::safe_slice::slice(text, c.end as usize, fep as usize)
+                                    .is_ok_and(|gap| {
+                                        gap.contains("\n\n") || gap.contains("\r\n\r\n")
+                                    });
+                            return has_blank_line;
                         }
                     }
                     true
@@ -338,12 +335,8 @@ impl<'a> Printer<'a> {
                 let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
                     lit.text == "use strict"
                 } else if let Some(text) = self.source_text {
-                    let s = crate::safe_slice::slice_or_empty(
-                        text,
-                        expr_node.pos as usize,
-                        expr_node.end as usize,
-                    );
-                    s == "\"use strict\"" || s == "'use strict'"
+                    crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
+                        .is_ok_and(|s| s == "\"use strict\"" || s == "'use strict'")
                 } else {
                     false
                 };
@@ -504,18 +497,15 @@ impl<'a> Printer<'a> {
                 let next_start = pinned
                     .get(pi + 1)
                     .map_or(first_stmt_pos, |next_c| next_c.pos);
-                let between = crate::safe_slice::slice_or_empty(
-                    text,
-                    comment.end as usize,
-                    next_start as usize,
-                );
-                let is_detached = between.contains("\n\n") || between.contains("\r\n\r\n");
-                if is_detached {
-                    let comment_text = crate::safe_slice::slice_or_empty(
-                        text,
-                        comment.pos as usize,
-                        comment.end as usize,
-                    );
+                let is_detached =
+                    crate::safe_slice::slice(text, comment.end as usize, next_start as usize)
+                        .is_ok_and(|between| {
+                            between.contains("\n\n") || between.contains("\r\n\r\n")
+                        });
+                if is_detached
+                    && let Ok(comment_text) =
+                        crate::safe_slice::slice(text, comment.pos as usize, comment.end as usize)
+                {
                     self.write_comment_with_reindent(comment_text, Some(comment.pos));
                     if comment.has_trailing_new_line {
                         self.write_line();
@@ -605,8 +595,12 @@ impl<'a> Printer<'a> {
                 if c_end <= first_stmt_pos {
                     let c_pos = self.all_comments[self.comment_emit_idx].pos;
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    // Bad-span fallback preserved via unwrap_or("") so the loop
+                    // cursor below still advances; otherwise we'd spin forever
+                    // on a corrupted comment range.
                     let comment_text =
-                        crate::safe_slice::slice_or_empty(text, c_pos as usize, c_end as usize);
+                        crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                            .unwrap_or("");
                     let trimmed_comment = comment_text.trim_start();
                     let is_triple_slash_reference = trimmed_comment.starts_with("///<reference")
                         || trimmed_comment.starts_with("/// <reference");
@@ -1171,12 +1165,8 @@ impl<'a> Printer<'a> {
                 let is_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
                     lit.text == "use strict"
                 } else if let Some(text) = self.source_text {
-                    let s = crate::safe_slice::slice_or_empty(
-                        text,
-                        expr_node.pos as usize,
-                        expr_node.end as usize,
-                    );
-                    s == "\"use strict\"" || s == "'use strict'"
+                    crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
+                        .is_ok_and(|s| s == "\"use strict\"" || s == "'use strict'")
                 } else {
                     false
                 };
@@ -1380,13 +1370,15 @@ impl<'a> Printer<'a> {
                     // Only emit if this comment ends before the statement's first token
                     // AND hasn't been emitted by a nested expression emitter
                     if c_end <= actual_start {
-                        let comment_text =
-                            crate::safe_slice::slice_or_empty(text, c_pos as usize, c_end as usize);
-                        self.write_comment_with_reindent(comment_text, Some(c_pos));
-                        if c_trailing {
-                            self.write_line();
-                        } else if comment_text.starts_with("/*") {
-                            self.pending_block_comment_space = true;
+                        if let Ok(comment_text) =
+                            crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                        {
+                            self.write_comment_with_reindent(comment_text, Some(c_pos));
+                            if c_trailing {
+                                self.write_line();
+                            } else if comment_text.starts_with("/*") {
+                                self.pending_block_comment_space = true;
+                            }
                         }
                         self.comment_emit_idx += 1;
                     } else {
@@ -1615,11 +1607,13 @@ impl<'a> Printer<'a> {
                 let c_pos = self.all_comments[self.comment_emit_idx].pos;
                 let c_end = self.all_comments[self.comment_emit_idx].end;
                 let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                let comment_text =
-                    crate::safe_slice::slice_or_empty(text, c_pos as usize, c_end as usize);
-                self.write_comment_with_reindent(comment_text, Some(c_pos));
-                if c_trailing {
-                    self.write_line();
+                if let Ok(comment_text) =
+                    crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
+                {
+                    self.write_comment_with_reindent(comment_text, Some(c_pos));
+                    if c_trailing {
+                        self.write_line();
+                    }
                 }
                 self.comment_emit_idx += 1;
             }

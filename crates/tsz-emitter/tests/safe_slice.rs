@@ -92,29 +92,21 @@ fn error_order_start_before_end_before_reversed() {
 }
 
 #[test]
-fn slice_or_empty_returns_valid_content() {
-    let s = "hello world";
-    assert_eq!(slice_or_empty(s, 0, 5), "hello");
-    assert_eq!(slice_or_empty(s, 6, 11), "world");
-    assert_eq!(slice_or_empty(s, 3, 3), "");
-}
-
-#[test]
-fn slice_or_empty_swallows_errors() {
-    let s = "hello";
-    assert_eq!(slice_or_empty(s, 0, 100), "");
-    assert_eq!(slice_or_empty(s, 100, 200), "");
-    assert_eq!(slice_or_empty(s, 5, 3), "");
-
-    let u = "hello 🦀";
-    assert_eq!(slice_or_empty(u, 7, 9), ""); // mid-emoji
-}
-
-#[test]
 fn slice_error_display_is_informative() {
     let s = "ab";
     let err = slice(s, 10, 5).unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("10"), "msg={msg}");
     assert!(msg.contains("out of bounds"), "msg={msg}");
+}
+
+#[test]
+fn explicit_empty_fallback_still_available_via_unwrap_or() {
+    // The old `slice_or_empty` shim was removed. When a caller genuinely
+    // wants empty-on-failure, the intent must be written at the call site
+    // so it is visible to reviewers.
+    let s = "hello";
+    assert_eq!(slice(s, 0, 5).unwrap_or(""), "hello");
+    assert_eq!(slice(s, 100, 200).unwrap_or(""), "");
+    assert_eq!(slice(s, 5, 3).unwrap_or(""), "");
 }

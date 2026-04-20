@@ -153,10 +153,11 @@ fn test_safe_slice_out_of_bounds() {
     assert!(safe_slice::slice(s, 100, 200).is_err());
     assert!(safe_slice::slice(s, 5, 3).is_err()); // start > end
 
-    // The compatibility shim preserves the old "empty on invalid" behavior.
-    assert_eq!(safe_slice::slice_or_empty(s, 0, 100), "");
-    assert_eq!(safe_slice::slice_or_empty(s, 100, 200), "");
-    assert_eq!(safe_slice::slice_or_empty(s, 5, 3), "");
+    // When a caller explicitly wants empty on failure, the intent is
+    // visible at the call site.
+    assert_eq!(safe_slice::slice(s, 0, 100).unwrap_or(""), "");
+    assert_eq!(safe_slice::slice(s, 100, 200).unwrap_or(""), "");
+    assert_eq!(safe_slice::slice(s, 5, 3).unwrap_or(""), "");
 }
 
 #[test]
@@ -171,7 +172,7 @@ fn test_safe_slice_unicode() {
 
     // Invalid boundaries (mid-emoji) surface a structured error.
     assert!(safe_slice::slice(s, 7, 9).is_err());
-    assert_eq!(safe_slice::slice_or_empty(s, 7, 9), "");
+    assert_eq!(safe_slice::slice(s, 7, 9).unwrap_or(""), "");
 }
 
 // =============================================================================
