@@ -664,6 +664,7 @@ jobs:
             --max-compilations-per-worker 50 \
             --max-worker-rss-mb 1024 \
             --cache-file scripts/conformance/tsc-cache-full.json \
+            --print-test \
             2>&1 | tee "$TMPOUT" || true
           sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
@@ -674,6 +675,12 @@ jobs:
           echo "passed=${PASSED:-0}" >> "$GITHUB_OUTPUT"
           echo "total=${TOTAL:-0}" >> "$GITHUB_OUTPUT"
           echo "Shard ${{ matrix.shard }}: ${PASSED:-0}/${TOTAL:-0} passed"
+
+          # Emit per-test PASS/FAIL lines as a separate artifact for offline
+          # cross-platform diffing (investigating Mac-vs-Linux 40-test delta).
+          mkdir -p .ci-metrics
+          grep -aE '^(PASS|FAIL|CRASH|TIMEOUT) ' "$CLEANOUT" \
+            > ".ci-metrics/shard-${{ matrix.shard }}-results.txt" || true
 
       - name: Save shard results
         if: always()
@@ -691,8 +698,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: conformance-shard-${{ matrix.shard }}
-          path: .ci-metrics/shard-${{ matrix.shard }}.json
-          retention-days: 1
+          path: |
+            .ci-metrics/shard-${{ matrix.shard }}.json
+            .ci-metrics/shard-${{ matrix.shard }}-results.txt
+          retention-days: 7
 
   # ─── Conformance: Aggregate results ────────────────────────────────────────
   conformance-aggregate:
