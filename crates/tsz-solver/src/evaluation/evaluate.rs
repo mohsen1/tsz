@@ -937,7 +937,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                 Some(crate::types::TypeData::Application(_))
                             )
                         {
-                            self.interner.store_display_alias(original_type_id, branch_app);
+                            self.interner
+                                .store_display_alias(original_type_id, branch_app);
                         }
                     }
                 }
