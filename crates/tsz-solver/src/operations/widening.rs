@@ -347,9 +347,7 @@ fn widen_type_cached(
                     };
 
                 // Carry forward display properties from the original TypeId.
-                if !strip_fresh_display
-                    && let Some(display_props) = db.get_display_properties(type_id)
-                {
+                if let Some(display_props) = db.get_display_properties(type_id) {
                     db.store_display_properties(widened_type_id, display_props.as_ref().clone());
                 }
                 propagate_display_alias(db, type_id, widened_type_id);
