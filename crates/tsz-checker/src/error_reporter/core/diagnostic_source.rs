@@ -615,7 +615,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     ty
                 };
-            return self.format_type_diagnostic_widened(display_ty);
+            return Self::truncate_property_receiver_display(
+                self.format_type_diagnostic_widened(display_ty),
+            );
         }
         // Only widen object-like types (to convert literal properties to primitives).
         // For literal/primitive receiver types (e.g., `""`, `42`), tsc preserves the
@@ -641,7 +643,11 @@ impl<'a> CheckerState<'a> {
         } else {
             self.widen_type_for_display(ty)
         };
-        let assignability_display = self.format_type_for_assignability_message(ty);
+        let mut assignability_display = self.format_type_for_assignability_message(ty);
+        if assignability_display.len() > 320 && assignability_display.starts_with("Omit<") {
+            assignability_display = self.format_long_property_receiver_type_for_diagnostic(ty);
+        }
+        let assignability_display = Self::truncate_property_receiver_display(assignability_display);
         if let Some(name) = self.synthesized_object_parent_display_name(ty) {
             let generic_prefix = format!("{name}<");
             if assignability_display.starts_with(&generic_prefix) {
@@ -659,43 +665,6 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic_structural(ty);
         }
         assignability_display
-    }
-
-    pub(crate) fn named_type_display_name(&self, type_id: TypeId) -> Option<String> {
-        if self.ctx.types.get_display_alias(type_id).is_some() {
-            return None;
-        }
-
-        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
-            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
-            && let Some(def) = self.ctx.definition_store.get(def_id)
-        {
-            let name = self.ctx.types.resolve_atom(def.name);
-            if !name.is_empty() {
-                return Some(name);
-            }
-        }
-
-        if let Some(shape_id) =
-            crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id)
-        {
-            let shape = self.ctx.types.object_shape(shape_id);
-            if let Some(sym_id) = shape.symbol
-                && let Some(symbol) = self.get_cross_file_symbol(sym_id)
-                && !symbol.escaped_name.is_empty()
-            {
-                return Some(symbol.escaped_name.clone());
-            }
-        }
-
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
-            && !symbol.escaped_name.is_empty()
-        {
-            return Some(symbol.escaped_name.clone());
-        }
-
-        None
     }
 
     pub(crate) fn preferred_constructor_display_name(&mut self, type_id: TypeId) -> Option<String> {

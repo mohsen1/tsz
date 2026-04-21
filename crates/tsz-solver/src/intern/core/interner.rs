@@ -1132,6 +1132,33 @@ impl TypeInterner {
         if evaluated == application {
             return;
         }
+        // Only alias types produced by this evaluation. Generic helper aliases
+        // can otherwise repaint unrelated earlier structural types that happen
+        // to intern to the same shape. Concrete applications remain eligible so
+        // named library/interface instantiations can display their nominal form.
+        let application_is_alias =
+            matches!(self.lookup(application), Some(TypeData::Application(_)));
+        let application_has_generic_args = application_is_alias
+            && self
+                .lookup(application)
+                .and_then(|data| match data {
+                    TypeData::Application(app_id) => Some(self.type_application(app_id)),
+                    _ => None,
+                })
+                .is_some_and(|app| {
+                    app.args.iter().any(|&arg| {
+                        crate::type_queries::contains_generic_type_parameters_db(self, arg)
+                    })
+                });
+        if application_is_alias && application_has_generic_args && evaluated.0 <= application.0 {
+            let existing_is_application =
+                self.display_alias.get(&evaluated).is_some_and(|existing| {
+                    matches!(self.lookup(*existing), Some(TypeData::Application(_)))
+                });
+            if !existing_is_application {
+                return;
+            }
+        }
         // Never alias intrinsic types (string, number, any, etc.) — they are
         // shared sentinels and aliasing them would make ALL occurrences display
         // as whatever alias happened to be stored last.
@@ -1149,6 +1176,12 @@ impl TypeInterner {
             if app.args.contains(&evaluated) {
                 return;
             }
+        }
+        if application_is_alias
+            && let Some(existing) = self.display_alias.get(&evaluated).map(|alias| *alias)
+            && !matches!(self.lookup(existing), Some(TypeData::Application(_)))
+        {
+            return;
         }
         self.display_alias.insert(evaluated, application);
     }
