@@ -1106,6 +1106,27 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
 
+                            // Visibility widening (TS2420): interface member is
+                            // PRIVATE (because the interface extends a class with
+                            // a private member) but the class declares the same
+                            // name as public. Private members are nominal in tsc,
+                            // so a public member cannot satisfy a private slot
+                            // even when the class extends the same base class.
+                            // Protected widening to public is NOT an error here:
+                            // tsc allows a subclass to override a protected member
+                            // with public visibility, and the implementing-class
+                            // check delegates to that rule.
+                            if prop.visibility == Visibility::Private {
+                                self.error_at_node(
+                                    class_error_idx,
+                                    &format!(
+                                        "Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."
+                                    ),
+                                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                );
+                                continue;
+                            }
+
                             // Check type compatibility using regular assignability.
                             // tsc uses the assignable relation (not bivariant) for
                             // implements clause member type checking.

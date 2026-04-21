@@ -407,3 +407,44 @@ class C3 {
         ts2339_errors
     );
 }
+
+/// Test that TS2420 fires when an interface inherits a private member from a
+/// base class and the implementing class declares that member with wider
+/// (public) visibility. The class widens visibility, which is a structural
+/// mismatch regardless of whether the class extends the same base.
+#[test]
+fn test_ts2420_for_public_class_member_vs_private_interface_member() {
+    let source = r"
+        class Foo {
+            private x!: string;
+        }
+        interface I extends Foo {
+            y: number;
+        }
+        class Bar2 extends Foo implements I {
+            x!: string;
+            y!: number;
+        }
+    ";
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let ts2420_for_bar2 = diagnostics.iter().find(|d| {
+        d.code == 2420
+            && d.message_text.contains("Bar2")
+            && d.message_text.contains("interface 'I'")
+    });
+    assert!(
+        ts2420_for_bar2.is_some(),
+        "expected TS2420 for Bar2 implementing I: class declares public 'x' but I inherits a private 'x' from Foo. Got diagnostics: {diagnostics:?}"
+    );
+    let d = ts2420_for_bar2.unwrap();
+    assert!(
+        d.message_text
+            .contains("Property 'x' is private in type 'I' but not in type 'Bar2'")
+            || d.related_information.iter().any(|r| r
+                .message_text
+                .contains("Property 'x' is private in type 'I' but not in type 'Bar2'")),
+        "expected visibility-widening elaboration for TS2420 on Bar2, got: {d:?}"
+    );
+}
