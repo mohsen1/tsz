@@ -306,10 +306,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         loop {
             // Skip type holes in both templates
+            let mut a_skipped_type = false;
+            let mut b_skipped_type = false;
             while a_idx < a_len && matches!(a_spans[a_idx], TemplateSpan::Type(_)) {
+                a_skipped_type = true;
                 a_idx += 1;
             }
             while b_idx < b_len && matches!(b_spans[b_idx], TemplateSpan::Type(_)) {
+                b_skipped_type = true;
                 b_idx += 1;
             }
 
@@ -343,6 +347,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // They must have at least one common prefix
                     let min_len = a_str.len().min(b_str.len());
                     if a_str[..min_len] != b_str[..min_len] {
+                        if a_skipped_type != b_skipped_type {
+                            return true;
+                        }
                         // Incompatible prefixes - templates are disjoint
                         return false;
                     }

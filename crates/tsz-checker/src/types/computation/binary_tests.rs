@@ -70,6 +70,24 @@ fn no_duplicate_ts2367_for_same_type_comparison() {
 }
 
 #[test]
+fn ts2367_template_literal_prefix_and_suffix_overlap() {
+    let diags = check_source_diagnostics(
+        r#"
+function f(x: `foo-${string}`, y: `${string}-bar`, z: `baz-${string}`) {
+    if (x === y) {}
+    if (x === z) {}
+}
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        1,
+        "Expected TS2367 only for the disjoint `baz-${{string}}` comparison, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn ts2367_typeof_vs_invalid_typeof_string() {
     // typeof x returns "string"|"number"|"bigint"|"boolean"|"symbol"|"undefined"|"object"|"function"
     // Comparing with "Object" (capital O) should trigger TS2367 — no overlap.
