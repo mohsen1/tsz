@@ -861,6 +861,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
         let source_fn = self.normalize_function_shape_params_for_context(&source_fn);
         let target_fn = self.normalize_function_shape_params_for_context(&target_fn);
+
+        // TypeScript does not use generic construct-signature arguments to infer
+        // type parameters for the outer constructor-typed parameter. Leave the
+        // callable intact so the shared constraint walker erases the source
+        // signature's own type parameters instead of contextually instantiating
+        // them into the outer placeholders.
+        if source_fn.is_constructor && !source_fn.type_params.is_empty() {
+            return source_ty;
+        }
+
         if source_fn.type_params.is_empty() {
             let source_has_calls = crate::type_queries::get_call_signatures(
                 self.interner.as_type_database(),
