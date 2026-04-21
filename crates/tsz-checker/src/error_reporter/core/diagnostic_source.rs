@@ -631,16 +631,15 @@ impl<'a> CheckerState<'a> {
         if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
             return format!("typeof import(\"{module_name}\")");
         }
-        let application_display = crate::query_boundaries::common::type_application(
-            self.ctx.types,
-            ty,
-        )
-        .map(|_| ty)
-        .or_else(|| {
-            self.ctx.types.get_display_alias(ty).filter(|&alias| {
-                crate::query_boundaries::common::type_application(self.ctx.types, alias).is_some()
-            })
-        });
+        let application_display =
+            crate::query_boundaries::common::type_application(self.ctx.types, ty)
+                .map(|_| ty)
+                .or_else(|| {
+                    self.ctx.types.get_display_alias(ty).filter(|&alias| {
+                        crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                            .is_some()
+                    })
+                });
         if let Some(application_display) = application_display {
             let display_ty =
                 self.normalize_property_receiver_application_display_type(application_display);
