@@ -410,6 +410,7 @@ impl<'a> CheckerContext<'a> {
         self.global_augmentation_targets_index = parent.global_augmentation_targets_index.clone();
         self.global_module_binder_index = parent.global_module_binder_index.clone();
         self.global_arena_index = parent.global_arena_index.clone();
+        self.global_file_name_index = parent.global_file_name_index.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
@@ -879,6 +880,10 @@ impl<'a> CheckerContext<'a> {
         }
 
         let arenas = self.all_arenas.as_ref()?;
+
+        // Direct-match fast path: the specifier IS an exact project file
+        // name (or differs only in extension). Very cheap linear scan over
+        // arenas with no path allocation.
         let normalized_specifier = specifier.replace('\\', "/");
         let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
         if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
@@ -890,18 +895,36 @@ impl<'a> CheckerContext<'a> {
         }) {
             return Some(target_idx);
         }
-        let file_names: Vec<String> = arenas
-            .iter()
-            .filter_map(|arena| arena.source_files.first().map(|sf| sf.file_name.clone()))
-            .collect();
-        let (fallback_paths, _) =
-            crate::module_resolution::build_module_resolution_maps(&file_names);
-        for candidate in module_specifier_candidates(specifier) {
-            if let Some(target_idx) = fallback_paths.get(&(source_file_idx, candidate)) {
-                return Some(*target_idx);
-            }
+
+        // Specifier-to-target fallback. Historically this rebuilt the full
+        // O(N²) `(src_idx, specifier) -> tgt_idx` map on every miss, which
+        // dominated the CPU profile for large projects (>40% in Path::
+        // Components iteration). We now consult a pre-built reverse index
+        // from normalized file name to file index and probe the small
+        // candidate set the specifier could address (direct hit, TS/JS
+        // extension fan-out, directory-index fallback) in O(1) each.
+        let source_file_name = arenas
+            .get(source_file_idx)
+            .and_then(|arena| arena.source_files.first())
+            .map(|sf| sf.file_name.as_str())?;
+
+        if let Some(idx) = self.global_file_name_index.as_ref() {
+            return crate::module_resolution::resolve_specifier_via_file_index(
+                source_file_name,
+                specifier,
+                idx,
+            );
         }
-        None
+
+        // No pre-built index (legacy contexts with no ProjectEnv wiring).
+        // Build the reverse index on-demand from `all_arenas` — still O(N)
+        // per call, but without the catastrophic O(N²) cross-product.
+        let fallback_idx = crate::module_resolution::build_file_name_index(arenas);
+        crate::module_resolution::resolve_specifier_via_file_index(
+            source_file_name,
+            specifier,
+            &fallback_idx,
+        )
     }
 
     /// Resolve an import specifier from a specific file using an explicit

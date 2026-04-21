@@ -726,3 +726,165 @@ fn test_extension_bearing_dts_specifier() {
     assert_eq!(paths.get(&(0, "./types".to_string())), Some(&1));
     assert_eq!(paths.get(&(0, "./types.d.ts".to_string())), Some(&1));
 }
+
+// ---------------------------------------------------------------------------
+// resolve_specifier_via_file_index — matches every canonical form
+// `build_module_resolution_maps` registers, without the O(N²) cross-product.
+// ---------------------------------------------------------------------------
+
+fn file_index_from(files: &[&str]) -> FxHashMap<String, usize> {
+    files
+        .iter()
+        .enumerate()
+        .map(|(i, s)| ((*s).to_string(), i))
+        .collect()
+}
+
+#[test]
+fn test_fast_resolver_same_dir_relative() {
+    let files = ["/proj/a.ts", "/proj/b.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./b", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "./b.ts", &idx),
+        Some(1),
+    );
+    // Same-directory bare alias.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/a.ts", "b", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_parent_and_sibling() {
+    let files = ["/proj/src/a.ts", "/proj/lib/b.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "../lib/b", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "../lib/b.ts", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_directory_index() {
+    let files = ["/proj/main.ts", "/proj/lib/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./lib", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./lib/", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_dot_chain_to_index() {
+    let files = ["/proj/sub/main.ts", "/proj/sub/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", ".", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", "./", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_parent_dot_chain_to_index() {
+    let files = ["/proj/sub/main.ts", "/proj/index.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", "..", &idx),
+        Some(1),
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/sub/main.ts", "../", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_handles_bare_source_file_name() {
+    // Regression: earlier the resolver returned None when the source file
+    // had no directory component, breaking test harnesses that use bare
+    // file names like `other.js`. Treat a missing src_dir as "current
+    // directory" so relative specifiers still resolve against siblings.
+    let files = ["types.ts", "other.js"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("other.js", "./types", &idx),
+        Some(0),
+    );
+}
+
+#[test]
+fn test_fast_resolver_miss_for_unknown_specifier() {
+    let files = ["/proj/main.ts", "/proj/types.d.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./does-not-exist", &idx),
+        None,
+    );
+    // Bare package-style specifier that isn't a same-dir file is not a match.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "react", &idx),
+        None,
+    );
+}
+
+#[test]
+fn test_fast_resolver_tsx_and_dts_fanout() {
+    let files = ["/proj/a.tsx", "/proj/b/main.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/b/main.ts", "../a", &idx),
+        Some(0),
+    );
+    // Extension-bearing form resolves directly.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/b/main.ts", "../a.tsx", &idx),
+        Some(0),
+    );
+}
+
+#[test]
+fn test_fast_resolver_matches_legacy_map_entries() {
+    // For a realistic cross-directory project, every (src, specifier) entry
+    // `build_module_resolution_maps` registers must be resolvable by the
+    // fast resolver. That's the invariant that makes the hot-path fallback
+    // behavior-preserving.
+    let files = vec![
+        "/proj/pkg/src/a.ts".to_string(),
+        "/proj/pkg/src/b.ts".to_string(),
+        "/proj/pkg/src/nested/c.ts".to_string(),
+        "/proj/pkg/src/nested/index.ts".to_string(),
+        "/proj/pkg/lib/util.ts".to_string(),
+        "/proj/pkg/lib/index.tsx".to_string(),
+        "/proj/pkg/types.d.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&files);
+    let idx = file_index_from(&files.iter().map(String::as_str).collect::<Vec<_>>());
+
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&files[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "fast resolver disagreed for src={} spec={}",
+            files[*src_idx],
+            specifier,
+        );
+    }
+}
