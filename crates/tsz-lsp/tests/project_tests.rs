@@ -4181,6 +4181,43 @@ fn test_project_code_lens_returns_none_for_missing_file() {
 }
 
 #[test]
+fn test_project_resolve_code_lens_reference_count_excludes_declaration() {
+    // Regression: the project-level resolve_code_lens path used to compare a
+    // zero-width declaration position against full identifier-span reference
+    // ranges, so it never recognized the declaration and reported N+1
+    // references for N real uses. See project/features.rs.
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "function foo() {}\nfoo();\nfoo();\nfoo();\n".to_string(),
+    );
+
+    let lenses = project
+        .get_code_lenses("test.ts")
+        .expect("code lenses for file");
+    let func_lens = lenses
+        .iter()
+        .find(|l| {
+            l.data
+                .as_ref()
+                .is_some_and(|d| d.kind == editor_decorations::code_lens::CodeLensKind::References)
+        })
+        .expect("references lens for function");
+
+    let resolved = project
+        .resolve_code_lens("test.ts", func_lens)
+        .expect("resolve produces a lens");
+    let command = resolved.command.expect("resolved lens has a command");
+    // Three call sites; declaration is appended by find_references and must
+    // be subtracted out.
+    assert_eq!(
+        command.title, "3 references",
+        "declaration must be excluded from the reference count (got: {})",
+        command.title
+    );
+}
+
+#[test]
 fn test_project_semantic_tokens_for_interface() {
     let mut project = Project::new();
     project.set_file(
