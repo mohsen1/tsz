@@ -365,6 +365,7 @@ impl<'a> QueryCache<'a> {
         self.property_cache.borrow_mut().clear();
         self.variance_cache.borrow_mut().clear();
         self.canonical_cache.borrow_mut().clear();
+        self.intersection_merge_cache.borrow_mut().clear();
         self.reset_relation_cache_stats();
     }
 

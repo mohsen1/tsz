@@ -24,6 +24,38 @@ fn test_script_target_comparisons() {
 }
 
 #[test]
+fn test_script_target_from_ts_str() {
+    assert_eq!(ScriptTarget::from_ts_str("ES5"), Some(ScriptTarget::ES5));
+    assert_eq!(ScriptTarget::from_ts_str("es6"), Some(ScriptTarget::ES2015));
+    assert_eq!(
+        ScriptTarget::from_ts_str("es2023"),
+        Some(ScriptTarget::ES2023)
+    );
+    assert_eq!(
+        ScriptTarget::from_ts_str("es2025"),
+        Some(ScriptTarget::ES2025)
+    );
+    assert_eq!(
+        ScriptTarget::from_ts_str("ES5, ES2015"),
+        Some(ScriptTarget::ES5)
+    );
+    assert_eq!(ScriptTarget::from_ts_str("not-a-target"), None);
+    assert_eq!(
+        ScriptTarget::from_ts_numeric(10),
+        Some(ScriptTarget::ES2023)
+    );
+    assert_eq!(
+        ScriptTarget::from_ts_numeric(12),
+        Some(ScriptTarget::ES2025)
+    );
+    assert_eq!(
+        ScriptTarget::from_ts_numeric(99),
+        Some(ScriptTarget::ESNext)
+    );
+    assert_eq!(ScriptTarget::from_ts_numeric(42), None);
+}
+
+#[test]
 fn test_module_kind_detection() {
     // CommonJS-like systems
     assert!(ModuleKind::CommonJS.is_commonjs());
@@ -63,6 +95,32 @@ fn test_module_kind_detection() {
     assert!(ModuleKind::Node20.supports_dynamic_import_options());
     assert!(ModuleKind::Preserve.supports_dynamic_import_options());
     assert!(!ModuleKind::CommonJS.supports_dynamic_import_options());
+}
+
+#[test]
+fn test_module_kind_from_ts_str() {
+    assert_eq!(
+        ModuleKind::from_ts_str("commonjs"),
+        Some(ModuleKind::CommonJS)
+    );
+    assert_eq!(ModuleKind::from_ts_str("es6"), Some(ModuleKind::ES2015));
+    assert_eq!(ModuleKind::from_ts_str("node18"), Some(ModuleKind::Node18));
+    assert_eq!(ModuleKind::from_ts_str("node20"), Some(ModuleKind::Node20));
+    assert_eq!(
+        ModuleKind::from_ts_str("react-native"),
+        None,
+        "jsx spellings must not parse as module values"
+    );
+    assert_eq!(
+        ModuleKind::from_ts_str("es2022, esnext"),
+        Some(ModuleKind::ES2022)
+    );
+    assert_eq!(ModuleKind::from_ts_numeric(3), Some(ModuleKind::UMD));
+    assert_eq!(ModuleKind::from_ts_numeric(5), Some(ModuleKind::ES2015));
+    assert_eq!(ModuleKind::from_ts_numeric(101), Some(ModuleKind::Node18));
+    assert_eq!(ModuleKind::from_ts_numeric(102), Some(ModuleKind::Node20));
+    assert_eq!(ModuleKind::from_ts_numeric(255), None);
+    assert_eq!(ModuleKind::NodeNext.ts_numeric_value(), 199);
 }
 
 #[test]

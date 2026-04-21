@@ -29,6 +29,10 @@ impl<'a> QueryCache<'a> {
     fn object_spread_properties_cache_len(&self) -> usize {
         self.object_spread_properties_cache.borrow().len()
     }
+
+    fn intersection_merge_cache_len(&self) -> usize {
+        self.intersection_merge_cache.borrow().len()
+    }
 }
 
 #[test]
@@ -387,12 +391,16 @@ fn query_cache_estimated_size_resets_on_clear() {
         RelationCacheKey::subtype(str_type, TypeId::NUMBER, 0, 0),
         true,
     );
+    cache.insert_intersection_merge(str_type, Some(TypeId::STRING));
 
     let before_clear = cache.estimated_size_bytes();
+    assert_eq!(cache.intersection_merge_cache_len(), 1);
 
     cache.clear();
 
     let after_clear = cache.estimated_size_bytes();
+    assert_eq!(cache.intersection_merge_cache_len(), 0);
+    assert_eq!(cache.lookup_intersection_merge(str_type), None);
     // After clear, size should not exceed before_clear (maps may retain capacity).
     // The key invariant: statistics-based estimate resets to zero.
     let stats = cache.statistics();
