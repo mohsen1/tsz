@@ -3,9 +3,10 @@
 //! Provides support for `workspace/willRenameFiles` to update import statements
 //! when files are renamed or moved.
 
-use tsz_common::position::Range;
+use tsz_common::position::{Position, Range};
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 
+use crate::rename::TextEdit;
 use crate::utils::{is_import_keyword, is_require_identifier};
 
 /// Information about an import/export that needs to be updated.
@@ -13,10 +14,31 @@ use crate::utils::{is_import_keyword, is_require_identifier};
 pub struct ImportLocation {
     /// The node containing the module specifier string
     pub specifier_node: NodeIndex,
-    /// The range of the specifier text (for `TextEdit`)
+    /// Full range of the string literal, **including the surrounding quotes**.
+    ///
+    /// Callers rewriting the specifier should prefer [`Self::specifier_text_edit`]
+    /// so the quote characters are preserved without needing to re-detect the
+    /// original quote style.
     pub range: Range,
-    /// The current specifier value (e.g., "./utils" or "../types")
+    /// The current specifier value with the quotes stripped (e.g. `./utils`).
     pub current_specifier: String,
+}
+
+impl ImportLocation {
+    /// Build a `TextEdit` that replaces the specifier content between the
+    /// surrounding quotes with `new_specifier`. The original quote characters
+    /// are untouched, so the rewrite preserves the file's quote style without
+    /// the caller having to recreate them.
+    pub const fn specifier_text_edit(&self, new_specifier: String) -> TextEdit {
+        let inner = Range::new(
+            Position::new(self.range.start.line, self.range.start.character + 1),
+            Position::new(
+                self.range.end.line,
+                self.range.end.character.saturating_sub(1),
+            ),
+        );
+        TextEdit::new(inner, new_specifier)
+    }
 }
 
 define_lsp_provider!(minimal FileRenameProvider, "Provider for finding imports/exports that reference a renamed file.");

@@ -2414,7 +2414,6 @@ impl Project {
         new_path: &Path,
         result: &mut WorkspaceEdit,
     ) {
-        use crate::rename::TextEdit;
         use crate::rename::file_rename::FileRenameProvider;
         use crate::utils::calculate_new_relative_path;
         use std::path::Path;
@@ -2454,11 +2453,13 @@ impl Project {
                     new_path,
                     &import_loc.current_specifier,
                 ) {
-                    // Create a TextEdit for this import
-                    let text_edit = TextEdit::new(import_loc.range, new_specifier);
-
-                    // Add to the result
-                    result.add_edit(dependent_path.clone(), text_edit);
+                    // `import_loc.range` spans the surrounding quotes; use the
+                    // helper so the rewrite replaces only the inner content
+                    // and the original quote style is preserved.
+                    result.add_edit(
+                        dependent_path.clone(),
+                        import_loc.specifier_text_edit(new_specifier),
+                    );
                 }
             }
         }

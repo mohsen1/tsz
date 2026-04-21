@@ -1097,33 +1097,11 @@ impl Project {
                 let resolved_base = strip_ext(&resolved);
 
                 if resolved_base == old_base {
-                    // Compute the new relative specifier
                     let new_specifier = self.compute_relative_specifier(file_name, &new_base);
-
-                    // The range includes quotes, so build the edit with quotes
-                    let quote = if loc.current_specifier.contains('\'') {
-                        '\''
-                    } else {
-                        '"'
-                    };
-                    // Adjust range to only replace the content inside quotes
-                    let inner_range = tsz_common::position::Range::new(
-                        tsz_common::position::Position::new(
-                            loc.range.start.line,
-                            loc.range.start.character + 1,
-                        ),
-                        tsz_common::position::Position::new(
-                            loc.range.end.line,
-                            loc.range.end.character.saturating_sub(1),
-                        ),
-                    );
-                    let _ = quote; // suppress unused warning, quote is in original text
-                    workspace_edits.entry(file_name.clone()).or_default().push(
-                        crate::rename::TextEdit {
-                            range: inner_range,
-                            new_text: new_specifier,
-                        },
-                    );
+                    workspace_edits
+                        .entry(file_name.clone())
+                        .or_default()
+                        .push(loc.specifier_text_edit(new_specifier));
                 }
             }
         }
