@@ -447,6 +447,53 @@ const value: Outer = { inner: { ok: 42 } };
 }
 
 #[test]
+fn discriminated_union_object_literal_reports_matching_member_property_mismatch() {
+    let source = r#"
+type A = {
+    type: 'a',
+    data: { a: string }
+};
+
+type B = {
+    type: 'b',
+    data: null
+};
+
+type C = {
+    type: 'c',
+    payload: string
+};
+
+type Union = A | B | C;
+
+const foo: Union = {
+    type: 'a',
+    data: null
+};
+"#;
+
+    let diagnostics = strict_diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322, got: {diagnostics:?}"
+    );
+
+    let diag = ts2322[0];
+    let data_start = source.rfind("data: null").expect("expected data property") as u32;
+    assert_eq!(
+        diag.start, data_start,
+        "TS2322 should anchor at the discriminant-selected property, got: {diag:?}"
+    );
+    assert!(
+        diag.message_text
+            .contains("Type 'null' is not assignable to type '{ a: string; }'."),
+        "TS2322 should report the matching union member property mismatch, got: {diag:?}"
+    );
+}
+
+#[test]
 fn numeric_property_assignment_reports_nested_value_mismatch() {
     let source = r#"
 interface A {
