@@ -684,6 +684,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if !is_const && self.error_invalid_commonjs_export_property_assignment(left_idx) {
+            return self.get_type_of_node(right_idx);
+        }
+
         if !is_const && self.is_commonjs_exports_property_declaration(left_idx) {
             // In JS files, `exports.X = value` is a declaration, not an assignment.
             // The type is inferred from the union of all assigned values, so individual
@@ -840,10 +844,6 @@ impl<'a> CheckerState<'a> {
         let suppress_for_readonly = is_readonly_target && !is_element_access;
 
         if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
-            return right_type;
-        }
-
-        if !is_const && self.error_invalid_commonjs_export_property_assignment(left_idx) {
             return right_type;
         }
 
