@@ -280,7 +280,20 @@ impl<'a> CheckerState<'a> {
                     } else {
                         prop.type_id
                     };
-                    format!("{name}: {}", self.format_type(display_type))
+                    let formatted_name = {
+                        let n = name.as_ref();
+                        let mut chars = n.chars();
+                        let is_ident = chars
+                            .next()
+                            .map_or(false, |c| c == '_' || c == '$' || c.is_ascii_alphabetic())
+                            && chars.all(|c| c == '_' || c == '$' || c.is_ascii_alphanumeric());
+                        if is_ident {
+                            n.to_string()
+                        } else {
+                            format!("\"{n}\"")
+                        }
+                    };
+                    format!("{formatted_name}: {}", self.format_type(display_type))
                 })
                 .collect::<Vec<_>>()
                 .join("; ");

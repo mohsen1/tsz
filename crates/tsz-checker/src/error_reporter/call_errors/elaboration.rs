@@ -546,7 +546,8 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::CALL_EXPRESSION
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::BINARY_EXPRESSION =>
             {
                 // For expression-bodied arrows with simple literal/expression bodies,
                 // check if the return expression type is assignable to the expected
@@ -595,21 +596,13 @@ impl<'a> CheckerState<'a> {
                 {
                     return false;
                 }
-                // Widen literal types in the function return type for display.
-                // This ensures that `() => "foo"` is displayed as `() => string`
-                // to match tsc's behavior for error messages.
-                let func_type = self.get_type_of_node(arg_idx);
-                let widened_func_type =
-                    crate::query_boundaries::common::widen_type_deep(self.ctx.types, func_type);
-                // For callback return type errors, use the full function types in the error message
-                // instead of just the return types. This produces errors like:
-                // "Type '() => string' is not assignable to type '{ (): number; (i: number): number; }'"
-                // instead of: "Type 'string' is not assignable to type 'number'"
-                self.error_type_not_assignable_at_with_display_types(
-                    widened_func_type,
-                    param_type,
-                    arg_idx,
-                );
+                // Report the error at the return expression with return types.
+                // tsc anchors expression-body arrow return mismatches at the body
+                // expression (col of the literal/expression), not the arrow function.
+                // E.g.: `const f: (a: number) => string = (a) => a + 1`
+                // → TS2322 at `a + 1` with "Type 'number' is not assignable to type 'string'."
+                let display_target = self.evaluate_type_with_env(expected_return_type);
+                self.error_type_not_assignable_at_with_anchor(body_type, display_target, func.body);
                 true
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {

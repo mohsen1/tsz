@@ -66,6 +66,13 @@ impl<'a> CheckerState<'a> {
         let mut text = text.trim().trim_start_matches(':').trim().to_string();
         if let Some(nl) = text.find('\n') {
             text = text[..nl].trim_end().to_string();
+            // After newline truncation, reject if braces are unbalanced
+            // (e.g., multi-line `{\n  foo: bar;\n}` gets truncated to `{`)
+            let open_brace = text.chars().filter(|&c| c == '{').count();
+            let close_brace = text.chars().filter(|&c| c == '}').count();
+            if open_brace != close_brace {
+                return None;
+            }
         }
         if text.ends_with('=') {
             text.pop();
@@ -1512,6 +1519,13 @@ impl<'a> CheckerState<'a> {
                     return self.node_text(var_decl.type_annotation).and_then(|text| {
                         self.sanitize_type_annotation_text_for_diagnostic(text, true)
                     });
+                }
+                // Check for inline JSDoc @satisfies annotation on the object literal
+                // e.g. `/** @satisfies {Record<Keys, unknown>} */ ({ x: 1 })`
+                if let Some(jsdoc_satisfies_text) =
+                    self.jsdoc_satisfies_type_text_for_node(parent_idx)
+                {
+                    return Some(jsdoc_satisfies_text);
                 }
                 return None;
             }

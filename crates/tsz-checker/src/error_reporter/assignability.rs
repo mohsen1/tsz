@@ -1024,6 +1024,45 @@ impl<'a> CheckerState<'a> {
             return source_display;
         }
 
+        // Declared type annotations (e.g. `var z: { length: 2; }`) store literal
+        // property types canonically with no display_properties. Only fresh object
+        // literal expressions carry display_properties (canonical=widened, display=literal).
+        // tsc preserves the annotation's literal property types in error messages.
+        //
+        // Skip widening when source has no display_properties AND has at least one direct
+        // canonical property of literal type. The "direct" check prevents false positives
+        // from outer types like `{ a: inner_fresh }` where the outer is not fresh but inner
+        // properties contain fresh types — their outer canonical properties are object types
+        // (not literals), so they correctly fall through to the widening path.
+        let evaluated_source = self.evaluate_type_for_assignability(source);
+        let source_has_display_props = self.ctx.types.get_display_properties(source).is_some()
+            || self
+                .ctx
+                .types
+                .get_display_properties(evaluated_source)
+                .is_some();
+        let source_is_array =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, source).is_some()
+                || crate::query_boundaries::common::array_element_type(
+                    self.ctx.types,
+                    evaluated_source,
+                )
+                .is_some();
+        if !source_has_display_props && !source_is_array {
+            let has_direct_literal_prop = crate::query_boundaries::common::object_shape_for_type(
+                self.ctx.types,
+                evaluated_source,
+            )
+            .is_some_and(|shape| {
+                shape.properties.iter().any(|p| {
+                    crate::query_boundaries::common::is_literal_type(self.ctx.types, p.type_id)
+                })
+            });
+            if has_direct_literal_prop {
+                return source_display;
+            }
+        }
+
         // For intersection types with display properties (fresh object literal in an
         // intersection), check whether the *target* type has literal-typed properties.
         // tsc preserves literal display when the target expects literals (e.g.

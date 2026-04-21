@@ -1715,6 +1715,12 @@ impl<'a> TypeFormatter<'a> {
     /// Resolve a `SymbolRef` (from `TypeQuery` / `ModuleNamespace`) to a display name.
     /// Tries the symbol arena first, then falls back to the definition store's
     /// `find_def_by_symbol` lookup.
+    /// Resolve the variable name for a unique symbol, for use in `typeof varName` display.
+    /// Public so callers outside the format module can use this (e.g., TS2367 path).
+    pub fn resolve_unique_symbol_name(&mut self, sym: SymbolRef) -> Option<String> {
+        self.resolve_symbol_ref_name(sym)
+    }
+
     pub(super) fn resolve_symbol_ref_name(&mut self, sym: SymbolRef) -> Option<String> {
         if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
             return Some(name);

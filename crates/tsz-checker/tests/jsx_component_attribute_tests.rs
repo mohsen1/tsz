@@ -4258,14 +4258,15 @@ let err =
         "Array-valued callback children should emit one child-level TS2322 per callback, got: {diags:?}"
     );
     // Verify the diagnostics mention the right types (callback return mismatch).
-    // After the fix for contextualTyping33, the error now shows full function types
-    // matching tsc's behavior: "Type '(x: number) => number' is not assignable to type '(x: number) => string'"
+    // After the expression-body arrow anchoring fix, tsc reports the return-type
+    // mismatch at the arrow body rather than the full function type:
+    // "Type 'number' is not assignable to type 'string'."
     assert!(
         diags.iter().any(
             |(code, msg)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && msg.contains("not assignable to type '(x: number) => string'")
+                && msg.contains("Type 'number' is not assignable to type 'string'")
         ),
-        "TS2322 should mention the function type with string return, got: {diags:?}"
+        "TS2322 should mention number→string return mismatch, got: {diags:?}"
     );
     assert!(
         !has_code(&diags, 7006),
