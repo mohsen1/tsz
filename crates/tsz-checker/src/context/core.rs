@@ -411,6 +411,11 @@ impl<'a> CheckerContext<'a> {
         self.global_module_binder_index = parent.global_module_binder_index.clone();
         self.global_arena_index = parent.global_arena_index.clone();
         self.global_file_name_index = parent.global_file_name_index.clone();
+        self.program_reexports = parent.program_reexports.clone();
+        self.program_wildcard_reexports = parent.program_wildcard_reexports.clone();
+        self.program_wildcard_reexports_type_only =
+            parent.program_wildcard_reexports_type_only.clone();
+        self.program_module_exports = parent.program_module_exports.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
@@ -855,6 +860,137 @@ impl<'a> CheckerContext<'a> {
         arenas.iter().enumerate().find_map(|(idx, candidate)| {
             (Arc::as_ptr(candidate) as usize == arena_ptr).then_some(idx)
         })
+    }
+
+    /// Try every file-name key variant (`./foo.ts`, `foo.ts`,
+    /// backslash-normalized) against `map` and return the first match.
+    ///
+    /// Avoids allocating a candidate `Vec<String>` up front: direct
+    /// matches and `./`-strip return immediately without building any
+    /// owned strings, and the backslash-normalize / `./`-prefix branches
+    /// only run when the common case misses.
+    #[inline]
+    fn lookup_any_file_key<'m, T>(
+        file_name: &str,
+        map: &'m rustc_hash::FxHashMap<String, T>,
+    ) -> Option<&'m T> {
+        // Direct match — common case, zero allocations.
+        if let Some(v) = map.get(file_name) {
+            return Some(v);
+        }
+        // Strip a leading `./` without allocating.
+        if let Some(stripped) = file_name.strip_prefix("./")
+            && let Some(v) = map.get(stripped)
+        {
+            return Some(v);
+        }
+        // Backslash-normalized variant (only allocates when input has backslashes).
+        let normalized: Option<String> = if file_name.contains('\\') {
+            let n = file_name.replace('\\', "/");
+            if let Some(v) = map.get(&n) {
+                return Some(v);
+            }
+            Some(n)
+        } else {
+            None
+        };
+        let bare_prefix_needed = |c: &str| {
+            !c.starts_with("./")
+                && !c.starts_with("../")
+                && !c.starts_with('/')
+                && !c.starts_with(".\\")
+                && !c.starts_with("..\\")
+        };
+        if bare_prefix_needed(file_name) {
+            let prefixed = format!("./{file_name}");
+            if let Some(v) = map.get(&prefixed) {
+                return Some(v);
+            }
+        }
+        if let Some(ref n) = normalized {
+            if let Some(stripped) = n.strip_prefix("./")
+                && let Some(v) = map.get(stripped)
+            {
+                return Some(v);
+            }
+            if bare_prefix_needed(n) {
+                let prefixed = format!("./{n}");
+                if let Some(v) = map.get(&prefixed) {
+                    return Some(v);
+                }
+            }
+        }
+        None
+    }
+
+    /// Look up the re-export entries for `file_name` in the cross-file
+    /// program-wide re-export map.
+    ///
+    /// Prefers `ProjectEnv`-level `program_reexports` (a single `Arc`-shared
+    /// allocation across all N cross-file lookup binders). Falls back to
+    /// `binder.reexports` for standalone callers without a `ProjectEnv`.
+    /// Tries file-name key variants (`./foo.ts` / `foo.ts` / backslash-
+    /// normalized).
+    pub fn reexports_for_file<'b>(
+        &'b self,
+        binder: &'b tsz_binder::BinderState,
+        file_name: &str,
+    ) -> Option<&'b tsz_binder::FileReexports> {
+        if let Some(ref idx) = self.program_reexports {
+            return Self::lookup_any_file_key(file_name, idx);
+        }
+        Self::lookup_any_file_key(file_name, &binder.reexports)
+    }
+
+    /// See [`reexports_for_file`]: wildcard `export * from`.
+    pub fn wildcard_reexports_for_file<'b>(
+        &'b self,
+        binder: &'b tsz_binder::BinderState,
+        file_name: &str,
+    ) -> Option<&'b Vec<String>> {
+        if let Some(ref idx) = self.program_wildcard_reexports {
+            return Self::lookup_any_file_key(file_name, idx);
+        }
+        Self::lookup_any_file_key(file_name, &binder.wildcard_reexports)
+    }
+
+    /// See [`reexports_for_file`]: type-only wildcard flags.
+    pub fn wildcard_reexports_type_only_for_file<'b>(
+        &'b self,
+        binder: &'b tsz_binder::BinderState,
+        file_name: &str,
+    ) -> Option<&'b Vec<(String, bool)>> {
+        if let Some(ref idx) = self.program_wildcard_reexports_type_only {
+            return Self::lookup_any_file_key(file_name, idx);
+        }
+        Self::lookup_any_file_key(file_name, &binder.wildcard_reexports_type_only)
+    }
+
+    /// Look up the module-exports table for a given module/file key.
+    ///
+    /// Prefers the project-wide `program_module_exports` (an `Arc`-shared
+    /// allocation across all N cross-file lookup binders). Falls back to
+    /// `binder.module_exports` for standalone callers without a
+    /// `ProjectEnv`. Tries file-name key variants
+    /// (`./foo.ts` / `foo.ts` / backslash-normalized).
+    pub fn module_exports_for_module<'b>(
+        &'b self,
+        binder: &'b tsz_binder::BinderState,
+        module_key: &str,
+    ) -> Option<&'b tsz_binder::SymbolTable> {
+        if let Some(ref idx) = self.program_module_exports {
+            return Self::lookup_any_file_key(module_key, idx);
+        }
+        Self::lookup_any_file_key(module_key, &binder.module_exports)
+    }
+
+    /// Like `module_exports_for_module` but tests existence only.
+    pub fn module_exports_contains_module(
+        &self,
+        binder: &tsz_binder::BinderState,
+        module_key: &str,
+    ) -> bool {
+        self.module_exports_for_module(binder, module_key).is_some()
     }
 
     /// Resolve an import specifier to its target file index.

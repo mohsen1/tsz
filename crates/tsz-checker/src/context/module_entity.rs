@@ -370,7 +370,7 @@ impl<'a> CheckerContext<'a> {
         {
             let target_arena = self.get_arena_for_file(target_idx as u32);
             for candidate in &candidates {
-                if let Some(exports) = target_binder.module_exports.get(candidate)
+                if let Some(exports) = self.module_exports_for_module(target_binder, candidate)
                     && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
                 {
                     tracing::trace!(
@@ -403,7 +403,8 @@ impl<'a> CheckerContext<'a> {
                 .source_files
                 .first()
                 .map(|sf| sf.file_name.as_str())
-                && let Some(exports) = target_binder.module_exports.get(target_file_name)
+                && let Some(exports) =
+                    self.module_exports_for_module(target_binder, target_file_name)
                 && let Some(non_module) = export_equals_is_non_module(target_binder, exports)
             {
                 tracing::trace!(

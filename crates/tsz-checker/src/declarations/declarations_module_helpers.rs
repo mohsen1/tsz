@@ -55,11 +55,16 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 .source_files
                 .first()
                 .map(|sf| sf.file_name.as_str())
-                && target_binder.module_exports.contains_key(target_file_name)
+                && self
+                    .ctx
+                    .module_exports_contains_module(target_binder, target_file_name)
             {
                 return true;
             }
-            if target_binder.module_exports.contains_key(module_name) {
+            if self
+                .ctx
+                .module_exports_contains_module(target_binder, module_name)
+            {
                 return true;
             }
         }
