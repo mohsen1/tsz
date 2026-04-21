@@ -14,6 +14,44 @@ fn diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(source, "test.ts", CheckerOptions::default())
 }
 
+#[test]
+fn typed_array_cross_assignment_preserves_generic_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+interface ArrayBuffer {}
+interface ArrayBufferLike {}
+interface Int8Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> {
+    readonly tag: "Int8Array";
+}
+interface Uint8Array<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> {
+    readonly tag: "Uint8Array";
+}
+declare var Int8Array: {
+    new (length: number): Int8Array<ArrayBuffer>;
+};
+declare var Uint8Array: {
+    new (length: number): Uint8Array<ArrayBuffer>;
+};
+
+let arr_Int8Array = new Int8Array(1);
+let arr_Uint8Array = new Uint8Array(1);
+
+arr_Int8Array = arr_Uint8Array;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for incompatible typed array assignment");
+    assert!(
+        diag.message_text.contains(
+            "Type 'Uint8Array<ArrayBuffer>' is not assignable to type 'Int8Array<ArrayBuffer>'."
+        ),
+        "typed array TS2322 should preserve generic type arguments, got: {diag:?}"
+    );
+}
+
 fn strict_diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(
         source,

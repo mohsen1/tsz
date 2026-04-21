@@ -1609,22 +1609,35 @@ impl<'a> CheckerState<'a> {
             target_property_type
         };
 
-        if depth == 0
-            && let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
-                nested_reason
-        {
-            return self.render_failure_reason(
-                nested_reason.expect("checked above"),
-                source_property_type,
-                target_property_type,
-                idx,
-                depth,
-            );
-        }
-
         if depth == 0 {
             let (source_str, target_str) =
                 self.format_top_level_assignability_message_types(source, target);
+            if let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
+                nested_reason
+            {
+                let is_typed_array_display = |display: &str| {
+                    display.starts_with("Int8Array<")
+                        || display.starts_with("Uint8Array<")
+                        || display.starts_with("Uint8ClampedArray<")
+                        || display.starts_with("Int16Array<")
+                        || display.starts_with("Uint16Array<")
+                        || display.starts_with("Int32Array<")
+                        || display.starts_with("Uint32Array<")
+                        || display.starts_with("Float32Array<")
+                        || display.starts_with("Float64Array<")
+                        || display.starts_with("BigInt64Array<")
+                        || display.starts_with("BigUint64Array<")
+                };
+                if !(is_typed_array_display(&source_str) && is_typed_array_display(&target_str)) {
+                    return self.render_failure_reason(
+                        nested_reason.expect("checked above"),
+                        source_property_type,
+                        target_property_type,
+                        idx,
+                        depth,
+                    );
+                }
+            }
             let base = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_str, &target_str],
