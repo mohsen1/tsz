@@ -774,6 +774,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         mapped_id: MappedTypeId,
     ) -> TypeId {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
         use tsz_solver::PropertyInfo;
         let factory = self.ctx.types.factory();
 
@@ -856,16 +857,10 @@ impl<'a> CheckerState<'a> {
         // This handles homomorphic mapped types and deferred types with constraints
         // the solver can't resolve even with the CheckerContext resolver.
 
-        // Prefer the shared finite-key collector once the constraint has been
-        // resolved. This keeps mapped expansion aligned with property access and
-        // exact `keyof` key-space semantics.
-        let string_keys: Vec<_> = if let Some(names) =
-            query::collect_finite_mapped_property_names(self.ctx.types, resolved_mapped_id)
-        {
-            names.into_iter().collect()
-        } else {
-            query::extract_string_literal_keys(self.ctx.types, keys)
-        };
+        // Iterate the source keys. Name remapping is applied per key below so
+        // generic `as` clauses that cannot produce exact property names keep the
+        // mapped type deferred instead of expanding to the original key space.
+        let string_keys: Vec<_> = query::extract_string_literal_keys(self.ctx.types, keys);
         if string_keys.is_empty() {
             // Can't evaluate - return original
             return type_id;
@@ -884,6 +879,36 @@ impl<'a> CheckerState<'a> {
         // Build the resulting object properties using solver-centralized modifier logic.
         let mut properties = Vec::new();
         for key_name in string_keys {
+            let remapped_names: Vec<Atom> = if let Some(name_type) = mapped.name_type {
+                let key_literal = self.ctx.types.literal_string_atom(key_name);
+                let mut subst = TypeSubstitution::new();
+                subst.insert(mapped.type_param.name, key_literal);
+                let instantiated_name = instantiate_type(self.ctx.types, name_type, &subst);
+                let remapped = self.evaluate_type_with_env(instantiated_name);
+                if remapped == TypeId::NEVER {
+                    continue;
+                }
+                if let Some(name) = query::literal_string(self.ctx.types, remapped) {
+                    vec![name]
+                } else if let Some(members) = query::union_members(self.ctx.types, remapped) {
+                    let mut names = Vec::with_capacity(members.len());
+                    for member in members {
+                        let Some(name) = query::literal_string(self.ctx.types, member) else {
+                            return type_id;
+                        };
+                        names.push(name);
+                    }
+                    if names.is_empty() {
+                        return type_id;
+                    }
+                    names
+                } else {
+                    return type_id;
+                }
+            } else {
+                vec![key_name]
+            };
+
             // Use env-evaluated template instantiation (needed for Lazy/DefId resolution).
             let mut property_type =
                 self.instantiate_mapped_property_template_with_env(&mapped, key_name);
@@ -911,19 +936,21 @@ impl<'a> CheckerState<'a> {
                 property_type = *declared_type;
             }
 
-            properties.push(PropertyInfo {
-                name: key_name,
-                type_id: property_type,
-                write_type: property_type,
-                optional,
-                readonly,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: 0,
-                is_string_named: false,
-            });
+            for remapped_name in remapped_names {
+                properties.push(PropertyInfo {
+                    name: remapped_name,
+                    type_id: property_type,
+                    write_type: property_type,
+                    optional,
+                    readonly,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                });
+            }
         }
 
         factory.object(properties)

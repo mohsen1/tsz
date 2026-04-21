@@ -185,6 +185,49 @@ impl<'a> CheckerState<'a> {
         let effective_target = self.normalized_target_for_excess_properties(target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
 
+        let mut generic_mapped_excess: Option<(tsz_common::interner::Atom, NodeIndex, u32)> = None;
+        for source_prop in source_props {
+            if explicit_property_names.is_some()
+                && !explicit_property_names
+                    .as_ref()
+                    .is_some_and(|names| names.contains(&source_prop.name))
+            {
+                continue;
+            }
+
+            let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+            if [target, effective_target, resolved_target]
+                .into_iter()
+                .any(|candidate| {
+                    self.generic_mapped_receiver_lacks_explicit_property(
+                        candidate,
+                        prop_name.as_ref(),
+                    )
+                })
+            {
+                let report_idx = self
+                    .find_object_literal_property_element(idx, source_prop.name)
+                    .unwrap_or(idx);
+                let pos = self
+                    .ctx
+                    .arena
+                    .get(report_idx)
+                    .map_or(u32::MAX, |node| node.pos);
+                if generic_mapped_excess.is_none_or(|(_, _, best_pos)| pos < best_pos) {
+                    generic_mapped_excess = Some((source_prop.name, report_idx, pos));
+                }
+            }
+        }
+        if let Some((prop_name_atom, report_idx, _)) = generic_mapped_excess {
+            let prop_name = self.object_literal_property_display_name(
+                report_idx,
+                self.ctx.types.resolve_atom(prop_name_atom).as_ref(),
+            );
+            self.error_excess_property_at(&prop_name, target, report_idx);
+            self.check_excess_property_initializer_implicit_any(report_idx, target);
+            return;
+        }
+
         // Handle union targets first using type_queries
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();

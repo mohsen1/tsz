@@ -44,6 +44,75 @@ fn test_any_top_bottom_subtyping() {
 }
 
 #[test]
+fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
+    let interner = TypeInterner::new();
+    let atom_a = interner.intern_string("a");
+    let atom_b = interner.intern_string("b");
+
+    let model = interner.object(vec![
+        PropertyInfo {
+            name: atom_a,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        },
+        PropertyInfo {
+            name: atom_b,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+        },
+    ]);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(interner.keyof(model)),
+        default: None,
+        is_const: false,
+    };
+    let key_type = interner.type_param(key_param);
+    let suffix_param = TypeParamInfo {
+        name: interner.intern_string("Suffix"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let suffix_type = interner.type_param(suffix_param);
+    let remapped_name = interner.template_literal(vec![
+        crate::types::TemplateSpan::Type(key_type),
+        crate::types::TemplateSpan::Type(suffix_type),
+    ]);
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: interner.keyof(model),
+        name_type: Some(remapped_name),
+        template: interner.index_access(model, key_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(model, mapped),
+        "generic remapped mapped types must not expand to the original source keys"
+    );
+}
+
+#[test]
 fn test_legacy_null_undefined_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);

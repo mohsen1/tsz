@@ -94,6 +94,13 @@ pub(crate) fn get_finite_mapped_property_type(
     tsz_solver::type_queries::get_finite_mapped_property_type(db, mapped_id, property_name)
 }
 
+pub(crate) fn is_identity_name_mapping(
+    db: &dyn TypeDatabase,
+    mapped: &tsz_solver::MappedType,
+) -> bool {
+    tsz_solver::type_queries::is_identity_name_mapping(db, mapped)
+}
+
 #[cfg(test)]
 #[path = "../../../tests/state_checking.rs"]
 mod tests;

@@ -624,7 +624,7 @@ impl<'a> CheckerState<'a> {
                         from_index_signature,
                     } => {
                         let generic_mapped_missing_named_property = from_index_signature
-                            && self.generic_mapped_receiver_lacks_explicit_property(
+                            && self.generic_mapped_receiver_lacks_property_access_name(
                                 original_object_type,
                                 property_name,
                             );
@@ -1759,7 +1759,7 @@ impl<'a> CheckerState<'a> {
 
                     if skip_flow_narrowing
                         && from_index_signature
-                        && self.generic_mapped_receiver_lacks_explicit_property(
+                        && self.generic_mapped_receiver_lacks_property_access_name(
                             original_object_type,
                             property_name,
                         )
