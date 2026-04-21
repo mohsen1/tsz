@@ -359,6 +359,9 @@ mod jsdoc_satisfies_tests;
 #[path = "../tests/jsdoc_template_class_tests.rs"]
 mod jsdoc_template_class_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_type_expression_tests.rs"]
+mod jsdoc_type_expression_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]

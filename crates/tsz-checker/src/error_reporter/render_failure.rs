@@ -1248,6 +1248,7 @@ impl<'a> CheckerState<'a> {
         // TSC emits TS2322 instead of TS2739/TS2740 when the target is an intersection type.
         if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
             || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
+            || self.anchor_jsdoc_type_tag_targets_intersection_alias(idx)
         {
             let src_str = self.format_type_diagnostic(source);
             let tgt_str = self.format_type_diagnostic(target);

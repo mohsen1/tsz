@@ -319,6 +319,53 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(false)
     }
 
+    pub(super) fn anchor_jsdoc_type_tag_targets_intersection_alias(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        self.anchor_jsdoc_type_tag_targets_intersection_alias_inner(anchor_idx)
+            .unwrap_or(false)
+    }
+
+    fn anchor_jsdoc_type_tag_targets_intersection_alias_inner(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> Option<bool> {
+        let sf = self.source_file_data_for_node(anchor_idx)?;
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let jsdoc = self.try_jsdoc_with_ancestor_walk(anchor_idx, &comments, &source_text)?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let base_name = if let Some(angle_idx) = Self::find_top_level_char(type_expr, '<') {
+            type_expr[..angle_idx].trim()
+        } else {
+            type_expr.trim()
+        };
+        if base_name.is_empty() {
+            return Some(false);
+        }
+
+        for comment in &comments {
+            if !tsz_common::comments::is_jsdoc_comment(comment, &source_text) {
+                continue;
+            }
+            let content = tsz_common::comments::get_jsdoc_content(comment, &source_text);
+            for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
+                if name != base_name {
+                    continue;
+                }
+                let Some(base_type) = typedef_info.base_type.as_deref() else {
+                    continue;
+                };
+                if Self::split_top_level_binary(base_type, '&').is_some() {
+                    return Some(true);
+                }
+            }
+        }
+
+        Some(false)
+    }
+
     /// Inner helper returning `Option` so we can use `?` for early returns.
     fn anchor_target_intersection_check_inner(&self, anchor_idx: NodeIndex) -> Option<bool> {
         use tsz_parser::parser::syntax_kind_ext;
