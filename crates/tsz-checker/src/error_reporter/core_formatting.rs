@@ -11,6 +11,64 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn truncate_property_receiver_display(display: String) -> String {
+        const MAX_PROPERTY_RECEIVER_DISPLAY_CHARS: usize = 320;
+        if display.len() <= MAX_PROPERTY_RECEIVER_DISPLAY_CHARS || !display.starts_with("Omit<") {
+            return display;
+        }
+        display
+            .chars()
+            .take(MAX_PROPERTY_RECEIVER_DISPLAY_CHARS)
+            .collect()
+    }
+
+    pub(crate) fn format_long_property_receiver_type_for_diagnostic(&self, ty: TypeId) -> String {
+        tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+            .with_def_store(&self.ctx.definition_store)
+            .with_diagnostic_mode()
+            .with_long_property_receiver_display()
+            .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+            .format(ty)
+            .into_owned()
+    }
+
+    pub(crate) fn named_type_display_name(&self, type_id: TypeId) -> Option<String> {
+        if self.ctx.types.get_display_alias(type_id).is_some() {
+            return None;
+        }
+
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(type_id))
+            && let Some(def) = self.ctx.definition_store.get(def_id)
+        {
+            let name = self.ctx.types.resolve_atom(def.name);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+
+        if let Some(shape_id) =
+            crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id)
+        {
+            let shape = self.ctx.types.object_shape(shape_id);
+            if let Some(sym_id) = shape.symbol
+                && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+                && !symbol.escaped_name.is_empty()
+            {
+                return Some(symbol.escaped_name.clone());
+            }
+        }
+
+        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && let Some(symbol) = self.get_cross_file_symbol(sym_id)
+            && !symbol.escaped_name.is_empty()
+        {
+            return Some(symbol.escaped_name.clone());
+        }
+
+        None
+    }
+
     fn assignability_display_has_own_signature_type_params(&self, ty: TypeId) -> bool {
         if let Some(fn_shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)

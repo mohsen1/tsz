@@ -235,7 +235,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 let true_inst =
                     instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
-                return self.evaluate(true_inst);
+                return self.evaluate_preserving_intersection_branch_alias(true_inst);
             }
 
             let extends_unwrapped = match self.interner().lookup(extends_type) {
@@ -292,7 +292,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // A type parameter always extends itself, so the conditional always takes
                 // the true branch.
                 if check_type == extends_type {
-                    return self.evaluate(cond.true_type);
+                    return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
                 }
 
                 // If extends_type contains infer patterns and the type parameter has a constraint,
@@ -313,7 +313,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &mut checker,
                     ) {
                         let substituted_true = self.substitute_infer(cond.true_type, &bindings);
-                        return self.evaluate(substituted_true);
+                        return self
+                            .evaluate_preserving_intersection_branch_alias(substituted_true);
                     }
                 }
                 // When the check type is a type parameter, tsc keeps the conditional
@@ -429,7 +430,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // e.g., `Synthetic<number,number> extends Synthetic<T, infer V> ? V : never`
             //   Both sides evaluate to the same empty object, but V must be bound to number.
             if check_type == extends_type && !self.type_contains_infer(cond.extends_type) {
-                return self.evaluate(cond.true_type);
+                return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
             }
 
             // Step 3: Perform subtype check or infer pattern matching
@@ -720,8 +721,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Not a tail-recursive case - evaluate normally
-            return self.evaluate(result_branch);
+            return self.evaluate_preserving_intersection_branch_alias(result_branch);
         }
+    }
+
+    fn evaluate_preserving_intersection_branch_alias(&mut self, branch: TypeId) -> TypeId {
+        let evaluated = self.evaluate(branch);
+        if evaluated != branch && self.is_concrete_application_led_intersection(branch) {
+            self.interner().store_display_alias(evaluated, branch);
+        }
+        evaluated
+    }
+
+    fn is_concrete_application_led_intersection(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Intersection(members)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        let members = self.interner().type_list(members);
+        matches!(
+            members
+                .first()
+                .and_then(|&member| self.interner().lookup(member)),
+            Some(TypeData::Application(_))
+        ) && !crate::type_queries::contains_generic_type_parameters_db(self.interner(), type_id)
     }
 
     /// Resolve the base constraint of a generic type by substituting type parameters

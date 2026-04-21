@@ -1648,6 +1648,70 @@ fn format_application_two_args() {
     );
 }
 
+#[test]
+fn display_alias_does_not_repaint_preexisting_structural_type() {
+    let db = TypeInterner::new();
+    let prop = PropertyInfo::new(db.intern_string("p"), TypeId::NUMBER);
+    let evaluated = db.object(vec![prop]);
+    let type_param = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let app = db.application(db.lazy(crate::def::DefId(1)), vec![type_param]);
+
+    db.store_display_alias(evaluated, app);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(evaluated);
+
+    assert_eq!(
+        result, "{ p: number; }",
+        "A later generic application should not repaint an already-interned structural type"
+    );
+}
+
+#[test]
+fn concrete_display_alias_can_name_preexisting_structural_type() {
+    let db = TypeInterner::new();
+    let evaluated = db.object(vec![]);
+    let app = db.application(
+        db.lazy(crate::def::DefId(1)),
+        vec![TypeId::NUMBER, TypeId::VOID, TypeId::UNKNOWN],
+    );
+
+    db.store_display_alias(evaluated, app);
+
+    assert_eq!(
+        db.get_display_alias(evaluated),
+        Some(app),
+        "Concrete application aliases should still name reused structural interface shapes"
+    );
+}
+
+#[test]
+fn structural_display_alias_can_replace_generic_helper_alias() {
+    let db = TypeInterner::new();
+    let app = db.application(db.lazy(crate::def::DefId(1)), vec![TypeId::STRING]);
+    let evaluated = db.object(vec![PropertyInfo::new(
+        db.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+    let structural_alias = db.union_preserve_members(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    db.store_display_alias(evaluated, app);
+    db.store_display_alias(evaluated, structural_alias);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(evaluated);
+
+    assert_eq!(
+        result, "string | number",
+        "Structural display provenance should replace a generic helper alias"
+    );
+}
+
 // =================================================================
 // Callable type formatting
 // =================================================================

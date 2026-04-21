@@ -103,6 +103,9 @@ pub struct TypeFormatter<'a> {
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
     skip_intersection_display_alias: bool,
+    /// When true, preserve a longer generic alias prefix while eliding nested
+    /// structural object branches. Used for long property receiver diagnostics.
+    long_property_receiver_display: bool,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -127,6 +130,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
+            long_property_receiver_display: false,
         }
     }
 
@@ -155,6 +159,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
+            long_property_receiver_display: false,
         }
     }
 
@@ -205,6 +210,14 @@ impl<'a> TypeFormatter<'a> {
     /// Should be set when formatting types for error messages (not hover/quickinfo).
     pub const fn with_diagnostic_mode(mut self) -> Self {
         self.skip_union_optionalize = true;
+        self
+    }
+
+    /// Preserve enough generic alias context for very long TS2339 receiver types
+    /// while still eliding nested structural object branches.
+    pub const fn with_long_property_receiver_display(mut self) -> Self {
+        self.max_depth = 64;
+        self.long_property_receiver_display = true;
         self
     }
 
@@ -324,10 +337,21 @@ impl<'a> TypeFormatter<'a> {
         if self.format_visiting.contains(&type_id) {
             return Cow::Borrowed("...");
         }
+        let type_key = self.interner.lookup(type_id);
+        if self.long_property_receiver_display
+            && (8..=55).contains(&self.current_depth)
+            && matches!(
+                type_key,
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            )
+            && self.interner.get_display_alias(type_id).is_none()
+        {
+            return Cow::Borrowed("{ ...; }");
+        }
         if self.current_depth >= self.max_depth {
             // tsc elides deep object branches as `{ ...; }` rather than raw `...`.
             if matches!(
-                self.interner.lookup(type_id),
+                type_key,
                 Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
             ) {
                 return Cow::Borrowed("{ ...; }");

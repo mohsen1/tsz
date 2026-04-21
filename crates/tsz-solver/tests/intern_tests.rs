@@ -41,6 +41,19 @@ fn test_interner_fresh_object_distinct_from_non_fresh() {
 }
 
 #[test]
+fn widen_freshness_preserves_display_alias() {
+    let interner = TypeInterner::new();
+    let prop = PropertyInfo::new(interner.intern_string("p"), TypeId::NUMBER);
+    let fresh = interner.object_fresh(vec![prop]);
+    let alias = interner.application(interner.lazy(crate::def::DefId(1)), vec![TypeId::STRING]);
+
+    interner.store_display_alias(fresh, alias);
+    let widened = widen_freshness(&interner, fresh);
+
+    assert_eq!(interner.get_display_alias(widened), Some(alias));
+}
+
+#[test]
 fn test_interner_bigint_literal() {
     let interner = TypeInterner::new();
 
