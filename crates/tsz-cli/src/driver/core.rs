@@ -1297,7 +1297,7 @@ fn compile_inner(
     let load_libs_duration = load_libs_start.elapsed();
     perf_log_phase("load_libs", load_libs_start);
 
-    // PERF: Start loading checker lib contexts in a background thread while we
+    // PERF: Start cloning checker lib binders in a background thread while we
     // build the user program. The checker needs fresh binder state (separate from
     // the binding-phase libs) because it mutates during declaration merging.
     // By overlapping this with user file parsing+binding, we save ~100ms on
@@ -1305,7 +1305,7 @@ fn compile_inner(
     let checker_lib_handle = if !resolved.no_check {
         let lib_files_clone = lib_files.clone();
         Some(std::thread::spawn(move || {
-            load_lib_files_for_contexts(&lib_files_clone)
+            load_checker_libs(&lib_files_clone)
         }))
     } else {
         None
@@ -1338,11 +1338,11 @@ fn compile_inner(
         update_import_symbol_ids(&program, &resolved, &base_dir, c);
     }
 
-    // Wait for checker lib contexts (already running in background)
+    // Wait for checker lib clones (already running in background)
     let build_lib_contexts_start = Instant::now();
-    let lib_contexts = match checker_lib_handle {
+    let checker_libs = match checker_lib_handle {
         Some(handle) => handle.join().expect("checker lib loading panicked"),
-        None => Vec::new(),
+        None => check::CheckerLibSet::default(),
     };
     perf_log_phase("build_lib_contexts", build_lib_contexts_start);
 
@@ -1353,7 +1353,7 @@ fn compile_inner(
         &resolved,
         &base_dir,
         effective_cache,
-        &lib_contexts,
+        &checker_libs,
         typescript_dom_replacement_globals,
         &parallel_type_caches,
         has_deprecation_diagnostics,
@@ -2305,7 +2305,7 @@ pub(crate) use sources::{
 mod check;
 #[path = "check_utils.rs"]
 mod check_utils;
-use check::{collect_diagnostics, load_lib_files_for_contexts};
+use check::{collect_diagnostics, load_checker_libs};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
     if let Some(target) = args.target {
@@ -2508,6 +2508,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.skip_lib_check {
         options.skip_lib_check = true;
+    }
+    if args.skip_default_lib_check {
+        options.skip_default_lib_check = true;
     }
     if args.allow_js {
         options.allow_js = true;

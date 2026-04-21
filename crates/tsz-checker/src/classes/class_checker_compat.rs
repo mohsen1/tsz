@@ -1,7 +1,7 @@
 //! Class and interface compatibility checking (TS2415, TS2430), member lookup
 //! in class chains, and visibility conflict detection.
 
-use crate::class_checker::{ClassMemberInfo, MemberVisibility};
+use crate::class_checker::MemberVisibility;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_property_type_mismatch,
@@ -180,21 +180,31 @@ impl<'a> CheckerState<'a> {
             CALL_SIGNATURE, INDEX_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
 
+        fn decl_arena_for<'a>(
+            binder: &'a tsz_binder::BinderState,
+            current_arena: &'a tsz_parser::parser::node::NodeArena,
+            sym_id: tsz_binder::SymbolId,
+            decl_idx: NodeIndex,
+        ) -> &'a tsz_parser::parser::node::NodeArena {
+            binder
+                .get_arena_for_declaration(sym_id, decl_idx)
+                .map_or(current_arena, |arena| arena.as_ref())
+        }
+
+        let iface_sym_id = self.ctx.binder.node_symbols.get(&_iface_idx.0).copied();
+
         // Get heritage clauses (extends) — must have at least one across all declarations
         if iface_data.heritage_clauses.is_none() {
             // Check if other declarations of this interface have heritage clauses
-            let has_heritage_elsewhere = self
-                .ctx
-                .binder
-                .node_symbols
-                .get(&_iface_idx.0)
-                .and_then(|&sym_id| self.ctx.binder.symbols.get(sym_id))
-                .is_some_and(|sym| {
+            let has_heritage_elsewhere = iface_sym_id
+                .and_then(|sym_id| self.ctx.binder.symbols.get(sym_id).map(|sym| (sym_id, sym)))
+                .is_some_and(|(sym_id, sym)| {
                     sym.declarations.iter().any(|&decl_idx| {
+                        let decl_arena =
+                            decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
                         decl_idx != _iface_idx
-                            && self.ctx.arena.get(decl_idx).is_some_and(|n| {
-                                self.ctx
-                                    .arena
+                            && decl_arena.get(decl_idx).is_some_and(|n| {
+                                decl_arena
                                     .get_interface(n)
                                     .is_some_and(|iface| iface.heritage_clauses.is_some())
                             })
@@ -236,16 +246,19 @@ impl<'a> CheckerState<'a> {
             .binder
             .node_symbols
             .get(&_iface_idx.0)
-            .and_then(|&sym_id| self.ctx.binder.symbols.get(sym_id))
+            .copied()
+            .and_then(|sym_id| self.ctx.binder.symbols.get(sym_id).map(|sym| (sym_id, sym)))
             .map(|sym| {
+                let (sym_id, sym) = sym;
                 sym.declarations
                     .iter()
                     .copied()
                     .filter(|&decl_idx| {
-                        self.ctx
-                            .arena
+                        let decl_arena =
+                            decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+                        decl_arena
                             .get(decl_idx)
-                            .is_some_and(|n| self.ctx.arena.get_interface(n).is_some())
+                            .is_some_and(|n| decl_arena.get_interface(n).is_some())
                     })
                     .collect()
             })
@@ -258,22 +271,33 @@ impl<'a> CheckerState<'a> {
         }
 
         for &decl_idx in &all_iface_decls {
-            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                && let Some(decl_iface) = self.ctx.arena.get_interface(decl_node)
+            let Some(sym_id) = iface_sym_id else {
+                continue;
+            };
+            let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+            if let Some(decl_node) = decl_arena.get(decl_idx)
+                && let Some(decl_iface) = decl_arena.get_interface(decl_node)
             {
                 for &member_idx in &decl_iface.members.nodes {
-                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    let Some(member_node) = decl_arena.get(member_idx) else {
                         continue;
                     };
                     if member_node.kind == CALL_SIGNATURE {
                         derived_member_names.insert(String::from("__call__"));
                     } else if (member_node.kind == METHOD_SIGNATURE
                         || member_node.kind == PROPERTY_SIGNATURE)
-                        && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                        && let Some(name) = self.get_property_name(sig.name)
+                        && let Some(sig) = decl_arena.get_signature(member_node)
+                        && let Some(name) =
+                            crate::types_domain::queries::core::get_literal_property_name(
+                                decl_arena, sig.name,
+                            )
                     {
                         derived_member_names.insert(name.clone());
-                        let type_id = self.get_type_of_interface_member(member_idx);
+                        let type_id = self
+                            .delegate_cross_arena_interface_member_simple_type(
+                                decl_idx, member_idx, decl_arena, None,
+                            )
+                            .unwrap_or_else(|| self.get_type_of_interface_member(member_idx));
                         derived_members.push((
                             name,
                             type_id,
@@ -353,30 +377,42 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let mut derived_method_counts: rustc_hash::FxHashMap<String, usize> =
+            rustc_hash::FxHashMap::default();
+        for (name, _, _, kind, _) in &derived_members {
+            if *kind == METHOD_SIGNATURE {
+                *derived_method_counts.entry(name.clone()).or_insert(0) += 1;
+            }
+        }
+
         // Collect derived interface index signatures across all declarations.
         // These are checked against base index signatures for TS2430 compatibility.
         let mut derived_string_index_type: Option<TypeId> = None;
         let mut derived_number_index_type: Option<TypeId> = None;
         for &decl_idx in &all_iface_decls {
-            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                && let Some(decl_iface) = self.ctx.arena.get_interface(decl_node)
+            let Some(sym_id) = iface_sym_id else {
+                continue;
+            };
+            let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+            if let Some(decl_node) = decl_arena.get(decl_idx)
+                && let Some(decl_iface) = decl_arena.get_interface(decl_node)
             {
                 for &member_idx in &decl_iface.members.nodes {
-                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    let Some(member_node) = decl_arena.get(member_idx) else {
                         continue;
                     };
                     if member_node.kind != INDEX_SIGNATURE {
                         continue;
                     }
-                    if let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) {
+                    if let Some(index_sig) = decl_arena.get_index_signature(member_node) {
                         let param_idx = index_sig
                             .parameters
                             .nodes
                             .first()
                             .copied()
                             .unwrap_or(NodeIndex::NONE);
-                        let key_type = if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        let key_type = if let Some(param_node) = decl_arena.get(param_idx)
+                            && let Some(param) = decl_arena.get_parameter(param_node)
                             && param.type_annotation.is_some()
                         {
                             self.get_type_from_type_node(param.type_annotation)
@@ -423,23 +459,21 @@ impl<'a> CheckerState<'a> {
         let mut all_heritage_types: Vec<(NodeIndex, NodeIndex)> = Vec::new(); // (clause_idx, type_idx)
 
         // First: collect heritage from merged class declaration (if any)
-        if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&_iface_idx.0)
+        if let Some(sym_id) = iface_sym_id
             && let Some(sym) = self.ctx.binder.symbols.get(sym_id)
         {
             for &decl_idx in &sym.declarations {
-                if let Some(node) = self.ctx.arena.get(decl_idx)
-                    && self.ctx.arena.get_class(node).is_some()
+                let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+                if let Some(node) = decl_arena.get(decl_idx)
+                    && decl_arena.get_class(node).is_some()
                 {
-                    let class_data = self
-                        .ctx
-                        .arena
+                    let class_data = decl_arena
                         .get_class(node)
                         .expect("get_class guard above ensures Some");
                     if let Some(ref heritage_clauses) = class_data.heritage_clauses {
                         for &clause_idx in &heritage_clauses.nodes {
-                            if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                                && let Some(heritage) =
-                                    self.ctx.arena.get_heritage_clause(clause_node)
+                            if let Some(clause_node) = decl_arena.get(clause_idx)
+                                && let Some(heritage) = decl_arena.get_heritage_clause(clause_node)
                                 && heritage.token == SyntaxKind::ExtendsKeyword as u16
                             {
                                 for &type_idx in &heritage.types.nodes {
@@ -455,13 +489,17 @@ impl<'a> CheckerState<'a> {
 
         // Then: collect heritage from all interface declarations
         for &decl_idx in &all_iface_decls {
-            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                && let Some(decl_iface) = self.ctx.arena.get_interface(decl_node)
+            let Some(sym_id) = iface_sym_id else {
+                continue;
+            };
+            let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+            if let Some(decl_node) = decl_arena.get(decl_idx)
+                && let Some(decl_iface) = decl_arena.get_interface(decl_node)
                 && let Some(ref heritage_clauses) = decl_iface.heritage_clauses
             {
                 for &clause_idx in &heritage_clauses.nodes {
-                    if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                        && let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
+                    if let Some(clause_node) = decl_arena.get(clause_idx)
+                        && let Some(heritage) = decl_arena.get_heritage_clause(clause_node)
                         && heritage.token == SyntaxKind::ExtendsKeyword as u16
                     {
                         for &type_idx in &heritage.types.nodes {
@@ -473,7 +511,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Process each extended type across all heritage clauses
-        for &(_clause_idx, type_idx) in &all_heritage_types {
+        'heritage_type_loop: for &(_clause_idx, type_idx) in &all_heritage_types {
             let Some(type_node) = self.ctx.arena.get(type_idx) else {
                 continue;
             };
@@ -521,16 +559,20 @@ impl<'a> CheckerState<'a> {
 
             let mut base_iface_indices = Vec::new();
             for &decl_idx in &base_symbol.declarations {
-                if let Some(node) = self.ctx.arena.get(decl_idx)
-                    && self.ctx.arena.get_interface(node).is_some()
+                let decl_arena =
+                    decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                if let Some(node) = decl_arena.get(decl_idx)
+                    && decl_arena.get_interface(node).is_some()
                 {
                     base_iface_indices.push(decl_idx);
                 }
             }
             if base_iface_indices.is_empty() && base_symbol.value_declaration.is_some() {
                 let decl_idx = base_symbol.value_declaration;
-                if let Some(node) = self.ctx.arena.get(decl_idx)
-                    && self.ctx.arena.get_interface(node).is_some()
+                let decl_arena =
+                    decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                if let Some(node) = decl_arena.get(decl_idx)
+                    && decl_arena.get_interface(node).is_some()
                 {
                     base_iface_indices.push(decl_idx);
                 }
@@ -538,8 +580,9 @@ impl<'a> CheckerState<'a> {
 
             // Collect ALL members from this base (direct + inherited from ancestors).
             // Use a worklist to walk the interface hierarchy without recursion.
-            // Each entry: (interface_decl_idx, type_args_for_this_level)
-            let mut worklist: Vec<(NodeIndex, Option<Vec<TypeId>>)> = Vec::new();
+            // Each entry: (interface_sym_id, interface_decl_idx, type_args_for_this_level)
+            let mut worklist: Vec<(tsz_binder::SymbolId, NodeIndex, Option<Vec<TypeId>>)> =
+                Vec::new();
             for &idx in &base_iface_indices {
                 let initial_args = type_arguments.map(|args| {
                     args.nodes
@@ -547,7 +590,7 @@ impl<'a> CheckerState<'a> {
                         .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                         .collect::<Vec<_>>()
                 });
-                worklist.push((idx, initial_args));
+                worklist.push((base_sym_id, idx, initial_args));
             }
 
             // Track which member keys we've already seen from THIS base entry.
@@ -555,20 +598,31 @@ impl<'a> CheckerState<'a> {
             let mut seen_member_keys: rustc_hash::FxHashSet<String> =
                 rustc_hash::FxHashSet::default();
             // Prevent cycles in the interface hierarchy.
-            let mut visited_ifaces: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
+            let mut visited_ifaces: rustc_hash::FxHashSet<(u32, u32, usize)> =
+                rustc_hash::FxHashSet::default();
 
-            while let Some((iface_decl_idx, level_type_args)) = worklist.pop() {
-                if !visited_ifaces.insert(iface_decl_idx.0) {
+            while let Some((iface_sym_id, iface_decl_idx, level_type_args)) = worklist.pop() {
+                let iface_arena = decl_arena_for(
+                    self.ctx.binder,
+                    self.ctx.arena,
+                    iface_sym_id,
+                    iface_decl_idx,
+                );
+                let visit_key = (
+                    iface_sym_id.0,
+                    iface_decl_idx.0,
+                    iface_arena as *const tsz_parser::parser::node::NodeArena as usize,
+                );
+                if !visited_ifaces.insert(visit_key) {
                     continue; // Already visited — cycle guard
                 }
 
-                let Some(iface_node) = self.ctx.arena.get(iface_decl_idx) else {
+                let Some(iface_node) = iface_arena.get(iface_decl_idx) else {
                     continue;
                 };
-                let Some(iface) = self.ctx.arena.get_interface(iface_node) else {
+                let Some(iface) = iface_arena.get_interface(iface_node) else {
                     continue;
                 };
-
                 let (level_type_params, level_type_param_updates) =
                     self.push_type_parameters(&iface.type_parameters);
 
@@ -592,9 +646,30 @@ impl<'a> CheckerState<'a> {
                     &substitution_args,
                 );
 
+                let mut base_method_counts: rustc_hash::FxHashMap<String, usize> =
+                    rustc_hash::FxHashMap::default();
+                for &member_idx in &iface.members.nodes {
+                    let Some(member_node) = iface_arena.get(member_idx) else {
+                        continue;
+                    };
+                    if member_node.kind != METHOD_SIGNATURE {
+                        continue;
+                    }
+                    let Some(sig) = iface_arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    let Some(name) = crate::types_domain::queries::core::get_literal_property_name(
+                        iface_arena,
+                        sig.name,
+                    ) else {
+                        continue;
+                    };
+                    *base_method_counts.entry(name).or_insert(0) += 1;
+                }
+
                 // Process direct members of this interface level
                 for &member_idx in &iface.members.nodes {
-                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    let Some(member_node) = iface_arena.get(member_idx) else {
                         continue;
                     };
 
@@ -612,19 +687,32 @@ impl<'a> CheckerState<'a> {
                         } else if member_node.kind == METHOD_SIGNATURE
                             || member_node.kind == PROPERTY_SIGNATURE
                         {
-                            let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                            let Some(sig) = iface_arena.get_signature(member_node) else {
                                 continue;
                             };
-                            let Some(name) = self.get_property_name(sig.name) else {
+                            let Some(name) =
+                                crate::types_domain::queries::core::get_literal_property_name(
+                                    iface_arena,
+                                    sig.name,
+                                )
+                            else {
                                 continue;
                             };
                             (
                                 name,
-                                instantiate_type(
-                                    self.ctx.types,
-                                    self.get_type_of_interface_member_simple(member_idx),
-                                    &substitution,
-                                ),
+                                self.delegate_cross_arena_interface_member_simple_type(
+                                    iface_decl_idx,
+                                    member_idx,
+                                    iface_arena,
+                                    Some(&substitution_args),
+                                )
+                                .unwrap_or_else(|| {
+                                    instantiate_type(
+                                        self.ctx.types,
+                                        self.get_type_of_interface_member_simple(member_idx),
+                                        &substitution,
+                                    )
+                                }),
                                 sig.question_token,
                             )
                         } else {
@@ -636,7 +724,58 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    if derived_member_names.contains(&member_key) {
+                    if let Some((
+                        _derived_name,
+                        derived_member_type,
+                        derived_member_idx,
+                        _derived_kind,
+                        _derived_optional,
+                    )) = derived_members
+                        .iter()
+                        .find(|(derived_name, _, _, _, _)| derived_name == &member_key)
+                    {
+                        let overloaded_method_compare = *_derived_kind == METHOD_SIGNATURE
+                            && member_node.kind == METHOD_SIGNATURE
+                            && (derived_method_counts.get(&member_key).copied().unwrap_or(0) > 1
+                                || base_method_counts.get(&member_key).copied().unwrap_or(0) > 1);
+                        if overloaded_method_compare {
+                            continue;
+                        }
+
+                        let derived_prop_type =
+                            crate::query_boundaries::common::find_property_by_str(
+                                self.ctx.types,
+                                *derived_member_type,
+                                &member_key,
+                            )
+                            .map(|p| p.type_id)
+                            .unwrap_or(*derived_member_type);
+                        let base_prop_type = crate::query_boundaries::common::find_property_by_str(
+                            self.ctx.types,
+                            member_type,
+                            &member_key,
+                        )
+                        .map(|p| p.type_id)
+                        .unwrap_or(member_type);
+
+                        if should_report_member_type_mismatch(
+                            self,
+                            derived_prop_type,
+                            base_prop_type,
+                            *derived_member_idx,
+                        ) {
+                            let derived_type_str = self.format_type(derived_prop_type);
+                            let base_type_str = self.format_type(base_prop_type);
+                            self.error_at_node(
+                                iface_data.name,
+                                &format!(
+                                    "Interface '{derived_name}' incorrectly extends interface '{base_name}'.\n  Types of property '{member_key}' are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
+                                ),
+                                diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                            );
+                            self.pop_type_parameters(level_type_param_updates);
+                            continue 'heritage_type_loop;
+                        }
                         continue;
                     }
 
@@ -678,21 +817,21 @@ impl<'a> CheckerState<'a> {
                 // Process index signatures from this base level.
                 // Check for cross-base index signature conflicts (TS2430).
                 for &member_idx in &iface.members.nodes {
-                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    let Some(member_node) = iface_arena.get(member_idx) else {
                         continue;
                     };
                     if member_node.kind != INDEX_SIGNATURE {
                         continue;
                     }
-                    if let Some(idx_sig) = self.ctx.arena.get_index_signature(member_node) {
+                    if let Some(idx_sig) = iface_arena.get_index_signature(member_node) {
                         let param_idx = idx_sig
                             .parameters
                             .nodes
                             .first()
                             .copied()
                             .unwrap_or(NodeIndex::NONE);
-                        let key_type = if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        let key_type = if let Some(param_node) = iface_arena.get(param_idx)
+                            && let Some(param) = iface_arena.get_parameter(param_node)
                             && param.type_annotation.is_some()
                         {
                             self.get_type_from_type_node(param.type_annotation)
@@ -746,10 +885,10 @@ impl<'a> CheckerState<'a> {
                 // Enqueue this interface's own bases (grandparent interfaces)
                 if let Some(ref heritage_clauses) = iface.heritage_clauses {
                     for &hc_idx in &heritage_clauses.nodes {
-                        let Some(hc_node) = self.ctx.arena.get(hc_idx) else {
+                        let Some(hc_node) = iface_arena.get(hc_idx) else {
                             continue;
                         };
-                        let Some(hc) = self.ctx.arena.get_heritage_clause(hc_node) else {
+                        let Some(hc) = iface_arena.get_heritage_clause(hc_node) else {
                             continue;
                         };
                         if hc.token != SyntaxKind::ExtendsKeyword as u16 {
@@ -757,8 +896,8 @@ impl<'a> CheckerState<'a> {
                         }
                         for &ancestor_type_idx in &hc.types.nodes {
                             let (ancestor_expr, ancestor_type_args_opt) = if let Some(ancestor_node) =
-                                self.ctx.arena.get(ancestor_type_idx)
-                                && let Some(eat) = self.ctx.arena.get_expr_type_args(ancestor_node)
+                                iface_arena.get(ancestor_type_idx)
+                                && let Some(eat) = iface_arena.get_expr_type_args(ancestor_node)
                             {
                                 let args: Vec<TypeId> = eat
                                     .type_arguments
@@ -781,16 +920,26 @@ impl<'a> CheckerState<'a> {
                                 (ancestor_type_idx, None)
                             };
 
-                            if let Some(ancestor_sym_id) =
-                                self.resolve_heritage_symbol(ancestor_expr)
+                            let ancestor_resolution = self.resolve_heritage_symbol(ancestor_expr);
+                            if let Some(ancestor_sym_id) = ancestor_resolution
                                 && let Some(ancestor_sym) =
                                     self.ctx.binder.get_symbol(ancestor_sym_id)
                             {
                                 for &decl_idx in &ancestor_sym.declarations {
-                                    if let Some(dn) = self.ctx.arena.get(decl_idx)
-                                        && self.ctx.arena.get_interface(dn).is_some()
+                                    let decl_arena = decl_arena_for(
+                                        self.ctx.binder,
+                                        self.ctx.arena,
+                                        ancestor_sym_id,
+                                        decl_idx,
+                                    );
+                                    if let Some(dn) = decl_arena.get(decl_idx)
+                                        && decl_arena.get_interface(dn).is_some()
                                     {
-                                        worklist.push((decl_idx, ancestor_type_args_opt.clone()));
+                                        worklist.push((
+                                            ancestor_sym_id,
+                                            decl_idx,
+                                            ancestor_type_args_opt.clone(),
+                                        ));
                                     }
                                 }
                             }
@@ -805,7 +954,9 @@ impl<'a> CheckerState<'a> {
             if base_iface_indices.is_empty() {
                 let mut base_class_idx = None;
                 for &decl_idx in &base_symbol.declarations {
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                    let decl_arena =
+                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                    if let Some(node) = decl_arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
                     {
                         base_class_idx = Some(decl_idx);
@@ -815,7 +966,9 @@ impl<'a> CheckerState<'a> {
 
                 if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
                     let decl_idx = base_symbol.value_declaration;
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
+                    let decl_arena =
+                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                    if let Some(node) = decl_arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
                     {
                         base_class_idx = Some(decl_idx);
@@ -823,8 +976,12 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(class_idx) = base_class_idx
-                    && let Some(class_node) = self.ctx.arena.get(class_idx)
-                    && let Some(class_data) = self.ctx.arena.get_class(class_node)
+                    && let Some(class_node) =
+                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, class_idx)
+                            .get(class_idx)
+                    && let Some(class_data) =
+                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, class_idx)
+                            .get_class(class_node)
                 {
                     // Build type parameter substitution for generic class bases
                     // e.g. `extends C<string>` where `class C<T> { a: T; }` → a: string
@@ -1739,209 +1896,5 @@ impl<'a> CheckerState<'a> {
 
             self.pop_type_parameters(base_type_param_updates);
         }
-    }
-
-    /// Find a member by name in a class, searching up the inheritance chain.
-    /// Returns the member info if found, or None.
-    /// Uses cycle detection to handle circular inheritance safely.
-    pub(crate) fn find_member_in_class_chain(
-        &mut self,
-        class_idx: NodeIndex,
-        target_name: &str,
-        target_is_static: bool,
-        _depth: usize,
-        skip_private: bool,
-    ) -> Option<ClassMemberInfo> {
-        self.summarize_class_chain(class_idx)
-            .lookup(target_name, target_is_static, skip_private)
-            .cloned()
-    }
-
-    /// Internal implementation of `find_member_in_class_chain` with recursion guard.
-    #[allow(dead_code)]
-    fn find_member_in_class_chain_impl(
-        &mut self,
-        class_idx: NodeIndex,
-        target_name: &str,
-        target_is_static: bool,
-        skip_private: bool,
-        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
-    ) -> Option<ClassMemberInfo> {
-        use tsz_solver::recursion::RecursionResult;
-
-        // Check for cycles using the recursion guard
-        match guard.enter(class_idx) {
-            RecursionResult::Cycle
-            | RecursionResult::DepthExceeded
-            | RecursionResult::IterationExceeded => {
-                // Circular inheritance/depth/iteration limits detected - return None gracefully
-                // Exceeded limits - bail out
-                return None;
-            }
-            RecursionResult::Entered => {
-                // Proceed with the search
-            }
-        }
-        let result = (|| {
-            let class_node = self.ctx.arena.get(class_idx)?;
-            let class_data = self.ctx.arena.get_class(class_node)?;
-
-            // Search direct members
-            for &member_idx in &class_data.members.nodes {
-                if let Some(info) = self.extract_class_member_info(member_idx, skip_private)
-                    && info.name == target_name
-                    && info.is_static == target_is_static
-                {
-                    return Some(info);
-                }
-
-                if !target_is_static
-                    && let Some(member_node) = self.ctx.arena.get(member_idx)
-                    && member_node.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR
-                    && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
-                {
-                    for &param_idx in &ctor.parameters.nodes {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                            && self.has_parameter_property_modifier(&param.modifiers)
-                            && let Some(name) = self.get_property_name(param.name)
-                            && name == target_name
-                        {
-                            if skip_private && self.has_private_modifier(&param.modifiers) {
-                                continue;
-                            }
-                            let visibility = if self.has_private_modifier(&param.modifiers) {
-                                MemberVisibility::Private
-                            } else if self.has_protected_modifier(&param.modifiers) {
-                                MemberVisibility::Protected
-                            } else {
-                                MemberVisibility::Public
-                            };
-                            let prop_type = if param.type_annotation.is_some() {
-                                self.get_type_from_type_node(param.type_annotation)
-                            } else {
-                                tsz_solver::TypeId::ANY
-                            };
-                            let info = ClassMemberInfo {
-                                name,
-                                type_id: prop_type,
-                                name_idx: param.name,
-                                visibility,
-                                is_method: false,
-                                is_static: false,
-                                is_accessor: false,
-                                is_abstract: false,
-                                has_override: self.has_override_modifier(&param.modifiers)
-                                    || self.has_jsdoc_override_tag(param_idx),
-                                is_jsdoc_override: !self.has_override_modifier(&param.modifiers)
-                                    && self.has_jsdoc_override_tag(param_idx),
-                                has_dynamic_name: false,
-                                has_computed_non_literal_name: false,
-                                from_interface: false,
-                            };
-                            return Some(info);
-                        }
-                    }
-                }
-            }
-
-            // Walk up to base class
-            let heritage_clauses = class_data.heritage_clauses.as_ref()?;
-
-            for &clause_idx in &heritage_clauses.nodes {
-                let clause_node = self.ctx.arena.get(clause_idx)?;
-                let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
-                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                    continue;
-                }
-                let type_idx = *heritage.types.nodes.first()?;
-                let type_node = self.ctx.arena.get(type_idx)?;
-                let expr_idx =
-                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
-                        expr_type_args.expression
-                    } else {
-                        type_idx
-                    };
-                let expr_node = self.ctx.arena.get(expr_idx)?;
-                let ident = self.ctx.arena.get_identifier(expr_node)?;
-                let base_name = &ident.escaped_text;
-                let sym_id = self.ctx.binder.file_locals.get(base_name)?;
-                let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                let base_idx = if symbol.value_declaration.is_some() {
-                    symbol.value_declaration
-                } else {
-                    *symbol.declarations.first()?
-                };
-
-                return self.find_member_in_class_chain_impl(
-                    base_idx,
-                    target_name,
-                    target_is_static,
-                    skip_private,
-                    guard,
-                );
-            }
-
-            None
-        })();
-
-        guard.leave(class_idx);
-        result
-    }
-
-    pub(crate) const fn class_member_visibility_conflicts(
-        &self,
-        derived_visibility: MemberVisibility,
-        base_visibility: MemberVisibility,
-    ) -> bool {
-        matches!(
-            (derived_visibility, base_visibility),
-            (
-                MemberVisibility::Private,
-                MemberVisibility::Private | MemberVisibility::Protected | MemberVisibility::Public
-            ) | (
-                MemberVisibility::Protected,
-                MemberVisibility::Public | MemberVisibility::Private
-            ) | (MemberVisibility::Public, MemberVisibility::Private)
-        )
-    }
-
-    /// Count required (non-optional, non-rest, no-initializer) parameters in a
-    /// method/function signature node, excluding `this` parameters.
-    fn count_required_params_from_signature_node(&self, node_idx: NodeIndex) -> usize {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return 0;
-        };
-        let Some(sig) = self.ctx.arena.get_signature(node) else {
-            return 0;
-        };
-        let Some(ref params) = sig.parameters else {
-            return 0;
-        };
-        let mut count = 0;
-        for &param_idx in &params.nodes {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-            // Skip `this` pseudo-parameter
-            if let Some(name_node) = self.ctx.arena.get(param.name)
-                && name_node.kind == SyntaxKind::ThisKeyword as u16
-            {
-                continue;
-            }
-            // Rest parameters are not counted as required
-            if param.dot_dot_dot_token {
-                continue;
-            }
-            // Optional or has-default parameters are not required
-            if param.question_token || param.initializer.is_some() {
-                continue;
-            }
-            count += 1;
-        }
-        count
     }
 }

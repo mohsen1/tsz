@@ -84,7 +84,8 @@ impl<'a> CheckerState<'a> {
                 // assignable to `string`.
                 let type_arg_contains_type_parameters =
                     query::contains_type_parameters(self.ctx.types, type_arg);
-                let base_constraint_type = type_arg_contains_type_parameters
+                let mut base_constraint_from_indexed_access_ast = false;
+                let mut base_constraint_type = type_arg_contains_type_parameters
                     .then(|| self.constraint_check_base_type(type_arg))
                     .filter(|&base| base != type_arg)
                     // Discard degenerate base constraints (undefined, null, never)
@@ -99,6 +100,16 @@ impl<'a> CheckerState<'a> {
                             && base != TypeId::NEVER
                             && base != TypeId::VOID
                     });
+                if type_arg_contains_type_parameters
+                    && base_constraint_type
+                        .is_none_or(|base| query::contains_type_parameters(self.ctx.types, base))
+                    && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && let Some(ast_base) =
+                        self.ast_indexed_access_property_union_from_declaration(type_arg, arg_idx)
+                {
+                    base_constraint_type = Some(ast_base);
+                    base_constraint_from_indexed_access_ast = true;
+                }
                 if type_arg_contains_type_parameters {
                     let is_bare_type_param =
                         query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg);
@@ -113,6 +124,14 @@ impl<'a> CheckerState<'a> {
                             && base != TypeId::UNKNOWN
                             && base != type_arg
                         {
+                            let mut base = base;
+                            if !base_constraint_from_indexed_access_ast
+                                && query::contains_free_type_parameters(self.ctx.types, base)
+                                && let Some(concrete_indexed_base) =
+                                    self.concrete_indexed_access_property_union(base)
+                            {
+                                base = concrete_indexed_base;
+                            }
                             // Base constraint still contains type parameters.
                             // For most cases, defer to instantiation time. However,
                             // when the required constraint is a callable signature
@@ -121,7 +140,9 @@ impl<'a> CheckerState<'a> {
                             // provably callable (e.g. generic indexed access types
                             // like `DataFetchFns[T][F]` are not callable). This
                             // matches tsc behavior for ReturnType/Parameters/etc.
-                            if query::contains_type_parameters(self.ctx.types, base) {
+                            if !base_constraint_from_indexed_access_ast
+                                && query::contains_free_type_parameters(self.ctx.types, base)
+                            {
                                 let constraint_resolved = self.resolve_lazy_type(constraint);
                                 let db = self.ctx.types.as_type_database();
 
@@ -512,7 +533,8 @@ impl<'a> CheckerState<'a> {
                                     &subst,
                                 )
                             };
-                            if query::contains_type_parameters(self.ctx.types, inst_constraint) {
+                            if query::contains_free_type_parameters(self.ctx.types, inst_constraint)
+                            {
                                 continue;
                             }
                             let db = self.ctx.types.as_type_database();
@@ -558,7 +580,7 @@ impl<'a> CheckerState<'a> {
                             // preserves T's index signatures, but constraint resolution
                             // may produce inconsistent index signatures). For non-callable
                             // constraints, defer to instantiation time to match tsc.
-                            if !query::contains_type_parameters(self.ctx.types, base)
+                            if !query::contains_free_type_parameters(self.ctx.types, base)
                                 && !query::is_callable_type(db, inst_constraint)
                                 && !self.is_function_constraint(original_constraint)
                             {
@@ -1020,7 +1042,7 @@ impl<'a> CheckerState<'a> {
                 if !is_satisfied
                     && let Some(base) = base_constraint_type
                     && base != TypeId::UNKNOWN
-                    && !query::contains_type_parameters(self.ctx.types, base)
+                    && !query::contains_free_type_parameters(self.ctx.types, base)
                 {
                     is_satisfied = self.is_assignable_to(base, instantiated_constraint)
                         || self.satisfies_array_like_constraint(base, instantiated_constraint);
@@ -1073,8 +1095,29 @@ impl<'a> CheckerState<'a> {
         let db = self.ctx.types.as_type_database();
         // For TypeParameter: returns constraint or UNKNOWN; for non-TypeParameter: returns type_id
         let base = query::base_constraint_of_type(db, type_id);
+        if base == TypeId::UNKNOWN
+            && query::is_bare_type_parameter(db, type_id)
+            && let Some(name_atom) = query::type_parameter_name(db, type_id)
+        {
+            let name = self.ctx.types.resolve_atom(name_atom);
+            if let Some(&scoped_type_id) = self.ctx.type_parameter_scope.get(&name)
+                && scoped_type_id != type_id
+            {
+                let scoped_base = query::base_constraint_of_type(db, scoped_type_id);
+                if scoped_base != TypeId::UNKNOWN && scoped_base != scoped_type_id {
+                    return self.constraint_check_base_type(scoped_base);
+                }
+            }
+        }
         if base != type_id {
-            return self.evaluate_type_for_assignability(base);
+            let base = self.evaluate_type_for_assignability(base);
+            if let Some(keyof_operand) = query::keyof_operand(db, base) {
+                let normalized = self.get_keyof_type(keyof_operand);
+                if normalized != self.ctx.types.keyof(keyof_operand) {
+                    return normalized;
+                }
+            }
+            return base;
         }
         if let Some((object_type, index_type)) = query::index_access_components(db, type_id) {
             let constrained_object_type =
@@ -1114,14 +1157,59 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn ast_indexed_access_property_union_from_declaration(
+        &mut self,
+        type_arg: TypeId,
+        arg_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(arg_idx)?;
+        let indexed = self.ctx.arena.get_indexed_access_type(node)?;
+
+        let db = self.ctx.types.as_type_database();
+        let (object_type, _index_type) = query::index_access_components(db, type_arg)?;
+        if matches!(object_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        let object_type_for_check = self.evaluate_type_for_assignability(object_type);
+        let object_type_for_check = self.resolve_lazy_type(object_type_for_check);
+        let index_constraint = self
+            .resolve_index_constraint_from_declaration(indexed.index_type, indexed.object_type)?;
+
+        if !self.is_keyof_for_current_object(index_constraint, object_type, object_type_for_check) {
+            return None;
+        }
+
+        let key_space = if let Some(keyof_operand) = query::keyof_operand(db, index_constraint) {
+            self.get_keyof_type(keyof_operand)
+        } else {
+            self.evaluate_type_for_assignability(index_constraint)
+        };
+        let key_space = self.resolve_lazy_type(key_space);
+        let value_type =
+            self.constraint_check_indexed_access_value_type(object_type_for_check, key_space)?;
+        let value_type = self.evaluate_type_for_assignability(value_type);
+        let value_type = self.resolve_lazy_type(value_type);
+        (!query::contains_free_type_parameters(self.ctx.types, value_type)).then_some(value_type)
+    }
+
     fn constraint_check_indexed_access_value_type(
         &mut self,
         object_type: TypeId,
         index_type: TypeId,
     ) -> Option<TypeId> {
-        let db = self.ctx.types.as_type_database();
         let object_type = self.evaluate_type_for_assignability(object_type);
+        let mut object_type = self.resolve_lazy_type(object_type);
+        if query::get_object_shape(self.ctx.types.as_type_database(), object_type).is_none()
+            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(object_type)
+        {
+            object_type = self.type_reference_symbol_type(sym_id);
+            object_type = self.evaluate_type_for_assignability(object_type);
+            object_type = self.resolve_lazy_type(object_type);
+        }
         let key_type = self.evaluate_type_for_assignability(index_type);
+        let key_type = self.resolve_lazy_type(key_type);
+        let db = self.ctx.types.as_type_database();
         let key_kind = query::classify_index_key(db, key_type);
 
         if let Some(shape) = query::get_object_shape(db, object_type) {
@@ -1157,7 +1245,53 @@ impl<'a> CheckerState<'a> {
             return Some(template);
         }
 
+        // For concrete object maps like `HTMLElementTagNameMap`, an indexed access
+        // `Map[K]` with `K extends keyof Map` has a base constraint equal to the
+        // union of all mapped property value types. tsc eagerly uses that union for
+        // TS2344 checks on `HTMLCollectionOf<HTMLElementTagNameMap[K]>` /
+        // `NodeListOf<HTMLElementTagNameMap[K]>` instead of deferring the relation.
+        let keyed_object_type = if query::is_bare_type_parameter(db, key_type) {
+            let key_base = self.constraint_check_base_type(key_type);
+            if key_base == TypeId::UNKNOWN {
+                key_type
+            } else {
+                key_base
+            }
+        } else {
+            key_type
+        };
+
+        if let Some(shape) = query::get_object_shape(db, object_type)
+            && !shape.properties.is_empty()
+            && let Some(object_keys) =
+                crate::query_boundaries::common::keyof_object_properties(db, object_type)
+        {
+            let keys_assignable = self.is_assignable_to(keyed_object_type, object_keys);
+            if !keys_assignable {
+                return None;
+            }
+            let property_types: Vec<TypeId> =
+                shape.properties.iter().map(|prop| prop.type_id).collect();
+            return match property_types.len() {
+                0 => None,
+                1 => property_types.first().copied(),
+                _ => Some(self.ctx.types.union(property_types)),
+            };
+        }
+
         None
+    }
+
+    fn concrete_indexed_access_property_union(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        let evaluated = self.resolve_lazy_type(evaluated);
+        let db = self.ctx.types.as_type_database();
+        let (object_type, index_type) = query::index_access_components(db, evaluated)?;
+        let value_type =
+            self.constraint_check_indexed_access_value_type(object_type, index_type)?;
+        let value_type = self.evaluate_type_for_assignability(value_type);
+        let value_type = self.resolve_lazy_type(value_type);
+        (!query::contains_free_type_parameters(self.ctx.types, value_type)).then_some(value_type)
     }
 
     /// Check if a type represents the global `Function` interface from lib.d.ts.

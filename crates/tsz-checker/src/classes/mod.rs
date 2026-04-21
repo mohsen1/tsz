@@ -1,4 +1,5 @@
 pub(crate) mod class_abstract_checker;
+pub(crate) mod class_chain_lookup;
 pub mod class_checker;
 pub(crate) mod class_checker_compat;
 pub(crate) mod class_helpers;

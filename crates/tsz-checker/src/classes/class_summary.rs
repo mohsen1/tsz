@@ -93,6 +93,15 @@ impl ClassChainSummary {
         target_is_static: bool,
         skip_private: bool,
     ) -> Option<&ClassMemberInfo> {
+        self.member_info(target_name, target_is_static, skip_private)
+    }
+
+    pub(crate) fn member_info(
+        &self,
+        target_name: &str,
+        target_is_static: bool,
+        skip_private: bool,
+    ) -> Option<&ClassMemberInfo> {
         let map = if target_is_static {
             &self.static_members
         } else {

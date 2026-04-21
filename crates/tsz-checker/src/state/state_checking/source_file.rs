@@ -6,6 +6,7 @@
 use crate::context::{TypingRequest, is_declaration_file_name};
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
+use rustc_hash::FxHashSet;
 use tracing::{Level, span};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -24,26 +25,15 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check a source file and populate diagnostics (main entry point).
-    ///
-    /// This is the primary entry point for type checking after parsing and binding.
-    /// It traverses the entire AST and performs all type checking operations.
-    pub fn check_source_file(&mut self, root_idx: NodeIndex) {
-        let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
-
+    fn prepare_source_file_for_checking(&mut self, root_idx: NodeIndex) -> Option<NodeIndex> {
         // Reset per-file flags
         self.ctx.is_in_ambient_declaration_file = false;
 
-        let Some(node) = self.ctx.arena.get(root_idx) else {
-            return;
-        };
-
-        let Some(sf) = self.ctx.arena.get_source_file(node) else {
-            return;
-        };
+        let node = self.ctx.arena.get(root_idx)?;
+        let sf = self.ctx.arena.get_source_file(node)?;
         self.resolve_compiler_options_from_source(&sf.text);
         if self.has_ts_nocheck_pragma(&sf.text) {
-            return;
+            return None;
         }
 
         // `type_env` is rebuilt per file, so drop per-file symbol-resolution memoization.
@@ -112,19 +102,207 @@ impl<'a> CheckerState<'a> {
             self.register_boxed_types();
         }
 
-        // Type check each top-level statement
         // Mark that we're now in the checking phase. During build_type_environment,
         // closures may be type-checked without contextual types, which would cause
         // premature TS7006 errors. The checking phase ensures contextual types are available.
         self.ctx.is_checking_statements = true;
 
+        // In .d.ts files, the entire file is an ambient context.
+        if self.ctx.is_declaration_file() {
+            self.ctx.is_in_ambient_declaration_file = true;
+        }
+
+        Some(root_idx)
+    }
+
+    fn check_interface_declarations_recursively(
+        &mut self,
+        statements: &[NodeIndex],
+        reset_fuel_between_interfaces: bool,
+        interface_filter: Option<&FxHashSet<String>>,
+        extension_filter: Option<&FxHashSet<String>>,
+    ) {
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                let interface_name = self
+                    .ctx
+                    .arena
+                    .get_interface(stmt_node)
+                    .and_then(|iface| self.ctx.arena.get(iface.name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|ident| ident.escaped_text.as_str());
+                if let Some(filter) = interface_filter {
+                    let Some(name) = interface_name else {
+                        continue;
+                    };
+                    if !filter.contains(name) {
+                        continue;
+                    }
+                }
+                if self.ctx.binder.node_symbols.contains_key(&stmt_idx.0) {
+                    if reset_fuel_between_interfaces {
+                        self.ctx
+                            .type_resolution_fuel
+                            .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
+                        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+                        let check_extension_compatibility = match extension_filter {
+                            Some(filter) => {
+                                interface_name.is_some_and(|name| filter.contains(name))
+                            }
+                            None => true,
+                        };
+                        self.check_lib_interface_declaration_post_merge(
+                            stmt_idx,
+                            check_extension_compatibility,
+                        );
+                    } else {
+                        self.check_interface_declaration(stmt_idx);
+                    }
+                }
+                continue;
+            }
+
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+
+            let Some(module_decl) = self.ctx.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if module_decl.body.is_none() {
+                continue;
+            }
+            let Some(body_node) = self.ctx.arena.get(module_decl.body) else {
+                continue;
+            };
+            if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                continue;
+            }
+            let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(inner) = &block.statements else {
+                continue;
+            };
+            self.check_interface_declarations_recursively(
+                &inner.nodes,
+                reset_fuel_between_interfaces,
+                interface_filter,
+                extension_filter,
+            );
+        }
+    }
+
+    /// Check only interface declarations in a source file after full environment setup.
+    ///
+    /// This is used for post-merge standard library validation so interface-specific
+    /// diagnostics like TS2344/TS2430 are re-evaluated without running the full lib
+    /// statement pipeline.
+    pub fn check_source_file_interfaces_only(&mut self, root_idx: NodeIndex) {
+        let _span =
+            span!(Level::INFO, "check_source_file_interfaces_only", idx = ?root_idx).entered();
+
+        let Some(root_idx) = self.prepare_source_file_for_checking(root_idx) else {
+            return;
+        };
+
+        let Some(node) = self.ctx.arena.get(root_idx) else {
+            return;
+        };
+        let Some(sf) = self.ctx.arena.get_source_file(node) else {
+            return;
+        };
+
+        self.check_interface_declarations_recursively(&sf.statements.nodes, false, None, None);
+    }
+
+    /// Check only interface declarations, refreshing type-resolution fuel between declarations.
+    ///
+    /// This is reserved for post-merge standard library validation, where a synthetic
+    /// lib file may contain many independent affected interfaces and an early DOM
+    /// interface must not exhaust the budget for later diagnostics.
+    pub fn check_source_file_interfaces_only_with_fresh_interface_fuel(
+        &mut self,
+        root_idx: NodeIndex,
+    ) {
+        let _span = span!(
+            Level::INFO,
+            "check_source_file_interfaces_only_with_fresh_interface_fuel",
+            idx = ?root_idx
+        )
+        .entered();
+
+        let Some(root_idx) = self.prepare_source_file_for_checking(root_idx) else {
+            return;
+        };
+
+        let Some(node) = self.ctx.arena.get(root_idx) else {
+            return;
+        };
+        let Some(sf) = self.ctx.arena.get_source_file(node) else {
+            return;
+        };
+
+        self.check_interface_declarations_recursively(&sf.statements.nodes, true, None, None);
+    }
+
+    /// Check selected interfaces with the minimal post-merge lib validation path.
+    pub fn check_source_file_interfaces_only_filtered_post_merge(
+        &mut self,
+        root_idx: NodeIndex,
+        interface_filter: &FxHashSet<String>,
+        extension_filter: &FxHashSet<String>,
+    ) {
+        let _span = span!(
+            Level::INFO,
+            "check_source_file_interfaces_only_filtered_post_merge",
+            idx = ?root_idx
+        )
+        .entered();
+
+        let Some(root_idx) = self.prepare_source_file_for_checking(root_idx) else {
+            return;
+        };
+
+        let Some(node) = self.ctx.arena.get(root_idx) else {
+            return;
+        };
+        let Some(sf) = self.ctx.arena.get_source_file(node) else {
+            return;
+        };
+
+        self.check_interface_declarations_recursively(
+            &sf.statements.nodes,
+            true,
+            Some(interface_filter),
+            Some(extension_filter),
+        );
+    }
+
+    /// Check a source file and populate diagnostics (main entry point).
+    ///
+    /// This is the primary entry point for type checking after parsing and binding.
+    /// It traverses the entire AST and performs all type checking operations.
+    pub fn check_source_file(&mut self, root_idx: NodeIndex) {
+        let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
+        let Some(root_idx) = self.prepare_source_file_for_checking(root_idx) else {
+            return;
+        };
+        let Some(node) = self.ctx.arena.get(root_idx) else {
+            return;
+        };
+        let Some(sf) = self.ctx.arena.get_source_file(node) else {
+            return;
+        };
+
         // In .d.ts files, emit TS1036 for non-declaration top-level statements.
         // The entire file is an ambient context, so statements like break, continue,
         // return, debugger, if, while, for, etc. are not allowed.
         let is_dts = self.ctx.is_declaration_file();
-        if is_dts {
-            self.ctx.is_in_ambient_declaration_file = true;
-        }
 
         // TS2563: In tsc, this is emitted when flow analysis recursion depth
         // exceeds 2000 during getTypeAtFlowNode, NOT as a pre-check on total
