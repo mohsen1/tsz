@@ -11,6 +11,7 @@
 
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
+use crate::test_utils::check_source;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -143,6 +144,41 @@ function f() {
     assert!(
         !codes.contains(&7027),
         "Expected no TS7027 after calling an inferred-never local identifier, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn throwing_iifes_in_for_clauses_anchor_unreachable_at_throw_statements() {
+    let source = r#"
+try {
+    for (
+        (function () { throw "1"; })();
+        (function () { throw "2"; })();
+        (function () { throw "3"; })()
+    ) {}
+} catch (e) {}
+"#;
+    let diagnostics = check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            allow_unreachable_code: Some(false),
+            ..Default::default()
+        },
+    );
+    let starts: Vec<u32> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 7027)
+        .map(|diag| diag.start)
+        .collect();
+    let expected = vec![
+        source.find("throw \"2\"").unwrap() as u32,
+        source.find("throw \"3\"").unwrap() as u32,
+    ];
+
+    assert_eq!(
+        starts, expected,
+        "expected TS7027 to be anchored at the unreachable throwing IIFE bodies; diagnostics: {diagnostics:?}"
     );
 }
 
