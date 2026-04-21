@@ -9,10 +9,11 @@ version: 2.1
 #   - per-crate test lanes (foundation, binder, solver, checker, emitter,
 #     lsp, root), some sharded via `parallelism`
 #   - wasm build
-#   - test-build + test-build-server produce binaries once; conformance,
-#     emit, and fourslash fan out via `parallelism` using those binaries
-#     passed through a workspace (the GHA equivalent of upload-artifact +
-#     download-artifact between jobs)
+#   - test-build + test-build-server produce rust binaries once, and
+#     prep-node produces JS artifacts (npm deps + fourslash harness) once;
+#     conformance, emit, and fourslash fan out via `parallelism` using
+#     those binaries passed through a workspace (the GHA equivalent of
+#     upload-artifact + download-artifact between jobs)
 #
 # Key differences vs GHA on purpose:
 #   1) We use `resource_class: large` / `xlarge` for test and build jobs.
@@ -27,15 +28,22 @@ version: 2.1
 #      upload-artifact since workspaces stream within the same pipeline).
 #   4) Caching uses `save_cache` / `restore_cache` with a layered key.
 #
+# Shard counts were tuned down (2026-04-21) after observing ~40m wall-clock
+# per pipeline dominated by queue-wait for containers. Free-tier concurrency
+# can only service ~10-15 executors at a time, so halving shard counts cut
+# queue time roughly in half without meaningfully slowing any single shard
+# (each shard just processes ~2x the work it did before).
+#
 # What is NOT implemented in v1 (intentional; call out for follow-ups):
 #   - Path filtering ("only run solver tests if solver changed"). Needs the
 #     circleci/path-filtering orb + a setup workflow. Straightforward to add
 #     once the shape is validated. For now every lane runs on every push.
 #   - sccache. The mozilla-actions/sccache-action variant on GHA uses GH's
-#     server-side cache backend. On CircleCI, sccache typically needs S3 (so
-#     AWS creds) or a plain local+cache-save layout. The cargo registry +
-#     .target cache here already gives most of the win; add sccache-S3 later
-#     if the numbers justify the setup.
+#     server-side cache backend. On CircleCI, sccache local mode would need
+#     save_cache on a 5 GB dir across ~9 jobs per pipeline — that pushes
+#     toward the free plan's data-transfer soft cap. The `.target` cache
+#     already covers the common case (unchanged Cargo.lock). Revisit with
+#     sccache-S3 or a minio side-car later if the numbers justify the setup.
 #   - Cross-platform (macOS) lanes — all jobs here are linux/amd64.
 
 # -----------------------------------------------------------------------------
@@ -239,10 +247,10 @@ jobs:
       - save-cargo-cache:
           prefix: cargo-test
 
-  # ---- Checker tests (4-way sharded — use native parallelism) --------------
+  # ---- Checker tests (2-way sharded — use native parallelism) --------------
   test-checker:
     executor: rust-xl
-    parallelism: 4
+    parallelism: 2
     steps:
       - checkout
       - init-typescript-submodule
@@ -344,8 +352,10 @@ jobs:
           prefix: cargo-wasm
 
   # ---- Build test binaries once (tsz, tsz-conformance) --------------------
+  # Pure-rust after 2026-04-21 — the npm install + `tsc -p scripts/emit` moved
+  # to the `prep-node` singleton, which runs in parallel with this job.
   test-build:
-    executor: rust-node-xl
+    executor: rust-xl
     steps:
       - checkout
       - init-typescript-submodule
@@ -364,22 +374,57 @@ jobs:
       - run:
           name: Verify binaries exist before persisting
           command: ls -l .target/dist-fast/tsz .target/dist-fast/tsz-conformance
-      - run:
-          name: Build emit runner JS
-          command: |
-            cd scripts
-            npm install --silent
-            cd emit
-            npx tsc -p tsconfig.json
       - persist_to_workspace:
           root: .
           paths:
             - .target/dist-fast/tsz
             - .target/dist-fast/tsz-conformance
-            - scripts/emit/dist
-            - scripts/node_modules
       - save-cargo-cache:
           prefix: cargo-testbuild
+
+  # ---- Prep node artifacts once (singleton; parallel to test-build) -------
+  # One-time: installs npm deps, compiles the scripts/emit runner, and builds
+  # the TypeScript fourslash harness (npm ci + tsc -b src/testRunner). Emit
+  # and fourslash fan-out lanes attach the resulting workspace instead of each
+  # doing their own npm install / tsc -b. On a cold-start (package-lock change)
+  # this turns ~2 min × 10 parallel harness builds into ~2 min × 1.
+  prep-node:
+    executor: rust-node
+    steps:
+      - checkout
+      - init-typescript-submodule
+      - restore_cache:
+          keys:
+            - prep-node-v1-{{ checksum "scripts/package-lock.json" }}-{{ checksum "TypeScript/package-lock.json" }}
+            - prep-node-v1-
+      - run:
+          name: Install scripts/ npm deps + build emit runner
+          command: |
+            set -euo pipefail
+            cd scripts
+            npm install --silent
+            cd emit
+            npx tsc -p tsconfig.json
+      - run:
+          name: Build fourslash TypeScript harness (npm ci + tsc -b)
+          command: |
+            # `--prep-only` implies --skip-cargo-build and exits after the
+            # build step; no tsz-server binary needed on this host.
+            ./scripts/fourslash/run-fourslash.sh --prep-only
+      - save_cache:
+          key: prep-node-v1-{{ checksum "scripts/package-lock.json" }}-{{ checksum "TypeScript/package-lock.json" }}
+          paths:
+            - scripts/node_modules
+            - scripts/emit/dist
+            - TypeScript/node_modules
+            - TypeScript/built/local
+      - persist_to_workspace:
+          root: .
+          paths:
+            - scripts/node_modules
+            - scripts/emit/dist
+            - TypeScript/node_modules
+            - TypeScript/built/local
 
   # ---- Build tsz-server (smaller, parallel to test-build) ------------------
   test-build-server:
@@ -399,10 +444,10 @@ jobs:
       - save-cargo-cache:
           prefix: cargo-testbuild-server
 
-  # ---- Conformance (10-way parallelism; ingest prebuilt binaries) ---------
+  # ---- Conformance (5-way parallelism; ingest prebuilt binaries) ----------
   conformance:
     executor: rust-node-xl               # xlarge lets us push workers > 2
-    parallelism: 10
+    parallelism: 5
     steps:
       - checkout
       - init-typescript-submodule
@@ -415,7 +460,8 @@ jobs:
           name: Run conformance shard ${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL}
           command: |
             set -euo pipefail
-            CHUNK=1300
+            # 5 shards × 2600 tests = 13,000 (covers the full suite with headroom).
+            CHUNK=2600
             OFFSET=$(( CIRCLE_NODE_INDEX * CHUNK ))
             mkdir -p .ci-metrics
             TMPOUT=$(mktemp); CLEANOUT=$(mktemp)
@@ -472,9 +518,9 @@ jobs:
               SHARD_COUNT=$((SHARD_COUNT + 1))
               echo "  $(basename "$f"): ${P}/${T}"
             done
-            echo "Received results from ${SHARD_COUNT}/10 shards"
+            echo "Received results from ${SHARD_COUNT}/5 shards"
 
-            [ "$SHARD_COUNT" -ge 8 ] || { echo "::error::too few shards reported"; exit 1; }
+            [ "$SHARD_COUNT" -ge 4 ] || { echo "::error::too few shards reported"; exit 1; }
             [ "$TOTAL_TESTS" -gt 0 ] || { echo "::error::no tests ran"; exit 1; }
 
             RATE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_PASSED / $TOTAL_TESTS) * 100}")
@@ -492,10 +538,10 @@ jobs:
           path: .ci-metrics
           destination: conformance-aggregate
 
-  # ---- Emit (10-way parallelism) ------------------------------------------
+  # ---- Emit (5-way parallelism) -------------------------------------------
   emit:
     executor: rust-node
-    parallelism: 10
+    parallelism: 5
     steps:
       - checkout
       - init-typescript-submodule
@@ -510,7 +556,8 @@ jobs:
             TSZ_BIN: /home/circleci/tsz/.target/dist-fast/tsz
           command: |
             set -euo pipefail
-            CHUNK=1900
+            # 5 shards × 3800 = 19,000 (was 10 × 1900).
+            CHUNK=3800
             OFFSET=$(( CIRCLE_NODE_INDEX * CHUNK ))
             mkdir -p .ci-metrics
             TMPOUT=$(mktemp); CLEANOUT=$(mktemp)
@@ -535,6 +582,8 @@ jobs:
             - .ci-metrics
 
   # ---- Fourslash (10-way parallelism) -------------------------------------
+  # Harness + node_modules come from the `prep-node` workspace, so every
+  # shard skips both the cargo build and the TypeScript harness build.
   fourslash:
     executor: rust-node
     parallelism: 10
@@ -549,10 +598,6 @@ jobs:
             chmod +x .target/dist-fast/tsz-server
             mkdir -p .target/release
             ln -sf "$PWD/.target/dist-fast/tsz-server" .target/release/tsz-server
-      - restore_cache:
-          keys:
-            - fourslash-v1-{{ checksum "scripts/fourslash/package-lock.json" }}-{{ checksum "TypeScript/package-lock.json" }}
-            - fourslash-v1-
       - run:
           name: Run fourslash shard ${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL}
           command: |
@@ -563,6 +608,7 @@ jobs:
 
             ./scripts/fourslash/run-fourslash.sh \
               --skip-cargo-build \
+              --skip-ts-build \
               --shard=${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL} \
               --workers=2 --memory-limit=512 2>&1 | tee "$TMPOUT" || true
             sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
@@ -574,12 +620,6 @@ jobs:
             printf '{"shard":%d,"passed":"%s","total":"%s"}\n' \
               "$CIRCLE_NODE_INDEX" "${PASSED:-0}" "${RAN:-0}" \
               > ".ci-metrics/fourslash-shard-${CIRCLE_NODE_INDEX}.json"
-      - save_cache:
-          key: fourslash-v1-{{ checksum "scripts/fourslash/package-lock.json" }}-{{ checksum "TypeScript/package-lock.json" }}
-          paths:
-            - scripts/fourslash/node_modules
-            - TypeScript/node_modules
-            - TypeScript/built/local
       - persist_to_workspace:
           root: .
           paths:
@@ -602,9 +642,14 @@ workflows:
       - test-root
       - wasm-build
 
-      # Build once, fan out
+      # Build once, fan out.
+      # test-build builds rust binaries; prep-node installs npm deps and
+      # builds the fourslash harness. They run in parallel — conformance
+      # only needs test-build; emit needs both; fourslash needs prep-node
+      # plus test-build-server.
       - test-build
       - test-build-server
+      - prep-node
 
       - conformance:
           requires: [test-build]
@@ -612,7 +657,7 @@ workflows:
           requires: [conformance]
 
       - emit:
-          requires: [test-build]
+          requires: [test-build, prep-node]
 
       - fourslash:
-          requires: [test-build-server]
+          requires: [test-build-server, prep-node]
