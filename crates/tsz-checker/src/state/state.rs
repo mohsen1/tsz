@@ -662,6 +662,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Like `with_options` but skips the per-file `DefinitionStore` build;
+    /// caller MUST install a populated store before use (see
+    /// [`CheckerContext::with_options_deferred_def_store`]).
+    pub fn with_options_deferred_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: &CheckerOptions,
+    ) -> Self {
+        CheckerState {
+            ctx: CheckerContext::with_options_deferred_def_store(
+                arena,
+                binder,
+                types,
+                file_name,
+                compiler_options,
+            ),
+        }
+    }
+
     /// Create a new `CheckerState` with explicit compiler options and a shared `DefinitionStore`.
     ///
     /// This is used in parallel checking to ensure all files share the same `DefId` namespace.

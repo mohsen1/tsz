@@ -508,13 +508,22 @@ fn contains_error_type_recursive(
 }
 
 /// Check if a type contains the `this` type anywhere.
+///
+/// The result is stable per `TypeId` within a single `TypeInterner`, so we
+/// memoize in a project-wide `DashMap` on the interner to avoid the repeated
+/// recursive walk that profiled at ~5% of total CPU on multi-file workloads.
 #[inline]
 pub fn contains_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Fast path: intrinsic types never contain ThisType
     if type_id.is_intrinsic() {
         return false;
     }
-    contains_type_matching(types, type_id, |key| matches!(key, TypeData::ThisType))
+    if let Some(cached) = types.contains_this_type_cached(type_id) {
+        return cached;
+    }
+    let result = contains_type_matching(types, type_id, |key| matches!(key, TypeData::ThisType));
+    types.set_contains_this_type_cache(type_id, result);
+    result
 }
 
 /// Check if a type contains any type matching a predicate.

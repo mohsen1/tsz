@@ -221,6 +221,20 @@ pub trait TypeDatabase {
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         false
     }
+
+    /// Look up a cached `contains_this_type(type_id)` result if available.
+    ///
+    /// Default impl returns `None` (no caching). The primary implementation
+    /// on `TypeInterner` consults a project-wide `DashMap`; the `QueryCache`
+    /// delegate forwards through to the interner so all sharing callers hit
+    /// the same cache.
+    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_this_type(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
 }
 
 impl TypeDatabase for TypeInterner {
@@ -533,6 +547,14 @@ impl TypeDatabase for TypeInterner {
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         Self::is_evaluation_fuel_exhausted(self)
+    }
+
+    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_this_cache.get(&type_id).map(|v| *v)
+    }
+
+    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_this_cache.insert(type_id, result);
     }
 }
 

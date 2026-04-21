@@ -1018,6 +1018,14 @@ impl TypeDatabase for QueryCache<'_> {
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         self.interner.is_evaluation_fuel_exhausted()
     }
+
+    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_this_type_cached(type_id)
+    }
+
+    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_contains_this_type_cache(type_id, result);
+    }
 }
 
 /// Implement `TypeResolver` for `QueryCache` with noop resolution.

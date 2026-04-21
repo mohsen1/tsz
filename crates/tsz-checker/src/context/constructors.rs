@@ -389,6 +389,45 @@ impl<'a> CheckerContext<'a> {
         ctx
     }
 
+    /// Same as [`with_options`], but skips building the per-file
+    /// `DefinitionStore` and the local-cache warm-up.
+    ///
+    /// **Invariant**: the caller MUST install a populated store before use,
+    /// typically via `ProjectEnv::apply_to` (which assigns
+    /// `ctx.definition_store` from a project-wide shared store and then
+    /// runs `warm_local_caches_from_shared_store`). Using the returned
+    /// context without that follow-up yields an empty store and mysterious
+    /// type resolution failures.
+    ///
+    /// This exists because the CLI's parallel checker path always calls
+    /// `apply_to` immediately after construction, which overwrites the
+    /// per-file store with the shared one. Building the per-file store up
+    /// front (`from_semantic_defs` + `warm_local_caches_from_shared_store`
+    /// twice) showed up in profiles as ~8% of total CPU on multi-file
+    /// projects, all of it thrown away.
+    pub fn with_options_deferred_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: &CheckerOptions,
+    ) -> Self {
+        let compiler_options = Self::normalize_options(types, compiler_options.clone(), true);
+        let capabilities =
+            crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
+                &compiler_options,
+                false,
+            );
+        Self::base(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            capabilities,
+        )
+    }
+
     /// Apply `TypeCache` fields to a context, overriding the defaults.
     ///
     /// This centralizes the cache-restoration logic shared by `with_cache`

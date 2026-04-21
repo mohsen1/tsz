@@ -1054,6 +1054,15 @@ pub(super) fn collect_diagnostics(
         let explicit_check_js_false = options.explicit_check_js_false;
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
+        // `TypeCache` is consumed by the emit pipeline (JS or declaration
+        // files). For a pure `--noEmit` run that does not also request
+        // declarations the cache is never read, but extracting one per file
+        // pins several hash maps per file in memory throughout the whole
+        // check — on a 6000-file repo that grew to ~10 GB RSS and got the
+        // process killed by macOS jetsam before any diagnostics emitted.
+        // Skip extraction in that case and let per-file state drop as soon
+        // as checking finishes.
+        let extract_type_cache = !options.no_emit || options.emit_declarations;
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
 
@@ -1099,6 +1108,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            extract_type_cache,
                         };
                         check_file_for_parallel(context)
                     })
@@ -1123,6 +1133,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            extract_type_cache,
                         };
                         check_file_for_parallel(context)
                     })
@@ -1149,19 +1160,22 @@ pub(super) fn collect_diagnostics(
                     explicit_check_js_false,
                     skip_lib_check,
                     program_has_real_syntax_errors,
+                    extract_type_cache,
                 };
                 check_file_for_parallel(context)
             })
             .collect();
 
-        // Aggregate per-file query cache and definition store statistics from the parallel path.
+        // Aggregate per-file query cache statistics. DefinitionStore stats
+        // come from the shared store computed once after the loop (workers
+        // all see the same shared store, so summing per-file was both
+        // wasted work and N× inflated).
         let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
-        let mut parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
                 .expect("type_cache_output mutex poisoned");
-            for (idx, (file_diags, type_cache, file_counters, qc_stats, ds_stats)) in
+            for (idx, (file_diags, type_cache, file_counters, qc_stats, _ds_stats)) in
                 file_results.into_iter().enumerate()
             {
                 diagnostics.extend(file_diags);
@@ -1170,7 +1184,6 @@ pub(super) fn collect_diagnostics(
                 diagnostics.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
                 request_cache_counters.merge(file_counters);
                 parallel_qc_stats.merge(&qc_stats);
-                parallel_ds_stats.merge(&ds_stats);
                 if let Some(tc) = type_cache {
                     let file_path = PathBuf::from(&program.files[file_idx].file_name);
                     tc_out.insert(file_path, tc);
@@ -1178,7 +1191,11 @@ pub(super) fn collect_diagnostics(
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
-        aggregated_ds_stats = Some(parallel_ds_stats);
+        aggregated_ds_stats = project_env
+            .shared_definition_store
+            .as_ref()
+            .map(|store| store.statistics())
+            .or_else(|| Some(tsz_solver::StoreStatistics::default()));
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         let mut sequential_ds_stats = tsz_solver::StoreStatistics::default();
@@ -1790,6 +1807,14 @@ pub(super) struct CheckFileForParallelContext<'a> {
     explicit_check_js_false: bool,
     skip_lib_check: bool,
     program_has_real_syntax_errors: bool,
+    /// When `false`, per-file `TypeCache` extraction is skipped entirely.
+    /// `TypeCache` is used by the emit pipeline (JS / declaration files) and
+    /// by incremental cache reuse. For a `--noEmit` run that does not also
+    /// request `--declaration`, nothing consumes it, and extracting it for
+    /// every one of N files pins several hash maps per file in memory
+    /// throughout the whole check (observed at ~10 GB RSS peak on a
+    /// 6000-file repo). Set this `false` in that case.
+    extract_type_cache: bool,
 }
 
 /// Result of checking a single file for the parallel checking path: diagnostics,
@@ -1826,6 +1851,7 @@ pub(super) fn check_file_for_parallel<'a>(
         explicit_check_js_false,
         skip_lib_check,
         program_has_real_syntax_errors,
+        extract_type_cache,
     } = context;
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
@@ -1856,7 +1882,12 @@ pub(super) fn check_file_for_parallel<'a>(
         .map(|(_, spec)| spec.clone())
         .collect();
 
-    let mut checker = CheckerState::with_options(
+    // apply_to (below) installs the project-wide shared DefinitionStore and
+    // warms the per-file caches from it. Use the deferred constructor so we
+    // don't build a throwaway per-file store first — that work showed up in
+    // profiles as a non-trivial fraction of total CPU on large projects, all
+    // of it overwritten moments later.
+    let mut checker = CheckerState::with_options_deferred_def_store(
         &file.arena,
         &binder,
         &query_cache,
@@ -1866,7 +1897,8 @@ pub(super) fn check_file_for_parallel<'a>(
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
 
-    // Apply all project-level shared state in one call.
+    // Apply all project-level shared state in one call. This installs the
+    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
     project_env.apply_to(&mut checker.ctx);
 
     // Per-file state that varies across files:
@@ -2007,11 +2039,20 @@ pub(super) fn check_file_for_parallel<'a>(
 
     let checker_counters = checker.ctx.request_cache_counters;
     let qc_stats = query_cache.statistics();
-    let ds_stats = checker.ctx.definition_store.statistics();
-    let type_cache = checker.extract_cache();
+    // Skip per-file DefinitionStore statistics: in the parallel path all
+    // checkers share the same store, so every worker would report the same
+    // numbers and the aggregator was summing them N times (both wasted work
+    // and inflated counts). The aggregator computes stats once on the
+    // shared store after the work loop completes.
+    let ds_stats = tsz_solver::StoreStatistics::default();
+    let type_cache = if extract_type_cache {
+        Some(checker.extract_cache())
+    } else {
+        None
+    };
     (
         file_diagnostics,
-        Some(type_cache),
+        type_cache,
         checker_counters,
         qc_stats,
         ds_stats,
