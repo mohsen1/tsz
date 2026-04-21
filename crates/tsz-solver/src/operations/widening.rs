@@ -14,7 +14,7 @@
 //! - **Type parameters**: Never widened
 //! - **Unique symbols**: Never widened
 
-use crate::types::{TypeData, TypeId};
+use crate::types::{ObjectFlags, TypeData, TypeId};
 
 /// Propagate `display_alias` from the original type to the widened type.
 ///
@@ -79,7 +79,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     // still contain widenable data, so they must go through the full path.
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true)
+    widen_type_cached(db, type_id, &mut cache, true, true, false)
 }
 
 /// Widen for diagnostic display: like `widen_type` but preserves boolean
@@ -92,7 +92,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, false, false)
+    widen_type_cached(db, type_id, &mut cache, false, false, false)
 }
 
 /// Widen type for inference resolution: like `widen_type` but does NOT
@@ -106,7 +106,7 @@ pub fn widen_type_for_display(db: &dyn crate::TypeDatabase, type_id: TypeId) -> 
 pub(crate) fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, false)
+    widen_type_cached(db, type_id, &mut cache, true, false, true)
 }
 
 /// Deep-widen a type including inside function/callable signatures.
@@ -145,7 +145,7 @@ pub fn widen_type_deep(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId 
     }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true)
+    widen_type_cached(db, type_id, &mut cache, true, true, false)
 }
 
 fn widen_type_cached(
@@ -154,6 +154,7 @@ fn widen_type_cached(
     cache: &mut rustc_hash::FxHashMap<TypeId, TypeId>,
     widen_boolean_intrinsics: bool,
     widen_functions: bool,
+    widen_object_union_members: bool,
 ) -> TypeId {
     // Fast path: most intrinsic types are never widened, but boolean
     // literal intrinsics (BOOLEAN_TRUE / BOOLEAN_FALSE) must widen to BOOLEAN.
@@ -208,17 +209,69 @@ fn widen_type_cached(
             let is_passthrough_intrinsic = |m: TypeId| -> bool {
                 m == TypeId::UNDEFINED || m == TypeId::NULL || m == TypeId::VOID
             };
+            let is_fresh_object_member = |m: TypeId| -> bool {
+                match db.lookup(m) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => db
+                        .object_shape(shape_id)
+                        .flags
+                        .contains(ObjectFlags::FRESH_LITERAL),
+                    _ => false,
+                }
+            };
+            let is_fresh_object_or_array_member = |m: TypeId| -> bool {
+                match db.lookup(m) {
+                    Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
+                        is_fresh_object_member(m)
+                    }
+                    Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+                    _ => false,
+                }
+            };
             let has_literal = members.iter().any(|&m| is_fresh_member(m));
             let small_fresh_union = has_literal
                 && members.len() <= 3
                 && members
                     .iter()
                     .all(|&m| is_fresh_member(m) || is_passthrough_intrinsic(m));
-            if small_fresh_union {
-                let widened_members: Vec<TypeId> = members
+            let has_fresh_object_or_array_member =
+                members.iter().any(|&m| is_fresh_object_or_array_member(m));
+            if small_fresh_union || (widen_object_union_members && has_fresh_object_or_array_member)
+            {
+                let mut members_to_widen = members.to_vec();
+                if widen_object_union_members {
+                    let fresh_object_members: Vec<TypeId> = members
+                        .iter()
+                        .copied()
+                        .filter(|&member| is_fresh_object_member(member))
+                        .collect();
+                    if let Some(normalized_objects) =
+                        super::expression_ops::normalize_fresh_object_literal_union_members(
+                            db,
+                            &fresh_object_members,
+                        )
+                    {
+                        let mut normalized = normalized_objects.into_iter();
+                        for member in &mut members_to_widen {
+                            if is_fresh_object_member(*member)
+                                && let Some(normalized_member) = normalized.next()
+                            {
+                                *member = normalized_member;
+                            }
+                        }
+                    }
+                }
+
+                let widened_members: Vec<TypeId> = members_to_widen
                     .iter()
                     .map(|&m| {
-                        widen_type_cached(db, m, cache, widen_boolean_intrinsics, widen_functions)
+                        widen_type_cached(
+                            db,
+                            m,
+                            cache,
+                            widen_boolean_intrinsics,
+                            widen_functions,
+                            widen_object_union_members,
+                        )
                     })
                     .collect();
                 let widened = db.union(widened_members);
@@ -234,6 +287,8 @@ fn widen_type_cached(
             let shape = db.object_shape(shape_id);
             let mut new_props = Vec::with_capacity(shape.properties.len());
             let mut changed = false;
+            let strip_fresh_display =
+                widen_object_union_members && shape.flags.contains(ObjectFlags::FRESH_LITERAL);
 
             for prop in &shape.properties {
                 // Rule: Readonly properties are NOT widened
@@ -246,6 +301,7 @@ fn widen_type_cached(
                         cache,
                         widen_boolean_intrinsics,
                         widen_functions,
+                        widen_object_union_members,
                     )
                 };
 
@@ -259,6 +315,7 @@ fn widen_type_cached(
                         cache,
                         widen_boolean_intrinsics,
                         widen_functions,
+                        widen_object_union_members,
                     )
                 };
 
@@ -271,17 +328,22 @@ fn widen_type_cached(
                 new_props.push(new_prop);
             }
 
-            if changed {
+            if changed || strip_fresh_display {
+                let mut flags = shape.flags;
+                if strip_fresh_display {
+                    flags.remove(ObjectFlags::FRESH_LITERAL);
+                }
+
                 let widened_type_id =
-                    // If we have index signatures, we must preserve them using object_with_index
                     if shape.string_index.is_some() || shape.number_index.is_some() {
                         let mut new_shape = (*shape).clone();
                         new_shape.properties = new_props;
+                        new_shape.flags = flags;
                         db.object_with_index(new_shape)
                     } else {
                         // Preserve symbol and flags so named types (interfaces,
                         // classes) retain their identity through widening.
-                        db.object_with_flags_and_symbol(new_props, shape.flags, shape.symbol)
+                        db.object_with_flags_and_symbol(new_props, flags, shape.symbol)
                     };
 
                 // Carry forward display properties from the original TypeId.
@@ -304,6 +366,7 @@ fn widen_type_cached(
                 cache,
                 widen_boolean_intrinsics,
                 widen_functions,
+                widen_object_union_members,
             );
             if widened != element_type {
                 let widened_arr = db.array(widened);
@@ -326,6 +389,7 @@ fn widen_type_cached(
                     cache,
                     widen_boolean_intrinsics,
                     widen_functions,
+                    widen_object_union_members,
                 );
                 if widened != elem.type_id {
                     changed = true;
@@ -359,6 +423,7 @@ fn widen_type_cached(
                         cache,
                         widen_boolean_intrinsics,
                         widen_functions,
+                        widen_object_union_members,
                     );
                     if widened.type_id != param.type_id {
                         changed = true;
@@ -373,6 +438,7 @@ fn widen_type_cached(
                     cache,
                     widen_boolean_intrinsics,
                     widen_functions,
+                    widen_object_union_members,
                 );
                 if widened != this_ty {
                     changed = true;
@@ -385,6 +451,7 @@ fn widen_type_cached(
                 cache,
                 widen_boolean_intrinsics,
                 widen_functions,
+                widen_object_union_members,
             );
             if widened_return != widened_shape.return_type {
                 changed = true;
@@ -421,6 +488,7 @@ fn widen_type_cached(
                                 cache,
                                 widen_boolean_intrinsics,
                                 widen_functions,
+                                widen_object_union_members,
                             );
                             if widened.type_id != param.type_id {
                                 changed = true;
@@ -435,6 +503,7 @@ fn widen_type_cached(
                             cache,
                             widen_boolean_intrinsics,
                             widen_functions,
+                            widen_object_union_members,
                         );
                         if widened != this_ty {
                             changed = true;
@@ -447,6 +516,7 @@ fn widen_type_cached(
                         cache,
                         widen_boolean_intrinsics,
                         widen_functions,
+                        widen_object_union_members,
                     );
                     if widened_return != widened_sig.return_type {
                         changed = true;
