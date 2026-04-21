@@ -1686,6 +1686,13 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
+        if let Some(target_count) =
+            crate::query_boundaries::common::get_fixed_tuple_length(self.ctx.types, param_type)
+            && arr.elements.nodes.len() > target_count
+        {
+            return false;
+        }
+
         let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             param_type,
