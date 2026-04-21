@@ -21,15 +21,3 @@ tsz is compiled with `--profile dist` (LTO enabled, single codegen unit). tsgo i
 ## Category Breakdown
 
 {{ benchmark_charts | safe }}
-
-## Running Benchmarks Locally
-
-To generate benchmark data yourself:
-
-```
-./scripts/bench/bench-vs-tsgo.sh --json
-```
-
-This produces a JSON file in `artifacts/` that the website build script uses to generate charts. Use `--quick` for faster results with fewer iterations.
-
-See [bench-vs-tsgo.sh](https://github.com/mohsen1/tsz/blob/main/scripts/bench/bench-vs-tsgo.sh) for full usage.

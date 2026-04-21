@@ -229,14 +229,16 @@ impl<'a> Completions<'a> {
         // 3. Contextual string-literal completions for call arguments.
         // This path intentionally runs before no-completion suppression, because
         // ordinary string literals are suppressed by default.
-        if self.interner.is_some()
+        if !self.is_member_context(offset)
+            && self.interner.is_some()
             && self.file_name.is_some()
             && let Some(items) =
                 self.get_string_literal_completions(node_idx, offset, type_cache.as_deref_mut())
         {
             return if items.is_empty() { None } else { Some(items) };
         }
-        if self.interner.is_some()
+        if !self.is_member_context(offset)
+            && self.interner.is_some()
             && self.file_name.is_some()
             && let Some(items) = self.get_contextual_string_literal_completions(
                 node_idx,
@@ -1094,6 +1096,32 @@ impl<'a> Completions<'a> {
 
             let ext = self.arena.get_extended(current)?;
             current = ext.parent;
+        }
+
+        if self.is_member_context(offset) && offset >= 2 {
+            let mut current = crate::utils::find_node_at_offset(self.arena, offset - 2);
+            let mut best = None;
+
+            while current.is_some() {
+                let Some(node) = self.arena.get(current) else {
+                    break;
+                };
+                if node.end == offset - 1 {
+                    best = Some(current);
+                }
+
+                let Some(ext) = self.arena.get_extended(current) else {
+                    break;
+                };
+                if ext.parent == current {
+                    break;
+                }
+                current = ext.parent;
+            }
+
+            if best.is_some() {
+                return best;
+            }
         }
 
         None
