@@ -856,7 +856,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::union_members(self.ctx.types, param_type).is_some();
 
         // Normalize optional/nullish wrappers (e.g., `{...} | undefined`).
-        let effective_param_type = if let (Some(non_nullish), Some(_nullish_cause)) =
+        let mut effective_param_type = if let (Some(non_nullish), Some(_nullish_cause)) =
             self.split_nullish_type(param_type)
         {
             non_nullish
@@ -888,6 +888,33 @@ impl<'a> CheckerState<'a> {
             Some(obj) => obj.clone(),
             None => return false,
         };
+
+        let resolved_param_type = self.resolve_type_for_property_access(effective_param_type);
+        let evaluated_param_type = self.judge_evaluate(resolved_param_type);
+        let contextual_param_type = self.evaluate_contextual_type(effective_param_type);
+        let lazy_resolved_param_type = self.resolve_lazy_type(effective_param_type);
+        let lazy_evaluated_param_type = self.evaluate_contextual_type(lazy_resolved_param_type);
+        let assignability_param_type = self.evaluate_type_for_assignability(effective_param_type);
+        let lazy_member_param_type = self.resolve_lazy_members_in_union(assignability_param_type);
+        for candidate in [
+            effective_param_type,
+            contextual_param_type,
+            evaluated_param_type,
+            resolved_param_type,
+            lazy_resolved_param_type,
+            lazy_evaluated_param_type,
+            assignability_param_type,
+            lazy_member_param_type,
+        ] {
+            let narrowed = self.narrow_contextual_union_via_object_literal_discriminants(
+                candidate,
+                &obj.elements.nodes,
+            );
+            if narrowed != candidate {
+                effective_param_type = narrowed;
+                break;
+            }
+        }
 
         // When the source object literal is missing required properties from the
         // target, don't elaborate into per-property TS2322 errors. tsc reports

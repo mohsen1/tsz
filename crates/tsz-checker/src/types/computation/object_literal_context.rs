@@ -1351,19 +1351,46 @@ impl<'a> CheckerState<'a> {
             return ctx_type;
         }
 
+        unit_discriminants.retain(|(prop_name, _)| {
+            let mut unit_member_count = 0;
+            for &member in &members {
+                let lazy_member = self.resolve_lazy_type(member);
+                let resolved_member = self.resolve_type_for_property_access(lazy_member);
+                let evaluated_member = self.evaluate_contextual_type(resolved_member);
+                let member_candidates = [evaluated_member, resolved_member, lazy_member, member];
+                let member_prop_type = member_candidates.iter().find_map(|&candidate| {
+                    self.ctx
+                        .types
+                        .contextual_property_type(candidate, prop_name)
+                });
+                let Some(member_prop_type) = member_prop_type else {
+                    continue;
+                };
+                if !crate::query_boundaries::common::is_unit_type(self.ctx.types, member_prop_type)
+                {
+                    return false;
+                }
+                unit_member_count += 1;
+            }
+            unit_member_count >= 2
+        });
+
         // For each union member, check if all discriminant values are compatible
         // AND no present property maps to `never` in that member.
         let mut matching_members: Vec<TypeId> = Vec::new();
         for &member in &members {
-            let resolved_member = self.resolve_type_for_property_access(member);
+            let lazy_member = self.resolve_lazy_type(member);
+            let resolved_member = self.resolve_type_for_property_access(lazy_member);
+            let evaluated_member = self.evaluate_contextual_type(resolved_member);
+            let member_candidates = [evaluated_member, resolved_member, lazy_member, member];
 
             // Check unit-type discriminants: literal must be subtype of member's prop type.
             let unit_match = unit_discriminants.iter().all(|(prop_name, lit_type)| {
-                let member_prop_type = self
-                    .ctx
-                    .types
-                    .contextual_property_type(resolved_member, prop_name)
-                    .or_else(|| self.ctx.types.contextual_property_type(member, prop_name));
+                let member_prop_type = member_candidates.iter().find_map(|&candidate| {
+                    self.ctx
+                        .types
+                        .contextual_property_type(candidate, prop_name)
+                });
                 match member_prop_type {
                     Some(target_type) => {
                         if *lit_type == target_type || self.is_subtype_of(*lit_type, target_type) {
@@ -1377,13 +1404,14 @@ impl<'a> CheckerState<'a> {
                         // properties).
                         if *lit_type == TypeId::UNDEFINED {
                             let prop_name_atom = self.ctx.types.intern_string(prop_name);
-                            let is_optional =
+                            let is_optional = member_candidates.iter().any(|&candidate| {
                                 crate::query_boundaries::common::find_property_in_object(
                                     self.ctx.types,
-                                    resolved_member,
+                                    candidate,
                                     prop_name_atom,
                                 )
-                                .is_some_and(|p| p.optional);
+                                .is_some_and(|p| p.optional)
+                            });
                             if is_optional {
                                 return true;
                             }
@@ -1403,11 +1431,13 @@ impl<'a> CheckerState<'a> {
             let never_match = present_property_names.iter().all(|prop_name| {
                 let prop_name_atom = self.ctx.types.intern_string(prop_name);
                 // Look up the raw property type from the member's object shape.
-                let raw_prop_type = crate::query_boundaries::common::raw_property_type(
-                    self.ctx.types,
-                    resolved_member,
-                    prop_name_atom,
-                );
+                let raw_prop_type = member_candidates.iter().find_map(|&candidate| {
+                    crate::query_boundaries::common::raw_property_type(
+                        self.ctx.types,
+                        candidate,
+                        prop_name_atom,
+                    )
+                });
                 match raw_prop_type {
                     Some(type_id) => type_id != TypeId::NEVER,
                     // Property not in object shape; don't eliminate.
@@ -1423,12 +1453,16 @@ impl<'a> CheckerState<'a> {
             //   type A = { disc: true; cb: (x: string) => void }
             //   type B = { disc?: false; cb: (x: number) => void }
             //   f({ cb: n => ... })  // disc is required in A but optional in B
-            let absent_required_match = {
+            let absent_required_match = if unit_discriminants.is_empty() {
+                true
+            } else {
                 let mut ok = true;
-                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-                    self.ctx.types,
-                    resolved_member,
-                ) {
+                if let Some(shape) = member_candidates.iter().find_map(|&candidate| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        candidate,
+                    )
+                }) {
                     for prop in &shape.properties {
                         if prop.optional {
                             continue;
@@ -1444,13 +1478,18 @@ impl<'a> CheckerState<'a> {
                             if other == member {
                                 return false;
                             }
-                            let resolved_other = self.resolve_type_for_property_access(other);
-                            let other_prop =
+                            let lazy_other = self.resolve_lazy_type(other);
+                            let resolved_other = self.resolve_type_for_property_access(lazy_other);
+                            let evaluated_other = self.evaluate_contextual_type(resolved_other);
+                            let other_candidates =
+                                [evaluated_other, resolved_other, lazy_other, other];
+                            let other_prop = other_candidates.iter().find_map(|&candidate| {
                                 crate::query_boundaries::common::find_property_in_object(
                                     self.ctx.types,
-                                    resolved_other,
+                                    candidate,
                                     prop.name,
-                                );
+                                )
+                            });
                             match other_prop {
                                 None => true,          // other member doesn't have it at all
                                 Some(p) => p.optional, // other member has it as optional
