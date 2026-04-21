@@ -974,3 +974,19 @@ fn estimated_size_bytes_grows_with_content() {
         "estimated_size_bytes should grow after interning strings: {before} -> {after}"
     );
 }
+
+#[test]
+fn common_strings_has_no_duplicates() {
+    use std::collections::HashSet;
+    let mut seen: HashSet<&'static str> = HashSet::new();
+    let mut dupes: Vec<&'static str> = Vec::new();
+    for &s in super::COMMON_STRINGS {
+        if !seen.insert(s) {
+            dupes.push(s);
+        }
+    }
+    assert!(
+        dupes.is_empty(),
+        "COMMON_STRINGS contains duplicate entries: {dupes:?}"
+    );
+}
