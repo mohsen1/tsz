@@ -324,6 +324,20 @@ impl<'a> CheckerState<'a> {
         file = self.ctx.file_name.as_str(),
         "compute_type_of_symbol: resolved symbol"
         );
+        if (flags & symbol_flags::ALIAS) != 0
+            && let Some(ref module_spec) = import_module
+            && let Some(imported_name) = import_name.as_deref()
+            && imported_name != "*"
+            && imported_name != "default"
+            && let Some(js_export_type) = self.resolve_js_export_named_type(
+                module_spec,
+                imported_name,
+                Some(self.ctx.current_file_idx),
+            )
+        {
+            return (js_export_type, Vec::new());
+        }
+
         // Export-value wrapper symbols should delegate to their wrapped declaration symbol.
         // This preserves the actual value type for `export var` / `export function` members
         // instead of falling back to implicit `any`.

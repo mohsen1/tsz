@@ -11,6 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -128,6 +129,62 @@ fn check_commonjs_single_file(file_name: &str, source: &str) -> Vec<(u32, String
         .ctx
         .diagnostics
         .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn check_named_files_entry(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = file_names
+        .iter()
+        .position(|name| name == entry_file)
+        .expect("entry file should exist");
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        options,
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker.ctx.set_resolved_modules(resolved_modules);
+
+    checker.check_source_file(roots[entry_idx]);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
@@ -399,6 +456,50 @@ lib.b;
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for valid module.exports properties, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_module_exports_object_literal_member_conflicts_with_module_augmentation() {
+    let files = [
+        (
+            "/test.js",
+            r#"module.exports = {
+  a: "ok"
+};"#,
+        ),
+        (
+            "/index.ts",
+            r#"import { a } from "./test";
+
+declare module "./test" {
+  export const a: number;
+}
+
+const n: number = a;"#,
+        ),
+    ];
+    let diagnostics = check_named_files_entry(
+        &files,
+        "/index.ts",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_lib: true,
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2300 && message.contains("Duplicate identifier 'a'")
+        }),
+        "Expected TS2300 for module augmentation colliding with CommonJS object export, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected imported `a` to keep the JS object export type, got: {diagnostics:#?}"
     );
 }
 

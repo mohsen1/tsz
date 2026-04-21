@@ -1566,7 +1566,7 @@ impl<'a> CheckerState<'a> {
                     (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                 }
             });
-            let has_remote_block_scoped_alias_conflict =
+            let remote_alias_conflict =
                 declarations.iter().any(|(_, flags, is_local, _, origin)| {
                     !*is_local
                         && *origin == DuplicateDeclarationOrigin::GlobalScopeConflict
@@ -1578,6 +1578,7 @@ impl<'a> CheckerState<'a> {
 
             let has_remote_declaration =
                 declarations.iter().any(|(_, _, is_local, _, _)| !*is_local);
+            let force2300 = remote_alias_conflict || self.has_targeted_aug(&declarations);
             let has_enum_conflict = if has_remote_declaration {
                 declarations.iter().any(|(_, flags, _, _, _)| {
                     (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
@@ -1628,8 +1629,7 @@ impl<'a> CheckerState<'a> {
             // TS2323: Check exported variable conflict using symbol.is_exported
             let has_exported_variable_conflict = symbol.is_exported && has_variable_conflict;
 
-            let (message, code) = if (!has_non_block_scoped
-                && !has_remote_block_scoped_alias_conflict)
+            let (message, code) = if !has_non_block_scoped && !force2300
                 || has_umd_global_value_conflict
             {
                 (
@@ -1643,7 +1643,7 @@ impl<'a> CheckerState<'a> {
                 && has_variable_conflict
                 && !has_non_variable_conflict
                 && !has_accessor_conflict
-                && !has_remote_block_scoped_alias_conflict
+                && !force2300
             {
                 (
                     format_message(
@@ -1688,7 +1688,7 @@ impl<'a> CheckerState<'a> {
                     // Cross-file mixed conflicts generally use TS2451, except for
                     // synthetic default-import alias collisions where tsc reports
                     // TS2300 (for example impliedNodeFormatInterop1.ts).
-                    !has_remote_block_scoped_alias_conflict
+                    !force2300
                 } else if has_block_scoped_conflict && has_function_conflict {
                     // When a function declaration conflicts with a block-scoped
                     // variable (let/const) at the same scope, tsc uses TS2300.
@@ -1823,7 +1823,7 @@ impl<'a> CheckerState<'a> {
             // the same name (e.g. allowImportClausesToMergeWithTypes.ts),
             // don't produce a false TS2300 at the `default` export site.
             if code == diagnostic_codes::DUPLICATE_IDENTIFIER
-                && has_remote_block_scoped_alias_conflict
+                && remote_alias_conflict
                 && self.is_js_file()
                 && self.ctx.should_resolve_jsdoc()
                 && let Some(default_export_ident) =

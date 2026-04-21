@@ -1552,6 +1552,18 @@ impl<'a> CheckerState<'a> {
                     return (TypeId::ANY, Vec::new());
                 }
 
+                // CommonJS object-literal/property exports are the concrete runtime
+                // export surface. A module augmentation may introduce a duplicate
+                // symbol with the same name, but it must not replace the JS export's
+                // value type.
+                if let Some(result) = self.resolve_js_export_named_type(
+                    module_name,
+                    export_name,
+                    Some(self.ctx.current_file_idx),
+                ) {
+                    return (result, Vec::new());
+                }
+
                 // First, try local binder's module_exports
                 let cross_file_result = self.resolve_cross_file_export(module_name, export_name);
                 let export_sym_id = cross_file_result
@@ -1652,15 +1664,6 @@ impl<'a> CheckerState<'a> {
                     if should_cache_on_export_symbol {
                         self.ctx.symbol_types.insert(export_sym_id, result);
                     }
-                    return (result, Vec::new());
-                }
-
-                // Use the unified JS export surface for CommonJS named export lookup.
-                if let Some(result) = self.resolve_js_export_named_type(
-                    module_name,
-                    export_name,
-                    Some(self.ctx.current_file_idx),
-                ) {
                     return (result, Vec::new());
                 }
 
