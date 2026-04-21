@@ -2,6 +2,7 @@
 //! type syntax, declarations, class syntax, statements, and error recovery.
 
 use crate::parser::node::NodeArena;
+use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
 use crate::parser::{NodeIndex, ParserState};
 use tsz_common::diagnostics::diagnostic_codes;
@@ -2647,6 +2648,31 @@ fn super_type_arguments_report_parser_error_and_recover_to_call() {
     );
     let callee_node = arena.get(call.expression).expect("callee");
     assert_eq!(callee_node.kind, SyntaxKind::SuperKeyword as u16);
+}
+
+#[test]
+fn accessor_children_include_body_once() {
+    let source = "class C { get x() { return 1; } }";
+    let (parser, root) = parse_source(source);
+    assert_no_errors(&parser, "class accessor");
+
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let accessor_idx = class.members.nodes[0];
+    let accessor_node = arena.get(accessor_idx).expect("accessor");
+    let accessor = arena.get_accessor(accessor_node).expect("accessor data");
+
+    let children = arena.get_children(accessor_idx);
+    assert_eq!(
+        children
+            .iter()
+            .filter(|&&child| child == accessor.body)
+            .count(),
+        1,
+        "accessor body should appear exactly once in traversal children"
+    );
 }
 
 #[test]
