@@ -986,6 +986,21 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         );
     }
 
+    fn report_unreachable_code_at_terminating_iife_body(&mut self, node_idx: NodeIndex) -> bool {
+        if self.ctx.compiler_options.allow_unreachable_code != Some(false) {
+            return false;
+        }
+        let Some(anchor) = self.terminating_iife_unreachable_anchor(node_idx) else {
+            return false;
+        };
+        self.error_at_node(
+            anchor,
+            crate::diagnostics::diagnostic_messages::UNREACHABLE_CODE_DETECTED,
+            crate::diagnostics::diagnostic_codes::UNREACHABLE_CODE_DETECTED,
+        );
+        true
+    }
+
     fn enter_iteration_statement(&mut self) {
         self.ctx.iteration_depth += 1;
     }
