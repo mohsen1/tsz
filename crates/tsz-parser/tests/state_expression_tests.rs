@@ -104,6 +104,41 @@ abstract class C1 {
 }
 
 #[test]
+fn malformed_equality_tail_in_parens_does_not_emit_close_paren_cascade() {
+    let (parser, _root) = parse_source("export = } x = ( y = z ==== 'function') {");
+    let diags = parser.get_diagnostics();
+
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED && diag.start == 9),
+        "expected TS1109 at the invalid export-assignment expression, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED && diag.start == 26),
+        "expected TS1109 at the stray equality token, got {diags:?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == 28
+                && diag.message == "')' expected."),
+        "should suppress the cascading missing-paren diagnostic at the string literal, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == 38
+                && diag.message == "';' expected."),
+        "expected statement recovery to report the missing semicolon at the close paren, got {diags:?}"
+    );
+}
+
+#[test]
 fn type_predicate_assertions_report_syntax_errors_instead_of_parsing_as_types() {
     let (parser, _root) = parse_source(
         r#"
