@@ -150,7 +150,6 @@ const COMMON_STRINGS: &[&str] = &[
     "console",
     "log",
     "warn",
-    "error",
     "info",
     "debug",
     "document",
