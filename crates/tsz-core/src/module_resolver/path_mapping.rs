@@ -42,6 +42,13 @@ impl ModuleResolver {
                     let candidate = base.join(&substituted);
 
                     if let Some(resolved) = self.try_file_or_directory(&candidate) {
+                        // `candidate` has no extension here (we skipped
+                        // targets that already did on line 34), so classify
+                        // on the resolved path instead — otherwise the
+                        // extension is always `Unknown`, which desyncs path-
+                        // mapping-resolved modules from every other resolver
+                        // exit that sets this from the resolved file.
+                        let extension = ModuleExtension::from_path(&resolved);
                         return PathMappingAttempt {
                             resolved: Some(ResolvedModule {
                                 resolved_path: resolved,
@@ -49,7 +56,7 @@ impl ModuleResolver {
                                 is_external: false,
                                 package_name: None,
                                 original_specifier: specifier.to_string(),
-                                extension: ModuleExtension::from_path(&candidate),
+                                extension,
                             }),
                             attempted,
                         };

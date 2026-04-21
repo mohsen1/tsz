@@ -3643,6 +3643,49 @@ fn test_lookup_path_mapping_failure_produces_ts2307_via_lookup() {
 }
 
 #[test]
+fn test_path_mapping_extension_reflects_resolved_file() {
+    // Regression: path-mapping previously classified the resolved module's
+    // extension from the pre-resolution candidate (which always has no
+    // extension at this point — targets with extensions are filtered
+    // earlier). That made every path-mapping-resolved module carry
+    // `ModuleExtension::Unknown` instead of the real `.ts` / `.d.ts` / etc.,
+    // drifting from every other resolver exit (relative, node_modules,
+    // exports, self-reference) which uses the resolved path. The fix
+    // classifies on the resolved path.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_path_mapping_ext_regression");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(dir.join("src/index.ts"), "import '@app/widget';").unwrap();
+    fs::write(dir.join("src/widget.ts"), "export const w = 1;").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        base_url: Some(dir.clone()),
+        paths: Some(vec![PathMapping {
+            pattern: "@app/*".to_string(),
+            prefix: "@app/".to_string(),
+            suffix: String::new(),
+            targets: vec!["src/*".to_string()],
+        }]),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let result = resolver.resolve("@app/widget", &dir.join("src/index.ts"), Span::new(8, 20));
+
+    let module = result.expect("path mapping should resolve @app/widget to src/widget.ts");
+    assert_eq!(module.resolved_path, dir.join("src/widget.ts"));
+    assert_eq!(
+        module.extension,
+        ModuleExtension::Ts,
+        "path-mapping must classify extension from the resolved file, not the extensionless candidate"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_lookup_fallback_rescues_not_found() {
     // When primary resolution fails but fallback succeeds, lookup() should
     // return resolved with no error.
