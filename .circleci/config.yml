@@ -52,10 +52,15 @@ executors:
       - image: cimg/rust:1.90
     resource_class: large              # 4 vCPU / 8 GB — fine for foundation
     working_directory: ~/tsz
+  # xlarge/2xlarge require a paid plan tier; current account hits a resource
+  # authorization failure ("Task information unavailable"/canceled) when
+  # xlarge is requested, so we alias both heavy executors to `large` for now.
+  # Re-introduce xlarge here once the plan allows it — that's where the real
+  # wall-clock wins live (more cores for compile + higher RAM for conformance).
   rust-xl:
     docker:
       - image: cimg/rust:1.90
-    resource_class: xlarge             # 8 vCPU / 16 GB — solver/checker build
+    resource_class: large
     working_directory: ~/tsz
   rust-node:
     docker:
@@ -65,7 +70,7 @@ executors:
   rust-node-xl:
     docker:
       - image: cimg/rust:1.90-node
-    resource_class: xlarge
+    resource_class: large
     working_directory: ~/tsz
 
 # -----------------------------------------------------------------------------
@@ -406,12 +411,13 @@ jobs:
             TMPOUT=$(mktemp); CLEANOUT=$(mktemp)
             trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
 
-            # With 16 GB RAM we can raise workers and per-worker RSS.
+            # `large` runner = 8 GB RAM; match the GHA settings (workers=2,
+            # per-worker RSS=1024) until xlarge is unlocked on the plan.
             .target/dist-fast/tsz-conformance \
               --offset "$OFFSET" --max "$CHUNK" \
-              --workers 4 --timeout 30 \
-              --max-compilations-per-worker 75 \
-              --max-worker-rss-mb 2048 \
+              --workers 2 --timeout 30 \
+              --max-compilations-per-worker 50 \
+              --max-worker-rss-mb 1024 \
               --cache-file scripts/conformance/tsc-cache-full.json \
               --print-test \
               2>&1 | tee "$TMPOUT" || true
@@ -548,7 +554,7 @@ jobs:
             ./scripts/fourslash/run-fourslash.sh \
               --skip-cargo-build \
               --shard=${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL} \
-              --workers=4 --memory-limit=1024 2>&1 | tee "$TMPOUT" || true
+              --workers=2 --memory-limit=512 2>&1 | tee "$TMPOUT" || true
             sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
             RESULTS_LINE=$(grep "^Results:" "$CLEANOUT" | tail -1 || true)

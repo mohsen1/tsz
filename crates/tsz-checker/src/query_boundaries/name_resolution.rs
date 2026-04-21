@@ -701,16 +701,14 @@ impl<'a> CheckerState<'a> {
                         &failure.suggestions,
                         request.idx,
                     );
+                } else if matches!(request.kind, NameLookupKind::Type) {
+                    self.error_at_node_msg(
+                        request.idx,
+                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        &[request.name],
+                    );
                 } else {
-                    if matches!(request.kind, NameLookupKind::Type) {
-                        self.error_at_node_msg(
-                            request.idx,
-                            crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
-                            &[request.name],
-                        );
-                    } else {
-                        self.error_cannot_find_name_at(request.name, request.idx);
-                    }
+                    self.error_cannot_find_name_at(request.name, request.idx);
                 }
             }
             ResolutionFailureKind::WrongMeaning { actual_meaning, .. } => {

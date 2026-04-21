@@ -328,22 +328,20 @@ impl<'a> CheckerState<'a> {
                     evaluated_type,
                     self.ctx.compiler_options.no_implicit_any,
                 ))
+            } else if is_closure {
+                self.jsdoc_callable_type_annotation_for_node(idx)
+                    .map(|evaluated_type| {
+                        contextual_signature_type_params =
+                            self.contextual_type_params_from_expected(evaluated_type);
+                        has_jsdoc_type_function = true;
+                        ContextualTypeContext::with_expected_and_options(
+                            self.ctx.types,
+                            evaluated_type,
+                            self.ctx.compiler_options.no_implicit_any,
+                        )
+                    })
             } else {
-                if is_closure {
-                    self.jsdoc_callable_type_annotation_for_node(idx)
-                        .map(|evaluated_type| {
-                            contextual_signature_type_params =
-                                self.contextual_type_params_from_expected(evaluated_type);
-                            has_jsdoc_type_function = true;
-                            ContextualTypeContext::with_expected_and_options(
-                                self.ctx.types,
-                                evaluated_type,
-                                self.ctx.compiler_options.no_implicit_any,
-                            )
-                        })
-                } else {
-                    None
-                }
+                None
             }
         } else {
             None
