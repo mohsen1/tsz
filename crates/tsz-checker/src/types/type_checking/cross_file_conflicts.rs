@@ -415,6 +415,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+
+        self.check_target_file_commonjs_object_exports_conflicting_with_module_augmentations();
     }
 
     fn target_file_has_direct_export_named(&self, file_idx: usize, export_name: &str) -> bool {

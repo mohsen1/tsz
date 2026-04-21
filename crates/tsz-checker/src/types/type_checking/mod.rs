@@ -10,11 +10,13 @@
 //! - `type_alias_checking` — type alias declaration checking, type node validation
 //! - `unused` — unused variable/parameter detection
 
+mod commonjs_object_exports;
 mod core;
 mod core_statement_checks;
 mod cross_file_conflicts;
 mod declarations;
 mod declarations_utils;
+mod duplicate_identifier_conflict_kinds;
 mod duplicate_identifiers;
 mod duplicate_identifiers_constructor;
 mod duplicate_identifiers_helpers;

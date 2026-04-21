@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
                 if !std::ptr::eq(arena, self.ctx.arena) {
                     continue;
                 }
-                if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&augmentation.node.0) {
+                if let Some(sym_id) = self.local_augmentation_decl_symbol_id(augmentation.node) {
                     symbol_ids.insert(sym_id);
                 }
             }
@@ -35,7 +35,7 @@ impl<'a> CheckerState<'a> {
                 if !std::ptr::eq(arena, self.ctx.arena) {
                     continue;
                 }
-                if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&augmentation.node.0) {
+                if let Some(sym_id) = self.local_augmentation_decl_symbol_id(augmentation.node) {
                     symbol_ids.insert(sym_id);
                 }
             }
@@ -382,7 +382,7 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> Vec<(NodeIndex, u32, bool)> {
         let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
-            return Vec::new();
+            return self.commonjs_object_literal_export_declarations_in_file(file_idx, name);
         };
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         let file_name = arena
@@ -533,10 +533,14 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                if declarations.is_empty() {
+                    return self
+                        .commonjs_object_literal_export_declarations_in_file(file_idx, name);
+                }
                 return declarations;
             }
 
-            return Vec::new();
+            return self.commonjs_object_literal_export_declarations_in_file(file_idx, name);
         };
         let Some(symbol) = binder.get_symbol(sym_id) else {
             return Vec::new();
@@ -667,6 +671,10 @@ impl<'a> CheckerState<'a> {
             }
 
             return merged;
+        }
+
+        if declarations.is_empty() {
+            return self.commonjs_object_literal_export_declarations_in_file(file_idx, name);
         }
 
         declarations
