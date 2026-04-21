@@ -1137,14 +1137,16 @@ pub(super) fn collect_diagnostics(
             })
             .collect();
 
-        // Aggregate per-file query cache and definition store statistics from the parallel path.
+        // Aggregate per-file query cache statistics. DefinitionStore stats
+        // come from the shared store computed once after the loop (workers
+        // all see the same shared store, so summing per-file was both
+        // wasted work and N× inflated).
         let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
-        let mut parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
                 .expect("type_cache_output mutex poisoned");
-            for (idx, (file_diags, type_cache, file_counters, qc_stats, ds_stats)) in
+            for (idx, (file_diags, type_cache, file_counters, qc_stats, _ds_stats)) in
                 file_results.into_iter().enumerate()
             {
                 diagnostics.extend(file_diags);
@@ -1153,7 +1155,6 @@ pub(super) fn collect_diagnostics(
                 diagnostics.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
                 request_cache_counters.merge(file_counters);
                 parallel_qc_stats.merge(&qc_stats);
-                parallel_ds_stats.merge(&ds_stats);
                 if let Some(tc) = type_cache {
                     let file_path = PathBuf::from(&program.files[file_idx].file_name);
                     tc_out.insert(file_path, tc);
@@ -1161,7 +1162,11 @@ pub(super) fn collect_diagnostics(
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
-        aggregated_ds_stats = Some(parallel_ds_stats);
+        aggregated_ds_stats = project_env
+            .shared_definition_store
+            .as_ref()
+            .map(|store| store.statistics())
+            .or_else(|| Some(tsz_solver::StoreStatistics::default()));
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         let mut sequential_ds_stats = tsz_solver::StoreStatistics::default();
@@ -1996,7 +2001,12 @@ pub(super) fn check_file_for_parallel<'a>(
 
     let checker_counters = checker.ctx.request_cache_counters;
     let qc_stats = query_cache.statistics();
-    let ds_stats = checker.ctx.definition_store.statistics();
+    // Skip per-file DefinitionStore statistics: in the parallel path all
+    // checkers share the same store, so every worker would report the same
+    // numbers and the aggregator was summing them N times (both wasted work
+    // and inflated counts). The aggregator computes stats once on the
+    // shared store after the work loop completes.
+    let ds_stats = tsz_solver::StoreStatistics::default();
     let type_cache = checker.extract_cache();
     (
         file_diagnostics,
