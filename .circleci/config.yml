@@ -45,24 +45,26 @@ version: 2.1
 # tools. `-node` variant also has Node.js, which the emit/fourslash lanes
 # need for their JS harnesses.
 executors:
+  # Workspace uses edition = "2024" (stable since Rust 1.85); pin to a
+  # version comfortably past that so cargo can parse the manifest.
   rust:
     docker:
-      - image: cimg/rust:1.84
+      - image: cimg/rust:1.90
     resource_class: large              # 4 vCPU / 8 GB — fine for foundation
     working_directory: ~/tsz
   rust-xl:
     docker:
-      - image: cimg/rust:1.84
+      - image: cimg/rust:1.90
     resource_class: xlarge             # 8 vCPU / 16 GB — solver/checker build
     working_directory: ~/tsz
   rust-node:
     docker:
-      - image: cimg/rust:1.84-node
+      - image: cimg/rust:1.90-node
     resource_class: large
     working_directory: ~/tsz
   rust-node-xl:
     docker:
-      - image: cimg/rust:1.84-node
+      - image: cimg/rust:1.90-node
     resource_class: xlarge
     working_directory: ~/tsz
 
