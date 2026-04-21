@@ -1621,7 +1621,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check named re-exports
-        if let Some(file_reexports) = target_binder.reexports.get(&target_file_name)
+        if let Some(file_reexports) = self
+            .ctx
+            .reexports_for_file(target_binder, &target_file_name)
             && let Some((source_module, original_name)) = file_reexports.get(export_name)
         {
             let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
@@ -1637,10 +1639,13 @@ impl<'a> CheckerState<'a> {
         // Two-pass approach: first check if any non-type-only wildcard provides
         // a value binding for the name (which overrides type-only from other
         // wildcards), then check type-only wildcards.
-        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
-            let source_type_only_flags = target_binder
-                .wildcard_reexports_type_only
-                .get(&target_file_name);
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
+        {
+            let source_type_only_flags = self
+                .ctx
+                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name);
 
             // Pass 1: Check non-type-only wildcards for value exports.
             // If a non-type-only `export *` re-exports the name AND the name is
@@ -1796,7 +1801,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(file_reexports) = target_binder.reexports.get(&target_file_name)
+        if let Some(file_reexports) = self
+            .ctx
+            .reexports_for_file(target_binder, &target_file_name)
             && let Some((source_module, original_name)) = file_reexports.get(export_name)
         {
             let name_to_lookup = original_name.as_deref().unwrap_or(export_name);
@@ -1808,10 +1815,13 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
-            let source_type_only_flags = target_binder
-                .wildcard_reexports_type_only
-                .get(&target_file_name);
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
+        {
+            let source_type_only_flags = self
+                .ctx
+                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name);
 
             for (i, source_module) in source_modules.iter().enumerate() {
                 let source_is_type_only = source_type_only_flags
@@ -1877,14 +1887,19 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check named re-exports
-        if let Some(file_reexports) = target_binder.reexports.get(&target_file_name)
+        if let Some(file_reexports) = self
+            .ctx
+            .reexports_for_file(target_binder, &target_file_name)
             && file_reexports.get(export_name).is_some()
         {
             return true;
         }
 
         // Check wildcard re-exports recursively
-        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
+        {
             for source_module in source_modules.iter() {
                 if self.name_exists_in_module_exports(
                     target_file_idx,

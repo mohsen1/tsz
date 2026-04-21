@@ -150,7 +150,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check named re-exports
-        if let Some(reexports) = target_binder.reexports.get(&target_file_name)
+        if let Some(reexports) = self
+            .ctx
+            .reexports_for_file(target_binder, &target_file_name)
             && let Some((source_module, original_name)) = reexports.get(export_name)
         {
             let name = original_name.as_deref().unwrap_or(export_name);
@@ -164,7 +166,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check wildcard re-exports
-        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
+        {
             let source_modules = source_modules.clone();
             for source_module in &source_modules {
                 if let Some(source_idx) = self

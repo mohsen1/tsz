@@ -91,10 +91,13 @@ impl<'a> CheckerState<'a> {
         // file (bound separately), the single-binder re-export walk above
         // won't find the member.  Follow the wildcard targets across files.
         {
-            let wildcards = target_binder
-                .wildcard_reexports
-                .get(&target_file_name)
-                .or_else(|| target_binder.wildcard_reexports.get(module_specifier))
+            let wildcards = self
+                .ctx
+                .wildcard_reexports_for_file(target_binder, &target_file_name)
+                .or_else(|| {
+                    self.ctx
+                        .wildcard_reexports_for_file(target_binder, module_specifier)
+                })
                 .cloned();
             if let Some(wildcard_sources) = wildcards {
                 for source_module in &wildcard_sources {

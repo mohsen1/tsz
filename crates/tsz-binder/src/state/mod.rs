@@ -32,9 +32,9 @@ pub type CrossFileNodeSymbols = FxHashMap<usize, Arc<FxHashMap<u32, SymbolId>>>;
 
 pub(crate) const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 
-type ReexportTarget = (String, Option<String>);
-type FileReexports = FxHashMap<String, ReexportTarget>;
-type FileReexportsMap = FxHashMap<String, FileReexports>;
+pub type ReexportTarget = (String, Option<String>);
+pub type FileReexports = FxHashMap<String, ReexportTarget>;
+pub type FileReexportsMap = FxHashMap<String, FileReexports>;
 type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
 type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
 /// Wrapper around `RwLock` that implements `Clone` by cloning the inner data.

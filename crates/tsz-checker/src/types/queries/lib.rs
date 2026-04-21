@@ -475,7 +475,8 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Follow named re-exports: `export { A } from './other'`
-                    if let Some(file_reexports) = target_binder.reexports.get(file_name)
+                    if let Some(file_reexports) =
+                        self.ctx.reexports_for_file(target_binder, file_name)
                         && let Some((source_module, original_name)) =
                             file_reexports.get(export_name)
                     {
@@ -507,7 +508,10 @@ impl<'a> CheckerState<'a> {
                     // This resolves imports through chains like:
                     //   g.ts: import { A } from './f'
                     //   f.ts: export * from './e'  (where e.ts exports A)
-                    if let Some(source_modules) = target_binder.wildcard_reexports.get(file_name) {
+                    if let Some(source_modules) = self
+                        .ctx
+                        .wildcard_reexports_for_file(target_binder, file_name)
+                    {
                         let source_modules = source_modules.clone();
                         for source_module in &source_modules {
                             if let Some(wc_target_idx) = self
@@ -1286,10 +1290,13 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_default();
 
         // Check if there's a type-only wildcard re-export
-        if let Some(source_modules) = target_binder.wildcard_reexports.get(&target_file_name) {
-            let type_only_flags = target_binder
-                .wildcard_reexports_type_only
-                .get(&target_file_name);
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
+        {
+            let type_only_flags = self
+                .ctx
+                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name);
 
             for (i, source_module) in source_modules.iter().enumerate() {
                 let is_type_only = type_only_flags

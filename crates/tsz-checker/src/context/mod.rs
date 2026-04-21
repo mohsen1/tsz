@@ -1408,6 +1408,18 @@ pub struct CheckerContext<'a> {
     /// `resolve_import_target_from_file` via `resolve_specifier_via_file_index`.
     pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
 
+    /// Program-wide `FileReexportsMap` shared across cross-file lookup
+    /// binders. The full merged map lives here once; per-file cross-file
+    /// lookup binders leave their `reexports` field empty and the
+    /// `ctx.reexports_for_file` accessor consults this first. Avoids the
+    /// O(N · map_size) deep clone that used to materialize a copy of the
+    /// program-wide map into every one of N cross-file binders.
+    pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
+    /// Program-wide wildcard re-exports map; see `program_reexports`.
+    pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
+    /// Program-wide type-only wildcard re-exports map; see `program_reexports`.
+    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
     ///
@@ -1667,6 +1679,11 @@ pub struct ProjectEnv {
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
     /// Pre-computed filename reverse index; see `CheckerContext::global_file_name_index`.
     pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
+    /// Program-wide re-export index shared across cross-file lookup binders;
+    /// see `CheckerContext::program_reexports`.
+    pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
+    pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
+    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module paths keyed by (`source_file_idx`, specifier, resolution-mode override).
@@ -1711,6 +1728,9 @@ impl Default for ProjectEnv {
             global_module_binder_index: None,
             global_arena_index: None,
             global_file_name_index: None,
+            program_reexports: None,
+            program_wildcard_reexports: None,
+            program_wildcard_reexports_type_only: None,
             resolved_module_paths: Arc::new(FxHashMap::default()),
             resolved_module_request_paths: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
@@ -1772,6 +1792,15 @@ impl ProjectEnv {
         }
         if let Some(ref idx) = self.global_file_name_index {
             ctx.global_file_name_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref m) = self.program_reexports {
+            ctx.program_reexports = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = self.program_wildcard_reexports {
+            ctx.program_wildcard_reexports = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = self.program_wildcard_reexports_type_only {
+            ctx.program_wildcard_reexports_type_only = Some(Arc::clone(m));
         }
         // Install the shared DefinitionStore before gating expensive semantic-def
         // prepopulation so `is_fully_populated()` reflects project-wide state.

@@ -889,6 +889,15 @@ pub(super) fn collect_diagnostics(
     // Build the project-wide shared environment once for all checkers (prime, parallel, sequential).
     // build_global_indices computes the 4 binder-derived indices once here so that
     // per-file checker creation via apply_to skips the O(N) binder scans.
+    // Wrap the merged program-wide re-export maps in `Arc` once so N
+    // cross-file lookup binders can share the single allocation instead of
+    // each deep-cloning a copy. Cross-file consumers read these via
+    // `ctx.reexports_for_file` / `wildcard_reexports_for_file`.
+    let program_reexports = Arc::new(program.reexports.clone());
+    let program_wildcard_reexports = Arc::new(program.wildcard_reexports.clone());
+    let program_wildcard_reexports_type_only =
+        Arc::new(program.wildcard_reexports_type_only.clone());
+
     let mut project_env = tsz::checker::context::ProjectEnv {
         lib_contexts: std::sync::Arc::new(lib_contexts.to_vec()),
         all_arenas: Arc::clone(&all_arenas),
@@ -904,6 +913,9 @@ pub(super) fn collect_diagnostics(
         file_is_esm_map: Arc::clone(&file_is_esm_map),
         typescript_dom_replacement_globals,
         has_deprecation_diagnostics,
+        program_reexports: Some(program_reexports),
+        program_wildcard_reexports: Some(program_wildcard_reexports),
+        program_wildcard_reexports_type_only: Some(program_wildcard_reexports_type_only),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.
