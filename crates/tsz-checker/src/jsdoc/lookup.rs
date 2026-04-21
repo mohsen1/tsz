@@ -371,6 +371,37 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    pub(crate) fn jsdoc_type_expression_span_for_node(&self, idx: NodeIndex) -> Option<(u32, u32)> {
+        if !self.ctx.should_resolve_jsdoc() {
+            return None;
+        }
+        let idx = self.normalized_jsdoc_lookup_node(idx);
+        let sf = self.source_file_data_for_node(idx)?;
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return None;
+        }
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let (jsdoc, comment_pos) =
+            self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?.trim();
+        if type_expr.is_empty() {
+            return None;
+        }
+        let tag_pos = jsdoc.find("@type")?;
+        let after_tag = tag_pos + "@type".len();
+        let rest = &jsdoc[after_tag..];
+        let rest_ws = rest.len() - rest.trim_start().len();
+        let rest_trimmed = rest.trim_start();
+        let expr_offset = if let Some(after_open) = rest_trimmed.strip_prefix('{') {
+            let brace_ws = after_open.len() - after_open.trim_start().len();
+            after_tag + rest_ws + 1 + brace_ws
+        } else {
+            after_tag + rest_ws
+        };
+        Some((comment_pos + expr_offset as u32 + 4, type_expr.len() as u32))
+    }
+
     /// Emit TS2694 for JSDoc qualified type names `A.B` whose root `A` is
     /// a plain value (not a namespace/module/type container). tsc's JSDoc
     /// checker treats this as "Namespace 'A' has no exported member 'B'";

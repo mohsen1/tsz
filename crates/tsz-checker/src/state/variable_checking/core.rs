@@ -606,20 +606,36 @@ impl<'a> CheckerState<'a> {
             {
                 // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
                 // This also applies to JSDoc @type annotations on catch variables in JS files.
-                if is_catch_variable
+                let is_invalid_catch_jsdoc = is_catch_variable
                     && jsdoc_type != TypeId::ANY
                     && jsdoc_type != TypeId::UNKNOWN
-                    && !checker.type_contains_error(jsdoc_type)
-                {
+                    && !checker.type_contains_error(jsdoc_type);
+                if is_invalid_catch_jsdoc {
                     use crate::diagnostics::diagnostic_codes;
-                    checker.error_at_node(
-                        decl_idx,
-                        "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
-                        diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
-                    );
+                    let jsdoc_type_span = checker.jsdoc_type_expression_span_for_node(decl_idx);
+                    if let Some((start, length)) = jsdoc_type_span {
+                        checker.error_at_position(
+                            start,
+                            length,
+                            "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                            diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
+                        );
+                    } else {
+                        checker.error_at_node(
+                            decl_idx,
+                            "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                            diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
+                        );
+                    }
                 }
-                declared_type = jsdoc_type;
-                jsdoc_declared_type = Some(jsdoc_type);
+                declared_type = if is_invalid_catch_jsdoc {
+                    flow_boundary::resolve_catch_variable_type(
+                        checker.ctx.use_unknown_in_catch_variables(),
+                    )
+                } else {
+                    jsdoc_type
+                };
+                jsdoc_declared_type = Some(declared_type);
                 has_type_annotation = true;
             }
             if !has_type_annotation
@@ -2280,6 +2296,8 @@ impl<'a> CheckerState<'a> {
             // binding element symbols created by the binder.
             let pattern_type = if var_decl.type_annotation.is_some() {
                 self.get_type_from_type_node(var_decl.type_annotation)
+            } else if let Some(jsdoc_type) = jsdoc_declared_type {
+                jsdoc_type
             } else if let Some(inferred) =
                 self.cached_inferred_variable_type(decl_idx, var_decl.name)
             {

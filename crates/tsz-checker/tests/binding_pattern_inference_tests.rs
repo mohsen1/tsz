@@ -29,6 +29,31 @@ fn compile_and_get_diagnostics(source: &str, options: CheckerOptions) -> Vec<(u3
         .collect()
 }
 
+fn compile_js_and_get_diagnostics(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 #[test]
 fn test_unknown_binding_patterns_match_tsc_split_diagnostics() {
     let source = r#"
@@ -57,6 +82,49 @@ const [e1, e2] = f();
         codes,
         vec![2571, 2339, 2488, 2571, 2488],
         "Expected TypeScript-style unknown destructuring diagnostics. Actual diagnostics: {relevant:#?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_catch_variable_invalid_type_falls_back_to_catch_policy() {
+    let source = r#"
+function fn() {
+    // @ts-ignore
+    try {} catch (/** @type {number} */ err) {
+        err.toLowerCase();
+    }
+    try {} catch (/** @type {unknown} */ { x }) {
+        console.log(x);
+    }
+}
+"#;
+
+    let diagnostics = compile_js_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            no_implicit_any: true,
+            use_unknown_in_catch_variables: false,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.iter().any(|(code, message)| *code == 2339
+            && message == "Property 'x' does not exist on type 'unknown'."),
+        "Expected TS2339 for destructuring from unknown catch JSDoc. Actual diagnostics: {relevant:#?}"
+    );
+    assert!(
+        !relevant
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("toLowerCase")),
+        "Invalid catch JSDoc must not make err a number. Actual diagnostics: {relevant:#?}"
     );
 }
 
