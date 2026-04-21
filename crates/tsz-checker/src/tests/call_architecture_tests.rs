@@ -323,6 +323,33 @@ const test1 = authorPromise.then(mapper);
 }
 
 #[test]
+fn generic_construct_signature_argument_does_not_infer_outer_return_type() {
+    let diags = check_source_diagnostics(
+        r#"
+interface GenericCtor {
+    new <T>(x: T): T;
+}
+
+declare const ctor: GenericCtor;
+
+function foo<T, U>(x: T, cb: new(a: T) => U, y: U) {
+    return new cb(x);
+}
+
+foo(null, ctor, "");
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected generic construct signature argument not to infer U from T, got: {:?}",
+        errors.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn generic_call_preserves_outer_type_param_in_contravariant_object_member() {
     let diags = check_source_diagnostics(
         r#"
