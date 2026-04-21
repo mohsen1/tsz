@@ -171,7 +171,6 @@ impl<'a> CheckerState<'a> {
                                 .any(|param| param.default.is_some())
                         })
                     });
-
                 // Recovery path: a type reference can appear where an expression statement is expected
                 // (e.g. malformed `this.x: any;` parses through a labeled statement).
                 // In value position, primitive type keywords should emit TS2693.

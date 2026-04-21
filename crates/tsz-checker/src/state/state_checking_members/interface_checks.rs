@@ -13,6 +13,71 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Minimal interface validation used by post-merge standard library checks.
+    ///
+    /// The normal interface checker runs many declaration-file diagnostics that are
+    /// unrelated to user-induced global merges. For lib rechecks we only need member
+    /// type annotations to trigger generic constraint diagnostics (TS2344) and
+    /// heritage compatibility to catch broken merged inheritance (TS2430).
+    pub(crate) fn check_lib_interface_declaration_post_merge(
+        &mut self,
+        stmt_idx: NodeIndex,
+        check_extension_compatibility: bool,
+    ) {
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        let Some(iface) = self.ctx.arena.get_interface(node) else {
+            return;
+        };
+
+        let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+
+        for &member_idx in &iface.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                let (_type_params, method_type_param_updates) =
+                    self.push_type_parameters(&sig.type_parameters);
+                if sig.type_annotation.is_some() {
+                    self.get_type_from_type_node(sig.type_annotation);
+                }
+                for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
+                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && param.type_annotation.is_some()
+                    {
+                        self.get_type_from_type_node(param.type_annotation);
+                    }
+                }
+                self.pop_type_parameters(method_type_param_updates);
+                continue;
+            }
+
+            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
+                if accessor.type_annotation.is_some() {
+                    self.get_type_from_type_node(accessor.type_annotation);
+                }
+                for &param_idx in &accessor.parameters.nodes {
+                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && param.type_annotation.is_some()
+                    {
+                        self.get_type_from_type_node(param.type_annotation);
+                    }
+                }
+            }
+        }
+
+        if check_extension_compatibility {
+            self.check_interface_extension_compatibility(stmt_idx, iface);
+        }
+        self.pop_type_parameters(type_param_updates);
+    }
+
     /// Check an interface declaration.
     pub(crate) fn check_interface_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;

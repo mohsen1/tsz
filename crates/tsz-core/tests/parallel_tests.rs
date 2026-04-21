@@ -3,6 +3,8 @@ use crate::parallel::residency::{MemoryPressure, ResidencyBudget};
 use crate::parallel::skeleton::diff_skeletons;
 use std::fs;
 use std::path::Path;
+use tsz_common::common::ModuleKind;
+use tsz_common::diagnostics::diagnostic_codes;
 
 #[test]
 fn test_parse_single_file() {
@@ -434,6 +436,67 @@ fn test_merge_preserves_file_locals() {
     assert!(program.file_locals[0].has("a2"));
     assert!(program.file_locals[1].has("b1"));
     assert!(program.file_locals[1].has("b2"));
+}
+
+#[test]
+fn check_files_parallel_reports_default_lib_breakage_from_global_node_merge() {
+    let files = vec![(
+        "main.ts".to_string(),
+        r#"
+const enum SyntaxKind {
+    Track,
+}
+
+interface Node {
+    kind: SyntaxKind;
+}
+"#
+        .to_string(),
+    )];
+
+    let lib_files = vec![std::sync::Arc::new(
+        crate::lib_loader::LibFile::from_source(
+            "lib.dom.d.ts".to_string(),
+            r#"
+interface Node {
+    kind: string;
+}
+
+interface Element extends Node {}
+interface HTMLElement extends Element {}
+interface HTMLTrackElement extends HTMLElement {
+    kind: string;
+}
+"#
+            .to_string(),
+        ),
+    )];
+    let program = merge_bind_results(parse_and_bind_parallel_with_libs(files, &lib_files));
+    let options = CheckerOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::ES2015,
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+
+    let result = check_files_parallel(&program, &options, &lib_files);
+    let lib_dom_diagnostics = result
+        .file_results
+        .iter()
+        .filter(|file| file.file_name.ends_with("lib.dom.d.ts"))
+        .flat_map(|file| file.diagnostics.iter())
+        .collect::<Vec<_>>();
+    let ts2430_count = lib_dom_diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE)
+        .count();
+
+    assert_eq!(
+        ts2430_count, 1,
+        "Expected one post-merge lib TS2430 diagnostic after merging Node.kind, got: {result:#?}"
+    );
 }
 
 #[test]

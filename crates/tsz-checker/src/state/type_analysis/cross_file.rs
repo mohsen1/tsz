@@ -1007,6 +1007,20 @@ impl<'a> CheckerState<'a> {
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        let parent_is_declaration_file = self.ctx.file_name.ends_with(".d.ts")
+            || self.ctx.file_name.ends_with(".d.cts")
+            || self.ctx.file_name.ends_with(".d.mts");
+        let delegate_is_declaration_file = interface_arena
+            .source_files
+            .first()
+            .is_some_and(|source_file| source_file.is_declaration_file);
+        if parent_is_declaration_file && !delegate_is_declaration_file {
+            checker
+                .ctx
+                .type_resolution_fuel
+                .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
+            crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+        }
         // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
         // on cache miss — no parent-to-child copy needed.
 
