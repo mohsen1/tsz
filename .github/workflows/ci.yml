@@ -15,9 +15,11 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_TEST_TIMEOUT: 300
-  # sccache settings — mozilla-actions/sccache-action sets up GHA-backed storage
-  SCCACHE_GHA_ENABLED: "true"
-  RUSTC_WRAPPER: "sccache"
+  # sccache disabled: GHA's cache backend has been returning 503s and takes
+  # down every Rust job via `cargo metadata` when set as RUSTC_WRAPPER.
+  # We rely on actions/cache for ~/.cargo/registry + target/ instead.
+  # To re-enable: set SCCACHE_GHA_ENABLED=true, RUSTC_WRAPPER=sccache, and
+  # uncomment the `mozilla-actions/sccache-action@v0.0.6` steps.
 
 # -----------------------------------------------------------------------------
 # Pipeline shape (applies CircleCI-migration learnings from commits
@@ -135,9 +137,6 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
-
       - name: Cache cargo registry + .target
         uses: actions/cache@v4
         with:
@@ -198,7 +197,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry + .target
@@ -235,7 +233,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry + .target
@@ -270,7 +267,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry + .target
@@ -310,7 +306,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry + .target
@@ -347,7 +342,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry + .target
@@ -388,7 +382,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry + .target
@@ -424,7 +417,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
       - uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry + .target
@@ -512,7 +504,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Cache cargo registry + .target
         uses: actions/cache@v4
@@ -555,7 +546,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.6
 
       - name: Cache cargo registry + .target
         uses: actions/cache@v4
