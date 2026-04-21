@@ -181,6 +181,52 @@ fn test_completions_member_string_literal() {
 }
 
 #[test]
+fn test_completions_member_access_wins_over_prior_string_literal_context() {
+    let source = "let x: string = 42;\n\nfunction greet(name: string): string {\n  return \"Hello, \" + name;\n}\n\ngreet(123);\n\ninterface User {\n  name: string;\n  age: number;\n}\n\nconst user: User = {\n  name: \"Alice\",\n  age: \"thirty\",\n};\n\nuser.";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+
+    let position = Position::new(18, 5);
+    let mut cache = None;
+    let items = completions.get_completions_with_cache(root, position, &mut cache);
+
+    assert!(
+        items.is_some(),
+        "Should have member completions for 'user.'"
+    );
+    let items = items.unwrap();
+    let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+    assert!(
+        names.contains(&"name"),
+        "Should suggest property 'name', got: {names:?}"
+    );
+    assert!(
+        names.contains(&"age"),
+        "Should suggest property 'age', got: {names:?}"
+    );
+    assert!(
+        !names.contains(&"\"Hello, \""),
+        "Member access should not be hijacked by prior string literal completions, got: {names:?}"
+    );
+}
+
+#[test]
 fn test_completions_contextual_string_literal_argument_keyof() {
     let source = "interface Events {\n  click: any;\n  drag: any;\n}\n\ndeclare function addListener<K extends keyof Events>(type: K, listener: (ev: Events[K]) => any): void;\n\naddListener(\"\");\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
