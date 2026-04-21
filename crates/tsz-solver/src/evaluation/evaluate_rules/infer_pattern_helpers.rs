@@ -11,8 +11,8 @@
 
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    CallableShapeId, FunctionShape, FunctionShapeId, ObjectShapeId, ParamInfo, TemplateSpan,
-    TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
+    CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, ObjectShapeId, ParamInfo,
+    TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils;
 use crate::{TypeSubstitution, instantiate_type};
@@ -22,6 +22,108 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn parse_template_number_capture(&self, captured: &str) -> Option<TypeId> {
+        let value = if let Some(digits) = captured.strip_prefix("0x") {
+            u64::from_str_radix(digits, 16).ok().map(|n| n as f64)?
+        } else if let Some(digits) = captured.strip_prefix("0X") {
+            u64::from_str_radix(digits, 16).ok().map(|n| n as f64)?
+        } else if let Some(digits) = captured.strip_prefix("0o") {
+            u64::from_str_radix(digits, 8).ok().map(|n| n as f64)?
+        } else if let Some(digits) = captured.strip_prefix("0O") {
+            u64::from_str_radix(digits, 8).ok().map(|n| n as f64)?
+        } else if let Some(digits) = captured.strip_prefix("0b") {
+            u64::from_str_radix(digits, 2).ok().map(|n| n as f64)?
+        } else if let Some(digits) = captured.strip_prefix("0B") {
+            u64::from_str_radix(digits, 2).ok().map(|n| n as f64)?
+        } else {
+            captured.parse::<f64>().ok()?
+        };
+
+        if !value.is_finite() {
+            return None;
+        }
+
+        let literal = self.interner().literal_number(value);
+        let round_trips = match value {
+            v if v.fract() == 0.0 && v.abs() < 1e15 => (v as i64).to_string() == captured,
+            v => format!("{v}") == captured,
+        };
+        Some(if round_trips { literal } else { TypeId::NUMBER })
+    }
+
+    fn parse_template_bigint_capture(&self, captured: &str) -> Option<TypeId> {
+        let (negative, digits) = captured
+            .strip_prefix('-')
+            .map_or((false, captured), |rest| (true, rest));
+        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+
+        Some(self.interner().literal_bigint_with_sign(negative, digits))
+    }
+
+    fn template_capture_for_constraint(
+        &self,
+        captured: &str,
+        captured_type: TypeId,
+        constraint: TypeId,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> Option<TypeId> {
+        if checker.is_subtype_of(captured_type, constraint) {
+            return Some(captured_type);
+        }
+
+        match self.interner().lookup(constraint) {
+            Some(TypeData::Intrinsic(IntrinsicKind::Number)) => self
+                .parse_template_number_capture(captured)
+                .filter(|&ty| checker.is_subtype_of(ty, constraint)),
+            Some(TypeData::Intrinsic(IntrinsicKind::Bigint)) => self
+                .parse_template_bigint_capture(captured)
+                .filter(|&ty| checker.is_subtype_of(ty, constraint)),
+            Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => match captured {
+                "true" => Some(self.interner().literal_boolean(true)),
+                "false" => Some(self.interner().literal_boolean(false)),
+                _ => None,
+            },
+            Some(TypeData::Intrinsic(IntrinsicKind::Null)) if captured == "null" => {
+                Some(TypeId::NULL)
+            }
+            Some(TypeData::Intrinsic(IntrinsicKind::Undefined)) if captured == "undefined" => {
+                Some(TypeId::UNDEFINED)
+            }
+            Some(TypeData::Union(members_id)) => {
+                let members = self.interner().type_list(members_id);
+                members.iter().find_map(|&member| {
+                    self.template_capture_for_constraint(captured, captured_type, member, checker)
+                        .filter(|&ty| checker.is_subtype_of(ty, constraint))
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn bind_template_infer_capture(
+        &self,
+        info: &TypeParamInfo,
+        captured: &str,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let captured_type = self.interner().literal_string(captured);
+        let inferred = if let Some(constraint) = info.constraint {
+            let Some(converted) =
+                self.template_capture_for_constraint(captured, captured_type, constraint, checker)
+            else {
+                return false;
+            };
+            converted
+        } else {
+            captured_type
+        };
+
+        self.bind_infer(info, inferred, bindings, checker)
+    }
+
     fn erase_type_params_to_constraints(
         &self,
         type_params: &[TypeParamInfo],
@@ -1921,7 +2023,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let captured_type = self.interner().literal_string(captured);
 
                     if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                        if !self.bind_infer(&info, captured_type, bindings, checker) {
+                        if !self.bind_template_infer_capture(&info, captured, bindings, checker) {
                             return false;
                         }
                     } else if !checker.is_subtype_of(captured_type, type_id) {
