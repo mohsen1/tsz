@@ -1586,14 +1586,17 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
-    // Compose semantic defs from the merged program, then overlay the file-local
-    // entries so reconstructed binders preserve the same stable semantic identity
-    // map as the core parallel binder path.
-    let mut composed_semantic_defs = program.semantic_defs.clone();
-    for (sym_id, entry) in &file.semantic_defs {
-        composed_semantic_defs.insert(*sym_id, entry.clone());
-    }
-    binder.semantic_defs = composed_semantic_defs;
+    // Only the file-local semantic_defs are stored on the reconstructed
+    // binder. The cross-file / program-wide entries live in the shared
+    // `DefinitionStore` installed by `ProjectEnv::apply_to`, which gates
+    // every consumer of `binder.semantic_defs` (`pre_populate_def_ids_*`,
+    // `resolve_cross_batch_heritage`) behind
+    // `!ctx.definition_store.is_fully_populated()`. In the parallel CLI
+    // path the shared store IS fully populated, so those consumers never
+    // read the binder's map — copying `program.semantic_defs` into each
+    // per-file binder was pure O(N · program_defs) waste (6%+ of total
+    // CPU on ts-toolbelt subsets, all of it in `SemanticDefEntry::drop`).
+    binder.semantic_defs = file.semantic_defs.clone();
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = tsz::binder::ScopeId(0);
@@ -1671,14 +1674,10 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();
-    // Compose semantic defs from the merged program, then overlay the file-local
-    // entries so reconstructed binders preserve the same stable semantic identity
-    // map as the core parallel binder path.
-    let mut composed_semantic_defs = program.semantic_defs.clone();
-    for (sym_id, entry) in &file.semantic_defs {
-        composed_semantic_defs.insert(*sym_id, entry.clone());
-    }
-    binder.semantic_defs = composed_semantic_defs;
+    // See `create_binder_from_bound_file_with_augmentations` for the
+    // rationale: the cross-file semantic_defs live in the shared
+    // `DefinitionStore`, not here.
+    binder.semantic_defs = file.semantic_defs.clone();
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = tsz::binder::ScopeId(0);
