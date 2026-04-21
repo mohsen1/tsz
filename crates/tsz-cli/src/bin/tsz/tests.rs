@@ -289,11 +289,7 @@ fn build_clean_removes_buildinfo_next_to_tsconfig_when_no_out_dir() {
     let root = tmp.path();
 
     let tsconfig_path = root.join("tsconfig.json");
-    fs::write(
-        &tsconfig_path,
-        r#"{"compilerOptions":{"composite":true}}"#,
-    )
-    .expect("write tsconfig");
+    fs::write(&tsconfig_path, r#"{"compilerOptions":{"composite":true}}"#).expect("write tsconfig");
 
     let src_dir = root.join("src");
     fs::create_dir_all(&src_dir).expect("mkdir src");
