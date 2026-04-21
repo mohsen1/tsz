@@ -3,7 +3,7 @@
 use crate::inference::infer::{InferenceContext, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
-use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypePredicate};
+use crate::types::{FunctionShape, ObjectFlags, ParamInfo, TypeData, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -1234,6 +1234,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .iter()
                         .all(|member| self.is_mergeable_direct_inference_candidate(*member))
             }
+            _ => false,
+        }
+    }
+
+    pub(super) fn inference_type_contains_fresh_object_or_array(&self, ty: TypeId) -> bool {
+        match self.interner.lookup(ty) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
+                .interner
+                .object_shape(shape_id)
+                .flags
+                .contains(ObjectFlags::FRESH_LITERAL),
+            Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+            Some(TypeData::Union(members)) => self
+                .interner
+                .type_list(members)
+                .iter()
+                .any(|&member| self.inference_type_contains_fresh_object_or_array(member)),
             _ => false,
         }
     }

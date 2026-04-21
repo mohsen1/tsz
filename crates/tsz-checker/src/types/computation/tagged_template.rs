@@ -6,9 +6,9 @@
 
 use super::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
-use crate::query_boundaries::assignability::contains_type_parameters;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::common::instantiate_type;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -33,10 +33,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        use crate::query_boundaries::checkers::iterable::{
-            call_signatures_for_type, function_shape_for_type,
-        };
-        use crate::query_boundaries::common::instantiate_type;
+        use crate::query_boundaries::checkers::iterable::function_shape_for_type;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -140,17 +137,6 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|s| !s.type_params.is_empty())
             && tagged.type_arguments.is_none();
 
-        // Determine whether to check argument assignability (TS2345).
-        // For overloaded functions, tsc performs full overload resolution and reports
-        // TS2769 ("No overload matches this call") instead of TS2345 per argument.
-        // We only check arguments when the tag has a single call signature.
-        let is_overloaded = crate::query_boundaries::common::callable_shape_for_type(
-            self.ctx.types,
-            resolved_tag_type,
-        )
-        .is_some_and(|callable| callable.call_signatures.len() > 1);
-        let should_check_args = !is_overloaded;
-
         // Apply explicit type arguments to the tag type (e.g., tag<Stuff>`...`).
         // This instantiates type parameters in the function signature so that
         // contextual typing of substitution expressions and the return type
@@ -164,6 +150,26 @@ impl<'a> CheckerState<'a> {
             resolved_tag_type
         };
 
+        let callee_type_for_context = self.evaluate_application_type(resolved_tag_type);
+        let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
+        let callee_type_for_context = self.evaluate_contextual_type(callee_type_for_context);
+        let mut call_target_type = self.resolve_lazy_members_in_union(callee_type_for_context);
+        call_target_type = self.replace_function_type_for_call(tag_type, call_target_type);
+        if call_target_type == TypeId::ANY {
+            self.type_check_template_substitutions_no_context(&tagged, request);
+            return TypeId::ANY;
+        }
+
+        let unwrapped_tag = self.ctx.arena.skip_parenthesized_and_assertions(tagged.tag);
+        let force_bivariant_callbacks = matches!(
+            self.ctx.arena.get(unwrapped_tag).map(|n| n.kind),
+            Some(
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
+        );
+        let actual_this_type = self.actual_this_type_for_tagged_template_call(unwrapped_tag);
+
         // For tagged templates, the tag function parameters are:
         //   param[0] = TemplateStringsArray (always)
         //   param[1..] = substitution expressions
@@ -172,7 +178,7 @@ impl<'a> CheckerState<'a> {
         // Create contextual context from tag function type
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
-            resolved_tag_type,
+            callee_type_for_context,
             self.ctx.compiler_options.no_implicit_any,
         );
 
@@ -190,10 +196,9 @@ impl<'a> CheckerState<'a> {
             if !needs_two_pass {
                 // === Single-pass inference: no contextually-sensitive args ===
                 // All arguments are concrete, so we can infer type parameters directly.
-                let template_strings_type = TypeId::ANY;
                 let total_args = 1 + substitution_exprs.len();
                 let mut arg_types: Vec<TypeId> = Vec::with_capacity(total_args);
-                arg_types.push(template_strings_type);
+                arg_types.push(TypeId::ANY);
 
                 for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
                     let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
@@ -202,105 +207,16 @@ impl<'a> CheckerState<'a> {
                     arg_types.push(arg_type);
                 }
 
-                // Perform inference
-                let evaluated_shape = {
-                    let new_params: Vec<_> = shape
-                        .params
-                        .iter()
-                        .map(|p| tsz_solver::ParamInfo {
-                            name: p.name,
-                            type_id: self.evaluate_type_with_env(p.type_id),
-                            optional: p.optional,
-                            rest: p.rest,
-                        })
-                        .collect();
-                    tsz_solver::FunctionShape {
-                        params: new_params,
-                        return_type: shape.return_type,
-                        this_type: shape.this_type,
-                        type_params: shape.type_params.clone(),
-                        type_predicate: shape.type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    }
-                };
-                let mut substitution = {
-                    let env = self.ctx.type_env.borrow();
-                    call_checker::compute_contextual_types_with_context(
-                        self.ctx.types,
-                        &self.ctx,
-                        &env,
-                        &evaluated_shape,
-                        &arg_types,
-                        request.contextual_type,
-                    )
-                };
-
-                // Post-process: replace __infer_N placeholders with their constraint
-                // or `unknown`. compute_contextual_types uses placeholders for
-                // unresolved type params (designed for two-pass contextual typing),
-                // but in the single-pass case we need concrete types for argument
-                // checking—matching resolve_generic_call_inner which defaults to
-                // `unknown` for unconstrained, uninferred type params.
-                for tp in &shape.type_params {
-                    if let Some(resolved) = substitution.get(tp.name)
-                        && let Some(info) = crate::query_boundaries::common::type_param_info(
-                            self.ctx.types,
-                            resolved,
-                        )
-                    {
-                        let name_str = self.ctx.types.resolve_atom(info.name);
-                        if name_str.as_str().starts_with("__infer_") {
-                            let fallback = if let Some(constraint) = tp.constraint {
-                                let inst =
-                                    instantiate_type(self.ctx.types, constraint, &substitution);
-                                if !contains_type_parameters(self.ctx.types, inst) {
-                                    inst
-                                } else {
-                                    TypeId::UNKNOWN
-                                }
-                            } else {
-                                TypeId::UNKNOWN
-                            };
-                            substitution.insert(tp.name, fallback);
-                        }
-                    }
-                }
-
-                // Check argument assignability with instantiated parameter types
-                let mut reported_arg_error = false;
-                for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
-                    let ctx_type = ctx_helper
-                        .get_parameter_type_for_call(i + 1, total_args)
-                        .map(|pt| {
-                            let instantiated = instantiate_type(self.ctx.types, pt, &substitution);
-                            self.evaluate_type_with_env(instantiated)
-                        });
-                    let actual_type = arg_types[i + 1]; // already computed above
-
-                    if should_check_args
-                        && !reported_arg_error
-                        && let Some(expected) = ctx_type
-                        && actual_type != TypeId::ERROR
-                        && actual_type != TypeId::UNKNOWN
-                        && expected != TypeId::ERROR
-                        && expected != TypeId::UNKNOWN
-                        && !contains_type_parameters(self.ctx.types, expected)
-                        && !self.should_defer_contextual_argument_mismatch(actual_type, expected)
-                        && !self.check_argument_assignable_or_report(
-                            actual_type,
-                            expected,
-                            expr_idx,
-                        )
-                    {
-                        reported_arg_error = true;
-                    }
-                }
-
-                // Return instantiated return type
-                let return_type =
-                    instantiate_type(self.ctx.types, shape.return_type, &substitution);
-                return self.evaluate_type_with_env(return_type);
+                return self.finish_tagged_template_call(
+                    idx,
+                    &tagged,
+                    &substitution_exprs,
+                    call_target_type,
+                    arg_types,
+                    force_bivariant_callbacks,
+                    request.contextual_type,
+                    actual_this_type,
+                );
             }
 
             if needs_two_pass {
@@ -322,10 +238,9 @@ impl<'a> CheckerState<'a> {
                 // Build argument types for Round 1: TemplateStringsArray + substitutions
                 // Use ANY as stand-in for TemplateStringsArray since it's a fixed
                 // non-generic type that doesn't affect type parameter inference.
-                let template_strings_type = TypeId::ANY;
                 let mut round1_arg_types: Vec<TypeId> =
                     Vec::with_capacity(1 + substitution_exprs.len());
-                round1_arg_types.push(template_strings_type);
+                round1_arg_types.push(TypeId::ANY);
 
                 for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
                     if sensitive_args[i] {
@@ -375,7 +290,8 @@ impl<'a> CheckerState<'a> {
 
                 // === Round 2: Type-check all substitutions with contextual types ===
                 let total_args = 1 + substitution_exprs.len();
-                let mut reported_arg_error = false;
+                let mut arg_types = Vec::with_capacity(total_args);
+                arg_types.push(TypeId::ANY);
                 for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
                     let ctx_type = ctx_helper
                         .get_parameter_type_for_call(i + 1, total_args)
@@ -389,80 +305,98 @@ impl<'a> CheckerState<'a> {
                         request.read().contextual_opt(None)
                     };
                     let actual_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
-
-                    // Check argument assignability against expected parameter type (TS2345).
-                    // tsc reports only the first argument mismatch per tagged template call.
-                    // Skip for overloaded functions (handled via overload resolution / TS2769).
-                    // Skip when expected type still contains unresolved type parameters
-                    // (generic inference may not have fully instantiated the signature).
-                    if should_check_args
-                        && !reported_arg_error
-                        && let Some(expected) = ctx_type
-                        && actual_type != TypeId::ERROR
-                        && actual_type != TypeId::UNKNOWN
-                        && expected != TypeId::ERROR
-                        && expected != TypeId::UNKNOWN
-                        && !contains_type_parameters(self.ctx.types, expected)
-                        && !self.should_defer_contextual_argument_mismatch(actual_type, expected)
-                        && !self.check_argument_assignable_or_report(
-                            actual_type,
-                            expected,
-                            expr_idx,
-                        )
-                    {
-                        reported_arg_error = true;
-                    }
+                    arg_types.push(actual_type);
                 }
 
-                // Return instantiated return type
-                let return_type =
-                    instantiate_type(self.ctx.types, shape.return_type, &substitution);
-                return self.evaluate_type_with_env(return_type);
+                return self.finish_tagged_template_call(
+                    idx,
+                    &tagged,
+                    &substitution_exprs,
+                    call_target_type,
+                    arg_types,
+                    force_bivariant_callbacks,
+                    request.contextual_type,
+                    actual_this_type,
+                );
             }
         }
 
         // Single-pass: type-check substitutions with contextual types from tag signature
         let total_args = 1 + substitution_exprs.len();
-        let mut reported_arg_error = false;
+        let mut arg_types = Vec::with_capacity(total_args);
+        arg_types.push(TypeId::ANY);
         for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
             let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
             let arg_request = request.read().contextual_opt(ctx_type);
             let actual_type = self.get_type_of_node_with_request(expr_idx, &arg_request);
-
-            // Check argument assignability against expected parameter type (TS2345).
-            // tsc reports only the first argument mismatch per tagged template call,
-            // so stop checking after the first error.
-            // Skip for overloaded functions (handled via overload resolution / TS2769).
-            // Skip when expected type still contains unresolved type parameters
-            // (generic inference may not have fully instantiated the signature).
-            if should_check_args
-                && !reported_arg_error
-                && let Some(expected) = ctx_type
-                && actual_type != TypeId::ERROR
-                && actual_type != TypeId::UNKNOWN
-                && expected != TypeId::ERROR
-                && expected != TypeId::UNKNOWN
-                && !contains_type_parameters(self.ctx.types, expected)
-                && !self.should_defer_contextual_argument_mismatch(actual_type, expected)
-                && !self.check_argument_assignable_or_report(actual_type, expected, expr_idx)
-            {
-                reported_arg_error = true;
-            }
+            arg_types.push(actual_type);
         }
 
-        // Get the return type from the tag function's call signature.
-        // Use resolved_tag_type which has explicit type arguments applied.
-        if let Some(sig) = function_shape_for_type(self.ctx.types, resolved_tag_type) {
-            return sig.return_type;
-        }
-        if let Some(call_sigs) = call_signatures_for_type(self.ctx.types, resolved_tag_type)
-            && let Some(first_sig) = call_sigs.first()
+        self.finish_tagged_template_call(
+            idx,
+            &tagged,
+            &substitution_exprs,
+            call_target_type,
+            arg_types,
+            force_bivariant_callbacks,
+            request.contextual_type,
+            actual_this_type,
+        )
+    }
+
+    fn actual_this_type_for_tagged_template_call(
+        &mut self,
+        unwrapped_tag: NodeIndex,
+    ) -> Option<TypeId> {
+        let tag_node = self.ctx.arena.get(unwrapped_tag)?;
+        if tag_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && tag_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
         {
-            return first_sig.return_type;
+            return None;
         }
 
-        // If tag is Function type, return any
-        TypeId::ANY
+        let access = self.ctx.arena.get_access_expr(tag_node)?;
+        Some(self.get_type_of_node(access.expression))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_tagged_template_call(
+        &mut self,
+        idx: NodeIndex,
+        tagged: &tsz_parser::parser::node::TaggedTemplateData,
+        substitution_exprs: &[NodeIndex],
+        callee_type: TypeId,
+        arg_types: Vec<TypeId>,
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+        actual_this_type: Option<TypeId>,
+    ) -> TypeId {
+        let mut args = Vec::with_capacity(1 + substitution_exprs.len());
+        args.push(tagged.template);
+        args.extend_from_slice(substitution_exprs);
+
+        let (result, _instantiated_predicate, _instantiated_params) = self
+            .resolve_call_with_checker_adapter(
+                callee_type,
+                &arg_types,
+                force_bivariant_callbacks,
+                contextual_type,
+                actual_this_type,
+            );
+
+        self.handle_call_result(
+            result,
+            super::call_result::CallResultContext {
+                callee_expr: tagged.tag,
+                call_idx: idx,
+                args: &args,
+                arg_types: &arg_types,
+                callee_type,
+                is_super_call: false,
+                is_optional_chain: false,
+                allow_contextual_mismatch_deferral: true,
+            },
+        )
     }
 
     /// Collect template substitution expression `NodeIndex` values from a tagged template.

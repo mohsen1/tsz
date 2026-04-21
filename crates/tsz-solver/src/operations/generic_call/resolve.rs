@@ -1,6 +1,5 @@
 //! Core generic call resolution (`resolve_generic_call_inner`).
 
-use crate::contains_type_by_id;
 use crate::inference::infer::{InferenceContext, InferenceError, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::widening;
@@ -1550,18 +1549,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
                 } else if !tp.is_const
                     && !contra_only
-                    && infer_ctx.all_candidates_are_fresh_literals(var)
                     && !tp
                         .constraint
                         .is_some_and(|c| constraint_is_primitive_type(self.interner, c))
                 {
-                    // Only widen when all covariant candidates are fresh literals
-                    // (from expressions, not type annotations) AND the type parameter
-                    // does NOT have a primitive constraint (string, number, bigint).
+                    // Widen fresh inference results from expressions when the type
+                    // parameter does NOT have a primitive constraint (string, number,
+                    // bigint).
                     // tsc preserves literal types when the constraint is a primitive:
                     //   <T extends string>(a: T) => T  -- T="z" preserved
                     //   <T>(a: T) => T                  -- T="z" widened to string
-                    crate::widen_literal_type(self.interner.as_type_database(), ty)
+                    if infer_ctx.all_candidates_are_fresh_literals(var) {
+                        crate::widen_literal_type(self.interner.as_type_database(), ty)
+                    } else if self.inference_type_contains_fresh_object_or_array(ty) {
+                        crate::operations::widening::widen_type_for_inference(
+                            self.interner.as_type_database(),
+                            ty,
+                        )
+                    } else {
+                        ty
+                    }
                 } else {
                     ty
                 }
@@ -2066,27 +2073,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return CallResult::Success(return_type);
                     }
 
-                    let expected = self
-                        .param_type_for_arg_index(&func.params, index, final_args.len())
-                        .filter(|raw_expected| {
-                            crate::type_queries::contains_type_parameters_db(
-                                self.interner,
-                                *raw_expected,
-                            ) && contains_type_by_id(
-                                self.interner.as_type_database(),
-                                expected,
-                                TypeId::UNKNOWN,
-                            )
-                        })
-                        .filter(|raw_expected| {
-                            instantiate_call_type(
-                                self.interner,
-                                *raw_expected,
-                                &final_subst,
-                                actual_this_type,
-                            ) == expected
-                        })
-                        .unwrap_or(expected);
                     CallResult::ArgumentTypeMismatch {
                         index,
                         expected,
