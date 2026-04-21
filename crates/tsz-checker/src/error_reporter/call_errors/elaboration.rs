@@ -336,7 +336,33 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let candidate = self.format_type_for_assignability_message(raw_constraint);
+        let evaluated_number_literal_union = if let Some(members) =
+            query_common::union_members(self.ctx.types, evaluated_constraint)
+        {
+            !members.is_empty()
+                && members.iter().all(|&member| {
+                    matches!(
+                        query_common::literal_value(self.ctx.types, member),
+                        Some(query_common::LiteralValue::Number(_))
+                    )
+                })
+        } else {
+            matches!(
+                query_common::literal_value(self.ctx.types, evaluated_constraint),
+                Some(query_common::LiteralValue::Number(_))
+            )
+        };
+        let candidate_display_type =
+            if query_common::type_application(self.ctx.types, raw_constraint).is_some()
+                && evaluated_constraint != raw_constraint
+                && evaluated_constraint != TypeId::ERROR
+                && evaluated_number_literal_union
+            {
+                evaluated_constraint
+            } else {
+                raw_constraint
+            };
+        let candidate = self.format_type_for_assignability_message(candidate_display_type);
         if display
             .as_ref()
             .is_some_and(|existing| existing != &candidate)

@@ -126,6 +126,80 @@ let c: "no_match" = r;  // should error: R is "hello"
     );
 }
 
+/// Template literal `infer N extends number` should parse matching string
+/// captures into numeric literals. This keeps tuple string keys like "0" and
+/// "1" usable as ordinal indices.
+#[test]
+fn test_template_literal_infer_extends_number_extracts_tuple_indices() {
+    let source = r#"
+type IndexFor<S extends string> = S extends `${infer N extends number}` ? N : never;
+type Extract<T, U> = T extends U ? T : never;
+type IndicesOf<T> = IndexFor<Extract<keyof T, string>>;
+
+declare function getIndex<I extends IndicesOf<[{ name: "x" }, { name: "y" }]>>(index: I): void;
+
+getIndex(0);
+getIndex(1);
+getIndex(2);
+"#;
+    let diags = check_strict(source);
+    let ts2345 = diags.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345, 1,
+        "Expected only getIndex(2) to emit TS2345; valid tuple indices 0 and 1 should be accepted. Got: {diags:#?}"
+    );
+    let message = diags
+        .iter()
+        .find(|d| d.code == 2345)
+        .map(|d| d.message_text.as_str())
+        .unwrap_or("");
+    assert!(
+        message.contains("parameter of type '0 | 1'"),
+        "Expected invalid tuple index diagnostic to display the evaluated index union, got: {message}"
+    );
+}
+
+#[test]
+fn test_template_literal_infer_extends_number_direct_union() {
+    let source = r#"
+type IndexFor<S extends string> = S extends `${infer N extends number}` ? N : never;
+type R = IndexFor<"0" | "1">;
+
+declare function getIndex<I extends R>(index: I): void;
+
+getIndex(0);
+getIndex(1);
+getIndex(2);
+"#;
+    let diags = check_strict(source);
+    let ts2345 = diags.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345, 1,
+        "Expected only getIndex(2) to emit TS2345 for direct string numeric keys. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn test_template_literal_infer_extends_number_after_extract() {
+    let source = r#"
+type IndexFor<S extends string> = S extends `${infer N extends number}` ? N : never;
+type Extract<T, U> = T extends U ? T : never;
+type R = IndexFor<Extract<"0" | "1" | "length", string>>;
+
+declare function getIndex<I extends R>(index: I): void;
+
+getIndex(0);
+getIndex(1);
+getIndex(2);
+"#;
+    let diags = check_strict(source);
+    let ts2345 = diags.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345, 1,
+        "Expected only getIndex(2) to emit TS2345 after Extract. Got: {diags:#?}"
+    );
+}
+
 /// When infer constraint fails (value doesn't match keyof T), should get false branch.
 #[test]
 fn test_infer_extends_keyof_constraint_fails_correctly() {
