@@ -29,6 +29,23 @@ fn relative_display(path: &Path, base: &Path) -> String {
         .map_or_else(|_| path.display().to_string(), |p| p.display().to_string())
 }
 
+/// Decide whether fingerprint-level comparison should run between the two
+/// diagnostic sets.
+///
+/// Returns `false` whenever either side is empty. Server mode (the legacy
+/// protocol in `server_pool.rs`) returns only error codes, so
+/// `tsz_fingerprints` is empty there — gating on TSC alone would flag every
+/// TSC fingerprint as "missing" on every test, even when the codes match.
+/// The same guard covers cache entries that happen to carry codes but no
+/// fingerprints: fall back to code-only comparison rather than producing
+/// bogus misses.
+fn use_fingerprint_compare(
+    tsc_fingerprints: &std::collections::HashSet<DiagnosticFingerprint>,
+    tsz_fingerprints: &std::collections::HashSet<DiagnosticFingerprint>,
+) -> bool {
+    !tsc_fingerprints.is_empty() && !tsz_fingerprints.is_empty()
+}
+
 fn sanitize_artifact_name(path: &str) -> String {
     path.chars()
         .map(|ch| match ch {
@@ -1094,7 +1111,8 @@ impl Runner {
                             .iter()
                             .cloned()
                             .collect();
-                    let use_fingerprint_compare = !tsc_fingerprints.is_empty();
+                    let use_fingerprint_compare =
+                        use_fingerprint_compare(&tsc_fingerprints, &tsz_fingerprints);
                     let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
                         if use_fingerprint_compare {
                             tsc_fingerprints
@@ -1325,7 +1343,8 @@ impl Runner {
                             .iter()
                             .cloned()
                             .collect();
-                    let use_fingerprint_compare = !tsc_fingerprints.is_empty();
+                    let use_fingerprint_compare =
+                        use_fingerprint_compare(&tsc_fingerprints, &tsz_fingerprints);
                     let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
                         if use_fingerprint_compare {
                             tsc_fingerprints
@@ -1528,7 +1547,8 @@ impl Runner {
                             .iter()
                             .cloned()
                             .collect();
-                    let use_fingerprint_compare = !tsc_fingerprints.is_empty();
+                    let use_fingerprint_compare =
+                        use_fingerprint_compare(&tsc_fingerprints, &tsz_fingerprints);
                     let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
                         if use_fingerprint_compare {
                             tsc_fingerprints
@@ -1689,6 +1709,34 @@ mod tests {
         std::env::set_current_dir(original).expect("cwd should be restored");
         let _ = std::fs::remove_dir_all(&temp);
         result
+    }
+
+    #[test]
+    fn use_fingerprint_compare_requires_both_sides_non_empty() {
+        let tsc: std::collections::HashSet<DiagnosticFingerprint> =
+            [fp(2322, "a.ts", "mismatch")].into_iter().collect();
+        let tsz_empty: std::collections::HashSet<DiagnosticFingerprint> =
+            std::collections::HashSet::new();
+        let tsz_populated: std::collections::HashSet<DiagnosticFingerprint> =
+            [fp(2322, "a.ts", "mismatch")].into_iter().collect();
+
+        // Server mode: TSC has fingerprints, tsz doesn't — must NOT compare,
+        // otherwise every test would spuriously fail with all tsc
+        // fingerprints reported as missing.
+        assert!(!use_fingerprint_compare(&tsc, &tsz_empty));
+        // Symmetric: tsz has fingerprints, TSC doesn't (cache missed them) —
+        // also fall back to code-only.
+        assert!(!use_fingerprint_compare(
+            &std::collections::HashSet::new(),
+            &tsz_populated
+        ));
+        // Both empty: no fingerprint data anywhere, compare by codes only.
+        assert!(!use_fingerprint_compare(
+            &std::collections::HashSet::new(),
+            &std::collections::HashSet::new()
+        ));
+        // CLI mode: both sides populated — enable fingerprint compare.
+        assert!(use_fingerprint_compare(&tsc, &tsz_populated));
     }
 
     #[test]
