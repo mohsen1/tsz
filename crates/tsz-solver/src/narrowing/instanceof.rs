@@ -875,42 +875,23 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow by `x.constructor !== SomeClass` (false branch).
     ///
-    /// Excludes the exact instance type from the union.
+    /// TypeScript treats constructor identity as a positive-only guard. The
+    /// true branch can narrow to the exact class, but the negative branch keeps
+    /// the original type rather than excluding the class.
     pub fn narrow_by_constructor_false(
         &self,
         source_type: TypeId,
-        instance_type: TypeId,
+        _instance_type: TypeId,
     ) -> TypeId {
         let _span = span!(
             Level::TRACE,
             "narrow_by_constructor_false",
             source = source_type.0,
-            instance = instance_type.0
+            instance = _instance_type.0
         )
         .entered();
 
-        if source_type == TypeId::ANY {
-            return source_type;
-        }
-
-        let resolved_instance = self.resolve_type(instance_type);
-
-        if let Some(members_list) = union_list_id(self.db, source_type) {
-            let members = self.db.type_list(members_list);
-            let filtered: Vec<TypeId> = members
-                .iter()
-                .copied()
-                .filter(|&m| !self.types_match_nominally(m, instance_type, resolved_instance))
-                .collect();
-            trace!(kept = filtered.len(), total = members.len());
-            return super::union_or_single_preserve(self.db, filtered);
-        }
-
-        if self.types_match_nominally(source_type, instance_type, resolved_instance) {
-            TypeId::NEVER
-        } else {
-            source_type
-        }
+        source_type
     }
 
     /// Check if two types refer to the same nominal declaration.

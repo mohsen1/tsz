@@ -697,7 +697,7 @@ if (x.constructor === C8) {
 }
 
 #[test]
-fn test_constructor_narrowing_false_branch() {
+fn test_constructor_identity_false_branch_keeps_original_union() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 class A { a!: string; }
@@ -705,15 +705,19 @@ class B { b!: number; }
 
 declare let x: A | B;
 if (x.constructor !== A) {
-    x; // should be B (A excluded)
-    x.b; // OK
+    x; // A | B
+    x.b; // TS2339: constructor inequality does not exclude A
 }
         ",
     );
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("A | B"))
+        .collect();
     assert!(
-        !has_error(&diagnostics, 2339),
-        "Constructor narrowing false branch: x.constructor !== A should \
-         exclude A from the union, leaving B. Got: {diagnostics:?}"
+        !ts2339.is_empty(),
+        "Constructor identity inequality should keep the original union in \
+         the false branch, matching tsc. Got: {diagnostics:?}"
     );
 }
 

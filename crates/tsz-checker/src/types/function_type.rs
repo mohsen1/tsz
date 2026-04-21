@@ -1,5 +1,7 @@
 //! Function, method, and arrow function type resolution.
+mod function_name_diagnostics;
 mod js_prototype;
+mod jsx_body_context;
 
 use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
@@ -15,23 +17,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
-    fn is_jsx_body_child_closure(&self, func_idx: NodeIndex) -> bool {
-        let mut current = func_idx;
-        while let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) {
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-            match parent_node.kind {
-                k if k == syntax_kind_ext::JSX_ATTRIBUTE => return false,
-                k if k == syntax_kind_ext::JSX_ELEMENT || k == syntax_kind_ext::JSX_FRAGMENT => {
-                    return true;
-                }
-                _ => current = parent,
-            }
-        }
-        false
-    }
-
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_function_impl(idx, &TypingRequest::NONE)
@@ -144,57 +129,12 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS1100: `eval` or `arguments` used as a function expression name in strict mode.
-        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            && let Some(name_idx) = name_node
-            && let Some(name_n) = self.ctx.arena.get(name_idx)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_n)
-        {
-            let name = &ident.escaped_text;
-            if self.is_strict_mode_for_node(name_idx)
-                && crate::state_checking::is_eval_or_arguments(name)
-                && !(self.ctx.enclosing_class.is_some() && name.as_str() == "arguments")
-            {
-                self.emit_eval_or_arguments_strict_mode_error(name_idx, name);
-            }
-        }
-
-        // TS1212: Reserved word used as function expression name in strict mode.
-        // This check is for function expressions (declarations are checked in check_function_declaration_callback).
-        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            && let Some(name_idx) = name_node
-            && let Some(name_n) = self.ctx.arena.get(name_idx)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_n)
-        {
-            let name = &ident.escaped_text;
-            if self.is_strict_mode_for_node(name_idx)
-                && !self.ctx.is_ambient_declaration(idx)
-                && crate::state_checking::is_strict_mode_reserved_name(name)
-            {
-                self.emit_strict_mode_reserved_word_error(name_idx, name, true);
-            }
-        }
-
-        // TS1359: 'await' used as function name in async context.
-        // Async functions create an implicit async context where 'await' is reserved.
-        // Skip for async generators — the parser handles `await` as a name there (TS1109).
-        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            && function_is_async
-            && !function_is_generator
-            && let Some(name_idx) = name_node
-            && let Some(name_n) = self.ctx.arena.get(name_idx)
-            && let Some(ident) = self.ctx.arena.get_identifier(name_n)
-        {
-            let name = &ident.escaped_text;
-            if name == "await" {
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    name_idx,
-                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
-                );
-            }
-        }
+        self.check_function_expression_name_diagnostics(
+            idx,
+            name_node,
+            function_is_async,
+            function_is_generator,
+        );
 
         // Push enclosing type parameters so nested functions can reference outer generic scopes.
         let enclosing_type_param_updates = self.push_enclosing_type_parameters(idx);
