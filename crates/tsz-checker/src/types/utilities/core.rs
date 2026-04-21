@@ -36,10 +36,48 @@ impl<'a> CheckerState<'a> {
         )?;
         let rest_param = shape.params.last().filter(|param| param.rest)?;
         if is_rest {
-            // For rest parameters in function expressions, preserve the original
-            // type (including type parameters like `Args extends any[]`). The
-            // constraint-resolved type would lose the generic identity, causing
-            // the rest param to be typed as `any[]` instead of `Args`.
+            let rest_start = shape.params.len().saturating_sub(1);
+            if shape.params.len() == 1 && index > 0 {
+                let rest_param_type =
+                    self.contextual_rest_parameter_source_type(rest_param.type_id);
+                if let Some(tuple_elements) =
+                    crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_param_type)
+                {
+                    if tuple_elements.len() > index {
+                        return Some(
+                            self.ctx
+                                .types
+                                .factory()
+                                .tuple(tuple_elements[index..].to_vec()),
+                        );
+                    }
+                    if let Some(last) = tuple_elements.last()
+                        && last.rest
+                    {
+                        return Some(last.type_id);
+                    }
+                }
+            }
+            if index < rest_start {
+                let mut elements = shape.params[index..rest_start]
+                    .iter()
+                    .map(|param| tsz_solver::TupleElement {
+                        type_id: param.type_id,
+                        name: param.name,
+                        optional: param.optional,
+                        rest: false,
+                    })
+                    .collect::<Vec<_>>();
+                elements.push(tsz_solver::TupleElement {
+                    type_id: rest_param.type_id,
+                    name: rest_param.name,
+                    optional: false,
+                    rest: true,
+                });
+                return Some(self.ctx.types.factory().tuple(elements));
+            }
+            // For rest parameters aligned with the contextual rest, preserve the
+            // original type (including type parameters like `Args extends any[]`).
             return Some(rest_param.type_id);
         }
         let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);

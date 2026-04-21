@@ -253,6 +253,35 @@ fn test_no_input_diagnostics_preserve_config_errors() {
 }
 
 #[test]
+fn test_compile_invalid_react_namespace_reports_config_error_without_jsx_cascade() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "jsx": "react",
+    "reactNamespace": "my-React-Lib"
+  },
+  "include": ["index.tsx"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("index.tsx"), "<foo data/>;\n").expect("write tsx");
+
+    let args = CliArgs::try_parse_from(["tsz"]).expect("default args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER],
+        "Expected only TS5059 for invalid reactNamespace, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.diagnostics[0].file.ends_with("tsconfig.json"));
+}
+
+#[test]
 fn test_compile_emits_ts18003_with_explicit_default_include_and_only_mts_input() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
