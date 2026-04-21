@@ -986,6 +986,14 @@ impl<'a> CheckerState<'a> {
         if let Some(rewritten) = rewrite_application_alias(self, target, &target_str) {
             target_str = rewritten;
         }
+        if let Some(display) = self.evaluated_literal_alias_source_display(source) {
+            source_str = display;
+        }
+        if let Some(display) = self.evaluated_literal_alias_source_display(target) {
+            target_str = display;
+        }
+        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
+        target_str = self.canonicalize_assignment_numeric_literal_union_display(target_str);
         (source_str, target_str)
     }
 
