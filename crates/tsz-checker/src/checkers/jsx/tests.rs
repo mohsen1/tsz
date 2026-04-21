@@ -401,6 +401,63 @@ fn jsx_element_attributes_property_multiple_members_emits_ts2608() {
     );
 }
 
+#[test]
+fn jsx_element_attributes_property_multiple_members_anchors_at_interface_name() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { }
+            interface ElementAttributesProperty { pr1: any; pr2: any; }
+            interface IntrinsicElements { }
+        }
+        interface CompType { new(n: string): {}; }
+        declare var Comp: CompType;
+        <Comp x={10} />;
+        "#;
+    let diagnostics = check_jsx(source);
+    let expected_start = source
+        .find("ElementAttributesProperty")
+        .expect("expected ElementAttributesProperty in source") as u32;
+    let ts2608 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2608)
+        .expect("expected TS2608 for invalid ElementAttributesProperty");
+    assert_eq!(
+        ts2608.start, expected_start,
+        "TS2608 should anchor at the ElementAttributesProperty name, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_invalid_element_attributes_property_props_assignability_anchors_at_tag_name() {
+    let source = r#"
+        declare namespace JSX {
+            interface Element { }
+            interface ElementAttributesProperty { pr1: any; pr2: any; }
+            interface IntrinsicElements { }
+        }
+        interface CompType { new(n: string): {}; }
+        declare var Comp: CompType;
+        <Comp x={10} />;
+        "#;
+    let diagnostics = check_jsx(source);
+    let expected_start = source
+        .find("Comp x")
+        .expect("expected JSX tag name in source") as u32;
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == 2322
+                && diag
+                    .message_text
+                    .contains("Type '{ x: number; }' is not assignable to type 'string'.")
+        })
+        .expect("expected TS2322 for invalid JSX attributes object");
+    assert_eq!(
+        ts2322.start, expected_start,
+        "TS2322 should anchor at the JSX tag name, got: {diagnostics:?}"
+    );
+}
+
 /// TS2786 should NOT fire for generic class components whose construct
 /// signature return type contains unresolved type parameters.
 /// TSC resolves signatures before checking; we skip the check when
