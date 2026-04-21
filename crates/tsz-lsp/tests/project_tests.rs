@@ -3915,6 +3915,50 @@ fn test_project_handle_will_rename_files() {
 }
 
 #[test]
+fn test_project_handle_will_rename_files_preserves_quotes() {
+    // Regression: `process_file_rename` used to pair the outer quoted range
+    // with a bare specifier, so applying the edit overwrote the surrounding
+    // quotes. Verify that the produced edit targets only the inner content
+    // and that applying it re-yields a quoted import (for both quote styles).
+    for (quote, name) in [('\"', "double"), ('\'', "single")] {
+        let source = format!("import {{ x }} from {quote}./old{quote};\n");
+        let mut project = Project::new();
+        project.set_file("old.ts".to_string(), "export const x = 1;\n".to_string());
+        project.set_file("consumer.ts".to_string(), source.clone());
+
+        let workspace_edit = project.handle_will_rename_files(&[FileRename {
+            old_uri: "old.ts".to_string(),
+            new_uri: "new.ts".to_string(),
+        }]);
+
+        let edits = workspace_edit
+            .changes
+            .get("consumer.ts")
+            .unwrap_or_else(|| panic!("{name}-quote variant should produce edits for consumer.ts"));
+        assert_eq!(edits.len(), 1, "{name}-quote variant: one edit expected");
+        let edit = &edits[0];
+        assert!(
+            !edit.new_text.contains(quote),
+            "{name}-quote variant: edit text must not contain quotes (got {:?})",
+            edit.new_text
+        );
+
+        // Apply the edit and assert the result is still a quoted import.
+        // The extension handling is a separate concern (`calculate_new_relative_path`
+        // retains `new_path`'s extension); here we just confirm the surrounding
+        // quote characters survive the rewrite.
+        let line_map = tsz_common::position::LineMap::build(&source);
+        let applied = apply_text_edits(&source, &line_map, edits);
+        let prefix = format!("import {{ x }} from {quote}");
+        let suffix = format!("{quote};\n");
+        assert!(
+            applied.starts_with(&prefix) && applied.ends_with(&suffix),
+            "{name}-quote variant: applying the rename edit should preserve quotes, got {applied:?}"
+        );
+    }
+}
+
+#[test]
 fn test_project_subtypes_returns_empty_for_missing_file() {
     let project = Project::new();
     let result = project.subtypes("nonexistent.ts", Position::new(0, 0));
