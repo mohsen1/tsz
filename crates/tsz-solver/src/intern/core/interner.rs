@@ -40,11 +40,20 @@ const LOOKUP_CACHE_SIZE: usize = 1 << LOOKUP_CACHE_BITS; // 1024
 #[allow(dead_code)]
 const LOOKUP_CACHE_MASK: u32 = (LOOKUP_CACHE_SIZE as u32) - 1;
 
-/// A single cache entry: (tag = TypeId raw value, cached TypeData).
+/// A single cache entry: (tag = TypeId raw value, cached TypeData, owning
+/// interner instance_id).
+///
 /// `tag == 0` means empty (`TypeId::NONE` is never looked up for user types).
+/// `instance_id` scopes the cache entry to the interner that inserted it, so
+/// a stale entry from a previous `TypeInterner` on the same thread is
+/// detected and treated as a miss — even though the raw `tag` may collide
+/// with a different type in the new interner. Without this, the thread-local
+/// cache was disabled entirely, forcing every `lookup()` through a
+/// `RwLock::read()` (~15-25 ns per call).
 #[derive(Clone, Copy)]
 struct LookupCacheEntry {
     tag: u32,
+    instance_id: u32,
     data: TypeData,
 }
 
@@ -66,6 +75,8 @@ const INTERN_CACHE_MASK: u64 = (INTERN_CACHE_SIZE as u64) - 1;
 struct InternCacheEntry {
     /// `FxHash` of the TypeData, used as tag
     hash: u64,
+    /// Owning interner instance_id for cross-interner safety.
+    instance_id: u32,
     /// The TypeData that was interned
     key: TypeData,
     /// The resulting TypeId
@@ -91,12 +102,14 @@ impl TypeInternerCache {
             lookup: UnsafeCell::new(
                 [LookupCacheEntry {
                     tag: 0,
+                    instance_id: 0,
                     data: TypeData::Error,
                 }; LOOKUP_CACHE_SIZE],
             ),
             intern: UnsafeCell::new(
                 [InternCacheEntry {
                     hash: 0,
+                    instance_id: 0,
                     key: TypeData::Error,
                     result: TypeId::NONE,
                 }; INTERN_CACHE_SIZE],
@@ -105,11 +118,11 @@ impl TypeInternerCache {
     }
 
     #[inline(always)]
-    fn lookup_probe(&self, id: TypeId) -> Option<TypeData> {
+    fn lookup_probe(&self, id: TypeId, instance_id: u32) -> Option<TypeData> {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
         // SAFETY: single-threaded access via thread_local!
         let entry = unsafe { &(*self.lookup.get())[idx] };
-        if entry.tag == id.0 {
+        if entry.tag == id.0 && entry.instance_id == instance_id {
             Some(entry.data)
         } else {
             None
@@ -117,20 +130,21 @@ impl TypeInternerCache {
     }
 
     #[inline(always)]
-    fn lookup_insert(&self, id: TypeId, data: TypeData) {
+    fn lookup_insert(&self, id: TypeId, instance_id: u32, data: TypeData) {
         let idx = (id.0 & LOOKUP_CACHE_MASK) as usize;
         // SAFETY: single-threaded access via thread_local!
         let entry = unsafe { &mut (*self.lookup.get())[idx] };
         entry.tag = id.0;
+        entry.instance_id = instance_id;
         entry.data = data;
     }
 
     #[inline(always)]
-    fn intern_probe(&self, hash: u64, key: &TypeData) -> Option<TypeId> {
+    fn intern_probe(&self, hash: u64, instance_id: u32, key: &TypeData) -> Option<TypeId> {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
         // SAFETY: single-threaded access via thread_local!
         let entry = unsafe { &(*self.intern.get())[idx] };
-        if entry.hash == hash && &entry.key == key {
+        if entry.hash == hash && entry.instance_id == instance_id && &entry.key == key {
             Some(entry.result)
         } else {
             None
@@ -138,11 +152,12 @@ impl TypeInternerCache {
     }
 
     #[inline(always)]
-    fn intern_insert(&self, hash: u64, key: TypeData, result: TypeId) {
+    fn intern_insert(&self, hash: u64, instance_id: u32, key: TypeData, result: TypeId) {
         let idx = (hash & INTERN_CACHE_MASK) as usize;
         // SAFETY: single-threaded access via thread_local!
         let entry = unsafe { &mut (*self.intern.get())[idx] };
         entry.hash = hash;
+        entry.instance_id = instance_id;
         entry.key = key;
         entry.result = result;
     }
@@ -151,6 +166,11 @@ impl TypeInternerCache {
 thread_local! {
     static TL_CACHE: TypeInternerCache = const { TypeInternerCache::new() };
 }
+
+/// Global counter for assigning unique `instance_id`s to `TypeInterner`
+/// instances. `0` is reserved as "empty/no-interner" so it will never match
+/// a real entry stored in the thread-local cache.
+static NEXT_INTERNER_INSTANCE_ID: AtomicU32 = AtomicU32::new(1);
 
 /// Clear the thread-local type interner cache.
 ///
@@ -563,6 +583,9 @@ pub struct TypeInterner {
     /// When this counter exceeds `MAX_EVALUATION_FUEL`, evaluators bail out early
     /// with `TypeId::ERROR`, matching tsc's TS2589 behavior.
     pub(super) evaluation_fuel: AtomicU32,
+    /// Unique identifier scoping this interner's entries in the thread-local
+    /// lookup/intern cache. See `NEXT_INTERNER_INSTANCE_ID` for context.
+    pub(super) instance_id: u32,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -608,6 +631,7 @@ impl TypeInterner {
             display_alias: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
+            instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -944,6 +968,9 @@ impl TypeInterner {
     /// Otherwise, creates a new `TypeId` and stores the key.
     ///
     /// This uses a lock-free pattern with `DashMap` for concurrent access.
+    ///
+    /// Consults a thread-local cache scoped by this interner's `instance_id`
+    /// before falling through to the `DashMap` lookup.
     #[inline]
     pub fn intern(&self, key: TypeData) -> TypeId {
         if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
@@ -953,12 +980,21 @@ impl TypeInterner {
             return id;
         }
 
-        // Thread-local caches are disabled (see lookup() comment for rationale).
         let mut hasher = FxHasher::default();
         key.hash(&mut hasher);
         let hash = hasher.finish();
 
-        self.intern_slow(key, hash)
+        // Fast path: thread-local cache hit scoped by this interner's
+        // instance_id.
+        if let Some(id) = TL_CACHE.with(|c| c.intern_probe(hash, self.instance_id, &key)) {
+            return id;
+        }
+
+        let result = self.intern_slow(key.clone(), hash);
+        if result != TypeId::ERROR {
+            TL_CACHE.with(|c| c.intern_insert(hash, self.instance_id, key, result));
+        }
+        result
     }
 
     /// Slow path for `intern`: goes through `DashMap` and RwLock-protected storage.
@@ -1024,7 +1060,10 @@ impl TypeInterner {
     /// Look up the `TypeData` for a given `TypeId`.
     ///
     /// Uses a thread-local direct-mapped cache for O(1) lookups on cache hits,
-    /// falling back to `RwLock`-protected shard storage on misses.
+    /// falling back to `RwLock`-protected shard storage on misses. Cache
+    /// entries are scoped by `self.instance_id` so a stale entry from a
+    /// previous `TypeInterner` on the same thread (conformance runner, batch
+    /// mode) is detected and treated as a miss.
     #[inline]
     pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
         if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1034,12 +1073,15 @@ impl TypeInterner {
             return self.get_intrinsic_key(id);
         }
 
-        // Thread-local caches are disabled because the cache is per-thread, not
-        // per-TypeInterner. When multiple TypeInterner instances are created on the
-        // same thread (e.g., conformance runner processing multiple files), the
-        // cache returns stale data from a previous interner instance, causing
-        // incorrect type lookups and widespread false diagnostics.
-        self.lookup_slow(id)
+        // Fast path: thread-local cache hit scoped by this interner's
+        // instance_id.
+        if let Some(data) = TL_CACHE.with(|c| c.lookup_probe(id, self.instance_id)) {
+            return Some(data);
+        }
+
+        let data = self.lookup_slow(id)?;
+        TL_CACHE.with(|c| c.lookup_insert(id, self.instance_id, data));
+        Some(data)
     }
 
     /// Slow path for `lookup`: goes through RwLock-protected shard storage.
