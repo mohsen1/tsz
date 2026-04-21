@@ -8,6 +8,7 @@ use tsz_checker::context::CheckerOptions;
 
 struct Diag {
     code: u32,
+    message: String,
 }
 
 fn check_js(source: &str) -> Vec<Diag> {
@@ -39,7 +40,10 @@ fn check_js(source: &str) -> Vec<Diag> {
         .ctx
         .diagnostics
         .iter()
-        .map(|d| Diag { code: d.code })
+        .map(|d| Diag {
+            code: d.code,
+            message: d.message_text.clone(),
+        })
         .collect()
 }
 
@@ -150,6 +154,63 @@ tuple = 1;
         diags.iter().any(|d| d.code == 2322),
         "Expected TS2322 for number assigned to optional/rest JSDoc tuple, got codes: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn jsdoc_recursive_generic_typedef_with_readonly_tuple_reports_assignment() {
+    let diags = check_js(
+        r#"/** @template T
+ * @typedef {{ readonly [n: number]: T }} ReadonlyArray<T>
+ */
+
+/** @template K,V
+ * @typedef {{ [key: string]: V }} Record<K,V>
+ */
+
+/** @typedef {ReadonlyArray<Json>} JsonArray */
+/** @typedef {{ readonly [key: string]: Json }} JsonRecord */
+/** @typedef {boolean | number | string | null | JsonRecord | JsonArray | readonly []} Json */
+
+/**
+ * @template T
+ * @typedef {{
+  $A: {
+    [K in keyof T]?: XMLObject<T[K]>[]
+  },
+  $O: {
+    [K in keyof T]?: {
+      $$?: Record<string, string>
+    } & (T[K] extends string ? {$:string} : XMLObject<T[K]>)
+  },
+  $$?: Record<string, string>,
+  } & {
+  [K in keyof T]?: (
+    T[K] extends string ? string
+      : XMLObject<T[K]>
+  )
+}} XMLObject<T> */
+
+/** @type {XMLObject<{foo:string}>} */
+const p = {};
+"#,
+    );
+    let codes = diags.iter().map(|d| d.code).collect::<Vec<_>>();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for empty object assigned to recursive JSDoc generic typedef, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !codes.contains(&2552),
+        "Did not expect TS2552 from resolving nested JSDoc generic typedefs, got diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
     );
 }
 

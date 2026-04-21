@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
     // -----------------------------------------------------------------
 
     /// Find the first occurrence of a character at the top level.
-    pub(super) fn find_top_level_char(s: &str, target: char) -> Option<usize> {
+    pub(crate) fn find_top_level_char(s: &str, target: char) -> Option<usize> {
         let mut angle_depth = 0u32;
         let mut paren_depth = 0u32;
         let mut brace_depth = 0u32;
@@ -60,7 +60,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Split a type expression on a top-level binary operator (`|` or `&`).
-    pub(super) fn split_top_level_binary(s: &str, op: char) -> Option<Vec<&str>> {
+    pub(crate) fn split_top_level_binary(s: &str, op: char) -> Option<Vec<&str>> {
         let mut parts = Vec::new();
         let mut start = 0;
         let mut angle_depth = 0u32;
@@ -619,7 +619,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(rest) = line.strip_prefix("}}") {
-                    let name = rest.trim();
+                    let name = Self::normalize_jsdoc_typedef_name(rest.trim());
                     if !name.is_empty() {
                         if let Some(previous_name) = current_name.take() {
                             typedefs.push((previous_name, current_info));
@@ -631,7 +631,7 @@ impl<'a> CheckerState<'a> {
                             };
                         }
                         let base_type = format!("{{ {} }}", body_lines.join(", "));
-                        current_name = Some(name.to_string());
+                        current_name = Some(name);
                         current_info.base_type = Some(base_type);
                         current_info.properties.clear();
                         current_info.template_params = template_params.clone();
@@ -896,7 +896,16 @@ impl<'a> CheckerState<'a> {
             None
         };
         let name = rest.split_whitespace().next()?;
-        Some((name.to_string(), base_type))
+        Some((Self::normalize_jsdoc_typedef_name(name), base_type))
+    }
+
+    fn normalize_jsdoc_typedef_name(name: &str) -> String {
+        let trimmed = name.trim().trim_end_matches(',').trim_end_matches(';');
+        if let Some(angle_idx) = Self::find_top_level_char(trimmed, '<') {
+            trimmed[..angle_idx].trim().to_string()
+        } else {
+            trimmed.to_string()
+        }
     }
 
     /// Extract the base type from an anonymous `@typedef {type}` (one without an
