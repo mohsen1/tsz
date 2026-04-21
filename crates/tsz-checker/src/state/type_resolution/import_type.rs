@@ -72,14 +72,18 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) = exports.get(member_name)
             && target_binder.get_symbol(sym_id).is_some()
         {
             return record_and_return(sym_id);
         }
 
-        if let Some(exports) = target_binder.module_exports.get(module_specifier)
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) = exports.get(member_name)
             && target_binder.get_symbol(sym_id).is_some()
         {
@@ -91,10 +95,13 @@ impl<'a> CheckerState<'a> {
         // file (bound separately), the single-binder re-export walk above
         // won't find the member.  Follow the wildcard targets across files.
         {
-            let wildcards = target_binder
-                .wildcard_reexports
-                .get(&target_file_name)
-                .or_else(|| target_binder.wildcard_reexports.get(module_specifier))
+            let wildcards = self
+                .ctx
+                .wildcard_reexports_for_file(target_binder, &target_file_name)
+                .or_else(|| {
+                    self.ctx
+                        .wildcard_reexports_for_file(target_binder, module_specifier)
+                })
                 .cloned();
             if let Some(wildcard_sources) = wildcards {
                 for source_module in &wildcard_sources {

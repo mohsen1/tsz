@@ -587,7 +587,9 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        if let Some(exports_table) = target_binder.module_exports.get(module_specifier)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
         {
@@ -764,8 +766,9 @@ impl<'a> CheckerState<'a> {
 
         // Check named re-exports before file_locals so that
         // `export { X } from './other'` is resolved through the chain.
-        if let Some(reexports) =
-            self.keyed_exports_for_file(&target_binder.reexports, &target_file_name)
+        if let Some(reexports) = self
+            .ctx
+            .reexports_for_file(target_binder, &target_file_name)
             && let Some((source_module, original_name)) = reexports.get(export_name)
         {
             let name = original_name.as_deref().unwrap_or(export_name);
@@ -781,8 +784,9 @@ impl<'a> CheckerState<'a> {
         // Check wildcard re-exports before file_locals so that
         // `export * from './other'` is followed to the actual declaring file.
         // file_locals may contain merged globals that shadow re-exported symbols.
-        if let Some(source_modules) =
-            self.keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
         {
             let source_modules = source_modules.clone();
             for source_module in &source_modules {
@@ -851,7 +855,10 @@ impl<'a> CheckerState<'a> {
         // Prefer canonical file key first, then module specifier fallback.
         let direct_exports = self
             .module_exports_for_file(target_binder, &target_file_name)
-            .or_else(|| target_binder.module_exports.get(module_specifier));
+            .or_else(|| {
+                self.ctx
+                    .module_exports_for_module(target_binder, module_specifier)
+            });
 
         if let Some(exports) = direct_exports {
             let mut combined = exports.clone();
@@ -880,10 +887,12 @@ impl<'a> CheckerState<'a> {
         // via `export * from './other'` or `export { X } from './other'`.
         // Collect re-exported symbols even when there are no direct exports.
         let has_reexports = self
-            .keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
             .is_some()
             || self
-                .keyed_exports_for_file(&target_binder.reexports, &target_file_name)
+                .ctx
+                .reexports_for_file(target_binder, &target_file_name)
                 .is_some();
         if has_reexports {
             let mut combined = tsz_binder::SymbolTable::new();
@@ -928,7 +937,9 @@ impl<'a> CheckerState<'a> {
         let direct_exports = self
             .module_exports_for_file(target_binder, &target_file_name)
             .or_else(|| {
-                module_specifier.and_then(|specifier| target_binder.module_exports.get(specifier))
+                module_specifier.and_then(|specifier| {
+                    self.ctx.module_exports_for_module(target_binder, specifier)
+                })
             });
 
         if let Some(exports) = direct_exports {
@@ -946,10 +957,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let has_reexports = self
-            .keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
             .is_some()
             || self
-                .keyed_exports_for_file(&target_binder.reexports, &target_file_name)
+                .ctx
+                .reexports_for_file(target_binder, &target_file_name)
                 .is_some();
         if has_reexports {
             let mut combined = tsz_binder::SymbolTable::new();
@@ -1385,16 +1398,15 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect from wildcard re-exports (export * from './module')
-        if let Some(source_modules) =
-            self.keyed_exports_for_file(&target_binder.wildcard_reexports, &target_file_name)
+        if let Some(source_modules) = self
+            .ctx
+            .wildcard_reexports_for_file(target_binder, &target_file_name)
         {
             let source_modules = source_modules.clone();
             // Get type-only flags for wildcard re-exports to skip `export type *` members
             let type_only_flags = self
-                .keyed_exports_for_file(
-                    &target_binder.wildcard_reexports_type_only,
-                    &target_file_name,
-                )
+                .ctx
+                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name)
                 .cloned();
             for (i, source_module) in source_modules.iter().enumerate() {
                 // Skip `export type * from '...'` — these exports should not appear as
@@ -1436,8 +1448,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Collect from named re-exports (export { X } from './module')
-        if let Some(reexports) =
-            self.keyed_exports_for_file(&target_binder.reexports, &target_file_name)
+        if let Some(reexports) = self
+            .ctx
+            .reexports_for_file(target_binder, &target_file_name)
         {
             let reexports = reexports.clone();
             for (exported_name, (source_module, original_name)) in &reexports {
@@ -2260,14 +2273,18 @@ impl<'a> CheckerState<'a> {
                 .source_files
                 .first()
                 .map(|sf| sf.file_name.clone())
-                && let Some(exports) = target_binder.module_exports.get(&target_file_name)
+                && let Some(exports) = self
+                    .ctx
+                    .module_exports_for_module(target_binder, &target_file_name)
                 && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);
                 return Some(sym_id);
             }
 
-            if let Some(exports) = target_binder.module_exports.get(module_specifier)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(target_binder, module_specifier)
                 && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);

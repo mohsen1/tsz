@@ -22,7 +22,8 @@ pub use flow::{FlowNode, FlowNodeArena, FlowNodeId, flow_flags};
 pub use scopes::{ContainerKind, Scope, ScopeContext, ScopeId};
 pub use state::export_surface::{ExportSurface, ExportedSymbol, NamedReexport, WildcardReexport};
 pub use state::{
-    BinderOptions, BinderState, DeclarationArenaMap, FileFeatures, GlobalAugmentation, LibContext,
-    ModuleAugmentation, SemanticDefEntry, SemanticDefKind, ValidationError,
+    BinderOptions, BinderState, DeclarationArenaMap, FileFeatures, FileReexports, FileReexportsMap,
+    GlobalAugmentation, LibContext, ModuleAugmentation, ReexportTarget, SemanticDefEntry,
+    SemanticDefKind, ValidationError,
 };
 pub use symbols::{Symbol, SymbolArena, SymbolId, SymbolTable, symbol_flags};

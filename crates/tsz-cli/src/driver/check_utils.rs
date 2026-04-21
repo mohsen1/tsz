@@ -1646,11 +1646,25 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             global_augmentations: augmentations.global_augmentations.clone(),
             module_augmentations: augmentations.module_augmentations.clone(),
             augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
-            module_exports: program.module_exports.clone(),
+            // Per-binder `module_exports` is left empty intentionally.
+            // The program-wide merged `module_exports` lives once on
+            // `ProjectEnv` as `program_module_exports` and is read via
+            // `ctx.module_exports_for_module`. Cross-file lookup binders
+            // used to deep-clone the entire merged map (thousands of
+            // entries on large repos) into every one of N per-file
+            // binders.
+            module_exports: Default::default(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
-            reexports: program.reexports.clone(),
-            wildcard_reexports: program.wildcard_reexports.clone(),
-            wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
+            // Per-binder re-export maps left empty intentionally. The
+            // program-wide merged re-export maps are stored once on
+            // `ProjectEnv` and read via `ctx.reexports_for_file` /
+            // `wildcard_reexports_for_file`. Cloning them into every one
+            // of N cross-file lookup binders scales the per-file setup
+            // cost with total re-exports across the whole project —
+            // several GB on the large-ts-repo benchmark fixture.
+            reexports: Default::default(),
+            wildcard_reexports: Default::default(),
+            wildcard_reexports_type_only: Default::default(),
             // Cross-file lookup binders only need local scopes/symbol ownership plus the
             // merged export/augmentation tables. Cloning the full cross-program arena maps
             // into every file binder makes all_binders setup scale with total declarations.

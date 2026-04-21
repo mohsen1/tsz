@@ -487,7 +487,7 @@ impl<'a> CheckerState<'a> {
         // symbol's namespace surface (e.g. `import("./mod").Member`). Those members are
         // nameable from consumers and must not trigger TS9006 private-name diagnostics.
         let is_exported_via_export_equals_namespace = export_keys.iter().any(|key| {
-            let Some(exports) = target_binder.module_exports.get(key) else {
+            let Some(exports) = self.ctx.module_exports_for_module(target_binder, key) else {
                 return false;
             };
             let Some(export_equals_sym_id) = exports.get("export=") else {
