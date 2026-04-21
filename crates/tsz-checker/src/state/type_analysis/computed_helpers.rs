@@ -20,7 +20,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {
+    pub(crate) fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {
         let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             type_id,
