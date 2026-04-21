@@ -1037,6 +1037,15 @@ pub(super) fn collect_diagnostics(
         let explicit_check_js_false = options.explicit_check_js_false;
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
+        // `TypeCache` is consumed by the emit pipeline (JS or declaration
+        // files). For a pure `--noEmit` run that does not also request
+        // declarations the cache is never read, but extracting one per file
+        // pins several hash maps per file in memory throughout the whole
+        // check — on a 6000-file repo that grew to ~10 GB RSS and got the
+        // process killed by macOS jetsam before any diagnostics emitted.
+        // Skip extraction in that case and let per-file state drop as soon
+        // as checking finishes.
+        let extract_type_cache = !options.no_emit || options.emit_declarations;
         let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
             Arc::new(dashmap::DashMap::new());
 
@@ -1082,6 +1091,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            extract_type_cache,
                         };
                         check_file_for_parallel(context)
                     })
@@ -1106,6 +1116,7 @@ pub(super) fn collect_diagnostics(
                             explicit_check_js_false,
                             skip_lib_check,
                             program_has_real_syntax_errors,
+                            extract_type_cache,
                         };
                         check_file_for_parallel(context)
                     })
@@ -1132,6 +1143,7 @@ pub(super) fn collect_diagnostics(
                     explicit_check_js_false,
                     skip_lib_check,
                     program_has_real_syntax_errors,
+                    extract_type_cache,
                 };
                 check_file_for_parallel(context)
             })
@@ -1778,6 +1790,14 @@ pub(super) struct CheckFileForParallelContext<'a> {
     explicit_check_js_false: bool,
     skip_lib_check: bool,
     program_has_real_syntax_errors: bool,
+    /// When `false`, per-file `TypeCache` extraction is skipped entirely.
+    /// `TypeCache` is used by the emit pipeline (JS / declaration files) and
+    /// by incremental cache reuse. For a `--noEmit` run that does not also
+    /// request `--declaration`, nothing consumes it, and extracting it for
+    /// every one of N files pins several hash maps per file in memory
+    /// throughout the whole check (observed at ~10 GB RSS peak on a
+    /// 6000-file repo). Set this `false` in that case.
+    extract_type_cache: bool,
 }
 
 /// Result of checking a single file for the parallel checking path: diagnostics,
@@ -1814,6 +1834,7 @@ pub(super) fn check_file_for_parallel<'a>(
         explicit_check_js_false,
         skip_lib_check,
         program_has_real_syntax_errors,
+        extract_type_cache,
     } = context;
     let file = &program.files[file_idx];
     // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
@@ -2007,10 +2028,14 @@ pub(super) fn check_file_for_parallel<'a>(
     // and inflated counts). The aggregator computes stats once on the
     // shared store after the work loop completes.
     let ds_stats = tsz_solver::StoreStatistics::default();
-    let type_cache = checker.extract_cache();
+    let type_cache = if extract_type_cache {
+        Some(checker.extract_cache())
+    } else {
+        None
+    };
     (
         file_diagnostics,
-        Some(type_cache),
+        type_cache,
         checker_counters,
         qc_stats,
         ds_stats,
