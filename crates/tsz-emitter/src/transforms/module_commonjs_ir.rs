@@ -32,7 +32,6 @@ use tsz_scanner::SyntaxKind;
 /// Context for `CommonJS` transformation
 pub struct CommonJsTransformContext<'a> {
     arena: &'a NodeArena,
-    module_counter: u32,
     preserve_const_enums: bool,
 }
 
@@ -40,7 +39,6 @@ impl<'a> CommonJsTransformContext<'a> {
     pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
-            module_counter: 0,
             preserve_const_enums: false,
         }
     }
@@ -133,9 +131,6 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         let module_var = sanitize_module_name(&module_spec);
-
-        // Generate module variable name
-        self.module_counter += 1;
         let var_name = format!("{module_var}_1");
 
         let mut statements = Vec::new();
@@ -252,8 +247,6 @@ impl<'a> CommonJsTransformContext<'a> {
     ) -> Option<IRNode> {
         let module_spec = string_literal_text(self.arena, export_data.module_specifier)?;
         let module_var = sanitize_module_name(&module_spec);
-
-        self.module_counter += 1;
         let var_name = format!("{module_var}_1");
 
         let mut statements = Vec::new();

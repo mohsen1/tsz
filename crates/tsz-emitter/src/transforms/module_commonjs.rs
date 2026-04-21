@@ -19,10 +19,7 @@
 //! exports.default = myFunc;
 //! ```
 
-use crate::transforms::emit_utils::{
-    identifier_text as get_identifier_text, sanitize_module_name, specifier_name_text,
-    string_literal_text,
-};
+use crate::transforms::emit_utils::{identifier_text as get_identifier_text, specifier_name_text};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1167,35 +1164,6 @@ pub fn emit_exports_init(
     }
 
     Ok(())
-}
-
-/// Transform an import declaration to `CommonJS` require
-///
-/// ```typescript
-/// import { foo, bar } from "./module";
-/// ```
-/// Becomes:
-/// ```javascript
-/// var module_1 = require("./module");
-/// ```
-pub fn transform_import_to_require(
-    arena: &NodeArena,
-    node: &Node,
-    module_counter: &mut u32,
-) -> Option<(String, String)> {
-    let import = arena.get_import_decl(node)?;
-
-    // Get module specifier text
-    let module_spec = string_literal_text(arena, import.module_specifier)?;
-
-    // Generate module variable name (e.g., module_1, module_2)
-    *module_counter += 1;
-    let var_name = format!("{}_1", sanitize_module_name(&module_spec));
-
-    // Return (var_name, require_statement)
-    let require_stmt = format!("var {var_name} = require(\"{module_spec}\");");
-
-    Some((var_name, require_stmt))
 }
 
 /// Transform import bindings to variable declarations
