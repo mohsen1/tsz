@@ -27,15 +27,22 @@ version: 2.1
 #      upload-artifact since workspaces stream within the same pipeline).
 #   4) Caching uses `save_cache` / `restore_cache` with a layered key.
 #
+# Shard counts were tuned down (2026-04-21) after observing ~40m wall-clock
+# per pipeline dominated by queue-wait for containers. Free-tier concurrency
+# can only service ~10-15 executors at a time, so halving shard counts cut
+# queue time roughly in half without meaningfully slowing any single shard
+# (each shard just processes ~2x the work it did before).
+#
 # What is NOT implemented in v1 (intentional; call out for follow-ups):
 #   - Path filtering ("only run solver tests if solver changed"). Needs the
 #     circleci/path-filtering orb + a setup workflow. Straightforward to add
 #     once the shape is validated. For now every lane runs on every push.
 #   - sccache. The mozilla-actions/sccache-action variant on GHA uses GH's
-#     server-side cache backend. On CircleCI, sccache typically needs S3 (so
-#     AWS creds) or a plain local+cache-save layout. The cargo registry +
-#     .target cache here already gives most of the win; add sccache-S3 later
-#     if the numbers justify the setup.
+#     server-side cache backend. On CircleCI, sccache local mode would need
+#     save_cache on a 5 GB dir across ~9 jobs per pipeline — that pushes
+#     toward the free plan's data-transfer soft cap. The `.target` cache
+#     already covers the common case (unchanged Cargo.lock). Revisit with
+#     sccache-S3 or a minio side-car later if the numbers justify the setup.
 #   - Cross-platform (macOS) lanes — all jobs here are linux/amd64.
 
 # -----------------------------------------------------------------------------
@@ -239,10 +246,10 @@ jobs:
       - save-cargo-cache:
           prefix: cargo-test
 
-  # ---- Checker tests (4-way sharded — use native parallelism) --------------
+  # ---- Checker tests (2-way sharded — use native parallelism) --------------
   test-checker:
     executor: rust-xl
-    parallelism: 4
+    parallelism: 2
     steps:
       - checkout
       - init-typescript-submodule
@@ -399,10 +406,10 @@ jobs:
       - save-cargo-cache:
           prefix: cargo-testbuild-server
 
-  # ---- Conformance (10-way parallelism; ingest prebuilt binaries) ---------
+  # ---- Conformance (5-way parallelism; ingest prebuilt binaries) ----------
   conformance:
     executor: rust-node-xl               # xlarge lets us push workers > 2
-    parallelism: 10
+    parallelism: 5
     steps:
       - checkout
       - init-typescript-submodule
@@ -415,7 +422,8 @@ jobs:
           name: Run conformance shard ${CIRCLE_NODE_INDEX}/${CIRCLE_NODE_TOTAL}
           command: |
             set -euo pipefail
-            CHUNK=1300
+            # 5 shards × 2600 tests = 13,000 (covers the full suite with headroom).
+            CHUNK=2600
             OFFSET=$(( CIRCLE_NODE_INDEX * CHUNK ))
             mkdir -p .ci-metrics
             TMPOUT=$(mktemp); CLEANOUT=$(mktemp)
@@ -472,9 +480,9 @@ jobs:
               SHARD_COUNT=$((SHARD_COUNT + 1))
               echo "  $(basename "$f"): ${P}/${T}"
             done
-            echo "Received results from ${SHARD_COUNT}/10 shards"
+            echo "Received results from ${SHARD_COUNT}/5 shards"
 
-            [ "$SHARD_COUNT" -ge 8 ] || { echo "::error::too few shards reported"; exit 1; }
+            [ "$SHARD_COUNT" -ge 4 ] || { echo "::error::too few shards reported"; exit 1; }
             [ "$TOTAL_TESTS" -gt 0 ] || { echo "::error::no tests ran"; exit 1; }
 
             RATE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_PASSED / $TOTAL_TESTS) * 100}")
@@ -492,10 +500,10 @@ jobs:
           path: .ci-metrics
           destination: conformance-aggregate
 
-  # ---- Emit (10-way parallelism) ------------------------------------------
+  # ---- Emit (5-way parallelism) -------------------------------------------
   emit:
     executor: rust-node
-    parallelism: 10
+    parallelism: 5
     steps:
       - checkout
       - init-typescript-submodule
@@ -510,7 +518,8 @@ jobs:
             TSZ_BIN: /home/circleci/tsz/.target/dist-fast/tsz
           command: |
             set -euo pipefail
-            CHUNK=1900
+            # 5 shards × 3800 = 19,000 (was 10 × 1900).
+            CHUNK=3800
             OFFSET=$(( CIRCLE_NODE_INDEX * CHUNK ))
             mkdir -p .ci-metrics
             TMPOUT=$(mktemp); CLEANOUT=$(mktemp)
