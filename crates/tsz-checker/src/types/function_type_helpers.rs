@@ -382,12 +382,21 @@ impl<'a> CheckerState<'a> {
         updates
     }
 
-    /// Evaluate Application types in rest parameters of contextual function types.
+    /// Evaluate indirection (Application, typeof, lazy) in rest parameters of
+    /// contextual function types so that downstream contextual-typing code can
+    /// split the tuple across the callback's own parameters.
+    ///
+    /// Why: `(...args: typeof t2) => void` where `t2: [number, boolean, ...string[]]`
+    /// needs to expose the tuple shape to `(a, b, c) => {}` param matching. When
+    /// the outer context is preserved raw (#688), this helper is the only place
+    /// that resolves the rest param — so it must handle more than just Application.
     pub(crate) fn evaluate_contextual_rest_param_applications(
         &mut self,
         type_id: TypeId,
     ) -> TypeId {
-        use crate::query_boundaries::common::function_shape_for_type;
+        use crate::query_boundaries::common::{
+            function_shape_for_type, is_generic_application, is_type_query_type, lazy_def_id,
+        };
 
         let Some(shape) = function_shape_for_type(self.ctx.types, type_id) else {
             return type_id;
@@ -401,16 +410,16 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        // Only try to evaluate if the rest param type is an Application
-        if !crate::query_boundaries::common::is_generic_application(
-            self.ctx.types,
-            last_param.type_id,
-        ) {
+        let rest_tid = last_param.type_id;
+        let needs_resolution = is_generic_application(self.ctx.types, rest_tid)
+            || is_type_query_type(self.ctx.types, rest_tid)
+            || lazy_def_id(self.ctx.types, rest_tid).is_some();
+        if !needs_resolution {
             return type_id;
         }
 
-        let evaluated_rest = self.evaluate_application_type(last_param.type_id);
-        if evaluated_rest == last_param.type_id {
+        let evaluated_rest = self.evaluate_type_with_env(rest_tid);
+        if evaluated_rest == rest_tid {
             return type_id;
         }
 
