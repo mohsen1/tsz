@@ -302,7 +302,7 @@ fn test_template_literal_with_boolean() {
     let interner = TypeInterner::new();
 
     // Create template literal with boolean type: `is-${boolean}`
-    // TypeScript expands this to "is-true" | "is-false"
+    // TypeScript expands this to "is-false" | "is-true"
     let template = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("is-")),
         TemplateSpan::Type(TypeId::BOOLEAN),
@@ -313,6 +313,16 @@ fn test_template_literal_with_boolean() {
         Some(TypeData::Union(list_id)) => {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
+            let strings: Vec<_> = members
+                .iter()
+                .map(|member| match interner.lookup(*member) {
+                    Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                        interner.resolve_atom_ref(atom).to_string()
+                    }
+                    other => panic!("Expected string literal member, got {other:?}"),
+                })
+                .collect();
+            assert_eq!(strings, vec!["is-false", "is-true"]);
         }
         other => panic!("Expected Union for `is-${{boolean}}`, got {other:?}"),
     }

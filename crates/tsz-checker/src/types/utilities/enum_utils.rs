@@ -1035,6 +1035,22 @@ impl<'a> CheckerState<'a> {
             return !has_overlap;
         }
 
+        if crate::query_boundaries::common::is_template_literal_type(self.ctx.types, effective_left)
+            || crate::query_boundaries::common::is_template_literal_type(
+                self.ctx.types,
+                effective_right,
+            )
+        {
+            let env = self.ctx.type_env.borrow();
+            return !crate::query_boundaries::assignability::are_types_overlapping_with_env(
+                self.ctx.types,
+                &env,
+                effective_left,
+                effective_right,
+                self.ctx.strict_null_checks(),
+            );
+        }
+
         // Check union types: if any member of one union overlaps with the other, they overlap
         if let query::UnionMembersKind::Union(left_members) =
             query::classify_for_union_members(self.ctx.types, effective_left)

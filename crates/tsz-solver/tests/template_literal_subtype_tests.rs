@@ -249,6 +249,26 @@ fn test_template_literal_overlap_detection() {
 }
 
 #[test]
+fn test_template_literal_leading_hole_overlap_is_conservative() {
+    // `foo-${string}` and `${string}-bar` overlap because the leading string
+    // hole can absorb the fixed prefix from the other template.
+    let interner = TypeInterner::new();
+
+    let template1 = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("foo-")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let template2 = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("-bar")),
+    ]);
+
+    let checker = SubtypeChecker::new(&interner);
+    assert!(checker.are_types_overlapping(template1, template2));
+}
+
+#[test]
 fn test_template_literal_disjointness_different_suffix() {
     // `a${string}b` and `a${string}c` should be disjoint
     let interner = TypeInterner::new();
