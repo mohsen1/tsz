@@ -744,6 +744,36 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
+    fn finite_mapped_target_property_type(
+        &mut self,
+        target_type: TypeId,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        if let Some(mapped_id) = query_common::mapped_type_id(self.ctx.types, target_type) {
+            return crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+                self.ctx.types,
+                mapped_id,
+                prop_name,
+            );
+        }
+
+        let (base, args) = query_common::application_info(self.ctx.types, target_type)?;
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        let mapped_id = query_common::mapped_type_id(self.ctx.types, body_type)?;
+        let substitution =
+            query_common::TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+        let instantiated = query_common::instantiate_type(self.ctx.types, body_type, &substitution);
+        let instantiated_mapped_id =
+            query_common::mapped_type_id(self.ctx.types, instantiated).unwrap_or(mapped_id);
+
+        crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+            self.ctx.types,
+            instantiated_mapped_id,
+            prop_name,
+        )
+    }
+
     pub(in crate::error_reporter) fn object_literal_target_property_type(
         &mut self,
         target_type: TypeId,
@@ -771,6 +801,12 @@ impl<'a> CheckerState<'a> {
             if let tsz_solver::operations::property::PropertyAccessResult::Success {
                 type_id, ..
             } = self.resolve_property_access_with_env(candidate, prop_name)
+                && self.should_prefer_property_target_type(env_property_type, type_id)
+            {
+                env_property_type = Some(type_id);
+            }
+
+            if let Some(type_id) = self.finite_mapped_target_property_type(candidate, prop_name)
                 && self.should_prefer_property_target_type(env_property_type, type_id)
             {
                 env_property_type = Some(type_id);

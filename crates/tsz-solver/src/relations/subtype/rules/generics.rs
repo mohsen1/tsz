@@ -1554,7 +1554,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Try to expand a Mapped type to its structural form.
     /// Returns None if the mapped type cannot be expanded (unresolvable constraint).
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
-        use crate::{MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type};
+        use crate::{
+            LiteralValue, MappedModifier, PropertyInfo, TypeSubstitution, instantiate_type,
+        };
 
         let mapped = self.interner.get_mapped(mapped_id);
 
@@ -1592,7 +1594,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             (false, false)
         };
 
-        // Build properties by instantiating template for each key
+        // Build properties by instantiating template for each key.
+        //
+        // If the mapped type has an `as` clause, the expanded property names must
+        // come from the remapped key, not from the original constraint key. When
+        // the remapped name is still generic (for example `${K}${T}`), the mapped
+        // type is not concretely expandable and must stay deferred.
         let mut properties = Vec::new();
         for key_name in keys {
             // Convert atom to the correct TypeId for substitution.
@@ -1610,6 +1617,37 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
+
+            let remapped_names: Vec<tsz_common::interner::Atom> = if let Some(name_type) =
+                mapped.name_type
+            {
+                let remapped =
+                    self.evaluate_type(instantiate_type(self.interner, name_type, &subst));
+                if remapped == TypeId::NEVER {
+                    continue;
+                }
+                if let Some(LiteralValue::String(name)) = literal_value(self.interner, remapped) {
+                    vec![name]
+                } else if let Some(list_id) = union_list_id(self.interner, remapped) {
+                    let members = self.interner.type_list(list_id);
+                    let mut names = Vec::with_capacity(members.len());
+                    for &member in members.iter() {
+                        let Some(LiteralValue::String(name)) = literal_value(self.interner, member)
+                        else {
+                            return None;
+                        };
+                        names.push(name);
+                    }
+                    if names.is_empty() {
+                        return None;
+                    }
+                    names
+                } else {
+                    return None;
+                }
+            } else {
+                vec![key_name]
+            };
 
             let instantiated_type = instantiate_type(self.interner, mapped.template, &subst);
             let property_type = self.evaluate_type(instantiated_type);
@@ -1639,19 +1677,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             };
 
-            properties.push(PropertyInfo {
-                name: key_name,
-                type_id: property_type,
-                write_type: property_type,
-                optional,
-                readonly,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: 0,
-                is_string_named: false,
-            });
+            for remapped_name in remapped_names {
+                properties.push(PropertyInfo {
+                    name: remapped_name,
+                    type_id: property_type,
+                    write_type: property_type,
+                    optional,
+                    readonly,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order: 0,
+                    is_string_named: false,
+                });
+            }
         }
 
         Some(self.interner.object(properties))

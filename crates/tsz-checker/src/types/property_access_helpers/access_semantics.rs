@@ -557,13 +557,20 @@ impl<'a> CheckerState<'a> {
             .map(|name| self.ctx.types.resolve_atom(name))
             .collect();
 
-        for name in crate::query_boundaries::state::checking::extract_string_literal_keys(
-            self.ctx.types,
-            mapped.constraint,
-        ) {
-            let name = self.ctx.types.resolve_atom(name);
-            if !names.iter().any(|existing| existing == &name) {
-                names.push(name);
+        let preserves_source_names = mapped.name_type.is_none()
+            || crate::query_boundaries::state::checking::is_identity_name_mapping(
+                self.ctx.types,
+                &mapped,
+            );
+        if preserves_source_names {
+            for name in crate::query_boundaries::state::checking::extract_string_literal_keys(
+                self.ctx.types,
+                mapped.constraint,
+            ) {
+                let name = self.ctx.types.resolve_atom(name);
+                if !names.iter().any(|existing| existing == &name) {
+                    names.push(name);
+                }
             }
         }
 
@@ -574,6 +581,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         prop_name: &str,
+        use_known_finite_names: bool,
     ) -> Option<bool> {
         use crate::query_boundaries::common::{
             TypeSubstitution, application_info, instantiate_type,
@@ -595,13 +603,25 @@ impl<'a> CheckerState<'a> {
         let instantiated = instantiate_type(self.ctx.types, body_type, &substitution);
         let instantiated_mapped_id =
             crate::query_boundaries::common::mapped_type_id(self.ctx.types, instantiated)?;
-        Some(
-            !self
-                .mapped_explicit_property_names(instantiated_mapped_id)
-                .iter()
-                .any(|name| name == prop_name)
-                && !self.mapped_type_has_explicit_property(instantiated_mapped_id, prop_name),
-        )
+        let instantiated_mapped = self.ctx.types.mapped_type(instantiated_mapped_id);
+        let names = self.mapped_explicit_property_names(instantiated_mapped_id);
+        let has_explicit_name = names.iter().any(|name| name == prop_name)
+            || self.mapped_type_has_explicit_property(instantiated_mapped_id, prop_name);
+        if has_explicit_name {
+            return Some(false);
+        }
+        let preserves_source_names = instantiated_mapped.name_type.is_none()
+            || crate::query_boundaries::state::checking::is_identity_name_mapping(
+                self.ctx.types,
+                &instantiated_mapped,
+            );
+        if preserves_source_names {
+            if use_known_finite_names && !names.is_empty() {
+                return Some(true);
+            }
+            return None;
+        }
+        Some(true)
     }
 
     pub(crate) fn generic_mapped_receiver_explicit_property_names(
@@ -656,7 +676,38 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common as common_query;
 
         if let Some(lacks_explicit_property) =
-            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name)
+            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name, false)
+        {
+            return lacks_explicit_property;
+        }
+
+        let resolved = self.resolve_type_for_property_access(object_type);
+        let evaluated = self.evaluate_type_with_env(resolved);
+
+        for candidate in [resolved, evaluated] {
+            if !common_query::contains_type_parameters(self.ctx.types, candidate) {
+                continue;
+            }
+
+            let Some(mapped_id) = common_query::mapped_type_id(self.ctx.types, candidate) else {
+                continue;
+            };
+
+            return !self.mapped_type_has_explicit_property(mapped_id, prop_name);
+        }
+
+        false
+    }
+
+    pub(crate) fn generic_mapped_receiver_lacks_property_access_name(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        use crate::query_boundaries::common as common_query;
+
+        if let Some(lacks_explicit_property) =
+            self.generic_mapped_application_lacks_explicit_property(object_type, prop_name, true)
         {
             return lacks_explicit_property;
         }
