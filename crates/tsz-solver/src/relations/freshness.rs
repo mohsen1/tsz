@@ -78,6 +78,9 @@ fn widen_freshness_deep(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> T
     if let Some(display_props) = db.get_display_properties(type_id) {
         db.store_display_properties(new_type, display_props.as_ref().clone());
     }
+    if let Some(display_alias) = db.get_display_alias(type_id) {
+        db.store_display_alias(new_type, display_alias);
+    }
 
     new_type
 }
