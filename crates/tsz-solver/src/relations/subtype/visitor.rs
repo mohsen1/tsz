@@ -17,6 +17,7 @@ use crate::visitor::{
     TypeVisitor, array_element_type, callable_shape_id, enum_components, function_shape_id,
     intrinsic_kind, literal_value, object_shape_id, object_with_index_shape_id,
     readonly_inner_type, string_intrinsic_components, tuple_list_id, type_param_info,
+    union_list_id,
 };
 
 // =============================================================================
@@ -62,7 +63,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if let Some(t_kind) = intrinsic_kind(self.checker.interner, self.target) {
             return self.checker.check_intrinsic_subtype(kind, t_kind);
         }
-        if self.checker.is_boxed_primitive_subtype(kind, self.target) {
+        if union_list_id(self.checker.interner, self.target).is_none()
+            && self.checker.is_boxed_primitive_subtype(kind, self.target)
+        {
             SubtypeResult::True
         } else {
             SubtypeResult::False
@@ -70,14 +73,27 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        let evaluated_target = self.checker.evaluate_type(self.target);
-        if evaluated_target != self.target
-            && self
-                .checker
-                .check_subtype(self.source, evaluated_target)
-                .is_true()
-        {
-            return SubtypeResult::True;
+        if let Some(t_kind) = intrinsic_kind(self.checker.interner, self.target) {
+            return self.checker.check_literal_to_intrinsic(value, t_kind);
+        }
+
+        let target_contains_object_keyword = union_list_id(self.checker.interner, self.target)
+            .is_some_and(|members| {
+                self.checker
+                    .interner
+                    .type_list(members)
+                    .contains(&TypeId::OBJECT)
+            });
+        if !target_contains_object_keyword {
+            let evaluated_target = self.checker.evaluate_type(self.target);
+            if evaluated_target != self.target
+                && self
+                    .checker
+                    .check_subtype(self.source, evaluated_target)
+                    .is_true()
+            {
+                return SubtypeResult::True;
+            }
         }
 
         if let Some(target_operand) =
@@ -117,9 +133,6 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
         }
 
-        if let Some(t_kind) = intrinsic_kind(self.checker.interner, self.target) {
-            return self.checker.check_literal_to_intrinsic(value, t_kind);
-        }
         if let LiteralValue::String(_) = value
             && let Some((kind, type_arg)) =
                 string_intrinsic_components(self.checker.interner, self.target)

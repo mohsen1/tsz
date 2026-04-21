@@ -15,7 +15,7 @@ use crate::def::resolver::TypeResolver;
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, is_disjoint_unit_type};
 use crate::types::{IntrinsicKind, TypeApplicationId, TypeData, TypeId};
 use crate::visitor::{
-    application_id, contains_this_type, enum_components, lazy_def_id, union_list_id,
+    application_id, contains_this_type, enum_components, lazy_def_id, literal_value, union_list_id,
 };
 
 // Global thread-local fuel counter for cross-instance subtype check termination.
@@ -685,6 +685,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         } else {
+            let literal_against_object_union = literal_value(self.interner, source).is_some()
+                && union_list_id(self.interner, target).is_some_and(|members| {
+                    self.interner.type_list(members).contains(&TypeId::OBJECT)
+                });
+            if literal_against_object_union {
+                let result = self.check_subtype_inner(source, target);
+                if let Some(dp) = def_entered {
+                    self.def_guard.leave(dp);
+                }
+                self.guard.leave(pair);
+                leave_global!();
+                return result;
+            }
+
             let source_raw = self.evaluate_type(source);
             let target_raw = self.evaluate_type(target);
             let source_eval = self.guard_compound_collapse(source, source_raw);

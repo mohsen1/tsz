@@ -884,6 +884,12 @@ impl<'a> CheckerState<'a> {
             if let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, type_id)
             {
+                if members.iter().any(|&member| {
+                    crate::query_boundaries::common::is_type_parameter(self.ctx.types, member)
+                }) {
+                    return false;
+                }
+
                 let has_indexed_access = members.iter().any(|&member| {
                     crate::query_boundaries::common::is_index_access_type(self.ctx.types, member)
                 });
