@@ -717,6 +717,16 @@ impl<'a> CheckerState<'a> {
                 .is_some()
             && let Some(raw_object_text) = self.node_text(data.object_type)
         {
+            let nested_base_type = self
+                .ctx
+                .arena
+                .get_indexed_access_type(object_node)
+                .map(|nested| self.get_type_from_type_node(nested.object_type));
+            if let Some(base_type) = nested_base_type
+                && self.indexed_access_constraint_values_allow_index(base_type, index_type)
+            {
+                return;
+            }
             // Clean up object type text: strip enclosing parens and any trailing
             // index access syntax that may leak from the object_type node span.
             let object_type_str = {
@@ -1586,6 +1596,11 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 object_type_for_check,
             ) {
+                if self.indexed_access_constraint_values_allow_index(base_obj, index_type_for_check)
+                {
+                    return;
+                }
+
                 let eval_base = self.evaluate_type_with_env(base_obj);
                 let is_concrete = !crate::query_boundaries::common::is_type_parameter_like(
                     self.ctx.types,
@@ -1637,6 +1652,13 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+            }
+            if object_type != object_type_for_check
+                && let Some((base_obj, _base_idx)) =
+                    crate::query_boundaries::common::index_access_types(self.ctx.types, object_type)
+                && self.indexed_access_constraint_values_allow_index(base_obj, index_type_for_check)
+            {
+                return;
             }
 
             let message_2536 = format_message(

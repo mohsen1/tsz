@@ -1255,6 +1255,16 @@ impl<'a> CheckerState<'a> {
                 pre_resolution_object_type,
             ) && self.is_generic_index_type(index_type)
             {
+                if request.flow.skip_flow_narrowing()
+                    && self.is_generic_indexed_write(pre_resolution_object_type, index_type)
+                {
+                    return self
+                        .ctx
+                        .types
+                        .factory()
+                        .index_access(pre_resolution_object_type, index_type);
+                }
+
                 // When indexing a type parameter T with keys from a different type
                 // parameter (e.g., `keyof U` where `U extends T`), tsc emits TS2536.
                 // We should not defer this case to IndexAccess(T, ...).
