@@ -629,6 +629,35 @@ fn member_call_tail_after_missing_comma_in_type_annotation_emits_second_comma_er
 }
 
 #[test]
+fn typeof_function_type_query_tail_emits_second_comma_error() {
+    let source = "var x7: typeof function f() { };";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let name_pos = source.find(" f(").expect("function name") as u32 + 1;
+    let open_paren_pos = source.find("f(").expect("function call tail") as u32 + 1;
+
+    let comma_diags: Vec<_> = diags
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::EXPECTED && diag.message == "',' expected.")
+        .collect();
+
+    assert_eq!(
+        comma_diags.len(),
+        2,
+        "Expected exactly two TS1005 ',' expected diagnostics, got {diags:?}"
+    );
+    assert!(
+        comma_diags.iter().any(|diag| diag.start == name_pos),
+        "Expected TS1005 ',' expected at the recovered declarator name, got {diags:?}"
+    );
+    assert!(
+        comma_diags.iter().any(|diag| diag.start == open_paren_pos),
+        "Expected TS1005 ',' expected at the opening paren after the recovered declarator, got {diags:?}"
+    );
+}
+
+#[test]
 fn class_field_initializer_does_not_asi_before_computed_member() {
     let (parser, _root) = parse_source("class C {\n    [e]: number = 0\n    [e2]: number\n}");
     let diags = parser.get_diagnostics();
