@@ -1094,6 +1094,80 @@ var r = foo<number>({ bar: 1, baz: '' });
 }
 
 #[test]
+fn test_ts2322_generic_private_class_assignment_preserves_type_arguments() {
+    let source = r#"
+class C<T> {
+    #foo: T;
+    #method(): T { return this.#foo; }
+    get #prop(): T { return this.#foo; }
+    set #prop(value: T) { this.#foo = value; }
+
+    bar(x: C<T>) { return x.#foo; }
+    bar2(x: C<T>) { return x.#method(); }
+    bar3(x: C<T>) { return x.#prop; }
+
+    baz(x: C<number>) { return x.#foo; }
+    baz2(x: C<number>) { return x.#method; }
+    baz3(x: C<number>) { return x.#prop; }
+
+    quux(x: C<string>) { return x.#foo; }
+    quux2(x: C<string>) { return x.#method; }
+    quux3(x: C<string>) { return x.#prop; }
+}
+
+declare let a: C<number>;
+declare let b: C<string>;
+a.#foo;
+a.#method;
+a.#prop;
+a = b;
+b = a;
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            strict_property_initialization: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected exactly two TS2322 assignment diagnostics, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("Type 'C' is not assignable to type 'C'.")),
+        "generic class TS2322 should not erase type arguments, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message
+                .contains("Type 'C<string>' is not assignable to type 'C<number>'.")),
+        "expected C<string> -> C<number> TS2322 display, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message
+                .contains("Type 'C<number>' is not assignable to type 'C<string>'.")),
+        "expected C<number> -> C<string> TS2322 display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn generic_object_assign_initializer_keeps_outer_ts2322() {
     let source = r#"
 type Omit<T, K> = Pick<T, Exclude<keyof T, K>>;
