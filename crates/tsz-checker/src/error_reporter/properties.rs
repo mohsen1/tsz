@@ -154,6 +154,20 @@ impl<'a> CheckerState<'a> {
             {
                 return annotation_display;
             }
+            // When the inferred display is an anonymous object but the annotation is a
+            // generic type alias (e.g. `Record<K, V>`, `Partial<T>`), prefer the annotation.
+            // Only apply for generic types (containing `<`) — plain identifiers like `Item`
+            // may resolve to union types, in which case tsc shows the specific union member.
+            if inferred_display.starts_with('{')
+                && annotation_display.contains('<')
+                && !annotation_display.contains('|')
+                && annotation_display
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            {
+                return annotation_display;
+            }
         }
         inferred_display
     }

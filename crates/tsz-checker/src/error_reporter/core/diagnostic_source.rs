@@ -2052,6 +2052,36 @@ impl<'a> CheckerState<'a> {
             return Some(display);
         }
 
+        // When the declared type annotation contains literal property types
+        // (e.g. `var z: { length: 2; }`), the standard widening path produces
+        // `length: number` instead of `length: 2`. tsc preserves the declared
+        // literal in the error message.
+        // Only applies to declared annotation types (canonical props contain Literal types,
+        // no display_properties on `declared_type` itself). Fresh object literals (inferred
+        // types from expressions like `var o1 = { one: 1 }`) have display_properties on
+        // `declared_type` and must NOT be handled here — the rewrite function widens them.
+        // NOTE: check `declared_type` directly (not its evaluated form) because
+        // `evaluate_type_with_env` strips display_properties from fresh types, making their
+        // evaluated form look like a declared annotation type.
+        if prefer_declared_display
+            && self
+                .ctx
+                .types
+                .get_display_properties(declared_type)
+                .is_none()
+        {
+            let widened =
+                crate::query_boundaries::common::widen_type(self.ctx.types, declared_type);
+            if widened != declared_type {
+                let literal_display =
+                    self.format_assignability_type_for_message(declared_type, target);
+                let widened_display = self.format_assignability_type_for_message(widened, target);
+                if literal_display != widened_display {
+                    return Some(literal_display);
+                }
+            }
+        }
+
         let declared_display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(declared_type));
         let expr_display_type =

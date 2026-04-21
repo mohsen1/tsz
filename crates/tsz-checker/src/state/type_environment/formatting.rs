@@ -216,6 +216,20 @@ impl<'a> CheckerState<'a> {
         formatter.format_pair_disambiguated(type_a, type_b)
     }
 
+    /// Format a type for TS2367 comparison overlap error messages.
+    /// tsc shows unique symbols as `typeof varName` in comparison contexts
+    /// (distinct from index-type errors where it shows `unique symbol`).
+    pub(crate) fn format_type_for_ts2367_display(&self, type_id: TypeId) -> String {
+        use crate::query_boundaries::common::unique_symbol_ref;
+        if let Some(sym_ref) = unique_symbol_ref(self.ctx.types, type_id) {
+            let mut formatter = self.ctx.create_type_formatter();
+            if let Some(name) = formatter.resolve_unique_symbol_name(sym_ref) {
+                return format!("typeof {name}");
+            }
+        }
+        self.format_type(type_id)
+    }
+
     /// Format a pair of types for diagnostic messages (skips union optionalization).
     /// When the two types format to the same short name, the formatter re-qualifies
     /// them — first via namespace prefix, then `import("<specifier>").Name` — so
