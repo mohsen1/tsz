@@ -872,6 +872,10 @@ const obj: {field: Rule} = {
         has_error(&diagnostics, 7006),
         "Expected TS7006 when optional callback property comes from a primitive-containing union.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Should NOT emit outer TS2322 when the callback loses contextual typing from a primitive-containing union.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 // TS7022: Variable implicitly has type 'any' because it does not have a type annotation

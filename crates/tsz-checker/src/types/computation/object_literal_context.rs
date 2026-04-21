@@ -308,27 +308,59 @@ impl<'a> CheckerState<'a> {
         };
         use crate::query_boundaries::common::PropertyAccessResult;
 
+        let resolved = self.resolve_type_for_property_access(type_id);
         let evaluated = self.evaluate_type_with_env(type_id);
+        let evaluated = self.resolve_type_for_property_access(evaluated);
         let evaluated = self.resolve_lazy_type(evaluated);
+        let evaluated = self.evaluate_application_type(evaluated);
 
-        let members = match classify_for_excess_properties(self.ctx.types, evaluated) {
-            ExcessPropertiesKind::Union(members) => members,
-            _ => return false,
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+            .or_else(|| crate::query_boundaries::common::union_members(self.ctx.types, resolved))
+            .or_else(|| crate::query_boundaries::common::union_members(self.ctx.types, evaluated))
+            .or_else(|| match classify_for_excess_properties(self.ctx.types, type_id) {
+                ExcessPropertiesKind::Union(members) => Some(members),
+                _ => None,
+            })
+            .or_else(|| match classify_for_excess_properties(self.ctx.types, resolved) {
+                ExcessPropertiesKind::Union(members) => Some(members),
+                _ => None,
+            })
+            .or_else(|| match classify_for_excess_properties(self.ctx.types, evaluated) {
+                ExcessPropertiesKind::Union(members) => Some(members),
+                _ => None,
+            });
+
+        let Some(members) = members
+        else {
+            return false;
         };
 
         for member in members {
             if self.ctx.types.is_nullish_type(member) {
                 continue;
             }
-            let is_primitive = matches!(
-                classify_for_excess_properties(self.ctx.types, member),
-                ExcessPropertiesKind::NotObject
-            );
+            let evaluated_member = self.evaluate_type_with_env(member);
+            let evaluated_member = self.resolve_lazy_type(evaluated_member);
+            let evaluated_member = self.evaluate_application_type(evaluated_member);
+            let resolved_member = self.resolve_type_for_property_access(member);
+            let resolved_evaluated_member = self.resolve_type_for_property_access(evaluated_member);
+            let is_primitive =
+                crate::query_boundaries::common::is_primitive_type(self.ctx.types, member)
+                    || crate::query_boundaries::common::is_primitive_type(
+                        self.ctx.types,
+                        evaluated_member,
+                    );
             if is_primitive
-                && matches!(
+                && (matches!(
                     self.resolve_property_access_with_env(member, property_name),
                     PropertyAccessResult::Success { .. }
-                )
+                ) || matches!(
+                    self.resolve_property_access_with_env(resolved_member, property_name),
+                    PropertyAccessResult::Success { .. }
+                ) || matches!(
+                    self.resolve_property_access_with_env(resolved_evaluated_member, property_name),
+                    PropertyAccessResult::Success { .. }
+                ))
             {
                 return true;
             }
@@ -368,6 +400,42 @@ impl<'a> CheckerState<'a> {
             .then_some(type_id)
     }
 
+    fn callable_context_type_from_mixed_union(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let type_id = crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
+        if type_id == TypeId::UNDEFINED {
+            return None;
+        }
+
+        if crate::query_boundaries::common::is_callable_type(self.ctx.types, type_id) {
+            return Some(type_id);
+        }
+
+        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        else {
+            return None;
+        };
+
+        let callable_members: Vec<_> = members
+            .into_iter()
+            .filter_map(|member| {
+                if crate::query_boundaries::common::is_callable_type(self.ctx.types, member) {
+                    return Some(member);
+                }
+                let evaluated = self.evaluate_type_with_env(member);
+                let evaluated = self.resolve_lazy_type(evaluated);
+                let evaluated = self.evaluate_application_type(evaluated);
+                crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
+                    .then_some(evaluated)
+            })
+            .collect();
+
+        match callable_members.len() {
+            0 => None,
+            1 => Some(callable_members[0]),
+            _ => Some(self.ctx.types.factory().union_preserve_members(callable_members)),
+        }
+    }
+
     pub(crate) fn function_initializer_context_type(
         &mut self,
         contextual_type: Option<TypeId>,
@@ -390,6 +458,11 @@ impl<'a> CheckerState<'a> {
             self.primitive_union_member_has_property(ctx_type, property_name)
         }) {
             return None;
+        }
+
+        if let Some(callable_only) = self.callable_context_type_from_mixed_union(property_context_type)
+        {
+            return Some(callable_only);
         }
 
         if !crate::query_boundaries::common::type_contains_undefined(
@@ -435,10 +508,6 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(property_context_type)
         }
-    }
-
-    pub(crate) fn contextual_type_has_primitive_union_member(&mut self, type_id: TypeId) -> bool {
-        self.union_with_non_nullish_non_object_member(type_id, 6)
     }
 
     fn contextual_property_presence(
