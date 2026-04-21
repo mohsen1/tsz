@@ -1084,10 +1084,29 @@ impl<'a> CheckerState<'a> {
         // reader can tell them apart. The formatter's pair-disambiguation
         // path adds namespace or `import("<specifier>")` prefixes only when
         // the bare names collide.
-        if src_str == tgt_str_qualified && widened_source != target {
-            let (da, db) = self.format_type_pair_diagnostic(widened_source, target);
-            src_str = da;
-            tgt_str_qualified = db;
+        //
+        // Two cases:
+        //   1. `src_str == tgt_str_qualified`: both formatted to the same
+        //      short name — disambiguate both sides.
+        //   2. `src_str` was already qualified by expression text (e.g.
+        //      `N.A` from `new N.A()`) but the underlying source and target
+        //      types still share a bare formatted name (e.g. both "A").
+        //      Keep the source text as-is and only qualify the target.
+        if widened_source != target {
+            if src_str == tgt_str_qualified {
+                let (da, db) = self.format_type_pair_diagnostic(widened_source, target);
+                src_str = da;
+                tgt_str_qualified = db;
+            } else {
+                let fmt_src_bare = self.format_type_diagnostic(widened_source);
+                let fmt_tgt_bare = self.format_type_diagnostic(target);
+                if fmt_src_bare == fmt_tgt_bare {
+                    let (_, db) = self.format_type_pair_diagnostic(widened_source, target);
+                    if db != tgt_str_qualified {
+                        tgt_str_qualified = db;
+                    }
+                }
+            }
         }
         let message = format_message(
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
