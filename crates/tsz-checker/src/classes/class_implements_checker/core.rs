@@ -1089,6 +1089,7 @@ impl<'a> CheckerState<'a> {
                                 (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0;
                             let is_class_member_protected =
                                 (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
+                            let interface_visibility = prop.visibility;
                             if is_class_member_private {
                                 self.error_at_node(
                                         class_error_idx,
@@ -1101,6 +1102,36 @@ impl<'a> CheckerState<'a> {
                                 self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is protected in type '{class_name}' but not in type '{interface_display_name}'."),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
+                                continue;
+                            }
+                            // Interface-side private/protected: an interface may inherit a
+                            // private/protected member from a base class (e.g., `interface I
+                            // extends Foo`). A class implementing that interface with a
+                            // non-private same-named property breaks nominal compatibility.
+                            //
+                            // For *protected*, if the class also extends the same base (so it
+                            // has the inherited protected brand), tsc allows the widened
+                            // public redeclaration. Skip the error in that case.
+                            //
+                            // For *private*, no such leniency — redeclaring a private member
+                            // is always a nominal mismatch even when the class extends the
+                            // declaring base.
+                            if interface_visibility == tsz_solver::Visibility::Private {
+                                self.error_at_node(
+                                        class_error_idx,
+                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{interface_display_name}' but not in type '{class_name}'."),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
+                                continue;
+                            }
+                            if interface_visibility == tsz_solver::Visibility::Protected
+                                && !inherited_non_public_members.contains_key(&member_name)
+                            {
+                                self.error_at_node(
+                                        class_error_idx,
+                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is protected in type '{interface_display_name}' but not in type '{class_name}'."),
                                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                     );
                                 continue;
