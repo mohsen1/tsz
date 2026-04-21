@@ -97,9 +97,7 @@ impl<'a> CheckerState<'a> {
     fn class_declaration_symbol(&self, class_idx: NodeIndex) -> Option<SymbolId> {
         let arena_ptr = self.ctx.arena as *const _ as usize;
         self.ctx
-            .binder
-            .cross_file_node_symbols
-            .get(&arena_ptr)
+            .cross_file_node_symbols_for_arena(self.ctx.binder, arena_ptr)
             .and_then(|node_symbols| node_symbols.get(&class_idx.0).copied())
             .or_else(|| self.ctx.binder.get_node_symbol(class_idx))
     }
