@@ -78,7 +78,16 @@ impl<'a> CheckerState<'a> {
             }
             // For rest parameters aligned with the contextual rest, preserve the
             // original type (including type parameters like `Args extends any[]`).
-            return Some(rest_param.type_id);
+            if crate::query_boundaries::common::is_type_parameter_like(
+                self.ctx.types,
+                rest_param.type_id,
+            ) || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                rest_param.type_id,
+            ) {
+                return Some(rest_param.type_id);
+            }
+            return None;
         }
         let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
 

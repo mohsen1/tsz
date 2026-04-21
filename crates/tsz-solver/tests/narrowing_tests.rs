@@ -229,6 +229,27 @@ fn test_narrow_excluding_discriminant() {
     assert_eq!(narrowed, expected);
 }
 
+#[test]
+fn test_constructor_identity_false_branch_does_not_exclude_instance() {
+    let interner = TypeInterner::new();
+    let prop = interner.intern_string("property1");
+    let class_instance = interner.object(vec![PropertyInfo::new(prop, TypeId::STRING)]);
+    let source = interner.union(vec![class_instance, TypeId::NUMBER]);
+    let ctx = NarrowingContext::new(&interner);
+
+    let narrowed = ctx.narrow_type(
+        source,
+        &TypeGuard::Constructor(class_instance),
+        GuardSense::Negative,
+    );
+
+    assert_eq!(
+        narrowed, source,
+        "constructor identity inequality is a positive-only guard; \
+         `x.constructor !== C` must not remove C from the source union"
+    );
+}
+
 // =============================================================================
 // Typeof Narrowing Tests
 // =============================================================================

@@ -882,6 +882,8 @@ fn evaluate_rest_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Typ
             | TypeData::Mapped(_)
             | TypeData::Conditional(_)
             | TypeData::IndexAccess(_, _)
+            | TypeData::TypeQuery(_)
+            | TypeData::KeyOf(_)
             | TypeData::Application(_),
         ) => {
             let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
