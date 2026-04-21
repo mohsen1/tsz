@@ -269,6 +269,9 @@ impl<'a> CheckerState<'a> {
         // `function(...): 3` | `4`.
         let starts_with_function =
             type_expr.starts_with("function") && type_expr[8..].trim_start().starts_with('(');
+        if let Some(conditional) = self.parse_jsdoc_conditional_type(type_expr) {
+            return Some(conditional);
+        }
         if !starts_with_function && let Some(parts) = Self::split_top_level_binary(type_expr, '|') {
             let mut members = Vec::new();
             for part in &parts {
@@ -295,6 +298,10 @@ impl<'a> CheckerState<'a> {
         }
         if type_expr == "?" {
             return Some(TypeId::ANY);
+        }
+        if let Some(inner) = type_expr.strip_prefix("readonly ") {
+            let inner_type = self.resolve_jsdoc_type_str(inner.trim())?;
+            return Some(self.ctx.types.factory().readonly_type(inner_type));
         }
         if let Some(inner) = type_expr.strip_prefix('?') {
             let inner = inner.trim();

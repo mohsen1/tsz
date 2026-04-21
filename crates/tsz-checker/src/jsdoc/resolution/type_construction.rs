@@ -746,13 +746,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if let Some(colon_idx) = Self::find_top_level_char(prop_str, ':') {
-                let raw_name = prop_str[..colon_idx].trim();
+                let mut raw_name = prop_str[..colon_idx].trim();
                 let type_str = prop_str[colon_idx + 1..].trim();
+                let readonly = if let Some(rest) = raw_name.strip_prefix("readonly ") {
+                    raw_name = rest.trim();
+                    true
+                } else {
+                    false
+                };
                 if raw_name.starts_with('[')
                     && raw_name.ends_with(']')
-                    && let Some(index_sig) =
+                    && let Some(mut index_sig) =
                         self.parse_jsdoc_object_literal_index_signature(raw_name, type_str)
                 {
+                    index_sig.readonly |= readonly;
                     match index_sig.key_type {
                         TypeId::STRING => object_shape.string_index = Some(index_sig),
                         TypeId::NUMBER => object_shape.number_index = Some(index_sig),
@@ -766,14 +773,14 @@ impl<'a> CheckerState<'a> {
                     (raw_name, false)
                 };
                 if !name.is_empty() {
-                    let prop_type = self.resolve_jsdoc_type_str(type_str)?;
+                    let prop_type = self.resolve_jsdoc_type_str(type_str).unwrap_or(TypeId::ANY);
                     let name_atom = self.ctx.types.intern_string(name);
                     properties.push(PropertyInfo {
                         name: name_atom,
                         type_id: prop_type,
                         write_type: prop_type,
                         optional,
-                        readonly: false,
+                        readonly,
                         is_method: false,
                         is_class_prototype: false,
                         visibility: Visibility::Public,
@@ -803,6 +810,11 @@ impl<'a> CheckerState<'a> {
         raw_name: &str,
         type_str: &str,
     ) -> Option<IndexSignature> {
+        let (raw_name, readonly) = if let Some(rest) = raw_name.trim().strip_prefix("readonly ") {
+            (rest.trim(), true)
+        } else {
+            (raw_name.trim(), false)
+        };
         let inner = raw_name.strip_prefix('[')?.strip_suffix(']')?.trim();
         let colon_idx = Self::find_top_level_char(inner, ':')?;
         let param_name = inner[..colon_idx].trim();
@@ -815,7 +827,7 @@ impl<'a> CheckerState<'a> {
         Some(IndexSignature {
             key_type,
             value_type,
-            readonly: false,
+            readonly,
             param_name: (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
         })
     }
@@ -843,7 +855,17 @@ impl<'a> CheckerState<'a> {
         }
         let close_bracket = close_bracket?;
         let header = inner[1..close_bracket].trim();
-        let template_str = inner[close_bracket + 1..].trim().strip_prefix(':')?.trim();
+        let mut after_bracket = inner[close_bracket + 1..].trim();
+        let optional_modifier = if let Some(rest) = after_bracket.strip_prefix('?') {
+            after_bracket = rest.trim();
+            Some(tsz_solver::MappedModifier::Add)
+        } else if let Some(rest) = after_bracket.strip_prefix("-?") {
+            after_bracket = rest.trim();
+            Some(tsz_solver::MappedModifier::Remove)
+        } else {
+            None
+        };
+        let template_str = after_bracket.strip_prefix(':')?.trim();
 
         let in_idx = header.find(" in ")?;
         let type_param_name = header[..in_idx].trim();
@@ -870,7 +892,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .type_parameter_scope
             .insert(type_param_name.to_string(), type_param_id);
-        let template = self.resolve_jsdoc_type_str(template_str);
+        let template = self
+            .resolve_jsdoc_type_str(template_str)
+            .or(Some(TypeId::ANY));
         if let Some(previous) = previous {
             self.ctx
                 .type_parameter_scope
@@ -886,9 +910,86 @@ impl<'a> CheckerState<'a> {
                 name_type: None,
                 template,
                 readonly_modifier: None,
-                optional_modifier: None,
+                optional_modifier,
             })
         })
+    }
+
+    pub(in crate::jsdoc::resolution) fn parse_jsdoc_conditional_type(
+        &mut self,
+        type_expr: &str,
+    ) -> Option<TypeId> {
+        let (extends_idx, question_idx, colon_idx) =
+            Self::find_jsdoc_conditional_separators(type_expr)?;
+        let check_type = self.resolve_jsdoc_type_str(type_expr[..extends_idx].trim())?;
+        let extends_start = extends_idx + " extends ".len();
+        let extends_type =
+            self.resolve_jsdoc_type_str(type_expr[extends_start..question_idx].trim())?;
+        let true_type =
+            self.resolve_jsdoc_type_str(type_expr[question_idx + 1..colon_idx].trim())?;
+        let false_type = self.resolve_jsdoc_type_str(type_expr[colon_idx + 1..].trim())?;
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .conditional(tsz_solver::ConditionalType {
+                    check_type,
+                    extends_type,
+                    true_type,
+                    false_type,
+                    is_distributive: true,
+                }),
+        )
+    }
+
+    fn find_jsdoc_conditional_separators(type_expr: &str) -> Option<(usize, usize, usize)> {
+        let extends_idx = Self::find_top_level_keyword(type_expr, " extends ")?;
+        let question_idx = Self::find_top_level_char(&type_expr[extends_idx..], '?')? + extends_idx;
+        let colon_idx =
+            Self::find_top_level_char(&type_expr[question_idx + 1..], ':')? + question_idx + 1;
+        Some((extends_idx, question_idx, colon_idx))
+    }
+
+    fn find_top_level_keyword(s: &str, keyword: &str) -> Option<usize> {
+        let mut angle_depth = 0u32;
+        let mut paren_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut square_depth = 0u32;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        for (i, ch) in s.char_indices() {
+            if ch == '\'' && !in_double_quote {
+                in_single_quote = !in_single_quote;
+                continue;
+            }
+            if ch == '"' && !in_single_quote {
+                in_double_quote = !in_double_quote;
+                continue;
+            }
+            if in_single_quote || in_double_quote {
+                continue;
+            }
+            if angle_depth == 0
+                && paren_depth == 0
+                && brace_depth == 0
+                && square_depth == 0
+                && s[i..].starts_with(keyword)
+            {
+                return Some(i);
+            }
+            match ch {
+                '<' => angle_depth += 1,
+                '>' if angle_depth > 0 => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                '[' => square_depth += 1,
+                ']' if square_depth > 0 => square_depth -= 1,
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Parse a named method signature from a JSDoc object property string.

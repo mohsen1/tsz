@@ -1764,6 +1764,19 @@ impl<'a> CheckerState<'a> {
                     if !Self::is_simple_type_name(expr) {
                         continue;
                     }
+                    // A recursive generic JSDoc alias can fail to resolve as a whole while
+                    // its base name is valid (for example `ReadonlyArray<Json>` while
+                    // resolving `Json`). In that case the expression is not an unknown name.
+                    if let Some(angle_idx) = Self::find_top_level_char(expr, '<')
+                        && expr.ends_with('>')
+                    {
+                        let base_name = expr[..angle_idx].trim();
+                        if Self::is_simple_type_name(base_name)
+                            && self.resolve_jsdoc_type_str(base_name).is_some()
+                        {
+                            continue;
+                        }
+                    }
                     if self.resolve_jsdoc_type_str(expr).is_none() {
                         self.emit_jsdoc_cannot_find_name(
                             expr,
