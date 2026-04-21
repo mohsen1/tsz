@@ -1974,6 +1974,24 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             ));
         }
 
+        if let Some(serde_json::Value::String(react_namespace_val)) =
+            compiler_opts.get("reactNamespace")
+            && !is_valid_identifier(react_namespace_val)
+        {
+            let start = find_value_offset_in_source(&stripped, "reactNamespace");
+            let msg = format_message(
+                diagnostic_messages::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER,
+                &[react_namespace_val.as_str()],
+            );
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                react_namespace_val.len() as u32 + 2,
+                msg,
+                diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER,
+            ));
+        }
+
         // TS5070: Option '--resolveJsonModule' cannot be specified when 'moduleResolution' is set to 'classic'.
         // TS5071: Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'.
         // Note: moduleResolution: bundler implies resolveJsonModule=true even when not explicitly set.
@@ -2396,21 +2414,23 @@ fn is_valid_identifier_or_qualified_name(s: &str) -> bool {
         return false;
     }
     for segment in s.split('.') {
-        if segment.is_empty() {
+        if !is_valid_identifier(segment) {
             return false;
-        }
-        let mut chars = segment.chars();
-        match chars.next() {
-            Some(c) if c.is_alphabetic() || c == '_' || c == '$' => {}
-            _ => return false,
-        }
-        for c in chars {
-            if !c.is_alphanumeric() && c != '_' && c != '$' {
-                return false;
-            }
         }
     }
     true
+}
+
+fn is_valid_identifier(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' || c == '$' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
 }
 
 /// Find the byte offset of a JSON key within the source text.
@@ -4309,6 +4329,40 @@ mod tests {
         assert!(
             codes.contains(&5024),
             "Expected TS5024 for libReplacement string value, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5059_emitted_for_invalid_react_namespace_value() {
+        let source = r#"{
+  "compilerOptions": {
+    "jsx": "react",
+    "reactNamespace": "my-React-Lib"
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let ts5059 = parsed
+            .diagnostics
+            .iter()
+            .find(|d| {
+                d.code
+                    == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
+            })
+            .unwrap_or_else(|| panic!("Expected TS5059, got: {:?}", parsed.diagnostics));
+
+        assert_eq!(ts5059.file, "tsconfig.json");
+        assert_eq!(
+            ts5059.start,
+            source
+                .find("\"my-React-Lib\"")
+                .expect("reactNamespace value") as u32
+        );
+        assert!(
+            ts5059
+                .message_text
+                .contains("'my-React-Lib' is not a valid identifier"),
+            "Unexpected TS5059 message: {}",
+            ts5059.message_text
         );
     }
 
