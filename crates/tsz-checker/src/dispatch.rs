@@ -1654,6 +1654,32 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 .checker
                                 .get_type_of_node_with_request(tag_name_idx, request);
                         }
+                        if let Some(tag_name_node) = self.checker.ctx.arena.get(tag_name_idx)
+                            && tag_name_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        {
+                            let mut root_idx = tag_name_idx;
+                            while let Some(root_node) = self.checker.ctx.arena.get(root_idx)
+                                && root_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                                && let Some(access) =
+                                    self.checker.ctx.arena.get_access_expr(root_node)
+                            {
+                                root_idx = access.expression;
+                            }
+                            if let Some(root_node) = self.checker.ctx.arena.get(root_idx)
+                                && root_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                                && let Some(ident) =
+                                    self.checker.ctx.arena.get_identifier(root_node)
+                                && ident
+                                    .escaped_text
+                                    .chars()
+                                    .next()
+                                    .is_some_and(|c| c.is_ascii_uppercase())
+                            {
+                                let _ = self
+                                    .checker
+                                    .get_type_of_node_with_request(root_idx, request);
+                            }
+                        }
                     }
                     self.checker.get_type_of_jsx_opening_element_with_children(
                         jsx.opening_element,

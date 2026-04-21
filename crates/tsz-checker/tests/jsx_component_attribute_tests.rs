@@ -1066,6 +1066,67 @@ fn cross_file_jsx_diagnostics_with_mode_and_default_libs(
         .collect()
 }
 
+fn cross_file_jsx_diagnostics_with_pos(
+    lib_source: &str,
+    main_source: &str,
+    jsx_mode: JsxMode,
+) -> Vec<(u32, u32, String)> {
+    // Parse and bind lib file (react.d.ts equivalent)
+    let mut parser_lib = ParserState::new("react.d.ts".to_string(), lib_source.to_string());
+    let root_lib = parser_lib.parse_source_file();
+    let mut binder_lib = tsz_binder::BinderState::new();
+    binder_lib.bind_source_file(parser_lib.get_arena(), root_lib);
+    let arena_lib = Arc::new(parser_lib.get_arena().clone());
+    let binder_lib = Arc::new(binder_lib);
+
+    let mut parser_main = ParserState::new("file.tsx".to_string(), main_source.to_string());
+    let root_main = parser_main.parse_source_file();
+    let mut binder_main = tsz_binder::BinderState::new();
+    binder_main.merge_lib_contexts_into_binder(&[tsz_binder::state::LibContext {
+        arena: Arc::clone(&arena_lib),
+        binder: Arc::clone(&binder_lib),
+    }]);
+    binder_main.bind_source_file(parser_main.get_arena(), root_main);
+
+    let arena_main = Arc::new(parser_main.get_arena().clone());
+    let binder_main = Arc::new(binder_main);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_main.as_ref(),
+        binder_main.as_ref(),
+        &types,
+        "file.tsx".to_string(),
+        CheckerOptions {
+            jsx_mode,
+            ..CheckerOptions::default()
+        },
+    );
+    checker.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&arena_main),
+        Arc::clone(&arena_lib),
+    ]));
+    checker.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&binder_main),
+        Arc::clone(&binder_lib),
+    ]));
+    checker.ctx.set_current_file_idx(0);
+    checker
+        .ctx
+        .set_lib_contexts(vec![tsz_checker::context::LibContext {
+            arena: Arc::clone(&arena_lib),
+            binder: Arc::clone(&binder_lib),
+        }]);
+    checker.ctx.set_actual_lib_file_count(1);
+
+    checker.check_source_file(root_main);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect()
+}
+
 fn load_typescript_fixture(rel_path: &str) -> Option<String> {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let candidates = [
@@ -4553,6 +4614,33 @@ declare function dom(...args: any[]): any;
     assert!(
         has_code(&diags, 2879),
         "Expected TS2879 when fragment factory root is missing, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_member_component_missing_root_reports_at_member_tag_root() {
+    let react_global =
+        load_typescript_fixture("TypeScript/tests/lib/react18/global.d.ts").unwrap_or_default();
+    let react18 =
+        load_typescript_fixture("TypeScript/tests/lib/react18/react18.d.ts").unwrap_or_default();
+    let react_like_lib = format!("{react_global}\n{react18}");
+    let source = r#"
+const test = () => "asd";
+const jsxWithJsxFragment = <>{test}</>;
+const jsxWithReactFragment = <React.Fragment>{test}</React.Fragment>;
+"#;
+    let diags = cross_file_jsx_diagnostics_with_pos(&react_like_lib, source, JsxMode::React);
+    let react_scope_diags: Vec<_> = diags
+        .iter()
+        .filter(|(code, _, message)| matches!(*code, 2304 | 2874) && message.contains("'React'"))
+        .collect();
+    let expected_start = source.find("<React.Fragment>").unwrap() as u32 + 1;
+
+    assert!(
+        react_scope_diags
+            .iter()
+            .any(|(_, start, _)| *start == expected_start),
+        "Expected missing React diagnostic at JSX member tag root, got: {diags:?}"
     );
 }
 
