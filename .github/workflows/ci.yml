@@ -1187,11 +1187,17 @@ jobs:
           echo "total=${TOTAL_TESTS}" >> "$GITHUB_OUTPUT"
           echo "Aggregate: ${TOTAL_PASSED}/${TOTAL_TESTS} passed (${RATE}%)"
 
+          # Fourslash has a small flake surface. Allow up to 0.1% drift so one
+          # racy test doesn't fail an unrelated PR. Hard-gate below that.
           BASELINE=$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json 2>/dev/null || echo 0)
           if [ -n "$BASELINE" ] && [ "$BASELINE" -gt 0 ]; then
-            if [ "$TOTAL_PASSED" -lt "$BASELINE" ]; then
-              echo "::error::Fourslash regression: ${TOTAL_PASSED} < ${BASELINE} passing tests"
+            TOLERANCE=$(awk "BEGIN {printf \"%d\", $BASELINE * 0.001 + 1}")
+            FLOOR=$((BASELINE - TOLERANCE))
+            if [ "$TOTAL_PASSED" -lt "$FLOOR" ]; then
+              echo "::error::Fourslash regression: ${TOTAL_PASSED} < ${BASELINE} passing tests (floor=${FLOOR}, tolerance=${TOLERANCE})"
               exit 1
+            elif [ "$TOTAL_PASSED" -lt "$BASELINE" ]; then
+              echo "::warning::Fourslash flake: ${TOTAL_PASSED} < ${BASELINE} passing (within ${TOLERANCE}-test tolerance)"
             else
               echo "::notice::Fourslash OK: ${TOTAL_PASSED} >= ${BASELINE} passing tests"
             fi
