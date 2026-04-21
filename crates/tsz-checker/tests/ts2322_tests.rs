@@ -134,6 +134,59 @@ fn get_all_diagnostics(source: &str) -> Vec<(u32, String)> {
     with_lib_contexts(source, "test.ts", CheckerOptions::default())
 }
 
+#[test]
+fn test_ts2322_identifier_literal_initializer_display_for_literal_sensitive_targets() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+var x = true;
+var n: number = x;
+var u: typeof undefined = x;
+enum E { A }
+var e: E = x;
+var s = "value";
+var su: typeof undefined = s;
+var i = 1;
+var iu: typeof undefined = i;
+"#,
+    );
+    let ts2322 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'boolean' is not assignable to type 'number'.")),
+        "expected widened boolean display for non-literal target, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'true' is not assignable to type 'undefined'.")),
+        "expected literal initializer display for undefined target, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'true' is not assignable to type 'E'.")),
+        "expected literal initializer display for enum target, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322.iter().any(
+            |message| message.contains("Type 'string' is not assignable to type 'undefined'.")
+        ),
+        "expected string initializer display to remain widened, got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type 'number' is not assignable to type 'undefined'.")),
+        "expected numeric initializer display to remain widened, got: {ts2322:#?}"
+    );
+}
+
 fn compile_with_options(
     source: &str,
     file_name: &str,
