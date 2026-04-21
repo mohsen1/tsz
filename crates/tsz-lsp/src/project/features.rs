@@ -477,16 +477,16 @@ impl Project {
                 let position = data.position;
                 let references = self.find_references(file_name, position)?;
 
-                // Count references (subtract 1 if declaration is included)
-                let ref_count = if references.is_empty() {
-                    0
-                } else {
-                    // Check if any reference is at the same position as the declaration
-                    let has_decl_reference = references
-                        .iter()
-                        .any(|r| r.range.start == position && r.range.end == position);
-                    references.len() - usize::from(has_decl_reference)
-                };
+                // `find_references` always appends the symbol's declarations to
+                // the result (see navigation/references.rs), so one entry is the
+                // declaration and the rest are uses. The previous point-vs-span
+                // equality check never matched — `position` is zero-width (it
+                // points at the declaration node's start offset, e.g. the
+                // `function` keyword), while location ranges cover the name
+                // identifier span (start != end) — so the count was inflated
+                // by 1 for every symbol. Mirror `code_lens::resolve_references_lens`
+                // and subtract 1 unconditionally when we have any results.
+                let ref_count = references.len().saturating_sub(1);
 
                 let title = if ref_count == 1 {
                     "1 reference".to_string()
