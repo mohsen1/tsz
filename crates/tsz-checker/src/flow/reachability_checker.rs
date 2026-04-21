@@ -34,6 +34,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn terminating_iife_unreachable_anchor(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.ctx.arena.get_call_expr(expr_node)?;
+        let callee = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(call.expression);
+        let callee_node = self.ctx.arena.get(callee)?;
+        if callee_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && callee_node.kind != syntax_kind_ext::ARROW_FUNCTION
+        {
+            return None;
+        }
+
+        let func = self.ctx.arena.get_function(callee_node)?;
+        let body_idx = func.body;
+        let body_node = self.ctx.arena.get(body_idx)?;
+        let block = self.ctx.arena.get_block(body_node)?;
+        let statements = block.statements.nodes.clone();
+
+        statements
+            .into_iter()
+            .find(|&stmt_idx| self.statement_always_throws(stmt_idx))
+    }
+
     /// Check if a callee expression explicitly returns `never` based on its
     /// declaration's return type annotation. This avoids fully type-checking the
     /// call expression, which would cache a potentially stale result in

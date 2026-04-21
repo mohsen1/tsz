@@ -317,6 +317,10 @@ pub trait StatementCheckCallbacks {
     /// Used for for-loop condition/incrementer that are unreachable.
     fn report_unreachable_code_at_node(&mut self, node_idx: NodeIndex);
 
+    /// Report TS7027 at the statement inside a direct throwing IIFE, if the
+    /// given expression is one.
+    fn report_unreachable_code_at_terminating_iife_body(&mut self, node_idx: NodeIndex) -> bool;
+
     /// Enter an iteration statement (for/while/do-while/for-in/for-of).
     /// Increments `iteration_depth` for break/continue validation.
     fn enter_iteration_statement(&mut self);
@@ -609,9 +613,22 @@ impl StatementChecker {
                         }
                     }
 
-                    // If the initializer always throws, the condition is unreachable
+                    // If the initializer always throws, the remaining for-clause
+                    // expressions are unreachable.
+                    // For direct throwing IIFEs, tsc anchors the unreachable
+                    // diagnostic inside the unreachable IIFE bodies, not at
+                    // the `for` clause expression starts.
                     if init_terminates && condition.is_some() {
-                        state.report_unreachable_code_at_node(condition);
+                        let reported_condition =
+                            state.report_unreachable_code_at_terminating_iife_body(condition);
+                        if !reported_condition {
+                            state.report_unreachable_code_at_node(condition);
+                        }
+                        if incrementor.is_some()
+                            && !state.report_unreachable_code_at_terminating_iife_body(incrementor)
+                        {
+                            state.report_unreachable_code_at_node(incrementor);
+                        }
                     }
 
                     let mut condition_is_false = false;
@@ -621,15 +638,15 @@ impl StatementChecker {
                         state.check_truthy_or_falsy(condition);
                         condition_is_false = state.is_false_condition(condition);
                         // Check if the condition expression itself terminates control flow
-                        if !init_terminates {
-                            condition_terminates =
-                                state.call_expression_terminates_control_flow(condition);
-                        }
+                        condition_terminates =
+                            state.call_expression_terminates_control_flow(condition);
                     }
 
                     // If the condition always throws, the incrementer is unreachable
-                    if (init_terminates || condition_terminates) && incrementor.is_some() {
-                        state.report_unreachable_code_at_node(incrementor);
+                    if !init_terminates && condition_terminates && incrementor.is_some() {
+                        if !state.report_unreachable_code_at_terminating_iife_body(incrementor) {
+                            state.report_unreachable_code_at_node(incrementor);
+                        }
                     }
 
                     let prev_unreachable = state.is_unreachable();
@@ -642,7 +659,11 @@ impl StatementChecker {
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
                     state.check_statement_with_request(statement, request);
-                    if incrementor.is_some() {
+                    if incrementor.is_some()
+                        && !condition_is_false
+                        && !init_terminates
+                        && !condition_terminates
+                    {
                         state.get_type_of_node_with_request(incrementor, &non_contextual_request);
                     }
                     state.leave_iteration_statement();
