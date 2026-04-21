@@ -224,6 +224,9 @@ pub struct CompilerOptions {
     /// Skip type checking of declaration files (.d.ts)
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub skip_lib_check: Option<bool>,
+    /// Skip type checking of default library declaration files (.d.ts)
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub skip_default_lib_check: Option<bool>,
     /// Disable emitting declarations that have '@internal' in their JSDoc comments
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub strip_internal: Option<bool>,
@@ -430,6 +433,8 @@ pub struct ResolvedCompilerOptions {
     pub explicit_check_js_false: bool,
     /// Skip type checking of declaration files (.d.ts)
     pub skip_lib_check: bool,
+    /// Skip type checking of default library declaration files (.d.ts)
+    pub skip_default_lib_check: bool,
     /// Disable emitting declarations that have '@internal' in their JSDoc comments
     pub strip_internal: bool,
     /// Maximum folder depth for checking JS files from `node_modules`.
@@ -1092,6 +1097,9 @@ pub fn resolve_compiler_options(
     }
     if let Some(skip_lib_check) = options.skip_lib_check {
         resolved.skip_lib_check = skip_lib_check;
+    }
+    if let Some(skip_default_lib_check) = options.skip_default_lib_check {
+        resolved.skip_default_lib_check = skip_default_lib_check;
     }
     if let Some(isolated_declarations) = options.isolated_declarations {
         resolved.isolated_declarations = isolated_declarations;

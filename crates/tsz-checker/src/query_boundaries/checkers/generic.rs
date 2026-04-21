@@ -27,6 +27,11 @@ pub(crate) fn index_access_components(
     tsz_solver::type_queries::get_index_access_types(db, type_id)
 }
 
+/// Get the operand of a `keyof T` type.
+pub(crate) fn keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::keyof_inner_type(db, type_id)
+}
+
 /// Get the extends type and false type of a conditional type.
 ///
 /// Returns `Some((extends_type, false_type))` if the type is a `Conditional`.
@@ -111,6 +116,14 @@ pub(crate) fn get_type_parameter_constraint(
     type_id: TypeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
+}
+
+/// Get the declared name of a type parameter or infer variable.
+pub(crate) fn type_parameter_name(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_common::Atom> {
+    tsz_solver::type_queries::get_type_parameter_name(db, type_id)
 }
 
 /// Check if a type is a primitive (string, number, boolean, bigint, etc.).

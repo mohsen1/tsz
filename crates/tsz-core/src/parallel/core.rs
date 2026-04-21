@@ -1033,6 +1033,30 @@ pub fn load_lib_files_for_binding_strict(
     results.into_iter().collect()
 }
 
+/// Clone lib files into fresh checker-only binders using the already-loaded source text.
+///
+/// The binders used during program construction are mutated while merging lib symbols into
+/// user-file binders. Checker-facing lib contexts and lib-file checks need fresh binder state
+/// so declaration merging and semantic lookups run against clean lib binders.
+#[must_use]
+pub fn clone_lib_files_for_checker(
+    lib_files: &[Arc<lib_loader::LibFile>],
+) -> Vec<Arc<lib_loader::LibFile>> {
+    lib_files
+        .iter()
+        .map(|lib| {
+            let source = lib
+                .arena
+                .get_source_file_at(lib.root_index)
+                .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
+            Arc::new(lib_loader::LibFile::from_source(
+                lib.file_name.clone(),
+                source.text.to_string(),
+            ))
+        })
+        .collect()
+}
+
 /// Parse and bind a single lib file, returning a `LibFile` or error.
 fn parse_and_bind_lib_file(
     file_name: String,
@@ -1088,18 +1112,20 @@ fn collect_lib_files_recursive_cached(
         return Ok(());
     }
 
-    // Priority: embedded (comment-stripped, 58% smaller) > disk cache > disk read.
-    // Embedded libs contain the same declarations as disk files but with comments
-    // removed at build time, reducing parse work by ~58%. This is safe because
-    // declaration files don't use comments for semantics.
+    // Prefer physical lib files when they exist so diagnostic offsets match the
+    // TypeScript lib baselines. Fall back to embedded libs only when running
+    // without an on-disk TypeScript lib directory.
     let basename = lib_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let embedded_key = basename.strip_prefix("lib.").unwrap_or(basename);
-    let source_text = if let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key) {
-        // Built-in embedded content — zero I/O, comment-stripped for faster parsing
-        embedded.to_string()
-    } else if let Some(cached) = file_cache.get(&lib_path) {
+    let source_text = if let Some(cached) = file_cache.get(&lib_path) {
         // File was read from disk (custom lib dir with non-standard files) — use it
         cached.clone()
+    } else if lib_path.exists() {
+        std::fs::read_to_string(&lib_path)
+            .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
+    } else if let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key) {
+        // Built-in embedded content — zero I/O, comment-stripped for faster parsing
+        embedded.to_string()
     } else {
         // Fallback to disk read
         std::fs::read_to_string(&lib_path)
@@ -3299,6 +3325,7 @@ pub struct FunctionCheckResult {
 }
 
 /// Result of type checking all function bodies in a file
+#[derive(Debug)]
 pub struct FileCheckResult {
     /// File index
     pub file_idx: usize,
@@ -3310,7 +3337,539 @@ pub struct FileCheckResult {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+fn collect_lib_interface_node_symbols(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    globals: &SymbolTable,
+    affected_interfaces: &FxHashSet<String>,
+    node_symbols: &mut FxHashMap<u32, SymbolId>,
+) {
+    for &stmt_idx in statements {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            if let Some(interface) = arena.get_interface(stmt_node)
+                && let Some(name) = arena.get_identifier_at(interface.name)
+                && affected_interfaces.contains(&name.escaped_text)
+                && let Some(sym_id) = globals.get(&name.escaped_text)
+            {
+                node_symbols.insert(stmt_idx.0, sym_id);
+                node_symbols.insert(interface.name.0, sym_id);
+                if let Some(heritage_clauses) = &interface.heritage_clauses {
+                    for &clause_idx in &heritage_clauses.nodes {
+                        let Some(clause_node) = arena.get(clause_idx) else {
+                            continue;
+                        };
+                        let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                            continue;
+                        };
+                        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                            continue;
+                        }
+                        for &type_idx in &heritage.types.nodes {
+                            let Some(type_node) = arena.get(type_idx) else {
+                                continue;
+                            };
+                            let expr_idx =
+                                if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
+                                    expr_type_args.expression
+                                } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                                    arena
+                                        .get_type_ref(type_node)
+                                        .map_or(type_idx, |type_ref| type_ref.type_name)
+                                } else {
+                                    type_idx
+                                };
+                            if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
+                                && let Some(base_sym_id) = globals.get(&base_name)
+                            {
+                                node_symbols.insert(expr_idx.0, base_sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            continue;
+        }
+
+        let Some(module_decl) = arena.get_module(stmt_node) else {
+            continue;
+        };
+        if module_decl.body.is_none() {
+            continue;
+        }
+        let Some(body_node) = arena.get(module_decl.body) else {
+            continue;
+        };
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            continue;
+        }
+        let Some(block) = arena.get_module_block(body_node) else {
+            continue;
+        };
+        let Some(inner) = &block.statements else {
+            continue;
+        };
+        collect_lib_interface_node_symbols(
+            arena,
+            &inner.nodes,
+            globals,
+            affected_interfaces,
+            node_symbols,
+        );
+    }
+}
+
+fn interface_name_text(arena: &NodeArena, stmt_idx: NodeIndex) -> Option<String> {
+    let node = arena.get(stmt_idx)?;
+    let interface = arena.get_interface(node)?;
+    let ident = arena.get_identifier_at(interface.name)?;
+    Some(ident.escaped_text.clone())
+}
+
+fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+    if node.kind == syntax_kind_ext::TYPE_REFERENCE
+        && let Some(type_ref) = arena.get_type_ref(node)
+    {
+        return entity_name_text_in_arena(arena, type_ref.type_name);
+    }
+    if node.kind == SyntaxKind::Identifier as u16 {
+        return arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone());
+    }
+    if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+        let qn = arena.get_qualified_name(node)?;
+        let left = entity_name_text_in_arena(arena, qn.left)?;
+        let right = entity_name_text_in_arena(arena, qn.right)?;
+        return Some(format!("{left}.{right}"));
+    }
+    if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        && let Some(access) = arena.get_access_expr(node)
+    {
+        let left = entity_name_text_in_arena(arena, access.expression)?;
+        let right = arena
+            .get(access.name_or_argument)
+            .and_then(|right_node| arena.get_identifier(right_node))?;
+        return Some(format!("{left}.{}", right.escaped_text));
+    }
+    None
+}
+
+fn collect_direct_base_names(
+    arena: &NodeArena,
+    interface: &crate::parser::node::InterfaceData,
+) -> Vec<String> {
+    let Some(heritage_clauses) = &interface.heritage_clauses else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    for &clause_idx in &heritage_clauses.nodes {
+        let Some(clause_node) = arena.get(clause_idx) else {
+            continue;
+        };
+        let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+            continue;
+        };
+        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+            continue;
+        }
+        for &type_idx in &heritage.types.nodes {
+            let Some(type_node) = arena.get(type_idx) else {
+                continue;
+            };
+            let expr_idx = if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
+                expr_type_args.expression
+            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                arena
+                    .get_type_ref(type_node)
+                    .map_or(type_idx, |type_ref| type_ref.type_name)
+            } else {
+                type_idx
+            };
+            if let Some(name) = entity_name_text_in_arena(arena, expr_idx) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<String> {
+    let mut seeds = FxHashSet::default();
+
+    for file in &program.files {
+        if !file.is_external_module
+            && let Some(source_file) = file.arena.get_source_file_at(file.source_file)
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                if let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx) {
+                    seeds.insert(name);
+                }
+            }
+        }
+
+        for name in file.global_augmentations.keys() {
+            seeds.insert(name.clone());
+        }
+    }
+
+    seeds
+}
+
+fn member_name_text(arena: &NodeArena, member_idx: NodeIndex) -> Option<String> {
+    let member_node = arena.get(member_idx)?;
+    if let Some(sig) = arena.get_signature(member_node) {
+        return arena
+            .get(sig.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone());
+    }
+    if let Some(accessor) = arena.get_accessor(member_node) {
+        return arena
+            .get(accessor.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone());
+    }
+    None
+}
+
+fn collect_user_global_interface_member_names(program: &MergedProgram) -> FxHashSet<String> {
+    let mut member_names = FxHashSet::default();
+
+    for file in &program.files {
+        if file.is_external_module {
+            continue;
+        }
+        let Some(source_file) = file.arena.get_source_file_at(file.source_file) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = file.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            for &member_idx in &interface.members.nodes {
+                if let Some(name) = member_name_text(file.arena.as_ref(), member_idx) {
+                    member_names.insert(name);
+                }
+            }
+        }
+    }
+
+    member_names
+}
+
+fn add_user_global_interface_declaration_arenas(
+    program: &MergedProgram,
+    declaration_arenas: &mut DeclarationArenaMap,
+) {
+    for file in &program.files {
+        if file.is_external_module {
+            continue;
+        }
+        let Some(source_file) = file.arena.get_source_file_at(file.source_file) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            let Some(sym_id) = program.globals.get(&name) else {
+                continue;
+            };
+            let target = declaration_arenas.entry((sym_id, stmt_idx)).or_default();
+            if !target.iter().any(|arena| Arc::ptr_eq(arena, &file.arena)) {
+                target.push(Arc::clone(&file.arena));
+            }
+        }
+    }
+}
+
+fn type_node_contains_tag_name_map_indexed_access(
+    arena: &NodeArena,
+    type_idx: NodeIndex,
+    fuel: &mut u32,
+) -> bool {
+    if type_idx == NodeIndex::NONE || *fuel == 0 {
+        return false;
+    }
+    *fuel -= 1;
+
+    let Some(node) = arena.get(type_idx) else {
+        return false;
+    };
+    if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
+        return arena
+            .get_indexed_access_type(node)
+            .and_then(|indexed| entity_name_text_in_arena(arena, indexed.object_type))
+            .is_some_and(|name| name.contains("TagNameMap"));
+    }
+
+    if let Some(type_ref) = arena.get_type_ref(node) {
+        return type_ref.type_arguments.as_ref().is_some_and(|args| {
+            args.nodes
+                .iter()
+                .any(|&arg| type_node_contains_tag_name_map_indexed_access(arena, arg, fuel))
+        });
+    }
+    if let Some(composite) = arena.get_composite_type(node) {
+        return composite
+            .types
+            .nodes
+            .iter()
+            .any(|&ty| type_node_contains_tag_name_map_indexed_access(arena, ty, fuel));
+    }
+    if let Some(array) = arena.get_array_type(node) {
+        return type_node_contains_tag_name_map_indexed_access(arena, array.element_type, fuel);
+    }
+    if let Some(wrapped) = arena.get_wrapped_type(node) {
+        return type_node_contains_tag_name_map_indexed_access(arena, wrapped.type_node, fuel);
+    }
+    if let Some(type_operator) = arena.get_type_operator(node) {
+        return type_node_contains_tag_name_map_indexed_access(
+            arena,
+            type_operator.type_node,
+            fuel,
+        );
+    }
+    if let Some(function_type) = arena.get_function_type(node) {
+        if type_node_contains_tag_name_map_indexed_access(
+            arena,
+            function_type.type_annotation,
+            fuel,
+        ) {
+            return true;
+        }
+        for &param_idx in &function_type.parameters.nodes {
+            let Some(param_node) = arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = arena.get_parameter(param_node) else {
+                continue;
+            };
+            if type_node_contains_tag_name_map_indexed_access(arena, param.type_annotation, fuel) {
+                return true;
+            }
+        }
+    }
+    if let Some(conditional) = arena.get_conditional_type(node) {
+        return [
+            conditional.check_type,
+            conditional.extends_type,
+            conditional.true_type,
+            conditional.false_type,
+        ]
+        .into_iter()
+        .any(|ty| type_node_contains_tag_name_map_indexed_access(arena, ty, fuel));
+    }
+
+    false
+}
+
+fn interface_declares_member_named(
+    arena: &NodeArena,
+    interface: &crate::parser::node::InterfaceData,
+    member_names: &FxHashSet<String>,
+) -> bool {
+    !member_names.is_empty()
+        && interface.members.nodes.iter().any(|&member_idx| {
+            member_name_text(arena, member_idx).is_some_and(|name| member_names.contains(&name))
+        })
+}
+
+fn interface_has_indexed_access_member_type(
+    arena: &NodeArena,
+    interface: &crate::parser::node::InterfaceData,
+) -> bool {
+    for &member_idx in &interface.members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+        if let Some(sig) = arena.get_signature(member_node) {
+            let mut fuel = 256;
+            if type_node_contains_tag_name_map_indexed_access(arena, sig.type_annotation, &mut fuel)
+            {
+                return true;
+            }
+            for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
+                let Some(param_node) = arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = arena.get_parameter(param_node) else {
+                    continue;
+                };
+                let mut fuel = 256;
+                if type_node_contains_tag_name_map_indexed_access(
+                    arena,
+                    param.type_annotation,
+                    &mut fuel,
+                ) {
+                    return true;
+                }
+            }
+        }
+        if let Some(accessor) = arena.get_accessor(member_node) {
+            let mut fuel = 256;
+            if type_node_contains_tag_name_map_indexed_access(
+                arena,
+                accessor.type_annotation,
+                &mut fuel,
+            ) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn affected_lib_interface_names(
+    program: &MergedProgram,
+    checker_lib_files: &[Arc<LibFile>],
+) -> FxHashSet<String> {
+    let seed_interfaces = collect_user_global_interface_seeds(program);
+    let mut affected = seed_interfaces.clone();
+    let user_member_names = collect_user_global_interface_member_names(program);
+    let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+
+    for lib in checker_lib_files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
+            inheritance_graph
+                .entry(name)
+                .or_default()
+                .extend(bases.into_iter());
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, bases) in &inheritance_graph {
+            if affected.contains(name) {
+                continue;
+            }
+            if bases.iter().any(|base| affected.contains(base)) {
+                changed = affected.insert(name.clone());
+            }
+        }
+    }
+
+    let mut relevant = FxHashSet::default();
+    for lib in checker_lib_files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            if !affected.contains(&name) {
+                continue;
+            }
+            if interface_declares_member_named(lib.arena.as_ref(), interface, &user_member_names)
+                || interface_has_indexed_access_member_type(lib.arena.as_ref(), interface)
+            {
+                relevant.insert(name);
+            }
+        }
+    }
+
+    relevant.extend(seed_interfaces);
+    let mut ancestor_queue: Vec<String> = relevant.iter().cloned().collect();
+    while let Some(name) = ancestor_queue.pop() {
+        let Some(bases) = inheritance_graph.get(&name) else {
+            continue;
+        };
+        for base in bases {
+            if relevant.insert(base.clone()) {
+                ancestor_queue.push(base.clone());
+            }
+        }
+    }
+
+    if relevant.is_empty() {
+        affected
+    } else {
+        relevant
+    }
+}
+
+fn build_lib_bound_file_for_interface_checks(
+    program: &MergedProgram,
+    lib_file: &Arc<LibFile>,
+    affected_interfaces: &FxHashSet<String>,
+) -> BoundFile {
+    let mut node_symbols = FxHashMap::default();
+    if let Some(source_file) = lib_file.arena.get_source_file_at(lib_file.root_index) {
+        collect_lib_interface_node_symbols(
+            lib_file.arena.as_ref(),
+            &source_file.statements.nodes,
+            &program.globals,
+            affected_interfaces,
+            &mut node_symbols,
+        );
+    }
+
+    let mut declaration_arenas = program.declaration_arenas.clone();
+    add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
+
+    BoundFile {
+        file_name: lib_file.file_name.clone(),
+        source_file: lib_file.root_index,
+        arena: Arc::clone(&lib_file.arena),
+        node_symbols,
+        symbol_arenas: program.symbol_arenas.clone(),
+        declaration_arenas,
+        module_declaration_exports_publicly: FxHashMap::default(),
+        scopes: Vec::new(),
+        node_scope_ids: FxHashMap::default(),
+        parse_diagnostics: Vec::new(),
+        global_augmentations: FxHashMap::default(),
+        module_augmentations: FxHashMap::default(),
+        augmentation_target_modules: FxHashMap::default(),
+        flow_nodes: FlowNodeArena::default(),
+        node_flow: FxHashMap::default(),
+        switch_clause_to_switch: FxHashMap::default(),
+        is_external_module: lib_file.binder.is_external_module,
+        expando_properties: FxHashMap::default(),
+        file_features: crate::binder::FileFeatures::NONE,
+        lib_symbol_reverse_remap: FxHashMap::default(),
+        semantic_defs: FxHashMap::default(),
+    }
+}
+
 /// Result of parallel type checking
+#[derive(Debug)]
 pub struct CheckResult {
     /// Per-file check results
     pub file_results: Vec<FileCheckResult>,
@@ -3662,11 +4221,13 @@ pub fn check_files_parallel(
         crate::checker::module_resolution::build_module_resolution_maps(&file_names);
     let resolved_module_paths = Arc::new(resolved_module_paths);
 
-    // Create lib_contexts from lib_files (contains both arena and binder).
+    let checker_lib_files = clone_lib_files_for_checker(lib_files);
+
+    // Create fresh checker lib contexts from cloned lib files (contains both arena and binder).
     // Wrapped in Arc so that per-file checkers and child delegations share
     // the same Vec with O(1) clone cost (single atomic refcount increment).
     let lib_contexts: Arc<Vec<LibContext>> = Arc::new(
-        lib_files
+        checker_lib_files
             .iter()
             .map(|lib| LibContext {
                 arena: Arc::clone(&lib.arena),
@@ -3820,11 +4381,135 @@ pub fn check_files_parallel(
         }
     };
 
+    let affected_lib_interfaces = affected_lib_interface_names(program, &checker_lib_files);
+
+    let check_one_lib = |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
+        let query_cache = if let Some(ref shared) = shared_query_cache {
+            tsz_solver::QueryCache::new_with_shared(&program.type_interner, shared)
+        } else {
+            tsz_solver::QueryCache::new(&program.type_interner)
+        };
+
+        let lib_bound_file =
+            build_lib_bound_file_for_interface_checks(program, lib_file, &affected_lib_interfaces);
+        let mut binder =
+            create_binder_from_bound_file(&lib_bound_file, program, program.files.len());
+        let mut composed_semantic_defs = program.semantic_defs.clone();
+        for (sym_id, entry) in &lib_bound_file.semantic_defs {
+            composed_semantic_defs.insert(*sym_id, entry.clone());
+        }
+        binder.semantic_defs = composed_semantic_defs;
+
+        let mut checker = CheckerState::with_options(
+            &lib_bound_file.arena,
+            &binder,
+            &query_cache,
+            lib_bound_file.file_name.clone(),
+            checker_options,
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        if let Some(ref modules) = shared_declared_modules {
+            checker
+                .ctx
+                .set_declared_modules_from_skeleton(Arc::clone(modules));
+        }
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules.clone());
+        checker
+            .ctx
+            .set_global_symbol_file_index(Arc::clone(&global_symbol_file_index));
+
+        let other_lib_contexts: Vec<LibContext> = lib_contexts
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx != lib_idx)
+            .map(|(_, ctx)| ctx.clone())
+            .collect();
+        checker.ctx.set_lib_contexts(other_lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        checker.prime_boxed_types();
+
+        checker.check_source_file_interfaces_only_with_fresh_interface_fuel(
+            lib_bound_file.source_file,
+        );
+
+        let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+        diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+
+        FileCheckResult {
+            file_idx: program.files.len() + lib_idx,
+            file_name: lib_file.file_name.clone(),
+            function_results: Vec::new(),
+            diagnostics,
+        }
+    };
+
+    let check_one_lib_baseline = |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
+        let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
+
+        let mut checker = CheckerState::with_options(
+            &lib_file.arena,
+            lib_file.binder.as_ref(),
+            &query_cache,
+            lib_file.file_name.clone(),
+            checker_options,
+        );
+        let other_lib_contexts: Vec<LibContext> = lib_contexts
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| *idx != lib_idx)
+            .map(|(_, ctx)| ctx.clone())
+            .collect();
+        checker.ctx.set_lib_contexts(other_lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_contexts.len());
+        checker.prime_boxed_types();
+        checker.check_source_file_interfaces_only_filtered_post_merge(
+            lib_file.root_index,
+            &affected_lib_interfaces,
+        );
+
+        let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+        diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+
+        FileCheckResult {
+            file_idx: program.files.len() + lib_idx,
+            file_name: lib_file.file_name.clone(),
+            function_results: Vec::new(),
+            diagnostics,
+        }
+    };
+
+    let fingerprint = |file_name: &str, diag: &Diagnostic| {
+        (
+            file_name.to_owned(),
+            diag.start,
+            diag.code,
+            diag.message_text.clone(),
+        )
+    };
+    let baseline_lib_diagnostics: FxHashSet<(String, u32, u32, String)> = checker_lib_files
+        .iter()
+        .enumerate()
+        .flat_map(|(lib_idx, lib_file)| {
+            let file_result = check_one_lib_baseline(lib_idx, lib_file);
+            let file_name = file_result.file_name.clone();
+            file_result
+                .diagnostics
+                .into_iter()
+                .map(move |diag| fingerprint(&file_name, &diag))
+        })
+        .collect();
+
     // Single-file optimization: skip Rayon overhead when there's only one file.
     // For multi-file projects, use parallel iteration via Rayon's work-stealing
     // scheduler. `par_iter().enumerate()` preserves input ordering (file_idx) so
     // results are deterministic regardless of which thread completes first.
-    let file_results: Vec<FileCheckResult> = if program.files.len() <= 1 {
+    let mut file_results: Vec<FileCheckResult> = if program.files.len() <= 1 {
         program
             .files
             .iter()
@@ -3837,6 +4522,20 @@ pub fn check_files_parallel(
             .map(|(file_idx, file)| check_one_file(file_idx, file))
             .collect()
     };
+
+    file_results.extend(
+        checker_lib_files
+            .iter()
+            .enumerate()
+            .map(|(lib_idx, lib_file)| {
+                let mut file_result = check_one_lib(lib_idx, lib_file);
+                let file_name = file_result.file_name.clone();
+                file_result.diagnostics.retain(|diag| {
+                    !baseline_lib_diagnostics.contains(&fingerprint(&file_name, diag))
+                });
+                file_result
+            }),
+    );
 
     let diagnostic_count: usize = file_results.iter().map(|r| r.diagnostics.len()).sum();
 

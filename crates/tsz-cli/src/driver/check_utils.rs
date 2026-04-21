@@ -1512,7 +1512,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
-    let declaration_arenas: tsz::binder::state::DeclarationArenaMap = program
+    let mut declaration_arenas: tsz::binder::state::DeclarationArenaMap = program
         .declaration_arenas
         .iter()
         .filter_map(|(&(sym_id, decl_idx), arenas)| {
@@ -1520,6 +1520,16 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
         })
         .collect();
+    for (&(sym_id, decl_idx), arenas) in &file.declaration_arenas {
+        let target = declaration_arenas.entry((sym_id, decl_idx)).or_default();
+        for arena in arenas {
+            if !Arc::ptr_eq(arena, &file.arena)
+                && !target.iter().any(|existing| Arc::ptr_eq(existing, arena))
+            {
+                target.push(Arc::clone(arena));
+            }
+        }
+    }
 
     let symbols_with_non_local_declarations: rustc_hash::FxHashSet<tsz::binder::SymbolId> =
         declaration_arenas

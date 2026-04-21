@@ -298,7 +298,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_keyof_for_current_object(
+    pub(crate) fn is_keyof_for_current_object(
         &mut self,
         ty: TypeId,
         object_type: TypeId,
@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
     /// Resolve a type parameter's constraint from its AST declaration when the TypeId
     /// doesn't carry one. This handles cases where type parameters lose their constraints
     /// during type application argument resolution (e.g., `M[Event]` inside `Id<M[Event]>`).
-    fn resolve_index_constraint_from_declaration(
+    pub(crate) fn resolve_index_constraint_from_declaration(
         &mut self,
         index_node_idx: NodeIndex,
         _object_node_idx: NodeIndex,

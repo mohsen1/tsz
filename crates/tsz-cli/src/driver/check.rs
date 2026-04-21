@@ -63,6 +63,12 @@ pub(super) struct CollectDiagnosticsResult {
     pub module_dep_stats: Option<super::ModuleDependencyStats>,
 }
 
+#[derive(Default)]
+pub(super) struct CheckerLibSet {
+    pub(super) files: Vec<Arc<LibFile>>,
+    pub(super) contexts: Vec<LibContext>,
+}
+
 /// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
 fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
@@ -74,35 +80,35 @@ fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
         .any(|component| component.as_os_str() == "node_modules")
 }
 
-/// Load lib.d.ts files and create `LibContext` objects for the checker.
+/// Clone lib.d.ts files and create fresh checker-facing `LibContext` objects.
 ///
 /// The binding pipeline mutates per-file binder state while injecting lib symbols into the
 /// unified program. Reusing those same `LibFile` binders as checker lib contexts leaks that
 /// binding-phase state into lib type resolution and can corrupt structural relations between
 /// recursive lib types like `RegExpMatchArray`, `Promise<T>`, and `PromiseLike<T>`.
 ///
-/// Build a fresh checker-facing lib context set from the same on-disk lib files so program
-/// binding and checker lib resolution stay isolated.
-pub(super) fn load_lib_files_for_contexts(lib_files: &[Arc<LibFile>]) -> Vec<LibContext> {
-    if lib_files.is_empty() {
-        return Vec::new();
-    }
-
-    let lib_paths: Vec<PathBuf> = lib_files
-        .iter()
-        .map(|lib| PathBuf::from(&lib.file_name))
-        .collect();
-    let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
-    let fresh_lib_files = parallel::load_lib_files_for_binding_strict(&lib_path_refs)
-        .expect("failed to reload lib files for checker contexts");
-
-    fresh_lib_files
+/// Build a fresh checker-facing lib set from the already-loaded lib sources so program
+/// binding and checker lib resolution stay isolated without requiring disk reloads.
+pub(super) fn load_checker_libs(lib_files: &[Arc<LibFile>]) -> CheckerLibSet {
+    let files = parallel::clone_lib_files_for_checker(lib_files);
+    let contexts = files
         .iter()
         .map(|lib| LibContext {
             arena: Arc::clone(&lib.arena),
             binder: Arc::clone(&lib.binder),
         })
-        .collect()
+        .collect();
+
+    CheckerLibSet { files, contexts }
+}
+
+fn should_skip_type_checking_for_file(
+    file_name: &str,
+    options: &ResolvedCompilerOptions,
+    is_default_lib: bool,
+) -> bool {
+    (options.skip_lib_check && is_declaration_file(file_name))
+        || (options.skip_default_lib_check && is_default_lib)
 }
 
 fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
@@ -539,7 +545,7 @@ pub(super) fn collect_diagnostics(
     options: &ResolvedCompilerOptions,
     base_dir: &Path,
     cache: Option<&mut CompilationCache>,
-    lib_contexts: &[LibContext],
+    checker_libs: &CheckerLibSet,
     typescript_dom_replacement_globals: (bool, bool, bool),
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     has_deprecation_diagnostics: bool,
@@ -568,6 +574,7 @@ pub(super) fn collect_diagnostics(
 
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
+    let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
 
     // Pre-create all binders for cross-file resolution
     let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
@@ -890,7 +897,7 @@ pub(super) fn collect_diagnostics(
     // build_global_indices computes the 4 binder-derived indices once here so that
     // per-file checker creation via apply_to skips the O(N) binder scans.
     let mut project_env = tsz::checker::context::ProjectEnv {
-        lib_contexts: std::sync::Arc::new(lib_contexts.to_vec()),
+        lib_contexts: std::sync::Arc::new(checker_libs.contexts.clone()),
         all_arenas: Arc::clone(&all_arenas),
         all_binders: Arc::clone(&all_binders),
         skeleton_declared_modules,
@@ -938,7 +945,7 @@ pub(super) fn collect_diagnostics(
 
     // Prime Array<T> base type with global augmentations before any file checks.
     // The prime checker uses the shared DefinitionStore (via project_env.apply_to).
-    if !program.files.is_empty() && !lib_contexts.is_empty() {
+    if !program.files.is_empty() && !checker_libs.contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
@@ -952,6 +959,17 @@ pub(super) fn collect_diagnostics(
         project_env.apply_to(&mut checker.ctx);
         checker.prime_boxed_types();
     }
+
+    let baseline_lib_diagnostics = if !options.no_check && !checker_libs.files.is_empty() {
+        collect_checker_lib_baseline_fingerprints(
+            program,
+            options,
+            checker_libs,
+            &affected_lib_interfaces,
+        )
+    } else {
+        FxHashSet::default()
+    };
 
     // --- SMART INVALIDATION: Work Queue Algorithm ---
     // Only type-check files that have changed or depend on files with changed export signatures
@@ -990,6 +1008,15 @@ pub(super) fn collect_diagnostics(
     let mut aggregated_qc_stats: Option<tsz_solver::QueryCacheStatistics> = None;
     #[allow(unused_assignments)]
     let mut aggregated_ds_stats: Option<tsz_solver::StoreStatistics> = None;
+    let checker_lib_file_env = CheckerLibFileCheckEnv {
+        program,
+        options,
+        checker_libs,
+        affected_interfaces: &affected_lib_interfaces,
+        merged_augmentations: &merged_augmentations,
+        project_env: &project_env,
+        program_has_real_syntax_errors,
+    };
 
     if cache.is_none() {
         // --- PARALLEL PATH: No cache, check all files concurrently ---
@@ -1158,6 +1185,27 @@ pub(super) fn collect_diagnostics(
                     let file_path = PathBuf::from(&program.files[file_idx].file_name);
                     tc_out.insert(file_path, tc);
                 }
+            }
+        }
+        if !options.no_check {
+            for lib_idx in 0..checker_libs.files.len() {
+                let query_cache = if let Some(shared) = shared_query_cache.as_ref() {
+                    QueryCache::new_with_shared(&program.type_interner, shared)
+                } else {
+                    QueryCache::new(&program.type_interner)
+                };
+                let (lib_diags, lib_counters, lib_ds_stats) = check_checker_lib_file(
+                    &checker_lib_file_env,
+                    lib_idx,
+                    &query_cache,
+                    Some(Arc::clone(&shared_lib_cache)),
+                );
+                let mut lib_diags = lib_diags;
+                retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
+                diagnostics.extend(lib_diags);
+                request_cache_counters.merge(lib_counters);
+                parallel_qc_stats.merge(&query_cache.statistics());
+                parallel_ds_stats.merge(&lib_ds_stats);
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
@@ -1454,6 +1502,17 @@ pub(super) fn collect_diagnostics(
                 diagnostics.extend(file_diagnostics);
             }
             request_cache_counters.merge(checker_counters);
+        }
+        if !options.no_check {
+            for lib_idx in 0..checker_libs.files.len() {
+                let (lib_diags, lib_counters, lib_ds_stats) =
+                    check_checker_lib_file(&checker_lib_file_env, lib_idx, &query_cache, None);
+                let mut lib_diags = lib_diags;
+                retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
+                diagnostics.extend(lib_diags);
+                request_cache_counters.merge(lib_counters);
+                sequential_ds_stats.merge(&lib_ds_stats);
+            }
         }
         // Sequential path: single shared QueryCache — capture stats after all files.
         aggregated_qc_stats = Some(query_cache.statistics());
@@ -2001,6 +2060,726 @@ pub(super) fn check_file_for_parallel<'a>(
     )
 }
 
+struct CheckerLibFileCheckEnv<'a> {
+    program: &'a MergedProgram,
+    options: &'a ResolvedCompilerOptions,
+    checker_libs: &'a CheckerLibSet,
+    affected_interfaces: &'a FxHashSet<String>,
+    merged_augmentations: &'a MergedAugmentations,
+    project_env: &'a tsz::checker::context::ProjectEnv,
+    program_has_real_syntax_errors: bool,
+}
+
+fn check_checker_lib_file(
+    env: &CheckerLibFileCheckEnv<'_>,
+    lib_idx: usize,
+    query_cache: &QueryCache,
+    shared_lib_cache: Option<Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>>,
+) -> (
+    Vec<Diagnostic>,
+    RequestCacheCounters,
+    tsz_solver::StoreStatistics,
+) {
+    let program = env.program;
+    let options = env.options;
+    let checker_libs = env.checker_libs;
+    let lib_file = &checker_libs.files[lib_idx];
+    if should_skip_type_checking_for_file(&lib_file.file_name, options, true) {
+        return (
+            Vec::new(),
+            RequestCacheCounters::default(),
+            tsz_solver::StoreStatistics::default(),
+        );
+    }
+
+    let lib_bound_file =
+        build_lib_bound_file_for_interface_checks(program, lib_file, env.affected_interfaces);
+    let binder = create_binder_from_bound_file_with_augmentations(
+        &lib_bound_file,
+        program,
+        program.files.len(),
+        env.merged_augmentations,
+    );
+
+    let mut checker = CheckerState::with_options(
+        &lib_bound_file.arena,
+        &binder,
+        query_cache,
+        lib_bound_file.file_name.clone(),
+        &options.checker,
+    );
+    env.project_env.apply_to(&mut checker.ctx);
+    if let Some(shared_lib_cache) = shared_lib_cache {
+        checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
+    }
+
+    // The current lib file is already the primary binder for this checker. Exclude it from the
+    // fallback lib contexts to avoid duplicate lib declarations during cross-file lookup while
+    // still preserving the total count used for capability checks.
+    let other_lib_contexts: Vec<LibContext> = checker_libs
+        .contexts
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| *idx != lib_idx)
+        .map(|(_, ctx)| ctx.clone())
+        .collect();
+    checker.ctx.set_lib_contexts(other_lib_contexts);
+    checker
+        .ctx
+        .set_actual_lib_file_count(checker_libs.contexts.len());
+    checker.prime_boxed_types();
+
+    // Lib files have no parser diagnostics in the checker pass, but semantic diagnostics from
+    // them should still respect tsc's global syntax-error suppression policy.
+    checker.ctx.has_parse_errors = env.program_has_real_syntax_errors;
+    tsz::checker::reset_stack_overflow_flag();
+    checker.check_source_file_interfaces_only_with_fresh_interface_fuel(lib_bound_file.source_file);
+
+    let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+    if env.program_has_real_syntax_errors {
+        diagnostics
+            .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
+    }
+    diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+    diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+
+    (
+        diagnostics,
+        checker.ctx.request_cache_counters,
+        checker.ctx.definition_store.statistics(),
+    )
+}
+
+fn check_checker_lib_file_baseline(
+    options: &ResolvedCompilerOptions,
+    checker_libs: &CheckerLibSet,
+    lib_idx: usize,
+    affected_interfaces: &FxHashSet<String>,
+    query_cache: &QueryCache,
+) -> (
+    Vec<Diagnostic>,
+    RequestCacheCounters,
+    tsz_solver::StoreStatistics,
+) {
+    let lib_file = &checker_libs.files[lib_idx];
+    if should_skip_type_checking_for_file(&lib_file.file_name, options, true) {
+        return (
+            Vec::new(),
+            RequestCacheCounters::default(),
+            tsz_solver::StoreStatistics::default(),
+        );
+    }
+
+    let mut checker = CheckerState::with_options(
+        &lib_file.arena,
+        lib_file.binder.as_ref(),
+        query_cache,
+        lib_file.file_name.clone(),
+        &options.checker,
+    );
+    let other_lib_contexts: Vec<LibContext> = checker_libs
+        .contexts
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| *idx != lib_idx)
+        .map(|(_, ctx)| ctx.clone())
+        .collect();
+    checker.ctx.set_lib_contexts(other_lib_contexts);
+    checker
+        .ctx
+        .set_actual_lib_file_count(checker_libs.contexts.len());
+    checker.prime_boxed_types();
+    tsz::checker::reset_stack_overflow_flag();
+    checker.check_source_file_interfaces_only_filtered_post_merge(
+        lib_file.root_index,
+        affected_interfaces,
+    );
+
+    let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+    diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+    diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
+
+    (
+        diagnostics,
+        checker.ctx.request_cache_counters,
+        checker.ctx.definition_store.statistics(),
+    )
+}
+
+fn collect_lib_interface_node_symbols(
+    arena: &NodeArena,
+    statements: &[NodeIndex],
+    globals: &SymbolTable,
+    affected_interfaces: &FxHashSet<String>,
+    node_symbols: &mut FxHashMap<u32, tsz::binder::SymbolId>,
+) {
+    for &stmt_idx in statements {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+
+        if stmt_node.kind == tsz::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+            if let Some(interface) = arena.get_interface(stmt_node)
+                && let Some(name) = arena.get_identifier_at(interface.name)
+                && affected_interfaces.contains(&name.escaped_text)
+                && let Some(sym_id) = globals.get(&name.escaped_text)
+            {
+                node_symbols.insert(stmt_idx.0, sym_id);
+                node_symbols.insert(interface.name.0, sym_id);
+                if let Some(heritage_clauses) = &interface.heritage_clauses {
+                    for &clause_idx in &heritage_clauses.nodes {
+                        let Some(clause_node) = arena.get(clause_idx) else {
+                            continue;
+                        };
+                        let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                            continue;
+                        };
+                        if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                            continue;
+                        }
+                        for &type_idx in &heritage.types.nodes {
+                            let Some(type_node) = arena.get(type_idx) else {
+                                continue;
+                            };
+                            let expr_idx = if let Some(expr_type_args) =
+                                arena.get_expr_type_args(type_node)
+                            {
+                                expr_type_args.expression
+                            } else if type_node.kind == tsz::parser::syntax_kind_ext::TYPE_REFERENCE
+                            {
+                                arena
+                                    .get_type_ref(type_node)
+                                    .map_or(type_idx, |type_ref| type_ref.type_name)
+                            } else {
+                                type_idx
+                            };
+                            if let Some(base_name) = entity_name_text_in_arena(arena, expr_idx)
+                                && let Some(base_sym_id) = globals.get(&base_name)
+                            {
+                                node_symbols.insert(expr_idx.0, base_sym_id);
+                            }
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if stmt_node.kind != tsz::parser::syntax_kind_ext::MODULE_DECLARATION {
+            continue;
+        }
+
+        let Some(module_decl) = arena.get_module(stmt_node) else {
+            continue;
+        };
+        if module_decl.body.is_none() {
+            continue;
+        }
+        let Some(body_node) = arena.get(module_decl.body) else {
+            continue;
+        };
+        if body_node.kind != tsz::parser::syntax_kind_ext::MODULE_BLOCK {
+            continue;
+        }
+        let Some(block) = arena.get_module_block(body_node) else {
+            continue;
+        };
+        let Some(inner) = &block.statements else {
+            continue;
+        };
+        collect_lib_interface_node_symbols(
+            arena,
+            &inner.nodes,
+            globals,
+            affected_interfaces,
+            node_symbols,
+        );
+    }
+}
+
+fn interface_name_text(arena: &NodeArena, stmt_idx: NodeIndex) -> Option<String> {
+    let node = arena.get(stmt_idx)?;
+    let interface = arena.get_interface(node)?;
+    let ident = arena.get_identifier_at(interface.name)?;
+    Some(ident.escaped_text.clone())
+}
+
+fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    let node = arena.get(idx)?;
+    if node.kind == tsz::parser::syntax_kind_ext::TYPE_REFERENCE
+        && let Some(type_ref) = arena.get_type_ref(node)
+    {
+        return entity_name_text_in_arena(arena, type_ref.type_name);
+    }
+    if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+        return arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone());
+    }
+    if node.kind == tsz::parser::syntax_kind_ext::QUALIFIED_NAME {
+        let qn = arena.get_qualified_name(node)?;
+        let left = entity_name_text_in_arena(arena, qn.left)?;
+        let right = entity_name_text_in_arena(arena, qn.right)?;
+        return Some(format!("{left}.{right}"));
+    }
+    if node.kind == tsz::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        && let Some(access) = arena.get_access_expr(node)
+    {
+        let left = entity_name_text_in_arena(arena, access.expression)?;
+        let right = arena
+            .get(access.name_or_argument)
+            .and_then(|right_node| arena.get_identifier(right_node))?;
+        return Some(format!("{left}.{}", right.escaped_text));
+    }
+    None
+}
+
+fn collect_direct_base_names(
+    arena: &NodeArena,
+    interface: &tsz_parser::parser::node::InterfaceData,
+) -> Vec<String> {
+    let Some(heritage_clauses) = &interface.heritage_clauses else {
+        return Vec::new();
+    };
+
+    let mut names = Vec::new();
+    for &clause_idx in &heritage_clauses.nodes {
+        let Some(clause_node) = arena.get(clause_idx) else {
+            continue;
+        };
+        let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+            continue;
+        };
+        if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+            continue;
+        }
+        for &type_idx in &heritage.types.nodes {
+            let Some(type_node) = arena.get(type_idx) else {
+                continue;
+            };
+            let expr_idx = if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
+                expr_type_args.expression
+            } else if type_node.kind == tsz::parser::syntax_kind_ext::TYPE_REFERENCE {
+                arena
+                    .get_type_ref(type_node)
+                    .map_or(type_idx, |type_ref| type_ref.type_name)
+            } else {
+                type_idx
+            };
+            if let Some(name) = entity_name_text_in_arena(arena, expr_idx) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+fn collect_user_global_interface_seeds(program: &MergedProgram) -> FxHashSet<String> {
+    let mut seeds = FxHashSet::default();
+
+    for file in &program.files {
+        if !file.is_external_module
+            && let Some(source_file) = file.arena.get_source_file_at(file.source_file)
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                if let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx) {
+                    seeds.insert(name);
+                }
+            }
+        }
+
+        for name in file.global_augmentations.keys() {
+            seeds.insert(name.clone());
+        }
+    }
+
+    seeds
+}
+
+fn member_name_text(arena: &NodeArena, member_idx: NodeIndex) -> Option<String> {
+    let member_node = arena.get(member_idx)?;
+    if let Some(sig) = arena.get_signature(member_node) {
+        return arena
+            .get(sig.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone());
+    }
+    if let Some(accessor) = arena.get_accessor(member_node) {
+        return arena
+            .get(accessor.name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.clone());
+    }
+    None
+}
+
+fn collect_user_global_interface_member_names(program: &MergedProgram) -> FxHashSet<String> {
+    let mut member_names = FxHashSet::default();
+
+    for file in &program.files {
+        if file.is_external_module {
+            continue;
+        }
+        let Some(source_file) = file.arena.get_source_file_at(file.source_file) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = file.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = file.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            for &member_idx in &interface.members.nodes {
+                if let Some(name) = member_name_text(file.arena.as_ref(), member_idx) {
+                    member_names.insert(name);
+                }
+            }
+        }
+    }
+
+    member_names
+}
+
+fn add_user_global_interface_declaration_arenas(
+    program: &MergedProgram,
+    declaration_arenas: &mut tsz::binder::state::DeclarationArenaMap,
+) {
+    for file in &program.files {
+        if file.is_external_module {
+            continue;
+        }
+        let Some(source_file) = file.arena.get_source_file_at(file.source_file) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(name) = interface_name_text(file.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            let Some(sym_id) = program.globals.get(&name) else {
+                continue;
+            };
+            let target = declaration_arenas.entry((sym_id, stmt_idx)).or_default();
+            if !target.iter().any(|arena| Arc::ptr_eq(arena, &file.arena)) {
+                target.push(Arc::clone(&file.arena));
+            }
+        }
+    }
+}
+
+fn type_node_contains_tag_name_map_indexed_access(
+    arena: &NodeArena,
+    type_idx: NodeIndex,
+    fuel: &mut u32,
+) -> bool {
+    if type_idx == NodeIndex::NONE || *fuel == 0 {
+        return false;
+    }
+    *fuel -= 1;
+
+    let Some(node) = arena.get(type_idx) else {
+        return false;
+    };
+    if node.kind == tsz::parser::syntax_kind_ext::INDEXED_ACCESS_TYPE {
+        return arena
+            .get_indexed_access_type(node)
+            .and_then(|indexed| entity_name_text_in_arena(arena, indexed.object_type))
+            .is_some_and(|name| name.contains("TagNameMap"));
+    }
+
+    if let Some(type_ref) = arena.get_type_ref(node) {
+        return type_ref.type_arguments.as_ref().is_some_and(|args| {
+            args.nodes
+                .iter()
+                .any(|&arg| type_node_contains_tag_name_map_indexed_access(arena, arg, fuel))
+        });
+    }
+    if let Some(composite) = arena.get_composite_type(node) {
+        return composite
+            .types
+            .nodes
+            .iter()
+            .any(|&ty| type_node_contains_tag_name_map_indexed_access(arena, ty, fuel));
+    }
+    if let Some(array) = arena.get_array_type(node) {
+        return type_node_contains_tag_name_map_indexed_access(arena, array.element_type, fuel);
+    }
+    if let Some(wrapped) = arena.get_wrapped_type(node) {
+        return type_node_contains_tag_name_map_indexed_access(arena, wrapped.type_node, fuel);
+    }
+    if let Some(type_operator) = arena.get_type_operator(node) {
+        return type_node_contains_tag_name_map_indexed_access(
+            arena,
+            type_operator.type_node,
+            fuel,
+        );
+    }
+    if let Some(function_type) = arena.get_function_type(node) {
+        if type_node_contains_tag_name_map_indexed_access(
+            arena,
+            function_type.type_annotation,
+            fuel,
+        ) {
+            return true;
+        }
+        for &param_idx in &function_type.parameters.nodes {
+            let Some(param_node) = arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = arena.get_parameter(param_node) else {
+                continue;
+            };
+            if type_node_contains_tag_name_map_indexed_access(arena, param.type_annotation, fuel) {
+                return true;
+            }
+        }
+    }
+    if let Some(conditional) = arena.get_conditional_type(node) {
+        return [
+            conditional.check_type,
+            conditional.extends_type,
+            conditional.true_type,
+            conditional.false_type,
+        ]
+        .into_iter()
+        .any(|ty| type_node_contains_tag_name_map_indexed_access(arena, ty, fuel));
+    }
+
+    false
+}
+
+fn interface_declares_member_named(
+    arena: &NodeArena,
+    interface: &tsz_parser::parser::node::InterfaceData,
+    member_names: &FxHashSet<String>,
+) -> bool {
+    !member_names.is_empty()
+        && interface.members.nodes.iter().any(|&member_idx| {
+            member_name_text(arena, member_idx).is_some_and(|name| member_names.contains(&name))
+        })
+}
+
+fn interface_has_indexed_access_member_type(
+    arena: &NodeArena,
+    interface: &tsz_parser::parser::node::InterfaceData,
+) -> bool {
+    for &member_idx in &interface.members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+        if let Some(sig) = arena.get_signature(member_node) {
+            let mut fuel = 256;
+            if type_node_contains_tag_name_map_indexed_access(arena, sig.type_annotation, &mut fuel)
+            {
+                return true;
+            }
+            for &param_idx in sig.parameters.as_ref().map_or(&[][..], |p| &p.nodes) {
+                let Some(param_node) = arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = arena.get_parameter(param_node) else {
+                    continue;
+                };
+                let mut fuel = 256;
+                if type_node_contains_tag_name_map_indexed_access(
+                    arena,
+                    param.type_annotation,
+                    &mut fuel,
+                ) {
+                    return true;
+                }
+            }
+        }
+        if let Some(accessor) = arena.get_accessor(member_node) {
+            let mut fuel = 256;
+            if type_node_contains_tag_name_map_indexed_access(
+                arena,
+                accessor.type_annotation,
+                &mut fuel,
+            ) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn affected_lib_interface_names(
+    program: &MergedProgram,
+    checker_libs: &CheckerLibSet,
+) -> FxHashSet<String> {
+    let seed_interfaces = collect_user_global_interface_seeds(program);
+    let mut affected = seed_interfaces.clone();
+    let user_member_names = collect_user_global_interface_member_names(program);
+    let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
+
+    for lib in &checker_libs.files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
+            inheritance_graph
+                .entry(name)
+                .or_default()
+                .extend(bases.into_iter());
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for (name, bases) in &inheritance_graph {
+            if affected.contains(name) {
+                continue;
+            }
+            if bases.iter().any(|base| affected.contains(base)) {
+                changed = affected.insert(name.clone());
+            }
+        }
+    }
+
+    let mut relevant = FxHashSet::default();
+    for lib in &checker_libs.files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            if !affected.contains(&name) {
+                continue;
+            }
+            if interface_declares_member_named(lib.arena.as_ref(), interface, &user_member_names)
+                || interface_has_indexed_access_member_type(lib.arena.as_ref(), interface)
+            {
+                relevant.insert(name);
+            }
+        }
+    }
+
+    relevant.extend(seed_interfaces);
+    let mut ancestor_queue: Vec<String> = relevant.iter().cloned().collect();
+    while let Some(name) = ancestor_queue.pop() {
+        let Some(bases) = inheritance_graph.get(&name) else {
+            continue;
+        };
+        for base in bases {
+            if relevant.insert(base.clone()) {
+                ancestor_queue.push(base.clone());
+            }
+        }
+    }
+
+    if relevant.is_empty() {
+        affected
+    } else {
+        relevant
+    }
+}
+
+fn build_lib_bound_file_for_interface_checks(
+    program: &MergedProgram,
+    lib_file: &Arc<LibFile>,
+    affected_interfaces: &FxHashSet<String>,
+) -> tsz::parallel::BoundFile {
+    let mut node_symbols = FxHashMap::default();
+    if let Some(source_file) = lib_file.arena.get_source_file_at(lib_file.root_index) {
+        collect_lib_interface_node_symbols(
+            lib_file.arena.as_ref(),
+            &source_file.statements.nodes,
+            &program.globals,
+            affected_interfaces,
+            &mut node_symbols,
+        );
+    }
+
+    let mut declaration_arenas = program.declaration_arenas.clone();
+    add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
+
+    tsz::parallel::BoundFile {
+        file_name: lib_file.file_name.clone(),
+        source_file: lib_file.root_index,
+        arena: Arc::clone(&lib_file.arena),
+        node_symbols,
+        symbol_arenas: program.symbol_arenas.clone(),
+        declaration_arenas,
+        module_declaration_exports_publicly: FxHashMap::default(),
+        scopes: Vec::new(),
+        node_scope_ids: FxHashMap::default(),
+        parse_diagnostics: Vec::new(),
+        global_augmentations: FxHashMap::default(),
+        module_augmentations: FxHashMap::default(),
+        augmentation_target_modules: FxHashMap::default(),
+        flow_nodes: tsz::binder::FlowNodeArena::default(),
+        node_flow: FxHashMap::default(),
+        switch_clause_to_switch: FxHashMap::default(),
+        is_external_module: lib_file.binder.is_external_module,
+        expando_properties: FxHashMap::default(),
+        file_features: tsz::binder::FileFeatures::NONE,
+        lib_symbol_reverse_remap: FxHashMap::default(),
+        semantic_defs: FxHashMap::default(),
+    }
+}
+
+type LibDiagnosticFingerprint = (String, u32, u32, String);
+
+fn lib_diagnostic_fingerprint(diag: &Diagnostic) -> LibDiagnosticFingerprint {
+    (
+        diag.file.clone(),
+        diag.start,
+        diag.code,
+        diag.message_text.clone(),
+    )
+}
+
+fn collect_checker_lib_baseline_fingerprints(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    checker_libs: &CheckerLibSet,
+    affected_interfaces: &FxHashSet<String>,
+) -> FxHashSet<LibDiagnosticFingerprint> {
+    let mut fingerprints = FxHashSet::default();
+
+    for lib_idx in 0..checker_libs.files.len() {
+        let query_cache = QueryCache::new(&program.type_interner);
+        let (diagnostics, _, _) = check_checker_lib_file_baseline(
+            options,
+            checker_libs,
+            lib_idx,
+            affected_interfaces,
+            &query_cache,
+        );
+        fingerprints.extend(diagnostics.iter().map(lib_diagnostic_fingerprint));
+    }
+
+    fingerprints
+}
+
+fn retain_program_induced_lib_diagnostics(
+    diagnostics: &mut Vec<Diagnostic>,
+    baseline_fingerprints: &FxHashSet<LibDiagnosticFingerprint>,
+) {
+    diagnostics.retain(|diag| !baseline_fingerprints.contains(&lib_diagnostic_fingerprint(diag)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2024,7 +2803,7 @@ mod tests {
             &ResolvedCompilerOptions::default(),
             std::path::Path::new("/"),
             None,
-            &[],
+            &CheckerLibSet::default(),
             (false, false, false),
             &type_cache_output,
             false,
@@ -2051,7 +2830,7 @@ mod tests {
             options,
             base_dir,
             None,
-            &[],
+            &CheckerLibSet::default(),
             (false, false, false),
             &type_cache_output,
             false,
@@ -2270,7 +3049,7 @@ const elem = <div className={class1, class2}/>;
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -2291,7 +3070,7 @@ const elem = <div className={class1, class2}/>;
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -2388,7 +3167,7 @@ const q: PromiseLike<number> = p;
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -2409,7 +3188,7 @@ const q: PromiseLike<number> = p;
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -2467,7 +3246,7 @@ async function f() {
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -2488,7 +3267,7 @@ async function f() {
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -2549,7 +3328,7 @@ type Recurse2 = {
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -2570,7 +3349,7 @@ type Recurse2 = {
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -2641,7 +3420,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let direct_lib_contexts: Vec<LibContext> = lib_files
             .iter()
             .map(|lib| LibContext {
@@ -2649,6 +3428,10 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
                 binder: Arc::clone(&lib.binder),
             })
             .collect();
+        let direct_checker_libs = CheckerLibSet {
+            files: lib_files.clone(),
+            contexts: direct_lib_contexts.clone(),
+        };
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -2777,7 +3560,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             &resolved,
             dir.path(),
             None,
-            &direct_lib_contexts,
+            &direct_checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -2797,7 +3580,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -2879,7 +3662,7 @@ export const x = foo();
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -2899,7 +3682,7 @@ export const x = foo();
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -2980,7 +3763,7 @@ export type RowToColumns<TColumns> = {
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -3000,7 +3783,7 @@ export type RowToColumns<TColumns> = {
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -3484,7 +4267,7 @@ let x2: string = f;
             &resolved,
             dir.path(),
             None,
-            &[],
+            &CheckerLibSet::default(),
             (false, false, false),
             &type_cache_output,
             false,
@@ -3580,7 +4363,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -3601,7 +4384,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -3677,7 +4460,7 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -3698,7 +4481,7 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -3764,7 +4547,7 @@ m(item => item.id < 5);
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -3785,7 +4568,7 @@ m(item => item.id < 5);
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -3845,7 +4628,7 @@ interface Buzz { id: number; buzz: string }
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -3866,7 +4649,7 @@ interface Buzz { id: number; buzz: string }
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -3934,7 +4717,7 @@ const obj: {field: Rule} = {
         let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
         let lib_files =
             parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
-        let lib_contexts = load_lib_files_for_contexts(&lib_files);
+        let checker_libs = load_checker_libs(&lib_files);
         let compile_inputs: Vec<_> = sources
             .into_iter()
             .map(|source| {
@@ -3955,7 +4738,7 @@ const obj: {field: Rule} = {
             &resolved,
             dir.path(),
             None,
-            &lib_contexts,
+            &checker_libs,
             (false, false, false),
             &type_cache_output,
             false,
@@ -3992,6 +4775,202 @@ const obj: {field: Rule} = {
                 .iter()
                 .any(|diag| diag.file == "/b.ts" && diag.code == 2322),
             "did not expect TS2322 when another file has a real syntax error: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn collect_diagnostics_reports_default_lib_breakage_from_global_node_merge() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"
+const enum SyntaxKind {
+    Modifier,
+    Decorator,
+}
+
+interface Node {
+    kind: SyntaxKind;
+}
+
+interface Modifier extends Node { kind: SyntaxKind.Modifier; }
+interface Decorator extends Node { kind: SyntaxKind.Decorator; }
+
+declare function isModifier(node: Node): node is Modifier;
+declare function isDecorator(node: Node): node is Decorator;
+
+declare function every<T, U extends T>(array: readonly T[], callback: (element: T) => element is U): array is readonly U[];
+
+declare const modifiers: readonly Decorator[] | readonly Modifier[];
+
+function foo() {
+    every(modifiers, isModifier);
+    every(modifiers, isDecorator);
+}
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        let lib_dom_diagnostics = diagnostics
+            .iter()
+            .filter(|diag| diag.file.ends_with("lib.dom.d.ts"))
+            .collect::<Vec<_>>();
+        let ts2344_count = lib_dom_diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT)
+            .count();
+        let ts2430_count = lib_dom_diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE)
+            .count();
+
+        assert_eq!(
+            ts2344_count, 3,
+            "Expected three TS2344 diagnostics from lib.dom.d.ts after merging Node.kind, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            ts2430_count, 1,
+            "Expected one TS2430 diagnostic from lib.dom.d.ts after merging Node.kind, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn collect_diagnostics_respects_skip_default_lib_check_for_global_node_merge() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"
+const enum SyntaxKind {
+    Modifier,
+    Decorator,
+}
+
+interface Node {
+    kind: SyntaxKind;
+}
+"#,
+        )
+        .expect("write source");
+
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        resolved.skip_default_lib_check = true;
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                            | diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+                    )
+            }),
+            "Did not expect lib.dom.d.ts TS2344/TS2430 diagnostics when skipDefaultLibCheck is enabled, got: {diagnostics:?}"
         );
     }
 
