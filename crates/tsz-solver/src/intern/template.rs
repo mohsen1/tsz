@@ -92,7 +92,7 @@ impl TypeInterner {
     fn get_string_literal_values(&self, type_id: TypeId) -> Option<Vec<String>> {
         // Handle BOOLEAN intrinsic (expands to two string literals)
         if type_id == TypeId::BOOLEAN {
-            return Some(vec!["true".to_string(), "false".to_string()]);
+            return Some(vec!["false".to_string(), "true".to_string()]);
         }
 
         // Helper to convert a single type to a string value if possible
