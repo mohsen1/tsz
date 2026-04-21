@@ -1,0 +1,56 @@
+{
+  "name": "tsz-vscode-lsp-dev",
+  "displayName": "TSZ LSP Dev Client",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Minimal VS Code client for running tsz-lsp locally during development.",
+  "engines": {
+    "vscode": "^1.98.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "onLanguage:typescript",
+    "onLanguage:typescriptreact",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "tsz.restartLanguageServer",
+        "title": "TSZ: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "TSZ",
+      "properties": {
+        "tsz.lsp.path": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the tsz-lsp binary. If empty, the extension uses <first workspace folder>/.target/debug/tsz-lsp or /.target/release/tsz-lsp."
+        },
+        "tsz.lsp.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Extra arguments passed to tsz-lsp."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.50",
+    "@types/vscode": "^1.98.0",
+    "typescript": "^5.8.3",
+    "vscode-languageclient": "^9.0.1"
+  }
+}
