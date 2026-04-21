@@ -539,6 +539,37 @@ t = (x: number) => 1;
 }
 
 #[test]
+fn tuple_arity_assignment_reports_outer_tuple_mismatch() {
+    let source = r#"
+let tup: [number, number, number] = [1, 2, 3, "string"];
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+
+    let tup_start = source.find("tup").expect("expected variable name") as u32;
+    assert_eq!(
+        diag.start, tup_start,
+        "TS2322 should anchor at the variable name for tuple arity mismatch"
+    );
+    assert!(
+        diag.message_text.contains(
+            "Type '[number, number, number, string]' is not assignable to type '[number, number, number]'"
+        ),
+        "TS2322 should report the outer tuple assignment mismatch, got: {diag:?}"
+    );
+    assert!(
+        !diag
+            .message_text
+            .contains("Type 'string' is not assignable to type 'number'"),
+        "tuple arity mismatch should not collapse to the extra element mismatch, got: {diag:?}"
+    );
+}
+
+#[test]
 fn generic_default_initializer_widens_numeric_literals() {
     let source = r#"
 function foo3<T extends Number>(x: T = 1) { }
