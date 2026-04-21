@@ -12,6 +12,7 @@
 //! - `lib_queries` - Library/global type availability queries
 //! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
 
+mod aliases;
 mod compiler_options;
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
@@ -26,6 +27,7 @@ mod resolver;
 pub(crate) mod speculation;
 mod strict_mode;
 pub mod typing_request;
+pub use aliases::*;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
@@ -50,57 +52,12 @@ pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
-/// Global cross-binder index: identifier name → list of `(file_idx, SymbolId)`
-/// where the name appears in a binder's `file_locals`.
-pub type GlobalFileLocalsIndex = Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>;
-
-/// Per-module export map: export name → list of `(file_idx, SymbolId)` where
-/// the export is declared. The value shape inside a `GlobalModuleExportsIndex`.
-pub type ModuleExportsByName = FxHashMap<String, Vec<(usize, SymbolId)>>;
-
-/// Owned (non-`Arc`) form of the cross-binder module exports index.
-/// Used while the index is being built before it is wrapped in `Arc`.
-pub type ModuleExportsIndexMap = FxHashMap<String, ModuleExportsByName>;
-
-/// Global cross-binder index: module specifier → export name → list of
-/// `(file_idx, SymbolId)` where the export is declared.
-pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
-
-/// Global cross-binder index: module specifier → list of `(file_idx, augmentation)`
-/// entries that contribute to that module's merged type.
-pub type GlobalModuleAugmentationsIndex = Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>;
-
-/// Global cross-binder index: module specifier → list of `(symbol, file_idx)`
-/// identifying the symbols targeted by each augmentation of that module.
-pub type GlobalAugmentationTargetsIndex = Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>;
-
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
 /// symbol references (e.g., mutually referencing type aliases, deeply
 /// nested namespace exports). Matches `MAX_INSTANTIATION_DEPTH` (50).
 pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
-
-pub type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
-pub type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
-pub type ResolvedModuleRequestPathMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>;
-pub type ResolvedModuleRequestErrorMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
-
-/// Represents a failed module resolution with specific error details.
-#[derive(Clone, Debug)]
-pub struct ResolutionError {
-    pub code: u32,
-    pub message: String,
-}
-
-/// Explicit module-resolution override carried by import attributes / import types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ResolutionModeOverride {
-    Import,
-    Require,
-}
 
 /// Pre-built global index of all declared/ambient module names across all binders.
 ///
@@ -1418,7 +1375,7 @@ pub struct CheckerContext<'a> {
     /// Program-wide wildcard re-exports map; see `program_reexports`.
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
     /// Program-wide type-only wildcard re-exports map; see `program_reexports`.
-    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
     /// Program-wide module-exports index keyed by file name (or ambient
     /// module specifier). Consulted by `ctx.module_exports_for_module`
     /// in preference to per-binder `module_exports`. Driver wraps
@@ -1689,7 +1646,7 @@ pub struct ProjectEnv {
     /// see `CheckerContext::program_reexports`.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
-    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
     /// Program-wide module-exports index; see `CheckerContext::program_module_exports`.
     pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
