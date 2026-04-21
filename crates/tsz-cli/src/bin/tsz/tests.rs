@@ -228,3 +228,85 @@ fn preprocess_non_boolean_false_not_consumed() {
     assert!(result.iter().any(|a| a == "--outDir"));
     assert!(result.iter().any(|a| a == "false"));
 }
+
+// ==================== handle_build_clean respects outDir ====================
+
+#[test]
+fn build_clean_removes_buildinfo_under_out_dir() {
+    use std::fs;
+    use tsz_cli::project_refs::ProjectReferenceGraph;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    let tsconfig_path = root.join("tsconfig.json");
+    fs::write(
+        &tsconfig_path,
+        r#"{"compilerOptions":{"composite":true,"outDir":"dist","declaration":true}}"#,
+    )
+    .expect("write tsconfig");
+
+    let src_dir = root.join("src");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("index.ts"), "export const x = 1;\n").expect("write entry");
+
+    let dist_dir = root.join("dist");
+    fs::create_dir_all(&dist_dir).expect("mkdir dist");
+    let buildinfo = dist_dir.join("tsconfig.tsbuildinfo");
+    fs::write(&buildinfo, "{}").expect("write buildinfo");
+
+    // Also drop a stray .tsbuildinfo next to the tsconfig so we verify the
+    // fix is deleting the correct file (the one under outDir) and not the
+    // legacy sibling location.
+    let sibling_buildinfo = root.join("tsconfig.tsbuildinfo");
+    fs::write(&sibling_buildinfo, "{}").expect("write sibling buildinfo");
+
+    let graph = ProjectReferenceGraph::load(&tsconfig_path).expect("load graph");
+    handle_build_clean(&graph, false).expect("clean");
+
+    assert!(
+        !buildinfo.exists(),
+        "dist/tsconfig.tsbuildinfo should have been deleted"
+    );
+    assert!(
+        !dist_dir.exists(),
+        "dist/ directory should have been deleted"
+    );
+    // The sibling file lives at the legacy location; it is not the build
+    // output, so leave it untouched.
+    assert!(
+        sibling_buildinfo.exists(),
+        "sibling tsconfig.tsbuildinfo at project root should be left alone"
+    );
+}
+
+#[test]
+fn build_clean_removes_buildinfo_next_to_tsconfig_when_no_out_dir() {
+    use std::fs;
+    use tsz_cli::project_refs::ProjectReferenceGraph;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+
+    let tsconfig_path = root.join("tsconfig.json");
+    fs::write(
+        &tsconfig_path,
+        r#"{"compilerOptions":{"composite":true}}"#,
+    )
+    .expect("write tsconfig");
+
+    let src_dir = root.join("src");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(src_dir.join("index.ts"), "export const x = 1;\n").expect("write entry");
+
+    let buildinfo = root.join("tsconfig.tsbuildinfo");
+    fs::write(&buildinfo, "{}").expect("write buildinfo");
+
+    let graph = ProjectReferenceGraph::load(&tsconfig_path).expect("load graph");
+    handle_build_clean(&graph, false).expect("clean");
+
+    assert!(
+        !buildinfo.exists(),
+        "tsconfig.tsbuildinfo next to tsconfig should be deleted when no outDir is set"
+    );
+}

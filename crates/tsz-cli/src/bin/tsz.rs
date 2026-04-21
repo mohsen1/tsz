@@ -3106,15 +3106,17 @@ fn handle_build_clean(
     verbose: bool,
 ) -> Result<()> {
     use std::fs;
-    use tsz_cli::config::resolve_compiler_options;
+    use tsz_cli::incremental::default_build_info_path;
 
     let mut deleted_count = 0;
 
     for project in graph.projects() {
-        let base_dir = &project.root_dir;
-
-        // Delete .tsbuildinfo file
-        let buildinfo_path = project.config_path.with_extension("tsbuildinfo");
+        // Use the same build-info path logic as the build/driver paths so that
+        // `--clean` removes the file the build actually wrote. Previously this
+        // always wrote next to the tsconfig, which missed the case where
+        // `outDir` relocates the .tsbuildinfo file.
+        let buildinfo_path =
+            default_build_info_path(&project.config_path, project.out_dir.as_deref());
         if buildinfo_path.exists() {
             fs::remove_file(&buildinfo_path)?;
             if verbose {
@@ -3123,31 +3125,27 @@ fn handle_build_clean(
             deleted_count += 1;
         }
 
-        // Get resolved options to find output directories
-        let resolved = resolve_compiler_options(project.config.base.compiler_options.as_ref())?;
-
-        // Delete outDir
-        if let Some(ref out_dir) = resolved.out_dir {
-            let full_out_dir = base_dir.join(out_dir);
-            if full_out_dir.exists() {
-                fs::remove_dir_all(&full_out_dir)?;
-                if verbose {
-                    println!("Deleted: {}", full_out_dir.display());
-                }
-                deleted_count += 1;
+        // `ResolvedProject` already stores absolute out/declaration dirs
+        // resolved against `root_dir`, so re-running `resolve_compiler_options`
+        // only duplicates work and risks drifting from the build path.
+        if let Some(ref out_dir) = project.out_dir
+            && out_dir.exists()
+        {
+            fs::remove_dir_all(out_dir)?;
+            if verbose {
+                println!("Deleted: {}", out_dir.display());
             }
+            deleted_count += 1;
         }
 
-        // Delete declarationDir
-        if let Some(ref declaration_dir) = resolved.declaration_dir {
-            let full_decl_dir = base_dir.join(declaration_dir);
-            if full_decl_dir.exists() {
-                fs::remove_dir_all(&full_decl_dir)?;
-                if verbose {
-                    println!("Deleted: {}", full_decl_dir.display());
-                }
-                deleted_count += 1;
+        if let Some(ref declaration_dir) = project.declaration_dir
+            && declaration_dir.exists()
+        {
+            fs::remove_dir_all(declaration_dir)?;
+            if verbose {
+                println!("Deleted: {}", declaration_dir.display());
             }
+            deleted_count += 1;
         }
     }
 
