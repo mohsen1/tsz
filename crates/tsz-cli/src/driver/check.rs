@@ -1239,7 +1239,7 @@ pub(super) fn collect_diagnostics(
                 diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
                 parallel_qc_stats.merge(&query_cache.statistics());
-                parallel_ds_stats.merge(&lib_ds_stats);
+                let _ = lib_ds_stats;
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
