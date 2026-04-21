@@ -930,16 +930,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // apparent type name that tsc displays.
                     if let Some(branch_app) = my_apparent_branch
                         && branch_app != original_type_id
-                            && branch_app != result
-                            && !has_param_args
-                            && matches!(
-                                self.interner.lookup(branch_app),
-                                Some(crate::types::TypeData::Application(_))
-                            )
-                        {
-                            self.interner
-                                .store_display_alias(original_type_id, branch_app);
-                        }
+                        && branch_app != result
+                        && !has_param_args
+                        && matches!(
+                            self.interner.lookup(branch_app),
+                            Some(crate::types::TypeData::Application(_))
+                        )
+                    {
+                        self.interner
+                            .store_display_alias(original_type_id, branch_app);
+                    }
                 }
             }
 
