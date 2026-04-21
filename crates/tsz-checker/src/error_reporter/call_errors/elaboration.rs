@@ -903,7 +903,12 @@ impl<'a> CheckerState<'a> {
         // Without this guard, widened property types (e.g., a string literal `'name'`
         // widened to `string`) can produce false TS2322 errors like
         // `Type '"name"' is not assignable to type '"name"'`.
-        if self.target_has_missing_required_properties_from_source(&obj, effective_param_type) {
+        let mapped_surface_names =
+            self.generic_mapped_receiver_explicit_property_names(effective_param_type);
+        if self.target_has_missing_required_properties_from_source(&obj, effective_param_type)
+            && mapped_surface_names.is_empty()
+            && !self.target_has_named_property_for_any_source_prop(arg_idx, effective_param_type)
+        {
             return false;
         }
 
@@ -1667,6 +1672,14 @@ impl<'a> CheckerState<'a> {
 
         // When the target type is `never`, don't elaborate into element-level TS2322 errors.
         if param_type == TypeId::NEVER {
+            return false;
+        }
+
+        if self
+            .generic_mapped_receiver_explicit_property_names(param_type)
+            .is_empty()
+            && self.generic_mapped_receiver_lacks_explicit_property(param_type, "0")
+        {
             return false;
         }
 

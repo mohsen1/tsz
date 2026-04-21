@@ -528,6 +528,7 @@ impl<'a> CheckerState<'a> {
         // Check excess properties on fresh object types BEFORE the assignability
         // check. Fresh types from chained assignments (e.g., `return obj = { x: 1, y: 2 }`)
         // are structurally assignable but should still trigger TS2353.
+        let mut had_excess_property_error = false;
         {
             let is_direct_literal = self
                 .ctx
@@ -535,16 +536,23 @@ impl<'a> CheckerState<'a> {
                 .get(source_idx)
                 .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
             if is_direct_literal {
+                let diags_before = self.ctx.diagnostics.len();
                 self.check_object_literal_excess_properties(source, target, source_idx);
+                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
             } else if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, source)
             {
                 let literal_idx = self.find_rhs_object_literal(source_idx);
+                let diags_before = self.ctx.diagnostics.len();
                 self.check_object_literal_excess_properties(
                     source,
                     target,
                     literal_idx.unwrap_or(source_idx),
                 );
+                had_excess_property_error = self.ctx.diagnostics.len() > diags_before;
             }
+        }
+        if had_excess_property_error {
+            return false;
         }
 
         // Canonical relation path: execute a RelationRequest to get both the

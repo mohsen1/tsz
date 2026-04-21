@@ -1,4 +1,5 @@
 use crate::state::CheckerState;
+use tsz_common::interner::Atom;
 use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::{
@@ -90,6 +91,14 @@ pub(crate) fn is_identity_name_mapping(
     mapped: &tsz_solver::MappedType,
 ) -> bool {
     tsz_solver::type_queries::is_identity_name_mapping(db, mapped)
+}
+
+pub(crate) fn literal_string(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
+    tsz_solver::visitor::literal_string(db, type_id)
+}
+
+pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    tsz_solver::type_queries::get_union_members(db, type_id)
 }
 
 /// Compute modifier values for a mapped-type property.
