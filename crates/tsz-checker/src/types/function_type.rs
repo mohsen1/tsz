@@ -653,16 +653,25 @@ impl<'a> CheckerState<'a> {
                     } else {
                         helper.get_parameter_type(contextual_index)
                     };
-                    let preserve_direct_from_mixed_context = helper.expected().is_some_and(|expected| {
-                        crate::query_boundaries::common::union_members(self.ctx.types, expected)
-                            .is_some_and(|members| {
-                                let has_callable =
-                                    members.iter().any(|&member| crate::query_boundaries::common::is_callable_type(self.ctx.types, member));
-                                let has_non_callable =
-                                    members.iter().any(|&member| !crate::query_boundaries::common::is_callable_type(self.ctx.types, member));
-                                has_callable && has_non_callable
-                            })
-                    });
+                    let preserve_direct_from_mixed_context =
+                        helper.expected().is_some_and(|expected| {
+                            crate::query_boundaries::common::union_members(self.ctx.types, expected)
+                                .is_some_and(|members| {
+                                    let has_callable = members.iter().any(|&member| {
+                                        crate::query_boundaries::common::is_callable_type(
+                                            self.ctx.types,
+                                            member,
+                                        )
+                                    });
+                                    let has_non_callable = members.iter().any(|&member| {
+                                        !crate::query_boundaries::common::is_callable_type(
+                                            self.ctx.types,
+                                            member,
+                                        )
+                                    });
+                                    has_callable && has_non_callable
+                                })
+                        });
 
                     if let Some(extracted) = direct {
                         if let Some(from_expected) = expected_contextual_type {

@@ -355,8 +355,10 @@ impl<'a> CheckerState<'a> {
                 self.normalize_property_receiver_application_display_arg(prop.type_id);
             let normalized_write =
                 self.normalize_property_receiver_application_display_arg(prop.write_type);
-            let widened_read =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, normalized_read);
+            let widened_read = crate::query_boundaries::common::widen_literal_type(
+                self.ctx.types,
+                normalized_read,
+            );
             let widened_write = crate::query_boundaries::common::widen_literal_type(
                 self.ctx.types,
                 normalized_write,

@@ -348,9 +348,9 @@ impl<'a> CheckerState<'a> {
                     // evaluate them with the full resolver first so the solver can
                     // extract property types from the resulting concrete object type.
                     let function_property_lookup_context = if initializer_is_function_like
-                        && original_contextual_type
-                            .is_some_and(|ctx_type| self.primitive_union_member_has_property(ctx_type, &name))
-                    {
+                        && original_contextual_type.is_some_and(|ctx_type| {
+                            self.primitive_union_member_has_property(ctx_type, &name)
+                        }) {
                         original_contextual_type.or(contextual_type)
                     } else {
                         contextual_type
