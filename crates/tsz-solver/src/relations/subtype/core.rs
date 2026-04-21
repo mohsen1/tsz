@@ -466,6 +466,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // comparison that fails (the apparent shape of `string` doesn't structurally match `String`).
         if let Some(s_kind) = intrinsic_kind(self.interner, source)
             && let Some(kind) = boxable_intrinsic_kind(s_kind)
+            && union_list_id(self.interner, target).is_none()
             && self.is_target_boxed_type(target, kind)
         {
             return SubtypeResult::True;
@@ -480,6 +481,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
             };
             if let Some(kind) = kind
+                && union_list_id(self.interner, target).is_none()
                 && self.is_target_boxed_type(target, kind)
             {
                 return SubtypeResult::True;
@@ -508,6 +510,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // boxed type which includes merged heritage from global augmentations.
                 // Use apparent_primitive_kind to also handle literals (e.g., "test" <: Iterable<string>).
                 if let Some(kind) = self.apparent_primitive_kind(source)
+                    && union_list_id(self.interner, target).is_none()
                     && self.is_boxed_primitive_subtype(kind, target)
                 {
                     return SubtypeResult::True;
@@ -569,6 +572,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Guard: skip for `object` type — primitives must NOT be subtypes of
             // `object` even though their boxed wrappers (Number, String, etc.) are.
             if target != TypeId::OBJECT
+                && union_list_id(self.interner, target).is_none()
                 && let Some(kind) = self.apparent_primitive_kind(source)
                 && self.is_boxed_primitive_subtype(kind, target)
             {

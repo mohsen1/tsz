@@ -3565,3 +3565,51 @@ const t = f({ a: 1, b: "c", d: ["e", 2] });
         "Should not emit TS2322 for const type parameter with multiple type params"
     );
 }
+
+#[test]
+fn non_primitive_conditional_with_type_params_matches_tsc_errors() {
+    let source = r#"
+type A<T, V> = { [P in keyof T]: T[P] extends V ? 1 : 0; };
+type B<T, V> = { [P in keyof T]: T[P] extends V | object ? 1 : 0; };
+
+let a: A<{ a: 0 | 1 }, 0> = { a: 0 };
+let b: B<{ a: 0 | 1 }, 0> = { a: 0 };
+
+function foo<T, U>(x: T) {
+    let a: object = x;
+    let b: U | object = x;
+}
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_messages = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2322_messages.len(),
+        2,
+        "expected only the two generic assignment errors, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322_messages
+            .iter()
+            .any(|message| message.contains("Type 'T' is not assignable to type 'object'.")),
+        "missing T to object diagnostic, got: {ts2322_messages:?}"
+    );
+    assert!(
+        ts2322_messages.iter().any(|message| {
+            message.contains("Type 'T' is not assignable to type 'object | U'.")
+                || message.contains("Type 'T' is not assignable to type 'U | object'.")
+        }),
+        "missing T to U | object diagnostic, got: {ts2322_messages:?}"
+    );
+    assert!(
+        !ts2322_messages
+            .iter()
+            .any(|message| message.contains("B<{")),
+        "mapped conditional assignment should not fail, got: {ts2322_messages:?}"
+    );
+}

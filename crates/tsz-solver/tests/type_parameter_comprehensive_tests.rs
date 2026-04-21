@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::intern::TypeInterner;
-use crate::types::{TypeData, TypeParamInfo};
+use crate::types::{FunctionShape, IntrinsicKind, PropertyInfo, TypeData, TypeParamInfo};
 
 // =============================================================================
 // Basic Type Parameter Construction Tests
@@ -666,4 +666,101 @@ fn test_function_with_multiple_type_parameters() {
     } else {
         panic!("Expected function type");
     }
+}
+
+#[test]
+fn unconstrained_type_parameter_not_assignable_to_unrelated_param_or_object_union() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let target = interner.union2(u_param, TypeId::OBJECT);
+
+    assert!(
+        !checker.is_assignable(t_param, target),
+        "unconstrained T must not be assignable to U | object"
+    );
+}
+
+#[test]
+fn numeric_literal_union_not_subtype_of_literal_or_object() {
+    let interner = TypeInterner::new();
+    let to_fixed = interner.function(FunctionShape {
+        params: Vec::new(),
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let number_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("toFixed"),
+        to_fixed,
+    )]);
+    interner.set_boxed_type(IntrinsicKind::Number, number_interface);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut subtype_checker = crate::relations::subtype::SubtypeChecker::new(&interner);
+
+    let zero = interner.literal_number(0.0);
+    let one = interner.literal_number(1.0);
+    let zero_or_one = interner.union2(zero, one);
+    let zero_or_object = interner.union2(zero, TypeId::OBJECT);
+
+    assert!(
+        !subtype_checker.is_subtype_of(one, TypeId::OBJECT),
+        "numeric literals must not satisfy the lowercase object keyword"
+    );
+    assert!(
+        !subtype_checker.is_subtype_of(one, zero),
+        "numeric literal 1 must not satisfy literal 0"
+    );
+    assert!(
+        !subtype_checker.is_subtype_of(one, zero_or_object),
+        "numeric literal 1 must not satisfy 0 | object"
+    );
+    assert!(
+        !subtype_checker.is_subtype_of(zero_or_one, zero_or_object),
+        "1 is a primitive and must not satisfy the lowercase object member"
+    );
+    assert!(
+        !checker.is_assignable(zero_or_one, zero_or_object),
+        "1 is a primitive and must not satisfy the lowercase object member"
+    );
+}
+
+#[test]
+fn conditional_union_literal_extends_literal_or_object_takes_false_branch() {
+    let interner = TypeInterner::new();
+
+    let zero = interner.literal_number(0.0);
+    let one = interner.literal_number(1.0);
+    let zero_or_one = interner.union2(zero, one);
+    let zero_or_object = interner.union2(zero, TypeId::OBJECT);
+    let conditional = interner.conditional(crate::types::ConditionalType {
+        check_type: zero_or_one,
+        extends_type: zero_or_object,
+        true_type: one,
+        false_type: zero,
+        is_distributive: false,
+    });
+
+    let evaluated = crate::evaluation::evaluate::evaluate_type(&interner, conditional);
+
+    assert_eq!(
+        evaluated, zero,
+        "0 | 1 should not be treated as extending 0 | object"
+    );
 }
