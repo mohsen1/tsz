@@ -353,7 +353,17 @@ jobs:
           prefix: cargo-testbuild
       - run:
           name: Build dist-fast binaries
-          command: cargo build --profile dist-fast -p tsz-cli --bin tsz -p tsz-conformance
+          # Split into two explicit per-package commands. Combining them as
+          # `-p tsz-cli --bin tsz -p tsz-conformance` in cargo 1.90 applied
+          # the `--bin tsz` filter to every listed package, silently skipping
+          # tsz-conformance (which has no bin named `tsz`) and breaking the
+          # downstream conformance lane with "No such file or directory".
+          command: |
+            cargo build --profile dist-fast -p tsz-cli --bin tsz
+            cargo build --profile dist-fast -p tsz-conformance --bin tsz-conformance
+      - run:
+          name: Verify binaries exist before persisting
+          command: ls -l .target/dist-fast/tsz .target/dist-fast/tsz-conformance
       - run:
           name: Build emit runner JS
           command: |
