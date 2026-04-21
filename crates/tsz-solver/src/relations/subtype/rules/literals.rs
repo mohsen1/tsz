@@ -153,7 +153,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
             TemplateSpan::Type(type_id) => {
-                let type_id = *type_id;
+                let original_type_id = *type_id;
+                let evaluated_type_id = self.evaluate_type(original_type_id);
+                let type_id = if evaluated_type_id == original_type_id {
+                    original_type_id
+                } else {
+                    evaluated_type_id
+                };
                 if let Some(kind) = intrinsic_kind(self.interner, type_id) {
                     return match kind {
                         IntrinsicKind::String => {
