@@ -928,18 +928,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // (e.g., `DeepReadonly<Part>` -> conditional -> `DeepReadonlyObject<Part>`),
                     // store a forward display alias so the formatter shows the one-step
                     // apparent type name that tsc displays.
-                    if let Some(branch_app) = my_apparent_branch {
-                        if branch_app != original_type_id
-                            && branch_app != result
-                            && !has_param_args
-                            && matches!(
-                                self.interner.lookup(branch_app),
-                                Some(crate::types::TypeData::Application(_))
-                            )
-                        {
-                            self.interner
-                                .store_display_alias(original_type_id, branch_app);
-                        }
+                    if let Some(branch_app) = my_apparent_branch
+                        && branch_app != original_type_id
+                        && branch_app != result
+                        && !has_param_args
+                        && matches!(
+                            self.interner.lookup(branch_app),
+                            Some(crate::types::TypeData::Application(_))
+                        )
+                    {
+                        self.interner
+                            .store_display_alias(original_type_id, branch_app);
                     }
                 }
             }
@@ -1307,31 +1306,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         original_members: &[TypeId],
         result: TypeId,
     ) {
-        use tsz_common::interner::Atom;
-        let mut merged_display_props: rustc_hash::FxHashMap<Atom, crate::PropertyInfo> =
-            rustc_hash::FxHashMap::default();
-
-        for &member in original_members {
-            if let Some(props) = self.interner.get_display_properties(member) {
-                for prop in props.as_ref() {
-                    merged_display_props
-                        .entry(prop.name)
-                        .and_modify(|existing| {
-                            if existing.type_id != prop.type_id {
-                                existing.type_id = self
-                                    .interner
-                                    .intersect_types_raw2(existing.type_id, prop.type_id);
-                            }
-                        })
-                        .or_insert_with(|| prop.clone());
-                }
-            }
-        }
-
-        if !merged_display_props.is_empty() {
-            let mut display_vec: Vec<crate::PropertyInfo> =
-                merged_display_props.into_values().collect();
-            display_vec.sort_by_key(|p| p.name.0);
+        let display_vec = crate::types::merge_display_properties_for_intersection(
+            self.interner,
+            original_members,
+        );
+        if !display_vec.is_empty() {
             self.interner.store_display_properties(result, display_vec);
         }
     }

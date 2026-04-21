@@ -182,9 +182,9 @@ Use for: full conformance runs, `cargo test` (full suite), `cargo build --releas
 
 Resets the TypeScript submodule to the pinned commit SHA. Called automatically by the pre-commit hook.
 
-## Multi-Agent Campaign System
+## Conformance Agent Workflow
 
-For large-scale parallel work, tsz includes a campaign system for coordinating multiple AI agents.
+Agents (and Claude Code) working on conformance start from one entry point.
 
 ### Key Scripts
 
@@ -192,26 +192,21 @@ For large-scale parallel work, tsz includes a campaign system for coordinating m
 # Health check before starting work
 scripts/session/healthcheck.sh
 
-# Check campaign status
-scripts/session/check-status.sh
+# Pick ONE random conformance failure to fix (prints path + codes + run cmd)
+scripts/session/quick-pick.sh
 
-# Claim a campaign and create a worktree
-scripts/session/start-campaign.sh <campaign-name>
+# Run a single test with verbose fingerprint diff
+./scripts/conformance/conformance.sh run --filter "<name>" --verbose
 
-# Record progress checkpoint
-scripts/session/campaign-checkpoint.sh <campaign-name>
-
-# Launch agents with staggered starts
-scripts/session/launch-agents.sh --max 3 --stagger 120
-
-# Validate and merge campaign branches
+# Validate campaign branches and open pull requests (never pushes to main)
 scripts/session/integrate.sh --auto
 
-# Clean up stale worktrees and targets
-scripts/session/cleanup.sh --auto
+# Full verification pass (build + unit + conformance)
+scripts/session/verify-all.sh
 ```
 
-See `scripts/session/AGENT_PROTOCOL.md` for the full protocol.
+See `scripts/session/conformance-agent-prompt.md` for the full agent prompt:
+how to pick, diagnose, fix with unit tests, and open a PR without bailing.
 
 ## Pre-commit Hook Details
 

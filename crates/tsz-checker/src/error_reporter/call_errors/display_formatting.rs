@@ -1426,11 +1426,116 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(param_type);
         }
 
+        if let Some(display) = self.non_tuple_spread_optional_parameter_display(param_type, arg_idx)
+        {
+            return display;
+        }
+
         // Use format_assignability_type_for_message to strip `| undefined` from
         // optional parameter types when the argument is non-nullable.  tsc shows
         // the declared parameter type without `| undefined` in TS2345 messages
         // when the user actually provided an argument.
         self.format_assignability_type_for_message(param_type, arg_type)
+    }
+
+    /// When the argument is a non-tuple spread (e.g. `...mixed` where
+    /// `mixed: (number|string)[]`) landing on an optional non-rest parameter,
+    /// tsc displays the parameter type widened with `| undefined`. A non-tuple
+    /// variadic spread may leave the position unfilled, so the parameter's
+    /// optional nature surfaces in the error message. Tuple spreads have
+    /// definite arity and regular arguments definitely fill their slot, so
+    /// neither case widens.
+    fn non_tuple_spread_optional_parameter_display(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        use crate::query_boundaries::checkers::call::array_element_type_for_type;
+
+        let arg_node = self.ctx.arena.get(arg_idx)?;
+        if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+            return None;
+        }
+        let spread_data = self.ctx.arena.get_spread(arg_node)?;
+        let spread_expr = spread_data.expression;
+
+        let spread_type = self.get_type_of_node(spread_expr);
+        let spread_type = self.resolve_type_for_property_access(spread_type);
+        let spread_type = self.resolve_lazy_type(spread_type);
+        let spread_type = self.evaluate_type_with_env(spread_type);
+
+        if query_common::tuple_elements(self.ctx.types, spread_type).is_some() {
+            return None;
+        }
+        let is_non_tuple_variadic = array_element_type_for_type(self.ctx.types, spread_type)
+            .is_some()
+            || self.is_iterable_type(spread_type);
+        if !is_non_tuple_variadic {
+            return None;
+        }
+
+        let (callee_type, arg_pos) = self.enclosing_call_arg_position(arg_idx)?;
+
+        let param_is_optional_non_rest = |params: &[tsz_solver::ParamInfo]| {
+            params
+                .get(arg_pos)
+                .map(|p| p.optional && !p.rest)
+                .unwrap_or(false)
+        };
+
+        let mut optional = false;
+        if let Some(shape) = query_common::function_shape_for_type(self.ctx.types, callee_type) {
+            optional = param_is_optional_non_rest(&shape.params);
+        }
+        if !optional
+            && let Some(signatures) =
+                query_common::call_signatures_for_type(self.ctx.types, callee_type)
+        {
+            optional = signatures
+                .iter()
+                .any(|sig| param_is_optional_non_rest(&sig.params));
+        }
+        if !optional {
+            return None;
+        }
+        // The solver typically widens optional-param types to include `undefined`
+        // before the relation check; format without the display-level strip so
+        // tsc's `T | undefined` surface is preserved. For a raw `T` param, union
+        // with undefined first.
+        let widened = if param_type == TypeId::UNDEFINED
+            || query_common::union_list_id(self.ctx.types, param_type).is_some_and(|list_id| {
+                self.ctx
+                    .types
+                    .type_list(list_id)
+                    .contains(&TypeId::UNDEFINED)
+            }) {
+            param_type
+        } else {
+            self.ctx.types.union2(param_type, TypeId::UNDEFINED)
+        };
+
+        Some(self.format_type_for_assignability_message(widened))
+    }
+
+    fn enclosing_call_arg_position(&mut self, arg_idx: NodeIndex) -> Option<(TypeId, usize)> {
+        let mut current = arg_idx;
+        loop {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                || node.kind == syntax_kind_ext::NEW_EXPRESSION
+            {
+                let call = self.ctx.arena.get_call_expr(node)?;
+                let args = call.arguments.as_ref()?;
+                let arg_pos = args.nodes.iter().position(|&a| a == arg_idx)?;
+                let callee_type = self.get_type_of_node(call.expression);
+                return Some((callee_type, arg_pos));
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            current = ext.parent;
+        }
     }
 
     fn expanded_rest_tuple_parameter_display_for_call(

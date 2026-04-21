@@ -1,11 +1,5 @@
-//! Rendering of `SubtypeFailureReason` into diagnostics.
-//!
-//! Converts solver-produced failure reasons into user-facing diagnostic
-//! messages. Split from `assignability.rs` for maintainability.
-use super::assignability::{
-    is_builtin_wrapper_name, is_function_type_display, is_object_prototype_method,
-    is_object_prototype_method_for_array_target, is_primitive_type_name,
-};
+//! Render `SubtypeFailureReason` values into diagnostics.
+//! Split from `assignability.rs` for maintainability.
 use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
     diagnostic_messages, format_message,
@@ -15,6 +9,11 @@ use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+
+use super::assignability::{
+    is_builtin_wrapper_name, is_function_type_display, is_object_prototype_method,
+    is_object_prototype_method_for_array_target, is_primitive_type_name,
+};
 mod type_mismatch;
 impl<'a> CheckerState<'a> {
     /// Recursively render a `SubtypeFailureReason` into a Diagnostic.
@@ -40,10 +39,8 @@ impl<'a> CheckerState<'a> {
             });
         let file_name = self.ctx.file_name.clone();
 
-        // TS2696: When the source is the `Object` wrapper type and the failure is
-        // about property-level issues (not call/construct signatures), tsc emits
-        // "The 'Object' type is assignable to very few other types" instead of TS2322.
-        // When the target is a callable/constructable type, tsc uses TS2322 instead.
+        // TS2696: property-only failures from the `Object` wrapper use the
+        // specialized message unless the target is callable/constructable.
         if depth == 0 {
             let is_property_failure = matches!(
                 reason,
@@ -382,9 +379,8 @@ impl<'a> CheckerState<'a> {
                         self.format_type_diagnostic(target),
                     )
                 };
-                // TS2820: when the source is a string literal and a union member is
-                // close in spelling, emit "did you mean X?" instead of plain TS2322.
-                // TSC uses the expanded union form (not the alias name) in TS2820 messages.
+                // TS2820 prefers "did you mean X?" and uses the expanded union
+                // form rather than the alias name.
                 let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);
                 if let Some(suggestion) = self.find_string_literal_spelling_suggestion(
                     source,
@@ -426,8 +422,7 @@ impl<'a> CheckerState<'a> {
                 source_type: _,
                 target_type: _,
             } => {
-                // Use unwidened type for TS2559/TS2560 — tsc preserves literal types
-                // (e.g., "12" not "number", "'false'" not "boolean") in
+                // Use the unwidened source: tsc preserves literal spellings in
                 // "has no properties in common" messages.
                 let mut source_str =
                     if (crate::query_boundaries::common::has_call_signatures(
@@ -446,8 +441,7 @@ impl<'a> CheckerState<'a> {
                     };
                 let target_str = self.format_type_for_assignability_message(target);
 
-                // If the source is callable/constructable and calling it would fix
-                // the mismatch, emit TS2560 ("did you mean to call it?") instead.
+                // If calling the source would fix the mismatch, emit TS2560 instead.
                 let (msg_template, code) = if self
                     .should_suggest_calling_for_weak_type(source, target)
                 {
@@ -500,7 +494,6 @@ impl<'a> CheckerState<'a> {
                 source_param,
                 target_param,
             } => {
-                // Emit the primary TS2322 diagnostic for the outer type mismatch.
                 let source_str =
                     self.format_assignment_source_type_for_diagnostic(source, target, idx);
                 let target_str = self.format_assignability_type_for_message(target, source);
@@ -516,39 +509,19 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
 
-                // Emit TS2328 as a separate top-level diagnostic when:
-                // 1. We're at the top-level (depth == 0)
-                // 2. The outer source/target are direct function types (not type
-                //    alias applications like `Func<T,U>` — tsc reports those via
-                //    type-argument elaboration, not TS2328)
-                // 3. The mismatched parameter types are themselves callable
-                // 4. Neither callback parameter type contains type parameters
-                //    (tsc skips TS2328 elaboration for generic signatures)
-                //
-                // tsc emits TS2328 as its own diagnostic in the error list, so it
-                // must appear as a standalone "error TS2328:" line.
-                let source_is_direct_callable =
-                    crate::query_boundaries::common::is_callable_type(self.ctx.types, source);
-                let target_is_direct_callable =
-                    crate::query_boundaries::common::is_callable_type(self.ctx.types, target);
-                let source_param_is_callable = crate::query_boundaries::common::is_callable_type(
-                    self.ctx.types,
-                    *source_param,
-                );
-                let target_param_is_callable = crate::query_boundaries::common::is_callable_type(
-                    self.ctx.types,
-                    *target_param,
-                );
-                let source_param_is_generic =
-                    crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types,
-                        *source_param,
-                    );
-                let target_param_is_generic =
-                    crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types,
-                        *target_param,
-                    );
+                // TS2328 is emitted separately only for top-level direct callable
+                // mismatches whose parameter types are callable and non-generic.
+                let is_callable =
+                    |ty| crate::query_boundaries::common::is_callable_type(self.ctx.types, ty);
+                let contains_type_params = |ty| {
+                    crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
+                };
+                let source_is_direct_callable = is_callable(source);
+                let target_is_direct_callable = is_callable(target);
+                let source_param_is_callable = is_callable(*source_param);
+                let target_param_is_callable = is_callable(*target_param);
+                let source_param_is_generic = contains_type_params(*source_param);
+                let target_param_is_generic = contains_type_params(*target_param);
 
                 if depth == 0
                     && source_is_direct_callable
@@ -620,10 +593,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // =========================================================================
-    // Per-variant render helpers
-    // =========================================================================
-
     #[allow(clippy::too_many_arguments)]
     fn render_missing_property(
         &mut self,
@@ -639,8 +608,7 @@ impl<'a> CheckerState<'a> {
         source_type: TypeId,
         target_type: TypeId,
     ) -> Diagnostic {
-        // TSC emits TS2322 (generic assignability error) instead of TS2741
-        // when the source is a primitive type. Primitives can't have "missing properties".
+        // Primitive sources use TS2322 rather than missing-property wording.
         let display_src_str = if depth == 0 && source_type != tsz_solver::TypeId::OBJECT {
             self.format_assignment_source_type_for_diagnostic(source, target, idx)
         } else {
@@ -664,9 +632,8 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TSC emits TS2322 instead of TS2741 when the source has call signatures
-        // (pure function type, NOT class constructor) and the target does NOT have call
-        // signatures. Class constructors (construct-only) should still produce TS2741.
+        // Pure function sources against non-callable targets use TS2322; class
+        // constructors still keep the missing-property path.
         let source_eval_for_fn = self.evaluate_type_with_env(source);
         let target_eval_for_fn = self.evaluate_type_with_env(target);
         let is_source_fn =
@@ -1117,10 +1084,29 @@ impl<'a> CheckerState<'a> {
         // reader can tell them apart. The formatter's pair-disambiguation
         // path adds namespace or `import("<specifier>")` prefixes only when
         // the bare names collide.
-        if src_str == tgt_str_qualified && widened_source != target {
-            let (da, db) = self.format_type_pair_diagnostic(widened_source, target);
-            src_str = da;
-            tgt_str_qualified = db;
+        //
+        // Two cases:
+        //   1. `src_str == tgt_str_qualified`: both formatted to the same
+        //      short name — disambiguate both sides.
+        //   2. `src_str` was already qualified by expression text (e.g.
+        //      `N.A` from `new N.A()`) but the underlying source and target
+        //      types still share a bare formatted name (e.g. both "A").
+        //      Keep the source text as-is and only qualify the target.
+        if widened_source != target {
+            if src_str == tgt_str_qualified {
+                let (da, db) = self.format_type_pair_diagnostic(widened_source, target);
+                src_str = da;
+                tgt_str_qualified = db;
+            } else {
+                let fmt_src_bare = self.format_type_diagnostic(widened_source);
+                let fmt_tgt_bare = self.format_type_diagnostic(target);
+                if fmt_src_bare == fmt_tgt_bare {
+                    let (_, db) = self.format_type_pair_diagnostic(widened_source, target);
+                    if db != tgt_str_qualified {
+                        tgt_str_qualified = db;
+                    }
+                }
+            }
         }
         let message = format_message(
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,

@@ -270,15 +270,19 @@ fn format_commonjs_single_file_symbol_type(
     checker.format_type(symbol_type)
 }
 
-#[allow(dead_code)]
-fn format_commonjs_two_file_consumer_symbol_type(
+struct ConsumerSymbolInspection {
+    formatted: String,
+    shape_props: Vec<(String, u32)>,
+}
+
+fn inspect_commonjs_two_file_consumer_symbol(
     producer_name: &str,
     producer_source: &str,
     consumer_name: &str,
     consumer_source: &str,
     consumer_symbol_name: &str,
     module_specifier: &str,
-) -> String {
+) -> ConsumerSymbolInspection {
     let mut parser_a = ParserState::new(producer_name.to_string(), producer_source.to_string());
     let root_a = parser_a.parse_source_file();
     let mut binder_a = BinderState::new();
@@ -351,7 +355,24 @@ fn format_commonjs_two_file_consumer_symbol_type(
 
     checker.check_source_file(root_b);
     let symbol_type = checker.get_type_of_symbol(sym_id);
-    checker.format_type(symbol_type)
+
+    ConsumerSymbolInspection {
+        formatted: checker.format_type(symbol_type),
+        shape_props: tsz_solver::type_queries::get_object_shape(checker.ctx.types, symbol_type)
+            .map(|shape| {
+                shape
+                    .properties
+                    .iter()
+                    .map(|prop| {
+                        (
+                            checker.ctx.types.resolve_atom_ref(prop.name).to_string(),
+                            prop.declaration_order,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
 }
 
 // ==========================================================================
@@ -405,6 +426,65 @@ new mod.Baz();
     assert!(
         ts2339.is_empty(),
         "Expected no TS2339 for require() of module.exports object literal class property, got: {ts2339:#?}"
+    );
+}
+
+#[test]
+fn test_js_export_surface_preserves_default_before_late_exports_assignment() {
+    let inspection = inspect_commonjs_two_file_consumer_symbol(
+        "lib.js",
+        r#"
+const defaultConfig = { parser: "babel" };
+module.exports = { default: defaultConfig };
+exports.configs = { "stage-0": defaultConfig };
+"#,
+        "consumer.ts",
+        r#"
+import lib = require("./lib.js");
+const value = lib;
+"#,
+        "value",
+        "./lib.js",
+    );
+
+    assert!(
+        inspection.formatted.starts_with("typeof import(\""),
+        "Expected require() namespace import to keep a module-style display name, got: {}",
+        inspection.formatted
+    );
+    assert_eq!(
+        inspection.shape_props,
+        vec![("configs".to_string(), 2), ("default".to_string(), 1)],
+        "Expected JS export surface namespace shape to preserve default-before-configs order"
+    );
+}
+
+#[test]
+fn test_js_export_surface_preserves_plain_exports_assignment_order() {
+    let inspection = inspect_commonjs_two_file_consumer_symbol(
+        "lib.js",
+        r#"
+exports.zzz = 1;
+exports.aaa = 2;
+"#,
+        "consumer.ts",
+        r#"
+import lib = require("./lib.js");
+const value = lib;
+"#,
+        "value",
+        "./lib.js",
+    );
+
+    assert!(
+        inspection.formatted.starts_with("typeof import(\""),
+        "Expected require() namespace import to keep a module-style display name, got: {}",
+        inspection.formatted
+    );
+    assert_eq!(
+        inspection.shape_props,
+        vec![("aaa".to_string(), 2), ("zzz".to_string(), 1)],
+        "Expected JS export surface namespace shape to preserve first-seen exports assignment order"
     );
 }
 

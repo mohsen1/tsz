@@ -720,26 +720,8 @@ impl TypeInterner {
         };
 
         // Propagate display properties from input objects to the merged result.
-        let mut merged_display_props: rustc_hash::FxHashMap<Atom, PropertyInfo> =
-            rustc_hash::FxHashMap::default();
-        for &member in members {
-            if let Some(props) = self.get_display_properties(member) {
-                for prop in props.as_ref() {
-                    merged_display_props
-                        .entry(prop.name)
-                        .and_modify(|existing| {
-                            if existing.type_id != prop.type_id {
-                                existing.type_id =
-                                    self.intersect_types_raw2(existing.type_id, prop.type_id);
-                            }
-                        })
-                        .or_insert_with(|| prop.clone());
-                }
-            }
-        }
-        if !merged_display_props.is_empty() {
-            let mut display_vec: Vec<PropertyInfo> = merged_display_props.into_values().collect();
-            display_vec.sort_by_key(|p| p.name.0);
+        let display_vec = crate::types::merge_display_properties_for_intersection(self, members);
+        if !display_vec.is_empty() {
             self.store_display_properties(result, display_vec);
         }
 

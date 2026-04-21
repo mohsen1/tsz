@@ -92,6 +92,79 @@ pub fn get_base_constraint_of_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     }
 }
 
+/// Resolve a type to its base constraint for display purposes, recursively reducing
+/// type parameters inside unions and intersections.
+///
+/// This mirrors tsc's `getBaseConstraintOfType` for instantiable types, which for
+/// unions/intersections recursively reduces each member and then re-intersects/unions.
+/// The intersection of union constraints is simplified via the interner's normal
+/// distribution rules (e.g., `(A | B) & (A | C)` reduces to `A | (B & C)` and
+/// disjoint primitives collapse to `never`).
+///
+/// Returns the reduced type, or `type_id` unchanged when there is no simplification.
+///
+/// Example: for `T & U` where `T extends string | number | undefined` and
+/// `U extends string | null | undefined`, this returns `string | undefined`
+/// (matching tsc's getBaseConstraintOfType(T & U) output).
+pub fn get_base_constraint_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    fn go(db: &dyn TypeDatabase, type_id: TypeId, depth: u8) -> Option<TypeId> {
+        if depth > 6 {
+            return None;
+        }
+        match db.lookup(type_id)? {
+            TypeData::TypeParameter(info) => {
+                let constraint = info.constraint?;
+                // Recursively reduce the constraint to bottom out at a concrete type.
+                Some(go(db, constraint, depth + 1).unwrap_or(constraint))
+            }
+            TypeData::Intersection(list_id) => {
+                let members = db.type_list(list_id);
+                let mut reduced: Vec<TypeId> = Vec::with_capacity(members.len());
+                let mut changed = false;
+                for &m in members.iter() {
+                    match go(db, m, depth + 1) {
+                        Some(r) => {
+                            if r != m {
+                                changed = true;
+                            }
+                            reduced.push(r);
+                        }
+                        None => reduced.push(m),
+                    }
+                }
+                if changed {
+                    Some(db.intersection(reduced))
+                } else {
+                    None
+                }
+            }
+            TypeData::Union(list_id) => {
+                let members = db.type_list(list_id);
+                let mut reduced: Vec<TypeId> = Vec::with_capacity(members.len());
+                let mut changed = false;
+                for &m in members.iter() {
+                    match go(db, m, depth + 1) {
+                        Some(r) => {
+                            if r != m {
+                                changed = true;
+                            }
+                            reduced.push(r);
+                        }
+                        None => reduced.push(m),
+                    }
+                }
+                if changed {
+                    Some(db.union(reduced))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+    go(db, type_id, 0).unwrap_or(type_id)
+}
+
 /// Compute the "constituent count" of a type for relation complexity estimation.
 ///
 /// Mirrors tsc's `getConstituentCount` used to detect TS2859 before

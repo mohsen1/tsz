@@ -1682,6 +1682,15 @@ impl<'a> CheckerState<'a> {
             };
 
             let elem_type = self.elaboration_source_expression_type(elem_idx);
+            let contextual_request =
+                crate::context::TypingRequest::with_contextual_type(target_element_type);
+            let contextual_elem_type =
+                self.get_type_of_node_with_request(elem_idx, &contextual_request);
+            let contextual_elem_assignable = contextual_elem_type != TypeId::ERROR
+                && contextual_elem_type != TypeId::ANY
+                && target_element_type != TypeId::ERROR
+                && target_element_type != TypeId::ANY
+                && self.is_assignable_to(contextual_elem_type, target_element_type);
 
             // When the target element type is an index-signature-only type
             // (e.g., `NamedTransform { [name: string]: Transform3D }`),
@@ -1697,6 +1706,10 @@ impl<'a> CheckerState<'a> {
                 && !self
                     .target_has_named_property_for_any_source_prop(elem_idx, target_element_type);
 
+            if contextual_elem_assignable {
+                continue;
+            }
+
             // For object/array literal elements, use contextually-typed type
             // to decide whether to elaborate (avoids false positives from widening).
             // Pass the target element type as contextual type so literal types
@@ -1707,19 +1720,6 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
             ) {
-                let contextual_request =
-                    crate::context::TypingRequest::with_contextual_type(target_element_type);
-                let contextual_elem_type =
-                    self.get_type_of_node_with_request(elem_idx, &contextual_request);
-                if contextual_elem_type != TypeId::ERROR
-                    && contextual_elem_type != TypeId::ANY
-                    && target_element_type != TypeId::ERROR
-                    && target_element_type != TypeId::ANY
-                    && self.is_assignable_to(contextual_elem_type, target_element_type)
-                {
-                    // Element is contextually assignable — no error needed.
-                    continue;
-                }
                 if !skip_deep_elaboration
                     && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
                 {

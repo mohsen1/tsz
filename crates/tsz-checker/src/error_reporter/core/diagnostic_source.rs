@@ -631,6 +631,25 @@ impl<'a> CheckerState<'a> {
         if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
             return format!("typeof import(\"{module_name}\")");
         }
+        let application_display =
+            crate::query_boundaries::common::type_application(self.ctx.types, ty)
+                .map(|_| ty)
+                .or_else(|| {
+                    self.ctx.types.get_display_alias(ty).filter(|&alias| {
+                        crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                            .is_some()
+                    })
+                });
+        if let Some(application_display) = application_display {
+            let display_ty =
+                self.normalize_property_receiver_application_display_type(application_display);
+            let mut formatter = self
+                .ctx
+                .create_diagnostic_type_formatter()
+                .with_display_properties()
+                .with_skip_application_alias_names();
+            return formatter.format(display_ty).into_owned();
+        }
         let has_object_shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();
         let has_def = self.ctx.definition_store.find_def_for_type(ty).is_some();
@@ -667,11 +686,24 @@ impl<'a> CheckerState<'a> {
         }
         // Only widen object-like types (to convert literal properties to primitives).
         // For literal/primitive receiver types (e.g., `""`, `42`), tsc preserves the
-        // literal in TS2339 messages (e.g., `'""'` not `'string'`).
+        // literal in TS2339 messages (e.g., `'""'` not `'string'`).  Unions whose
+        // every member is a literal are also preserved (e.g., `"foo" | "bar"`) —
+        // widening them to `string` loses discriminative information tsc keeps in
+        // property-existence diagnostics.
         let is_literal_or_primitive =
             crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
                 || crate::query_boundaries::common::is_primitive_type(self.ctx.types, ty);
-        let ty = if is_literal_or_primitive {
+        let is_union_of_literals = !is_literal_or_primitive
+            && crate::query_boundaries::common::union_members(self.ctx.types, ty).is_some_and(
+                |members| {
+                    !members.is_empty()
+                        && members.iter().all(|&m| {
+                            crate::query_boundaries::common::literal_value(self.ctx.types, m)
+                                .is_some()
+                        })
+                },
+            );
+        let ty = if is_literal_or_primitive || is_union_of_literals {
             ty
         } else {
             self.widen_type_for_display(ty)
@@ -788,6 +820,16 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             if let Some(type_id) = self.jsdoc_type_annotation_for_node_direct(current) {
+                // When `current` is a CommonJS module-exports assignment (e.g.
+                // `/** @type {string} */ module.exports = 0;`), the `@type`
+                // describes the declared export type, not the source RHS type.
+                // Returning the annotated type as the source display yields
+                // "Type 'string' is not assignable to type 'string'" where the
+                // RHS is actually a `number`. Skip the rewrite in that case so
+                // the real source type (e.g., `number`) is displayed.
+                if self.is_jsdoc_declared_target_assignment(current) {
+                    return None;
+                }
                 let display_type = self.widen_function_like_display_type(type_id);
                 return Some(self.format_assignability_type_for_message(display_type, target));
             }
@@ -800,6 +842,65 @@ impl<'a> CheckerState<'a> {
             let paren = self.ctx.arena.get_parenthesized(node)?;
             current = paren.expression;
         }
+    }
+
+    /// Determine whether `node` is the LHS (or the whole binary expression) of
+    /// a CommonJS `module.exports = X` / `exports = X` assignment in a JS file.
+    /// For these forms a leading JSDoc `@type` annotation declares the target
+    /// type, not the source type, and must not drive source-side display.
+    fn is_jsdoc_declared_target_assignment(&self, node: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        if !self.is_js_file() {
+            return false;
+        }
+        let Some(node_data) = self.ctx.arena.get(node) else {
+            return false;
+        };
+        // Resolve the enclosing assignment binary expression.  The JSDoc
+        // annotation may have been attached to the wrapping ExpressionStatement,
+        // so accept that form too (`/** @type {string} */ module.exports = 0;`).
+        let binary_idx = match node_data.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => node,
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
+                let Some(stmt) = self.ctx.arena.get_expression_statement(node_data) else {
+                    return false;
+                };
+                stmt.expression
+            }
+            _ => {
+                // If `node` is the LHS of an assignment, walk to the parent.
+                let Some(parent_idx) = self
+                    .ctx
+                    .arena
+                    .node_info(node)
+                    .map(|info| info.parent)
+                    .filter(|idx| idx.is_some())
+                else {
+                    return false;
+                };
+                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    return false;
+                };
+                if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                    return false;
+                }
+                parent_idx
+            }
+        };
+
+        let Some(binary_node) = self.ctx.arena.get(binary_idx) else {
+            return false;
+        };
+        if binary_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(binary_node) else {
+            return false;
+        };
+        if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
+            return false;
+        }
+        self.is_commonjs_module_exports_assignment(binary.left)
     }
 
     fn empty_array_literal_source_type_display(&self, expr_idx: NodeIndex) -> Option<String> {
@@ -1004,6 +1105,18 @@ impl<'a> CheckerState<'a> {
             })
         {
             return self.format_assignability_type_for_message(source, target);
+        }
+
+        // Generic intersection source reduction: when the source is an intersection
+        // containing type parameters (e.g., `T & U`), tsc displays the reduced base
+        // constraint instead of the raw generic intersection.  For example,
+        // `T extends string | number | undefined` and `U extends string | null | undefined`
+        // display as `string | undefined` rather than `T & U`.
+        //
+        // This matches tsc's `getBaseConstraintOfType` behavior for intersection types
+        // in error messages.
+        if let Some(reduced) = self.generic_intersection_source_display_substitution(source) {
+            return self.format_type_for_assignability_message(reduced);
         }
 
         // For Lazy(DefId) source types representing named interfaces (non-generic),
@@ -2246,5 +2359,43 @@ impl<'a> CheckerState<'a> {
             .diagnostics
             .iter()
             .any(|diag| diag.code == code && diag.start >= start && diag.start < end)
+    }
+
+    /// When the source of an assignment is a generic intersection (e.g., `T & U`
+    /// where at least one member is a type parameter with a constraint), return
+    /// the reduced base-constraint form for display.  Returns `None` when no
+    /// reduction applies (source is not an intersection, or no members have
+    /// usable constraints, or the reduction yields the same type).
+    ///
+    /// This matches tsc's `getBaseConstraintOfType` behavior for intersection
+    /// types: the base constraint of `T & U` is `constraint(T) & constraint(U)`,
+    /// which the interner further simplifies via distribution.
+    pub(in crate::error_reporter) fn generic_intersection_source_display_substitution(
+        &self,
+        source: TypeId,
+    ) -> Option<TypeId> {
+        let members = crate::query_boundaries::common::intersection_members(
+            self.ctx.types.as_type_database(),
+            source,
+        )?;
+        // Only rewrite when at least one member is a bare type parameter with a
+        // constraint — otherwise there's no reduction and this would just hide
+        // the intersection unnecessarily.
+        let has_constrained_type_param = members.iter().any(|&m| {
+            crate::query_boundaries::common::type_param_info(self.ctx.types.as_type_database(), m)
+                .and_then(|info| info.constraint)
+                .is_some()
+        });
+        if !has_constrained_type_param {
+            return None;
+        }
+        let reduced = crate::query_boundaries::common::get_base_constraint_for_display(
+            self.ctx.types.as_type_database(),
+            source,
+        );
+        if reduced == source {
+            return None;
+        }
+        Some(reduced)
     }
 }

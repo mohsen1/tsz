@@ -384,6 +384,44 @@ var a: string, b: boolean;
 }
 
 #[test]
+fn for_of_object_destructuring_default_reports_leaf_mismatch() {
+    let source = r#"
+// @target: ES6
+var x: string, y: number;
+var array = [{ x: "", y: true }]
+enum E { x }
+for ({x, y = E.x} of array) {
+    x;
+    y;
+}
+"#;
+
+    let diagnostics = diagnostics_for(source);
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322, got: {diagnostics:?}"
+    );
+
+    let diag = ts2322[0];
+    let y_start = source.find("y = E.x").expect("expected defaulted binding") as u32;
+    assert_eq!(
+        diag.start, y_start,
+        "TS2322 should anchor at the defaulted binding name, not the whole pattern"
+    );
+    assert_eq!(
+        diag.length, 1,
+        "TS2322 should cover only the binding name token"
+    );
+    assert!(
+        diag.message_text
+            .contains("Type 'boolean' is not assignable to type 'number'"),
+        "TS2322 should report the source property mismatch, got: {diag:?}"
+    );
+}
+
+#[test]
 fn nested_object_literal_assignability_keeps_exact_property_anchor() {
     let source = r#"
 type Inner = { ok: string };

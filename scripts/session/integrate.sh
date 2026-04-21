@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # =============================================================================
-# integrate.sh — Validate and merge campaign branches to main
+# integrate.sh — Validate campaign branches and open pull requests
 # =============================================================================
 #
 # Usage:
 #   scripts/session/integrate.sh                    # Interactive mode
-#   scripts/session/integrate.sh --auto             # Auto-merge all ready branches
-#   scripts/session/integrate.sh --branch campaign/narrowing  # Merge specific branch
-#   scripts/session/integrate.sh --dry-run          # Show what would be merged
+#   scripts/session/integrate.sh --auto             # Auto-open PRs for all ready branches
+#   scripts/session/integrate.sh --branch campaign/narrowing  # Process a specific branch
+#   scripts/session/integrate.sh --dry-run          # Show what would be processed
 #
 # For each campaign branch with commits ahead of main:
-#   1. Creates a temp merge onto latest main
+#   1. Creates a temp merge onto latest main (validation only — never pushed)
 #   2. Builds and runs targeted conformance tests
-#   3. If no regression: fast-forward merges to main and pushes
+#   3. If no regression: opens (or updates) a pull request targeting main
 #   4. If regression: reports failure, skips branch
+#
+# This script NEVER pushes directly to main. Merging into main is done via the
+# pull-request review flow on GitHub, not by this script.
 #
 # Designed to be run by the integrator agent via:
 #   /loop 30m run scripts/session/integrate.sh --auto
@@ -188,38 +191,34 @@ for branch in "${branches[@]}"; do
     git -C "$REPO_ROOT" worktree remove "$MERGE_DIR" --force 2>/dev/null || rm -rf "$MERGE_DIR"
     git -C "$REPO_ROOT" branch -D "$MERGE_BRANCH" 2>/dev/null || true
 
-    # Actually merge to main
-    echo "  Merging to main..."
+    # Open (or update) a pull request against main instead of pushing directly.
+    echo "  Opening pull request for $branch..."
 
-    # Re-fetch to check for race condition (main may have advanced during validation)
-    git -C "$REPO_ROOT" fetch origin main --quiet
-    CURRENT_MAIN=$(git -C "$REPO_ROOT" rev-parse origin/main)
-    if [[ "$CURRENT_MAIN" != "$VALIDATED_MAIN" ]]; then
-        echo "  WARNING: origin/main advanced during validation. Re-validating would be needed."
-        echo "  Skipping this branch for now. Will retry on next integration cycle."
-        SKIPPED=$((SKIPPED + 1))
-        continue
-    fi
+    PR_TITLE="integrate: $branch (+$IMPROVEMENT tests)"
+    PR_BODY=$(printf "Validated by scripts/session/integrate.sh.\n\nConformance: %s tests passing (+%s vs baseline %s).\n\nMerge this PR via the GitHub review flow; integrate.sh never pushes to main directly." \
+        "$MERGE_PASS" "$IMPROVEMENT" "$BASELINE_PASS")
 
-    # Checkout main, merge, push
-    MAIN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tsz-main-XXXXXX")
-    TEMP_DIRS+=("$MAIN_DIR")
-    git -C "$REPO_ROOT" worktree add "$MAIN_DIR" --detach origin/main --quiet
-    git -C "$MAIN_DIR" checkout -B main origin/main --quiet
-
-    git -C "$MAIN_DIR" merge "origin/$branch" --no-edit --quiet
-    git -C "$MAIN_DIR" push origin main --quiet
-
-    echo "  Pushed to main. Conformance: $MERGE_PASS (+$IMPROVEMENT)"
-    BASELINE_PASS=$MERGE_PASS
-
-    # Clean up
-    git -C "$REPO_ROOT" worktree remove "$MAIN_DIR" --force 2>/dev/null || rm -rf "$MAIN_DIR"
-
-    # Delete the campaign branch from remote
-    if $AUTO; then
-        echo "  Deleting merged branch origin/$branch..."
-        git -C "$REPO_ROOT" push origin --delete "${branch}" --quiet 2>/dev/null || true
+    if command -v gh >/dev/null 2>&1; then
+        if gh pr view "$branch" >/dev/null 2>&1; then
+            echo "  PR already exists for $branch; leaving it for reviewer."
+        else
+            gh pr create \
+                --base main \
+                --head "$branch" \
+                --title "$PR_TITLE" \
+                --body "$PR_BODY" \
+                >/dev/null || {
+                    echo "  Failed to open PR via gh. Open one manually for $branch."
+                    FAILED=$((FAILED + 1))
+                    continue
+                }
+            echo "  PR opened for $branch."
+        fi
+    else
+        echo "  gh CLI not installed. Please open a PR manually:"
+        echo "    base: main"
+        echo "    head: $branch"
+        echo "    title: $PR_TITLE"
     fi
 
     MERGED=$((MERGED + 1))
@@ -228,8 +227,9 @@ done
 echo ""
 echo "============================================="
 echo "Integration Summary"
-echo "  Merged:  $MERGED"
-echo "  Failed:  $FAILED"
-echo "  Skipped: $SKIPPED"
-echo "  New baseline: $BASELINE_PASS tests passing"
+echo "  PRs opened/updated: $MERGED"
+echo "  Failed:             $FAILED"
+echo "  Skipped:            $SKIPPED"
+echo "  Validated baseline: $BASELINE_PASS tests passing"
+echo "  (Merging into main happens via the GitHub PR review flow.)"
 echo "============================================="

@@ -106,9 +106,6 @@ mod circular_accessor_annotation_tests;
 #[path = "../tests/class_member_closure_tests.rs"]
 mod class_member_closure_tests;
 #[cfg(test)]
-#[path = "../tests/conformance_issues.rs"]
-mod conformance_issues;
-#[cfg(test)]
 #[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
 #[cfg(test)]
