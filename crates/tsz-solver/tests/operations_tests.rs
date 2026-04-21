@@ -430,6 +430,174 @@ fn test_generic_call_widening_applies_when_constraint_satisfied() {
 }
 
 #[test]
+fn test_generic_call_widens_fresh_object_union_inferred_type() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_param = TypeParamInfo {
+        is_const: false,
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    };
+    let t_type = interner.type_param(t_param);
+    let func = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo::unnamed(t_type),
+            ParamInfo::unnamed(t_type),
+            ParamInfo::unnamed(t_type),
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_params: vec![t_param],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let x = interner.intern_string("x");
+    let y = interner.intern_string("y");
+    let z = interner.intern_string("z");
+    let six = interner.literal_number(6.0);
+    let seven = interner.literal_number(7.0);
+    let empty = interner.literal_string("");
+
+    let left = interner.object_fresh(vec![PropertyInfo::new(x, six), PropertyInfo::new(z, seven)]);
+    let right = interner.object_fresh(vec![PropertyInfo::new(x, six), PropertyInfo::new(y, empty)]);
+
+    let result = evaluator.resolve_call(func, &[TypeId::UNDEFINED, left, right]);
+    let ret = match result {
+        CallResult::Success(ret) => ret,
+        other => panic!("Expected Success for fresh-object generic inference, got {other:?}"),
+    };
+
+    let Some(TypeData::Union(list_id)) = interner.lookup(ret) else {
+        panic!("Expected union return type, got {:?}", interner.lookup(ret));
+    };
+    let members = interner.type_list(list_id);
+    assert!(
+        members.contains(&TypeId::UNDEFINED),
+        "Expected undefined in inferred union, got {members:?}"
+    );
+
+    let mut saw_left_shape = false;
+    let mut saw_right_shape = false;
+
+    for &member in members.iter() {
+        let shape = match interner.lookup(member) {
+            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+                interner.object_shape(shape_id)
+            }
+            _ => continue,
+        };
+
+        assert!(
+            !shape
+                .flags
+                .contains(crate::types::ObjectFlags::FRESH_LITERAL),
+            "Widened inference result should not retain fresh-object flags"
+        );
+
+        let find_prop = |name| shape.properties.iter().find(|prop| prop.name == name);
+        let x_prop = find_prop(x).expect("normalized member should keep x");
+        assert_eq!(x_prop.type_id, TypeId::NUMBER);
+        assert!(!x_prop.optional);
+
+        let y_prop = find_prop(y).expect("normalized member should include y");
+        let z_prop = find_prop(z).expect("normalized member should include z");
+
+        if !z_prop.optional {
+            saw_left_shape = true;
+            assert_eq!(z_prop.type_id, TypeId::NUMBER);
+            assert!(y_prop.optional);
+            assert_eq!(y_prop.type_id, TypeId::UNDEFINED);
+        } else if !y_prop.optional {
+            saw_right_shape = true;
+            assert_eq!(y_prop.type_id, TypeId::STRING);
+            assert!(z_prop.optional);
+            assert_eq!(z_prop.type_id, TypeId::UNDEFINED);
+        }
+    }
+
+    assert!(
+        saw_left_shape,
+        "Expected widened left object member in inferred union"
+    );
+    assert!(
+        saw_right_shape,
+        "Expected widened right object member in inferred union"
+    );
+}
+
+#[test]
+fn test_generic_call_uninferred_callback_param_mismatch_uses_unknown() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_param = TypeParamInfo {
+        is_const: false,
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+    };
+    let u_param = TypeParamInfo {
+        is_const: false,
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+    };
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
+
+    let callback = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(u_type)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let func = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(t_type), ParamInfo::unnamed(callback)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: vec![t_param, u_param],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let result = evaluator.resolve_call(func, &[TypeId::NULL, TypeId::NULL]);
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected,
+            actual,
+            ..
+        } => {
+            assert_eq!(index, 1);
+            assert_eq!(actual, TypeId::NULL);
+
+            let Some(TypeData::Function(shape_id)) = interner.lookup(expected) else {
+                panic!(
+                    "Expected instantiated callback type in mismatch, got {:?}",
+                    interner.lookup(expected)
+                );
+            };
+            let shape = interner.function_shape(shape_id);
+            assert!(shape.type_params.is_empty());
+            assert_eq!(shape.params.len(), 1);
+            assert_eq!(shape.params[0].type_id, TypeId::UNKNOWN);
+            assert_eq!(shape.return_type, TypeId::VOID);
+        }
+        other => panic!("Expected callback mismatch with unknown parameter, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_get_contextual_signature_with_compat_checker_matches_call_evaluator() {
     let interner = TypeInterner::new();
     let contextual = interner.function(FunctionShape {

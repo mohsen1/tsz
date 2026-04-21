@@ -971,3 +971,99 @@ tag `${ x => x }`;
         "Should NOT emit TS7006 - 'x' should be contextually typed from tag parameter.\nActual errors: {relevant:#?}"
     );
 }
+
+#[test]
+fn test_tagged_template_generic_literal_argument_uses_call_inference() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function someGenerics9<T>(strs: TemplateStringsArray, a: T, b: T, c: T): T {
+    return null as any;
+}
+var a9a = someGenerics9 `${ "" }${ 0 }${ [] }`;
+var a9a: {};
+        "#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message
+                    .contains("Argument of type '0' is not assignable to parameter of type '\"\"'")
+        }),
+        "Expected tagged-template TS2345 to match normal generic call inference. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2403
+                && message.contains("Variable 'a9a' must be of type 'string'")
+                && !message.contains("\"\" | 0")
+        }),
+        "Expected tagged-template result display to widen to string. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tagged_template_generic_object_union_result_is_widened() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function someGenerics9<T>(strs: TemplateStringsArray, a: T, b: T, c: T): T {
+    return null as any;
+}
+var a9e = someGenerics9 `${ undefined }${ { x: 6, z: new Date() } }${ { x: 6, y: "" } }`;
+var a9e: {};
+        "#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2403
+                && message.contains("Variable 'a9e' must be of type")
+                && message.contains("x: number")
+                && message.contains("z: Date")
+                && message.contains("z?: undefined")
+                && message.contains("y: string")
+                && message.contains("y?: undefined")
+                && !message.contains("x: 6")
+                && !message.contains("y: \"\"")
+        }),
+        "Expected tagged-template object union result display to widen literals. Actual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_tagged_template_generic_unresolved_type_params_display_as_unknown() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function someGenerics4<T, U>(strs: TemplateStringsArray, n: T, f: (x: U) => void) { }
+someGenerics4 `${ null }${ null }`;
+
+function someGenerics7<A, B, C>(strs: TemplateStringsArray, a: (a: A) => A, b: (b: B) => B, c: (c: C) => C) { }
+function someGenerics8<T>(strs: TemplateStringsArray, n: T): T { return n; }
+var x = someGenerics8 `${ someGenerics7 }`;
+x `${ null }${ null }${ null }`;
+        "#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message
+                    .contains("Argument of type 'null' is not assignable to parameter of type '(x: unknown) => void'")
+        }),
+        "Expected unresolved callback parameter type to display as unknown. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345
+                && message
+                    .contains("Argument of type 'null' is not assignable to parameter of type '(a: unknown) => unknown'")
+        }),
+        "Expected returned generic tag parameter type to display as unknown. Actual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("(x: U)") && !message.contains("(a: A)")),
+        "Tagged-template generic diagnostics should not leak unresolved type parameter names. Actual: {diagnostics:#?}"
+    );
+}
