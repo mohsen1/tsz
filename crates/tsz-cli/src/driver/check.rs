@@ -575,6 +575,8 @@ pub(super) fn collect_diagnostics(
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
     let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
+    let affected_lib_extension_interfaces =
+        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
 
     // Pre-create all binders for cross-file resolution
     let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
@@ -966,6 +968,7 @@ pub(super) fn collect_diagnostics(
             options,
             checker_libs,
             &affected_lib_interfaces,
+            &affected_lib_extension_interfaces,
         )
     } else {
         FxHashSet::default()
@@ -1013,6 +1016,7 @@ pub(super) fn collect_diagnostics(
         options,
         checker_libs,
         affected_interfaces: &affected_lib_interfaces,
+        extension_interfaces: &affected_lib_extension_interfaces,
         merged_augmentations: &merged_augmentations,
         project_env: &project_env,
         program_has_real_syntax_errors,
@@ -2065,6 +2069,7 @@ struct CheckerLibFileCheckEnv<'a> {
     options: &'a ResolvedCompilerOptions,
     checker_libs: &'a CheckerLibSet,
     affected_interfaces: &'a FxHashSet<String>,
+    extension_interfaces: &'a FxHashSet<String>,
     merged_augmentations: &'a MergedAugmentations,
     project_env: &'a tsz::checker::context::ProjectEnv,
     program_has_real_syntax_errors: bool,
@@ -2133,7 +2138,11 @@ fn check_checker_lib_file(
     // them should still respect tsc's global syntax-error suppression policy.
     checker.ctx.has_parse_errors = env.program_has_real_syntax_errors;
     tsz::checker::reset_stack_overflow_flag();
-    checker.check_source_file_interfaces_only_with_fresh_interface_fuel(lib_bound_file.source_file);
+    checker.check_source_file_interfaces_only_filtered_post_merge(
+        lib_bound_file.source_file,
+        env.affected_interfaces,
+        env.extension_interfaces,
+    );
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
     if env.program_has_real_syntax_errors {
@@ -2155,6 +2164,7 @@ fn check_checker_lib_file_baseline(
     checker_libs: &CheckerLibSet,
     lib_idx: usize,
     affected_interfaces: &FxHashSet<String>,
+    extension_interfaces: &FxHashSet<String>,
     query_cache: &QueryCache,
 ) -> (
     Vec<Diagnostic>,
@@ -2193,6 +2203,7 @@ fn check_checker_lib_file_baseline(
     checker.check_source_file_interfaces_only_filtered_post_merge(
         lib_file.root_index,
         affected_interfaces,
+        extension_interfaces,
     );
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -2695,6 +2706,43 @@ fn affected_lib_interface_names(
     }
 }
 
+fn affected_lib_extension_interface_names(
+    program: &MergedProgram,
+    checker_libs: &CheckerLibSet,
+    affected_interfaces: &FxHashSet<String>,
+) -> FxHashSet<String> {
+    let user_member_names = collect_user_global_interface_member_names(program);
+    let mut extension_interfaces = FxHashSet::default();
+
+    for lib in &checker_libs.files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            if affected_interfaces.contains(&name)
+                && interface_declares_member_named(
+                    lib.arena.as_ref(),
+                    interface,
+                    &user_member_names,
+                )
+            {
+                extension_interfaces.insert(name);
+            }
+        }
+    }
+
+    extension_interfaces
+}
+
 fn build_lib_bound_file_for_interface_checks(
     program: &MergedProgram,
     lib_file: &Arc<LibFile>,
@@ -2755,6 +2803,7 @@ fn collect_checker_lib_baseline_fingerprints(
     options: &ResolvedCompilerOptions,
     checker_libs: &CheckerLibSet,
     affected_interfaces: &FxHashSet<String>,
+    extension_interfaces: &FxHashSet<String>,
 ) -> FxHashSet<LibDiagnosticFingerprint> {
     let mut fingerprints = FxHashSet::default();
 
@@ -2765,6 +2814,7 @@ fn collect_checker_lib_baseline_fingerprints(
             checker_libs,
             lib_idx,
             affected_interfaces,
+            extension_interfaces,
             &query_cache,
         );
         fingerprints.extend(diagnostics.iter().map(lib_diagnostic_fingerprint));

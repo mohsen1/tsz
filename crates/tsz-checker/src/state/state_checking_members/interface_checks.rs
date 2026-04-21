@@ -19,7 +19,11 @@ impl<'a> CheckerState<'a> {
     /// unrelated to user-induced global merges. For lib rechecks we only need member
     /// type annotations to trigger generic constraint diagnostics (TS2344) and
     /// heritage compatibility to catch broken merged inheritance (TS2430).
-    pub(crate) fn check_lib_interface_declaration_post_merge(&mut self, stmt_idx: NodeIndex) {
+    pub(crate) fn check_lib_interface_declaration_post_merge(
+        &mut self,
+        stmt_idx: NodeIndex,
+        check_extension_compatibility: bool,
+    ) {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
         };
@@ -68,7 +72,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.check_interface_extension_compatibility(stmt_idx, iface);
+        if check_extension_compatibility {
+            self.check_interface_extension_compatibility(stmt_idx, iface);
+        }
         self.pop_type_parameters(type_param_updates);
     }
 

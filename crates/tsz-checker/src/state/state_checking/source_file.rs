@@ -120,6 +120,7 @@ impl<'a> CheckerState<'a> {
         statements: &[NodeIndex],
         reset_fuel_between_interfaces: bool,
         interface_filter: Option<&FxHashSet<String>>,
+        extension_filter: Option<&FxHashSet<String>>,
     ) {
         for &stmt_idx in statements {
             let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
@@ -127,15 +128,15 @@ impl<'a> CheckerState<'a> {
             };
 
             if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                let interface_name = self
+                    .ctx
+                    .arena
+                    .get_interface(stmt_node)
+                    .and_then(|iface| self.ctx.arena.get(iface.name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|ident| ident.escaped_text.as_str());
                 if let Some(filter) = interface_filter {
-                    let Some(name) = self
-                        .ctx
-                        .arena
-                        .get_interface(stmt_node)
-                        .and_then(|iface| self.ctx.arena.get(iface.name))
-                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                        .map(|ident| ident.escaped_text.as_str())
-                    else {
+                    let Some(name) = interface_name else {
                         continue;
                     };
                     if !filter.contains(name) {
@@ -148,7 +149,16 @@ impl<'a> CheckerState<'a> {
                             .type_resolution_fuel
                             .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
                         crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
-                        self.check_lib_interface_declaration_post_merge(stmt_idx);
+                        let check_extension_compatibility = match extension_filter {
+                            Some(filter) => {
+                                interface_name.is_some_and(|name| filter.contains(name))
+                            }
+                            None => true,
+                        };
+                        self.check_lib_interface_declaration_post_merge(
+                            stmt_idx,
+                            check_extension_compatibility,
+                        );
                     } else {
                         self.check_interface_declaration(stmt_idx);
                     }
@@ -182,6 +192,7 @@ impl<'a> CheckerState<'a> {
                 &inner.nodes,
                 reset_fuel_between_interfaces,
                 interface_filter,
+                extension_filter,
             );
         }
     }
@@ -206,7 +217,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        self.check_interface_declarations_recursively(&sf.statements.nodes, false, None);
+        self.check_interface_declarations_recursively(&sf.statements.nodes, false, None, None);
     }
 
     /// Check only interface declarations, refreshing type-resolution fuel between declarations.
@@ -236,7 +247,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        self.check_interface_declarations_recursively(&sf.statements.nodes, true, None);
+        self.check_interface_declarations_recursively(&sf.statements.nodes, true, None, None);
     }
 
     /// Check selected interfaces with the minimal post-merge lib validation path.
@@ -244,6 +255,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         root_idx: NodeIndex,
         interface_filter: &FxHashSet<String>,
+        extension_filter: &FxHashSet<String>,
     ) {
         let _span = span!(
             Level::INFO,
@@ -267,6 +279,7 @@ impl<'a> CheckerState<'a> {
             &sf.statements.nodes,
             true,
             Some(interface_filter),
+            Some(extension_filter),
         );
     }
 

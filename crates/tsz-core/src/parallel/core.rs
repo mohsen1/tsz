@@ -3824,6 +3824,43 @@ fn affected_lib_interface_names(
     }
 }
 
+fn affected_lib_extension_interface_names(
+    program: &MergedProgram,
+    checker_lib_files: &[Arc<LibFile>],
+    affected_interfaces: &FxHashSet<String>,
+) -> FxHashSet<String> {
+    let user_member_names = collect_user_global_interface_member_names(program);
+    let mut extension_interfaces = FxHashSet::default();
+
+    for lib in checker_lib_files {
+        let Some(source_file) = lib.arena.get_source_file_at(lib.root_index) else {
+            continue;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = lib.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(interface) = lib.arena.get_interface(stmt_node) else {
+                continue;
+            };
+            let Some(name) = interface_name_text(lib.arena.as_ref(), stmt_idx) else {
+                continue;
+            };
+            if affected_interfaces.contains(&name)
+                && interface_declares_member_named(
+                    lib.arena.as_ref(),
+                    interface,
+                    &user_member_names,
+                )
+            {
+                extension_interfaces.insert(name);
+            }
+        }
+    }
+
+    extension_interfaces
+}
+
 fn build_lib_bound_file_for_interface_checks(
     program: &MergedProgram,
     lib_file: &Arc<LibFile>,
@@ -4382,6 +4419,11 @@ pub fn check_files_parallel(
     };
 
     let affected_lib_interfaces = affected_lib_interface_names(program, &checker_lib_files);
+    let affected_lib_extension_interfaces = affected_lib_extension_interface_names(
+        program,
+        &checker_lib_files,
+        &affected_lib_interfaces,
+    );
 
     let check_one_lib = |lib_idx: usize, lib_file: &Arc<LibFile>| -> FileCheckResult {
         let query_cache = if let Some(ref shared) = shared_query_cache {
@@ -4432,8 +4474,10 @@ pub fn check_files_parallel(
         checker.ctx.set_actual_lib_file_count(lib_contexts.len());
         checker.prime_boxed_types();
 
-        checker.check_source_file_interfaces_only_with_fresh_interface_fuel(
+        checker.check_source_file_interfaces_only_filtered_post_merge(
             lib_bound_file.source_file,
+            &affected_lib_interfaces,
+            &affected_lib_extension_interfaces,
         );
 
         let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -4470,6 +4514,7 @@ pub fn check_files_parallel(
         checker.check_source_file_interfaces_only_filtered_post_merge(
             lib_file.root_index,
             &affected_lib_interfaces,
+            &affected_lib_extension_interfaces,
         );
 
         let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
