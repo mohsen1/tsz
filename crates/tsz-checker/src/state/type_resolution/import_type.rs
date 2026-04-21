@@ -72,14 +72,18 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) = exports.get(member_name)
             && target_binder.get_symbol(sym_id).is_some()
         {
             return record_and_return(sym_id);
         }
 
-        if let Some(exports) = target_binder.module_exports.get(module_specifier)
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) = exports.get(member_name)
             && target_binder.get_symbol(sym_id).is_some()
         {

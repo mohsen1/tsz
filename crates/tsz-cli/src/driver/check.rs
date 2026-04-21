@@ -897,6 +897,10 @@ pub(super) fn collect_diagnostics(
     let program_wildcard_reexports = Arc::new(program.wildcard_reexports.clone());
     let program_wildcard_reexports_type_only =
         Arc::new(program.wildcard_reexports_type_only.clone());
+    // Same rationale for `program.module_exports`: the merged map is the
+    // authoritative cross-file exports table; wrap once, share via `Arc`
+    // to avoid N deep-clones into per-file cross-file lookup binders.
+    let program_module_exports = Arc::new(program.module_exports.clone());
 
     let mut project_env = tsz::checker::context::ProjectEnv {
         lib_contexts: std::sync::Arc::new(lib_contexts.to_vec()),
@@ -916,6 +920,7 @@ pub(super) fn collect_diagnostics(
         program_reexports: Some(program_reexports),
         program_wildcard_reexports: Some(program_wildcard_reexports),
         program_wildcard_reexports_type_only: Some(program_wildcard_reexports_type_only),
+        program_module_exports: Some(program_module_exports),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.

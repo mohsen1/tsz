@@ -587,7 +587,9 @@ impl<'a> CheckerState<'a> {
             return record_and_return(sym_id);
         }
 
-        if let Some(exports_table) = target_binder.module_exports.get(module_specifier)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
         {
@@ -853,7 +855,10 @@ impl<'a> CheckerState<'a> {
         // Prefer canonical file key first, then module specifier fallback.
         let direct_exports = self
             .module_exports_for_file(target_binder, &target_file_name)
-            .or_else(|| target_binder.module_exports.get(module_specifier));
+            .or_else(|| {
+                self.ctx
+                    .module_exports_for_module(target_binder, module_specifier)
+            });
 
         if let Some(exports) = direct_exports {
             let mut combined = exports.clone();
@@ -932,7 +937,9 @@ impl<'a> CheckerState<'a> {
         let direct_exports = self
             .module_exports_for_file(target_binder, &target_file_name)
             .or_else(|| {
-                module_specifier.and_then(|specifier| target_binder.module_exports.get(specifier))
+                module_specifier.and_then(|specifier| {
+                    self.ctx.module_exports_for_module(target_binder, specifier)
+                })
             });
 
         if let Some(exports) = direct_exports {
@@ -2266,14 +2273,18 @@ impl<'a> CheckerState<'a> {
                 .source_files
                 .first()
                 .map(|sf| sf.file_name.clone())
-                && let Some(exports) = target_binder.module_exports.get(&target_file_name)
+                && let Some(exports) = self
+                    .ctx
+                    .module_exports_for_module(target_binder, &target_file_name)
                 && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);
                 return Some(sym_id);
             }
 
-            if let Some(exports) = target_binder.module_exports.get(module_specifier)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(target_binder, module_specifier)
                 && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 self.ctx.register_symbol_file_target(sym_id, target_idx);

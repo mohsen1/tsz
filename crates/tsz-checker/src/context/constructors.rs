@@ -238,6 +238,7 @@ impl<'a> CheckerContext<'a> {
             program_reexports: None,
             program_wildcard_reexports: None,
             program_wildcard_reexports_type_only: None,
+            program_module_exports: None,
             resolved_module_paths: None,
             resolved_module_request_paths: None,
             current_file_idx: 0,

@@ -438,7 +438,9 @@ impl<'a> CheckerState<'a> {
                     let is_namespace_import = export_name == "*"
                         || (symbol.import_name.is_none() && symbol.escaped_name != "default");
                     if is_namespace_import {
-                        if let Some(exports) = target_binder.module_exports.get(file_name) {
+                        if let Some(exports) =
+                            self.ctx.module_exports_for_module(target_binder, file_name)
+                        {
                             if let Some(export_equals_sym_id) = exports.get("export=") {
                                 self.ctx
                                     .register_symbol_file_target(export_equals_sym_id, target_idx);
@@ -458,7 +460,9 @@ impl<'a> CheckerState<'a> {
                         // which follows import_module re-exports.
                         return Some(sym_id);
                     }
-                    if let Some(exports) = target_binder.module_exports.get(file_name) {
+                    if let Some(exports) =
+                        self.ctx.module_exports_for_module(target_binder, file_name)
+                    {
                         if let Some(target_sym_id) = exports.get(export_name) {
                             self.ctx
                                 .register_symbol_file_target(target_sym_id, target_idx);

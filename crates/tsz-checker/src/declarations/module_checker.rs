@@ -1298,8 +1298,9 @@ impl<'a> CheckerState<'a> {
                         } else {
                             let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                             if let Some(sf) = target_arena.source_files.first()
-                                && let Some(exports) =
-                                    target_binder.module_exports.get(&sf.file_name)
+                                && let Some(exports) = self
+                                    .ctx
+                                    .module_exports_for_module(target_binder, &sf.file_name)
                             {
                                 if let Some(target_sym_id) = exports.get(export_name) {
                                     current_binder = target_binder;

@@ -888,8 +888,11 @@ impl<'a> CheckerState<'a> {
                     .map(|sf| sf.file_name.as_str());
 
                 let exports_table = target_file_name
-                    .and_then(|fname| target_binder.module_exports.get(fname))
-                    .or_else(|| target_binder.module_exports.get(module_specifier));
+                    .and_then(|fname| self.ctx.module_exports_for_module(target_binder, fname))
+                    .or_else(|| {
+                        self.ctx
+                            .module_exports_for_module(target_binder, module_specifier)
+                    });
 
                 let in_module_exports =
                     exports_table.is_some_and(|exports| exports.has(export_name));

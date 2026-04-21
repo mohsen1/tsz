@@ -415,6 +415,7 @@ impl<'a> CheckerContext<'a> {
         self.program_wildcard_reexports = parent.program_wildcard_reexports.clone();
         self.program_wildcard_reexports_type_only =
             parent.program_wildcard_reexports_type_only.clone();
+        self.program_module_exports = parent.program_module_exports.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
@@ -963,6 +964,33 @@ impl<'a> CheckerContext<'a> {
             return Self::lookup_any_file_key(file_name, idx);
         }
         Self::lookup_any_file_key(file_name, &binder.wildcard_reexports_type_only)
+    }
+
+    /// Look up the module-exports table for a given module/file key.
+    ///
+    /// Prefers the project-wide `program_module_exports` (an `Arc`-shared
+    /// allocation across all N cross-file lookup binders). Falls back to
+    /// `binder.module_exports` for standalone callers without a
+    /// `ProjectEnv`. Tries file-name key variants
+    /// (`./foo.ts` / `foo.ts` / backslash-normalized).
+    pub fn module_exports_for_module<'b>(
+        &'b self,
+        binder: &'b tsz_binder::BinderState,
+        module_key: &str,
+    ) -> Option<&'b tsz_binder::SymbolTable> {
+        if let Some(ref idx) = self.program_module_exports {
+            return Self::lookup_any_file_key(module_key, idx);
+        }
+        Self::lookup_any_file_key(module_key, &binder.module_exports)
+    }
+
+    /// Like `module_exports_for_module` but tests existence only.
+    pub fn module_exports_contains_module(
+        &self,
+        binder: &tsz_binder::BinderState,
+        module_key: &str,
+    ) -> bool {
+        self.module_exports_for_module(binder, module_key).is_some()
     }
 
     /// Resolve an import specifier to its target file index.
