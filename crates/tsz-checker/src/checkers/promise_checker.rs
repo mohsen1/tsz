@@ -3,8 +3,9 @@
 use crate::query_boundaries::checkers::promise as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{SymbolId, symbol_flags};
+use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
 use tsz_solver as solver_narrowing;
 use tsz_solver::TypeId;
@@ -407,12 +408,16 @@ impl<'a> CheckerState<'a> {
             _ => return None,
         };
 
+        let sym_id = self
+            .resolve_alias_symbol(sym_id, visited_aliases)
+            .unwrap_or(sym_id);
+
         // Try to get the symbol, but handle the case where it doesn't exist (e.g., import from missing module)
-        let symbol = self.ctx.binder.get_symbol(sym_id);
+        let symbol_and_file = self.promise_symbol_and_decl_file(sym_id);
 
         // If symbol doesn't exist, we can still check if we have type arguments to extract
         // This handles cases like `MyPromise<void>` where MyPromise is imported from a missing module
-        if symbol.is_none() {
+        if symbol_and_file.is_none() {
             // For unresolved Promise-like types, assume the inner type is the first type argument
             // This allows async functions with unresolved Promise return types to be handled gracefully
             if let Some(&first_arg) = args.first() {
@@ -422,7 +427,7 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::UNKNOWN);
         }
 
-        let symbol = match symbol {
+        let (symbol, decl_file_idx) = match symbol_and_file {
             Some(sym) => sym,
             None => {
                 // This should never happen due to the check above, but handle gracefully
@@ -441,10 +446,33 @@ impl<'a> CheckerState<'a> {
         }
 
         if symbol.flags & symbol_flags::CLASS != 0 {
-            return self.promise_like_type_argument_from_class(sym_id, args, visited_aliases);
+            return self.promise_like_type_argument_from_class_in_arena(
+                sym_id,
+                args,
+                visited_aliases,
+                decl_file_idx,
+            );
         }
 
         None
+    }
+
+    fn promise_symbol_and_decl_file(&self, sym_id: SymbolId) -> Option<(Symbol, u32)> {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
+            && let Some(symbol) = binder.get_symbol(sym_id)
+        {
+            return Some((symbol.clone(), file_idx as u32));
+        }
+
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(sym_id, &lib_binders)?
+            .clone();
+        let decl_file_idx = symbol.decl_file_idx;
+        Some((symbol, decl_file_idx))
     }
 
     /// Extract type argument from a type alias that expands to a Promise type.
@@ -547,12 +575,29 @@ impl<'a> CheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
+        self.promise_like_type_argument_from_class_in_arena(sym_id, args, visited_aliases, u32::MAX)
+    }
+
+    fn promise_like_type_argument_from_class_in_arena(
+        &mut self,
+        sym_id: SymbolId,
+        args: &[TypeId],
+        visited_aliases: &mut AliasCycleTracker,
+        decl_file_idx: u32,
+    ) -> Option<TypeId> {
         if visited_aliases.contains(&sym_id) {
             return None;
         }
         visited_aliases.push(sym_id);
 
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let (symbol, decl_file_idx) = self.promise_symbol_and_decl_file(sym_id).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbol(sym_id)
+                .cloned()
+                .map(|symbol| (symbol, decl_file_idx))
+        })?;
+        let arena = self.ctx.get_arena_for_file(decl_file_idx);
         let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
@@ -566,7 +611,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let class = self.ctx.arena.get_class_at(decl_idx)?;
+        let class = arena.get_class_at(decl_idx)?;
 
         // Build type parameter bindings for this class
         let mut bindings = Vec::new();
@@ -575,8 +620,8 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
-                let param = self.ctx.arena.get_type_parameter_at(param_idx)?;
-                let ident = self.ctx.arena.get_identifier_at(param.name)?;
+                let param = arena.get_type_parameter_at(param_idx)?;
+                let ident = arena.get_identifier_at(param.name)?;
                 bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
             }
         } else if !args.is_empty() {
@@ -587,7 +632,7 @@ impl<'a> CheckerState<'a> {
         let heritage_clauses = class.heritage_clauses.as_ref()?;
 
         for &clause_idx in &heritage_clauses.nodes {
-            let heritage = self.ctx.arena.get_heritage_clause_at(clause_idx)?;
+            let heritage = arena.get_heritage_clause_at(clause_idx)?;
 
             // Only check extends clauses (token = ExtendsKeyword = 96)
             if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
@@ -598,7 +643,7 @@ impl<'a> CheckerState<'a> {
             let Some(&type_idx) = heritage.types.nodes.first() else {
                 continue;
             };
-            let Some(type_node) = self.ctx.arena.get(type_idx) else {
+            let Some(type_node) = arena.get(type_idx) else {
                 continue;
             };
 
@@ -606,7 +651,7 @@ impl<'a> CheckerState<'a> {
             // 1. ExpressionWithTypeArguments (e.g., Promise<T>)
             // 2. Simple Identifier (e.g., Promise)
             let (expr_idx, type_arguments) =
-                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node) {
+                if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
                     (
                         expr_type_args.expression,
                         expr_type_args.type_arguments.as_ref(),
@@ -616,10 +661,10 @@ impl<'a> CheckerState<'a> {
                 };
 
             // Get the base class name
-            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+            let Some(expr_node) = arena.get(expr_idx) else {
                 continue;
             };
-            let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
+            let Some(ident) = arena.get_identifier(expr_node) else {
                 continue;
             };
 
@@ -632,7 +677,8 @@ impl<'a> CheckerState<'a> {
             if let Some(type_args) = type_arguments
                 && let Some(&first_arg_node) = type_args.nodes.first()
             {
-                let lowered = self.lower_type_with_bindings(first_arg_node, bindings);
+                let lowered =
+                    self.lower_type_with_bindings_from_arena(arena, first_arg_node, bindings);
                 return Some(lowered);
             }
 
@@ -641,6 +687,43 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn lower_type_with_bindings_from_arena(
+        &self,
+        arena: &NodeArena,
+        type_node: NodeIndex,
+        bindings: Vec<(tsz_common::interner::Atom, TypeId)>,
+    ) -> TypeId {
+        if let Some(type_ref) = arena.get_type_ref_at(type_node)
+            && type_ref.type_arguments.is_none()
+            && let Some(ident) = arena.get_identifier_at(type_ref.type_name)
+        {
+            let name = self.ctx.types.intern_string(&ident.escaped_text);
+            if let Some((_, ty)) = bindings.iter().find(|(param, _)| *param == name) {
+                return *ty;
+            }
+        }
+
+        if std::ptr::eq(arena, self.ctx.arena) {
+            return self.lower_type_with_bindings(type_node, bindings);
+        }
+
+        let Some(node) = arena.get(type_node) else {
+            return TypeId::UNKNOWN;
+        };
+        match node.kind as u32 {
+            k if k == SyntaxKind::StringKeyword as u32 => TypeId::STRING,
+            k if k == SyntaxKind::NumberKeyword as u32 => TypeId::NUMBER,
+            k if k == SyntaxKind::BooleanKeyword as u32 => TypeId::BOOLEAN,
+            k if k == SyntaxKind::VoidKeyword as u32 => TypeId::VOID,
+            k if k == SyntaxKind::UndefinedKeyword as u32 => TypeId::UNDEFINED,
+            k if k == SyntaxKind::NullKeyword as u32 => TypeId::NULL,
+            k if k == SyntaxKind::NeverKeyword as u32 => TypeId::NEVER,
+            k if k == SyntaxKind::AnyKeyword as u32 => TypeId::ANY,
+            k if k == SyntaxKind::UnknownKeyword as u32 => TypeId::UNKNOWN,
+            _ => TypeId::UNKNOWN,
+        }
     }
 
     // =========================================================================
