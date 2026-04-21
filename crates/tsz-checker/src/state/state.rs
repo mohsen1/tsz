@@ -662,15 +662,9 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Create a new `CheckerState` with compiler options but no per-file
-    /// `DefinitionStore` build.
-    ///
-    /// The caller MUST install a populated store before use (typically via
-    /// `ProjectEnv::apply_to`). See
-    /// [`CheckerContext::with_options_deferred_def_store`] for the full
-    /// contract. The parallel checker path uses this variant because
-    /// `apply_to` immediately overwrites the per-file store with a shared
-    /// project-wide one, so building the per-file one first is pure waste.
+    /// Like `with_options` but skips the per-file `DefinitionStore` build;
+    /// caller MUST install a populated store before use (see
+    /// [`CheckerContext::with_options_deferred_def_store`]).
     pub fn with_options_deferred_def_store(
         arena: &'a NodeArena,
         binder: &'a BinderState,
