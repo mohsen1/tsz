@@ -89,6 +89,38 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(super) fn indexed_access_constraint_values_allow_index(
+        &mut self,
+        base_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
+        if let Some(mapped_id) =
+            crate::query_boundaries::common::mapped_type_id(self.ctx.types, base_type)
+        {
+            let mapped = self.ctx.types.mapped_type(mapped_id);
+            let template_keyof = self.ctx.types.evaluate_keyof(mapped.template);
+            return self.is_assignable_to(index_type, template_keyof);
+        }
+
+        let Some(constraint) =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, base_type)
+        else {
+            return false;
+        };
+        let constraint = self.evaluate_type_with_env(constraint);
+        if matches!(constraint, TypeId::ERROR | TypeId::ANY) {
+            return false;
+        }
+
+        let key_space = self.ctx.types.evaluate_keyof(constraint);
+        let values = self
+            .evaluate_type_with_env(self.ctx.types.factory().index_access(constraint, key_space));
+        if matches!(values, TypeId::ERROR | TypeId::UNDEFINED) {
+            return false;
+        }
+        self.is_assignable_to(index_type, self.ctx.types.evaluate_keyof(values))
+    }
+
     pub(super) fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {

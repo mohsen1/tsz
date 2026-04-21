@@ -591,7 +591,11 @@ impl<'a> CheckerState<'a> {
     /// - The index is `keyof T` — constrains to the receiver's own key space
     /// - The index is `K extends keyof T` — a type parameter constrained to keyof
     /// - The constraint has no index signature (e.g., `{ a: string, b: number }`)
-    fn is_generic_indexed_write(&mut self, object_type: TypeId, index_type: TypeId) -> bool {
+    pub(crate) fn is_generic_indexed_write(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> bool {
         use crate::query_boundaries::common as common_query;
         use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
 
@@ -649,6 +653,12 @@ impl<'a> CheckerState<'a> {
         // E.g., Record<string, any> is stored as Application(Mapped) and needs
         // evaluation to produce { [key: string]: any }.
         let resolved = self.evaluate_type_with_env(constraint);
+        if crate::query_boundaries::common::is_generic_mapped_type(self.ctx.types, resolved)
+            || crate::query_boundaries::common::is_mapped_type(self.ctx.types, resolved)
+        {
+            return true;
+        }
+
         let resolver = IndexSignatureResolver::new(self.ctx.types);
 
         // Check if the constraint has an index signature matching the broad index type
@@ -668,10 +678,49 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `true` for: `string`, `number`, `symbol`, or unions of these.
     /// Returns `false` for: literals, `keyof T`, type parameters, etc.
-    fn is_broad_index_type(&self, type_id: TypeId) -> bool {
+    fn is_broad_index_type(&mut self, type_id: TypeId) -> bool {
         // Direct primitive types — these go through index signatures
         if type_id == TypeId::STRING || type_id == TypeId::NUMBER || type_id == TypeId::SYMBOL {
             return true;
+        }
+
+        let resolved = self.resolve_lazy_type(type_id);
+        if resolved != type_id && resolved != TypeId::ERROR {
+            return self.is_broad_index_type(resolved);
+        }
+
+        let evaluated = self.evaluate_type_with_env(type_id);
+        if evaluated != type_id && evaluated != TypeId::ERROR {
+            return self.is_broad_index_type(evaluated);
+        }
+
+        let display = self.format_type(type_id);
+        if display
+            .split(" | ")
+            .all(|part| matches!(part, "string" | "number" | "symbol"))
+        {
+            return true;
+        }
+
+        // A concrete `keyof` can reduce to a broad primitive key space. Keep
+        // generic `keyof T` out of this path because writes through `T[keyof T]`
+        // are checked as assignment compatibility errors instead.
+        if let Some(inner) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, type_id)
+            && !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, inner)
+        {
+            let evaluated = self.ctx.types.evaluate_keyof(inner);
+            return evaluated != type_id && self.is_broad_index_type(evaluated);
+        }
+
+        // Aliases such as `keyof Record<string, number>` may arrive wrapped in
+        // an application. Evaluate non-recursively through the environment and
+        // classify the resulting key space.
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id) {
+            let evaluated = self.evaluate_type_with_env(type_id);
+            return evaluated != type_id
+                && evaluated != TypeId::ERROR
+                && self.is_broad_index_type(evaluated);
         }
 
         // Check if it's a union where ALL members are broad index types

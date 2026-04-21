@@ -342,6 +342,64 @@ function foo<T>() {
 }
 
 #[test]
+fn test_readonly_generic_write_with_concrete_keyof_reports_ts2862_not_ts2536() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type Dict = { readonly [key: string]: number };
+
+function f<T extends Dict, K extends keyof T>(
+    obj: T,
+    k1: keyof Dict,
+    k2: keyof T,
+    k3: K,
+) {
+    obj.foo = 123;
+    obj[k1] = 123;
+    obj[k2] = 123;
+    obj[k3] = 123;
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2862 && message.contains("Type 'T' is generic") }),
+        "Expected TS2862 for concrete keyof write through readonly generic constraint.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Did not expect TS2536 to preempt TS2862 for readonly generic write.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_tuple_value_index_access_does_not_emit_ts2536() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r##"
+type Bar<T> = { [K in keyof T]: [K] };
+type Wrapped<T> = { [key: string]: { [K in keyof T]: [K] }[keyof T] };
+type Qux<T, Q extends Wrapped<T>> = { [K in keyof Q]: T[Q[K]["0"]] };
+"##,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Did not expect TS2536 for indexing mapped tuple values with \"0\".\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_return_diagnostic_preserves_literal_for_generic_indexed_target() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
