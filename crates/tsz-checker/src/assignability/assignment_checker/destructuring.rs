@@ -301,6 +301,32 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Shared object-destructuring validation for assignment-like contexts.
+    ///
+    /// This mirrors the object-literal branch of assignment checking without
+    /// requiring a concrete assignment-expression RHS node. Callers use it when
+    /// the source value is already available as a type, such as `for ({...} of xs)`.
+    pub(crate) fn check_object_destructuring_assignment_from_source_type(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_type: TypeId,
+        source_expr_idx: Option<NodeIndex>,
+    ) {
+        if source_type == TypeId::ANY || source_type == TypeId::ERROR {
+            return;
+        }
+
+        if let Some(source_expr_idx) = source_expr_idx {
+            self.report_abstract_properties_in_destructuring_assignment(
+                pattern_idx,
+                source_expr_idx,
+            );
+        }
+
+        self.check_destructuring_property_accessibility(pattern_idx, source_type);
+        self.check_object_destructuring_rest_assignability(pattern_idx, source_type);
+    }
+
     /// TS2322: Check assignability of the rest element in an object destructuring
     /// assignment. For `({ b, ...rest } = source)`, computes the rest type
     /// (source minus named properties) and checks it against the rest target's
@@ -804,23 +830,29 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // When a default value is present, compute the effective destructured
-        // type: removeUndefined(sourcePropertyType) | typeOf(default).
+        // type. The default only contributes when the source property can
+        // actually be `undefined`; otherwise the runtime value always comes from
+        // the source property itself.
         // This matches tsc behavior:
         //   `({ x = 0 } = a)` where `a.x` is `number | undefined`:
         //     effective = number | number = number → assignable to number ✓
+        //   `({ x = 0 } = a)` where `a.x` is `boolean`:
+        //     effective = boolean → NOT assignable to number ✗
         //   `({ x = undefined } = a)` where `a.x` is `number | undefined`:
         //     effective = number | undefined → NOT assignable to number ✗
         if has_default && self.ctx.compiler_options.strict_null_checks {
-            let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
-                self.ctx.types,
-                prop_type,
-                true,
-            );
-            let default_type = self.get_type_of_node(default_expr);
-            let factory = self.ctx.types.factory();
-            prop_type = factory.union2(non_undefined, default_type);
-            if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
-                return;
+            if crate::query_boundaries::common::type_contains_undefined(self.ctx.types, prop_type) {
+                let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
+                    self.ctx.types,
+                    prop_type,
+                    true,
+                );
+                let default_type = self.get_type_of_node(default_expr);
+                let factory = self.ctx.types.factory();
+                prop_type = factory.union2(non_undefined, default_type);
+                if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
+                    return;
+                }
             }
         }
         let target_type = self.get_type_of_assignment_target(target_idx);

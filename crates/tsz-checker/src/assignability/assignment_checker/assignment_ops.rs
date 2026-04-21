@@ -855,13 +855,11 @@ impl<'a> CheckerState<'a> {
             let mut check_assignability = !is_destructuring && !suppress_for_readonly;
 
             if is_destructuring && !is_not_iterable {
-                self.report_abstract_properties_in_destructuring_assignment(left_idx, right_idx);
-                self.check_destructuring_property_accessibility(left_idx, right_type);
-                // TS2322: Check rest element assignability in object destructuring
-                // assignments. For `({ b, ...rest } = source)`, the rest type
-                // (source minus named properties) must be assignable to `rest`'s
-                // declared type.
-                self.check_object_destructuring_rest_assignability(left_idx, right_type);
+                self.check_object_destructuring_assignment_from_source_type(
+                    left_idx,
+                    right_type,
+                    Some(right_idx),
+                );
             }
 
             if check_assignability {
