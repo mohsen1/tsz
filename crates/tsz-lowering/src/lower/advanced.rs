@@ -237,66 +237,6 @@ impl<'a> TypeLowering<'a> {
         std::borrow::Cow::Owned(out)
     }
 
-    pub(super) fn parse_numeric_literal_value(
-        &self,
-        value: Option<f64>,
-        text: &str,
-    ) -> Option<f64> {
-        if let Some(value) = value {
-            return Some(value);
-        }
-
-        if let Some(rest) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-            return Self::parse_radix_digits(rest, 16);
-        }
-        if let Some(rest) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-            return Self::parse_radix_digits(rest, 2);
-        }
-        if let Some(rest) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
-            return Self::parse_radix_digits(rest, 8);
-        }
-
-        if text.as_bytes().contains(&b'_') {
-            let cleaned = Self::strip_numeric_separators(text);
-            return cleaned.as_ref().parse::<f64>().ok();
-        }
-
-        text.parse::<f64>().ok()
-    }
-
-    pub(super) fn parse_radix_digits(text: &str, base: u32) -> Option<f64> {
-        if text.is_empty() {
-            return None;
-        }
-
-        let mut value = 0f64;
-        let base_value = base as f64;
-        let mut saw_digit = false;
-        for &byte in text.as_bytes() {
-            if byte == b'_' {
-                continue;
-            }
-
-            let digit = match byte {
-                b'0'..=b'9' => (byte - b'0') as u32,
-                b'a'..=b'f' => (byte - b'a' + 10) as u32,
-                b'A'..=b'F' => (byte - b'A' + 10) as u32,
-                _ => return None,
-            };
-            if digit >= base {
-                return None;
-            }
-            saw_digit = true;
-            value = value * base_value + digit as f64;
-        }
-
-        if !saw_digit {
-            return None;
-        }
-
-        Some(value)
-    }
-
     pub(super) fn normalize_bigint_literal<'b>(
         &self,
         text: &'b str,
@@ -409,9 +349,9 @@ impl<'a> TypeLowering<'a> {
                     }
                     k if k == SyntaxKind::NumericLiteral as u16 => {
                         if let Some(lit_data) = self.arena.get_literal(literal_node) {
-                            if let Some(value) =
-                                self.parse_numeric_literal_value(lit_data.value, &lit_data.text)
-                            {
+                            if let Some(value) = lit_data.value.or_else(|| {
+                                tsz_common::numeric::parse_numeric_literal_value(&lit_data.text)
+                            }) {
                                 self.interner.literal_number(value)
                             } else {
                                 TypeId::NUMBER
@@ -445,10 +385,11 @@ impl<'a> TypeLowering<'a> {
                             match operand_node.kind {
                                 k if k == SyntaxKind::NumericLiteral as u16 => {
                                     if let Some(lit_data) = self.arena.get_literal(operand_node) {
-                                        if let Some(value) = self.parse_numeric_literal_value(
-                                            lit_data.value,
-                                            &lit_data.text,
-                                        ) {
+                                        if let Some(value) = lit_data.value.or_else(|| {
+                                            tsz_common::numeric::parse_numeric_literal_value(
+                                                &lit_data.text,
+                                            )
+                                        }) {
                                             let value = if op == SyntaxKind::MinusToken as u16 {
                                                 -value
                                             } else {
