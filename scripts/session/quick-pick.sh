@@ -13,7 +13,8 @@
 #   scripts/session/quick-pick.sh --code TS2322  # filter by error code
 #   scripts/session/quick-pick.sh --run        # also run conformance --verbose
 #
-# For richer options, use pick-random-failure.sh / random-failure.sh.
+# This is the sole random-failure picker for the conformance agent workflow.
+# See scripts/session/conformance-agent-prompt.md for the full process.
 # =============================================================================
 set -euo pipefail
 

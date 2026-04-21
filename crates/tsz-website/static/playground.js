@@ -156,8 +156,14 @@ let dtsEditor = null;
 let wasm = null;
 let libFiles = {};
 let checkTimeout = null;
+let checkSequence = 0;
 let lspParser = null;
 let lspParserState = null;
+let outputCacheKey = null;
+let outputCache = {
+  js: null,
+  dts: null,
+};
 
 const statusEl = document.getElementById("playground-status");
 const exampleSelect = document.getElementById("example-select");
@@ -187,6 +193,77 @@ function setExampleInUrl(key) {
   window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
+function isDiagnosticsDebugEnabled() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("debugDiagnostics") === "1";
+}
+
+function debugDiagnosticsLog(label, payload) {
+  if (!isDiagnosticsDebugEnabled()) {
+    return;
+  }
+  console.log(`[playground diagnostics] ${label}`, payload);
+}
+
+function getOutputStateKey(code, options) {
+  return JSON.stringify({
+    code,
+    strict: options.strict,
+    soundMode: options.soundMode,
+    module: options.module,
+  });
+}
+
+function resetOutputCache() {
+  outputCacheKey = null;
+  outputCache.js = null;
+  outputCache.dts = null;
+}
+
+function createProgram(code, options) {
+  const program = new wasm.TsProgram();
+  program.setCompilerOptions(JSON.stringify(options));
+
+  for (const [name, content] of Object.entries(libFiles)) {
+    program.addLibFile(name, content);
+  }
+
+  program.addSourceFile("input.ts", code);
+  return program;
+}
+
+function collectProgramDebugSnapshot(code, options) {
+  if (!isDiagnosticsDebugEnabled() || !wasm) {
+    return null;
+  }
+
+  const program = createProgram(code, options);
+
+  try {
+    const compilerOptionsJson = program.getCompilerOptionsJson?.() || "{}";
+    const syntacticJson = program.getSyntacticDiagnosticsJson?.() || "[]";
+    const semanticJson = program.getSemanticDiagnosticsJson?.() || "[]";
+    const preEmitJson = program.getPreEmitDiagnosticsJson?.() || "[]";
+
+    return {
+      sourceFileCount: program.getSourceFileCount?.(),
+      rootFileNames: program.getRootFileNames?.(),
+      compilerOptions: JSON.parse(compilerOptionsJson),
+      allDiagnosticCodes: program.getAllDiagnosticCodes?.() || [],
+      syntacticDiagnostics: JSON.parse(syntacticJson),
+      semanticDiagnostics: JSON.parse(semanticJson),
+      preEmitDiagnostics: JSON.parse(preEmitJson),
+      preEmitDiagnosticsDirect: program.getPreEmitDiagnostics?.() || [],
+    };
+  } catch (e) {
+    return {
+      error: e?.message || String(e),
+    };
+  } finally {
+    program.dispose();
+  }
+}
+
 // ── Tab switching ──
 
 document.querySelectorAll(".output-tab").forEach(tab => {
@@ -196,6 +273,10 @@ document.querySelectorAll(".output-tab").forEach(tab => {
     tab.classList.add("active");
     const panel = document.getElementById(`${tab.dataset.panel}-panel`);
     if (panel) panel.classList.add("active");
+
+    if (tab.dataset.panel === "js" || tab.dataset.panel === "dts") {
+      updateActiveOutputPanel();
+    }
   });
 });
 
@@ -334,7 +415,9 @@ function getCurrentCompilerOptions() {
 }
 
 function disposeLspParser() {
-  if (lspParser && typeof lspParser.free === "function") {
+  if (lspParser && typeof lspParser.dispose === "function") {
+    lspParser.dispose();
+  } else if (lspParser && typeof lspParser.free === "function") {
     lspParser.free();
   }
   lspParser = null;
@@ -366,6 +449,9 @@ function ensureLspParser() {
       parser.addLibFile(name, content);
     }
     parser.parseSourceFile();
+    if (typeof parser.bindSourceFile === "function") {
+      parser.bindSourceFile();
+    }
 
     lspParser = parser;
     lspParserState = state;
@@ -569,11 +655,91 @@ function scheduleCheck() {
   checkTimeout = setTimeout(runCheck, 250);
 }
 
-function runCheck() {
+function cancelScheduledCheck() {
+  if (checkTimeout) {
+    clearTimeout(checkTimeout);
+    checkTimeout = null;
+  }
+}
+
+function getActivePanelName() {
+  const activeTab = document.querySelector(".output-tab.active");
+  return activeTab?.dataset.panel || "diagnostics";
+}
+
+function ensureOutputCache(code, options) {
+  const cacheKey = getOutputStateKey(code, options);
+  if (outputCacheKey !== cacheKey) {
+    outputCacheKey = cacheKey;
+    outputCache.js = null;
+    outputCache.dts = null;
+  }
+}
+
+function updateActiveOutputPanel() {
   if (!wasm || !editor) return;
+
+  const panel = getActivePanelName();
+  if (panel !== "js" && panel !== "dts") {
+    return;
+  }
 
   const code = editor.getValue();
   const options = getCurrentCompilerOptions();
+  ensureOutputCache(code, options);
+
+  if (panel === "js" && jsEditor) {
+    if (outputCache.js === null) {
+      try {
+        const program = createProgram(code, options);
+        outputCache.js = program.emitFile("input.ts") || "// (empty output)";
+        program.dispose();
+      } catch (e) {
+        outputCache.js = `// Emit error: ${e.message}`;
+      }
+    }
+    jsEditor.setValue(outputCache.js);
+    return;
+  }
+
+  if (panel === "dts" && dtsEditor) {
+    if (outputCache.dts === null) {
+      try {
+        const transpileResultJson = wasm.transpileModule(code, JSON.stringify({ declaration: true }));
+        const transpileResult = JSON.parse(transpileResultJson || "{}");
+        outputCache.dts = transpileResult && typeof transpileResult.declarationText === "string"
+          ? transpileResult.declarationText
+          : transpileResult && typeof transpileResult.declaration_text === "string"
+            ? transpileResult.declaration_text
+          : "";
+        if (!outputCache.dts) {
+          outputCache.dts = "// (no declaration output)";
+        }
+      } catch (e) {
+        outputCache.dts = `// DTS emit error: ${e.message}`;
+      }
+    }
+    dtsEditor.setValue(outputCache.dts);
+  }
+}
+
+function runCheck() {
+  if (!wasm || !editor) return;
+
+  checkTimeout = null;
+
+  const checkId = ++checkSequence;
+  const code = editor.getValue();
+  const options = getCurrentCompilerOptions();
+  resetOutputCache();
+
+  debugDiagnosticsLog("runCheck:start", {
+    checkId,
+    example: exampleSelect?.value,
+    strict: strictCheck?.checked,
+    sound: soundCheck?.checked,
+    code,
+  });
 
   statusEl.textContent = "checking...";
   statusEl.className = "status-checking";
@@ -581,19 +747,16 @@ function runCheck() {
   const start = performance.now();
 
   try {
-    ensureLspParser();
-
-    const program = new wasm.TsProgram();
-    program.setCompilerOptions(JSON.stringify(options));
-
-    for (const [name, content] of Object.entries(libFiles)) {
-      program.addLibFile(name, content);
-    }
-
-    program.addSourceFile("input.ts", code);
+    const program = createProgram(code, options);
 
     const diagJson = program.getPreEmitDiagnosticsJson();
     const diagnostics = JSON.parse(diagJson);
+    debugDiagnosticsLog("runCheck:raw-diagnostics", { checkId, diagnostics });
+    debugDiagnosticsLog("runCheck:program-snapshot", {
+      checkId,
+      phase: "after-diagnostics",
+      snapshot: collectProgramDebugSnapshot(code, options),
+    });
     const elapsed = (performance.now() - start).toFixed(0);
 
     // Filter out "Cannot find global type" noise if libs partially loaded
@@ -602,6 +765,8 @@ function runCheck() {
       if (d.code === 2318 && d.start === 0) return false;
       return true;
     });
+
+    debugDiagnosticsLog("runCheck:user-diagnostics", { checkId, diagnostics: userDiags });
 
     const errCount = userDiags.filter(d => d.category === 1).length;
     const warnCount = userDiags.filter(d => d.category === 0).length;
@@ -642,32 +807,13 @@ function runCheck() {
         code: `TS${d.code}`,
       };
     });
+    debugDiagnosticsLog("runCheck:markers", { checkId, markers });
     monaco.editor.setModelMarkers(model, "tsz", markers);
 
     renderDiagnostics(userDiags, model);
 
-    // Emit JS output
-    try {
-      const jsOutput = program.emitFile("input.ts");
-      jsEditor.setValue(jsOutput || "// (empty output)");
-    } catch (e) {
-      jsEditor.setValue(`// Emit error: ${e.message}`);
-    }
-
-    // Emit .d.ts output
-    if (dtsEditor) {
-      try {
-        const transpileResultJson = wasm.transpileModule(code, JSON.stringify({ declaration: true }));
-        const transpileResult = JSON.parse(transpileResultJson || "{}");
-        const dtsOutput = transpileResult && typeof transpileResult.declarationText === "string"
-          ? transpileResult.declarationText
-          : transpileResult && typeof transpileResult.declaration_text === "string"
-            ? transpileResult.declaration_text
-          : "";
-        dtsEditor.setValue(dtsOutput || "// (no declaration output)");
-      } catch (e) {
-        dtsEditor.setValue(`// DTS emit error: ${e.message}`);
-      }
+    if (getActivePanelName() === "js" || getActivePanelName() === "dts") {
+      updateActiveOutputPanel();
     }
 
     program.dispose();
@@ -679,6 +825,14 @@ function runCheck() {
 }
 
 function renderDiagnostics(diagnostics, model) {
+  debugDiagnosticsLog("renderDiagnostics:input", diagnostics.map(d => ({
+    code: d.code,
+    start: d.start,
+    length: d.length,
+    messageText: d.messageText,
+    position: model.getPositionAt(d.start),
+  })));
+
   if (diagnostics.length === 0) {
     diagPanel.innerHTML = `<div class="diagnostics-ok">No errors</div>`;
     return;
@@ -695,6 +849,32 @@ function renderDiagnostics(diagnostics, model) {
       <div class="diag-location">input.ts:${pos.lineNumber}:${pos.column}</div>
     </div>`;
   }).join("");
+
+  debugDiagnosticsLog("renderDiagnostics:dom-count", {
+    childElementCount: diagPanel.childElementCount,
+    innerHTML: diagPanel.innerHTML,
+    className: diagPanel.className,
+  });
+
+  requestAnimationFrame(() => {
+    const items = Array.from(diagPanel.querySelectorAll(".diag-item")).map((item, index) => ({
+      index,
+      text: item.textContent,
+      offsetTop: item.offsetTop,
+      offsetHeight: item.offsetHeight,
+      clientHeight: item.clientHeight,
+      rectTop: item.getBoundingClientRect().top,
+      rectBottom: item.getBoundingClientRect().bottom,
+    }));
+    debugDiagnosticsLog("renderDiagnostics:layout", {
+      panelClientHeight: diagPanel.clientHeight,
+      panelScrollHeight: diagPanel.scrollHeight,
+      panelScrollTop: diagPanel.scrollTop,
+      panelOverflowY: window.getComputedStyle(diagPanel).overflowY,
+      panelDisplay: window.getComputedStyle(diagPanel).display,
+      items,
+    });
+  });
 
   diagPanel.querySelectorAll(".diag-item").forEach(item => {
     item.addEventListener("click", () => {
@@ -717,6 +897,7 @@ exampleSelect.addEventListener("change", () => {
   const val = exampleSelect.value;
   const code = EXAMPLES[val];
   if (code && editor) {
+    debugDiagnosticsLog("exampleSelect:change", { val, code });
     setExampleInUrl(val);
     // Auto-toggle sound mode checkbox for the sound_mode example
     if (val === "sound_mode") {
@@ -725,15 +906,18 @@ exampleSelect.addEventListener("change", () => {
       soundCheck.checked = false;
     }
     editor.setValue(code);
+    resetOutputCache();
     disposeLspParser();
   }
 });
 
 strictCheck.addEventListener("change", () => {
+  resetOutputCache();
   disposeLspParser();
   scheduleCheck();
 });
 soundCheck.addEventListener("change", () => {
+  resetOutputCache();
   disposeLspParser();
   scheduleCheck();
 });
@@ -761,6 +945,7 @@ async function init() {
     if (urlExample) {
       exampleSelect.value = urlExample;
       editor.setValue(EXAMPLES[urlExample]);
+      cancelScheduledCheck();
       if (urlExample === "sound_mode") {
         soundCheck.checked = true;
       } else {

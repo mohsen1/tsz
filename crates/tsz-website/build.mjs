@@ -168,7 +168,7 @@ function extractMetrics() {
 function computeLoc() {
   try {
     const output = execSync(
-      `find crates/ src/ -name '*.rs' -not -path '*/target/*' | xargs wc -l`,
+      `find crates -path '*/target/*' -prune -o -path '*/src/*' -type f -name '*.rs' -print | xargs wc -l`,
       { cwd: ROOT, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 }
     );
     const lines = output.trim().split("\n");

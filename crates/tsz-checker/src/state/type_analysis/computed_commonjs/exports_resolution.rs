@@ -809,7 +809,7 @@ impl<'a> CheckerState<'a> {
                     is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: None,
-                    declaration_order: props.len() as u32,
+                    declaration_order: props.len() as u32 + 1,
                     is_string_named: false,
                 });
             }
@@ -947,7 +947,7 @@ impl<'a> CheckerState<'a> {
                 &target_arena,
                 &name,
                 descriptor_expr,
-                props.len() as u32,
+                props.len() as u32 + 1,
             ) else {
                 continue;
             };
@@ -1007,12 +1007,13 @@ impl<'a> CheckerState<'a> {
         if let Some(exports_table) = exports_table {
             let module_is_non_module_entity =
                 self.ctx.module_resolves_to_non_module_entity(module_name);
-            for (name, &sym_id) in exports_table.iter() {
+            let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
+            for &(name, sym_id) in &ordered_exports {
                 self.record_cross_file_symbol_if_needed(sym_id, name, module_name);
             }
-            let exports_table_target = exports_table
+            let exports_table_target = ordered_exports
                 .iter()
-                .find_map(|(_, &sym_id)| self.ctx.resolve_symbol_file_index(sym_id));
+                .find_map(|(_, sym_id)| self.ctx.resolve_symbol_file_index(*sym_id));
 
             let mut export_equals_type = exports_table.get("export=").map(|export_equals_sym| {
                 // When `export = C.B` resolves to a type-only symbol (e.g., `interface B` from a
@@ -1077,9 +1078,7 @@ impl<'a> CheckerState<'a> {
                     .as_ref()
                     .map(|s| s.named_exports.clone())
                     .unwrap_or_default();
-                for (order, prop) in named_exports.iter_mut().enumerate() {
-                    prop.declaration_order = order as u32;
-                }
+                Self::normalize_namespace_export_declaration_order(&mut named_exports);
                 if let Some(surface_direct_type) =
                     surface.as_ref().and_then(|s| s.direct_export_type)
                 {
@@ -1088,7 +1087,7 @@ impl<'a> CheckerState<'a> {
                 named_exports
             } else {
                 let mut props: Vec<PropertyInfo> = Vec::new();
-                for (name, &sym_id) in exports_table.iter() {
+                for &(name, sym_id) in &ordered_exports {
                     if name == "export="
                         || self.should_skip_namespace_export_name(&exports_table, name, sym_id)
                         || self.is_type_only_export_symbol(sym_id)
@@ -1101,6 +1100,11 @@ impl<'a> CheckerState<'a> {
 
                     let mut prop_type = self.get_type_of_symbol(sym_id);
                     prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+                    let declaration_order = if name == "default" {
+                        1
+                    } else {
+                        props.len() as u32 + 2
+                    };
                     let name_atom = self.ctx.types.intern_string(name);
                     props.push(PropertyInfo {
                         name: name_atom,
@@ -1112,7 +1116,7 @@ impl<'a> CheckerState<'a> {
                         is_class_prototype: false,
                         visibility: Visibility::Public,
                         parent_id: None,
-                        declaration_order: props.len() as u32,
+                        declaration_order,
                         is_string_named: false,
                     });
                 }
@@ -1150,6 +1154,7 @@ impl<'a> CheckerState<'a> {
             let display_module_name = (has_named_props && preserve_namespace_display)
                 .then(|| self.resolve_namespace_display_module_name(&exports_table, module_name));
             let namespace_type = has_named_props.then(|| {
+                Self::normalize_namespace_export_declaration_order(&mut props);
                 let namespace_type = factory.object(props);
                 if let Some(display_module_name) = display_module_name.as_ref() {
                     self.ctx

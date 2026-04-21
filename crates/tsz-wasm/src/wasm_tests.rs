@@ -13,7 +13,7 @@ use crate::wasm_api::utilities::{
     create_source_file, is_keyword, is_punctuation, parse_config_file_text_to_json,
     parse_json_text, syntax_kind_to_name, token_to_string,
 };
-use crate::{TsDiagnostic, TsProgram, TsSourceFile, TsSymbol, TsType};
+use crate::{Parser, TsDiagnostic, TsProgram, TsSourceFile, TsSymbol, TsType};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -141,6 +141,66 @@ fn test_ts_program_semantic_diagnostics_contract() {
             .iter()
             .any(|diag| diag.get("code").and_then(|v| v.as_u64()) == Some(2322)),
         "Expected TS2322 diagnostics in {semantic}"
+    );
+}
+
+#[test]
+fn test_ts_program_diagnostics_are_stable_after_parser_parse() {
+    fn diagnostic_codes(json: &str) -> Vec<u64> {
+        let diagnostics: Vec<Value> = serde_json::from_str(json).expect("valid diagnostics json");
+        diagnostics
+            .into_iter()
+            .filter_map(|diag| diag.get("code").and_then(Value::as_u64))
+            .collect()
+    }
+
+    let source = r#"let x: string = 42;
+
+function greet(name: string): string {
+  return "Hello, " + name;
+}
+
+greet(123);
+
+interface User {
+  name: string;
+  age: number;
+}
+
+const user: User = {
+  name: "Alice",
+  age: "thirty",
+};
+"#;
+
+    let mut baseline = TsProgram::new();
+    baseline
+        .set_compiler_options("{\"strict\":true,\"module\":99}")
+        .unwrap();
+    baseline.add_source_file("input.ts".to_string(), source.to_string());
+    let baseline_codes = diagnostic_codes(&baseline.get_pre_emit_diagnostics_json());
+
+    assert!(
+        !baseline_codes.is_empty(),
+        "expected baseline diagnostics for sample source"
+    );
+
+    let mut parser = Parser::new("input.ts".to_string(), source.to_string());
+    parser
+        .set_compiler_options("{\"strict\":true,\"module\":99}")
+        .unwrap();
+    parser.parse_source_file();
+
+    let mut after_parser = TsProgram::new();
+    after_parser
+        .set_compiler_options("{\"strict\":true,\"module\":99}")
+        .unwrap();
+    after_parser.add_source_file("input.ts".to_string(), source.to_string());
+    let after_parser_codes = diagnostic_codes(&after_parser.get_pre_emit_diagnostics_json());
+
+    assert_eq!(
+        baseline_codes, after_parser_codes,
+        "TsProgram diagnostics changed after constructing/parsing a Parser"
     );
 }
 

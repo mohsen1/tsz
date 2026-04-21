@@ -1,4 +1,5 @@
 use super::*;
+use crate::TypeInterner;
 
 #[test]
 fn test_type_id_intrinsics() {
@@ -151,6 +152,156 @@ fn test_ordered_float_infinity() {
     assert_eq!(pos_inf, OrderedFloat(f64::INFINITY));
     assert_eq!(neg_inf, OrderedFloat(f64::NEG_INFINITY));
     assert_ne!(pos_inf, neg_inf);
+}
+
+#[test]
+fn test_normalize_display_property_order_preserves_declaration_sequence() {
+    let interner = tsz_common::interner::ShardedInterner::new();
+    let default_name = interner.intern("default");
+    let configs_name = interner.intern("configs");
+
+    let mut props = vec![
+        PropertyInfo {
+            name: configs_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            declaration_order: 2,
+            ..PropertyInfo::new(configs_name, TypeId::STRING)
+        },
+        PropertyInfo {
+            name: default_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            declaration_order: 1,
+            ..PropertyInfo::new(default_name, TypeId::NUMBER)
+        },
+    ];
+
+    normalize_display_property_order(&mut props);
+
+    assert_eq!(props[0].name, default_name);
+    assert_eq!(props[1].name, configs_name);
+    assert_eq!(props[0].declaration_order, 1);
+    assert_eq!(props[1].declaration_order, 2);
+}
+
+#[test]
+fn test_normalize_display_property_order_prioritizes_explicit_order_before_unset_members() {
+    let interner = tsz_common::interner::ShardedInterner::new();
+    let default_name = interner.intern("default");
+    let configs_name = interner.intern("configs");
+
+    let mut props = vec![
+        PropertyInfo {
+            name: configs_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            declaration_order: 0,
+            ..PropertyInfo::new(configs_name, TypeId::STRING)
+        },
+        PropertyInfo {
+            name: default_name,
+            type_id: TypeId::NUMBER,
+            write_type: TypeId::NUMBER,
+            declaration_order: 1,
+            ..PropertyInfo::new(default_name, TypeId::NUMBER)
+        },
+    ];
+
+    normalize_display_property_order(&mut props);
+
+    assert_eq!(props[0].name, default_name);
+    assert_eq!(props[1].name, configs_name);
+    assert_eq!(props[0].declaration_order, 1);
+    assert_eq!(props[1].declaration_order, 2);
+}
+
+#[test]
+fn test_merge_display_properties_for_intersection_preserves_first_seen_order() {
+    let interner = TypeInterner::new();
+    let default_name = interner.intern_string("default");
+    let configs_name = interner.intern_string("configs");
+
+    let mk_prop = |name, type_id, declaration_order| PropertyInfo {
+        name,
+        type_id,
+        write_type: type_id,
+        declaration_order,
+        ..PropertyInfo::new(name, type_id)
+    };
+
+    let left = interner.object(vec![
+        mk_prop(configs_name, TypeId::STRING, 2),
+        mk_prop(default_name, TypeId::NUMBER, 1),
+    ]);
+    interner.store_display_properties(
+        left,
+        vec![
+            mk_prop(default_name, TypeId::NUMBER, 1),
+            mk_prop(configs_name, TypeId::STRING, 2),
+        ],
+    );
+
+    let right = interner.object(vec![
+        mk_prop(configs_name, TypeId::STRING, 2),
+        mk_prop(default_name, TypeId::NUMBER, 1),
+    ]);
+    interner.store_display_properties(
+        right,
+        vec![
+            mk_prop(default_name, TypeId::NUMBER, 1),
+            mk_prop(configs_name, TypeId::STRING, 2),
+        ],
+    );
+
+    let merged = merge_display_properties_for_intersection(&interner, &[left, right]);
+
+    assert_eq!(merged.len(), 2);
+    assert_eq!(merged[0].name, default_name);
+    assert_eq!(merged[1].name, configs_name);
+    assert_eq!(merged[0].declaration_order, 1);
+    assert_eq!(merged[1].declaration_order, 2);
+}
+
+#[test]
+fn test_merge_display_properties_for_intersection_keeps_left_to_right_member_sequence() {
+    let interner = TypeInterner::new();
+    let b_name = interner.intern_string("b");
+    let c_name = interner.intern_string("c");
+    let a_name = interner.intern_string("a");
+
+    let mk_prop = |name, type_id, declaration_order| PropertyInfo {
+        name,
+        type_id,
+        write_type: type_id,
+        declaration_order,
+        ..PropertyInfo::new(name, type_id)
+    };
+
+    let left = interner.object(vec![
+        mk_prop(b_name, TypeId::STRING, 2),
+        mk_prop(c_name, TypeId::BOOLEAN, 3),
+    ]);
+    interner.store_display_properties(
+        left,
+        vec![
+            mk_prop(b_name, TypeId::STRING, 2),
+            mk_prop(c_name, TypeId::BOOLEAN, 3),
+        ],
+    );
+
+    let right = interner.object(vec![mk_prop(a_name, TypeId::NUMBER, 1)]);
+    interner.store_display_properties(right, vec![mk_prop(a_name, TypeId::NUMBER, 1)]);
+
+    let merged = merge_display_properties_for_intersection(&interner, &[left, right]);
+
+    assert_eq!(merged.len(), 3);
+    assert_eq!(merged[0].name, b_name);
+    assert_eq!(merged[1].name, c_name);
+    assert_eq!(merged[2].name, a_name);
+    assert_eq!(merged[0].declaration_order, 1);
+    assert_eq!(merged[1].declaration_order, 2);
+    assert_eq!(merged[2].declaration_order, 3);
 }
 
 // ============================================================================

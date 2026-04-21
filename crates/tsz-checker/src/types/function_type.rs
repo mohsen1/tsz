@@ -231,7 +231,29 @@ impl<'a> CheckerState<'a> {
                 EvaluationNeeded, classify_for_evaluation, lazy_def_id, type_application,
             };
 
-            let evaluated_type = if type_application(self.ctx.types, ctx_type).is_some() {
+            let preserve_raw_mixed_context =
+                crate::query_boundaries::common::union_members(self.ctx.types, ctx_type)
+                    .is_some_and(|members| {
+                        let has_callable = members.iter().any(|&member| {
+                            crate::query_boundaries::common::is_callable_type(
+                                self.ctx.types,
+                                member,
+                            )
+                        });
+                        let has_non_callable = members.iter().any(|&member| {
+                            !crate::query_boundaries::common::is_callable_type(
+                                self.ctx.types,
+                                member,
+                            )
+                        });
+                        has_callable && has_non_callable
+                    });
+            let preserve_raw_signature_context =
+                preserve_raw_mixed_context || self.raw_contextual_signature_available(ctx_type);
+
+            let evaluated_type = if preserve_raw_signature_context {
+                ctx_type
+            } else if type_application(self.ctx.types, ctx_type).is_some() {
                 self.evaluate_application_type(ctx_type)
             } else if lazy_def_id(self.ctx.types, ctx_type).is_some()
                 || matches!(
@@ -257,7 +279,11 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     evaluated_type,
                 );
-            let evaluated_type = self.normalize_contextual_signature_with_env(evaluated_type);
+            let evaluated_type = if preserve_raw_signature_context {
+                evaluated_type
+            } else {
+                self.normalize_contextual_signature_with_env(evaluated_type)
+            };
             let helper_probe = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 evaluated_type,
@@ -627,6 +653,25 @@ impl<'a> CheckerState<'a> {
                     } else {
                         helper.get_parameter_type(contextual_index)
                     };
+                    let preserve_direct_from_mixed_context =
+                        helper.expected().is_some_and(|expected| {
+                            crate::query_boundaries::common::union_members(self.ctx.types, expected)
+                                .is_some_and(|members| {
+                                    let has_callable = members.iter().any(|&member| {
+                                        crate::query_boundaries::common::is_callable_type(
+                                            self.ctx.types,
+                                            member,
+                                        )
+                                    });
+                                    let has_non_callable = members.iter().any(|&member| {
+                                        !crate::query_boundaries::common::is_callable_type(
+                                            self.ctx.types,
+                                            member,
+                                        )
+                                    });
+                                    has_callable && has_non_callable
+                                })
+                        });
 
                     if let Some(extracted) = direct {
                         if let Some(from_expected) = expected_contextual_type {
@@ -666,10 +711,21 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     from_expected,
                                 );
+                            let preserve_mixed_context_direct = preserve_direct_from_mixed_context
+                                && !direct_is_placeholderish
+                                && !crate::query_boundaries::common::contains_type_parameters(
+                                    self.ctx.types,
+                                    extracted,
+                                );
                             let direct_is_strict_subtype = extracted != from_expected
                                 && self.is_subtype_of(extracted, from_expected)
                                 && !self.is_subtype_of(from_expected, extracted);
-                            if direct_is_rest_tuple_container
+                            let expected_is_strict_subtype = extracted != from_expected
+                                && self.is_subtype_of(from_expected, extracted)
+                                && !self.is_subtype_of(extracted, from_expected);
+                            if preserve_mixed_context_direct {
+                                Some(extracted)
+                            } else if direct_is_rest_tuple_container
                                 || (direct_is_placeholderish && expected_is_more_informative)
                                 || direct_is_constrained_type_param
                                 || direct_is_strict_subtype
@@ -678,7 +734,9 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 let resolved = self.resolve_type_query_type(extracted);
                                 let evaluated = self.evaluate_type_with_env(resolved);
-                                if evaluated != extracted {
+                                if expected_is_strict_subtype {
+                                    Some(extracted)
+                                } else if evaluated != extracted {
                                     expected_contextual_type.or(Some(extracted))
                                 } else {
                                     Some(extracted)
