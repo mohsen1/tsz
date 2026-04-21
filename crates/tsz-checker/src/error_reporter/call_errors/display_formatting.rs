@@ -774,6 +774,115 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn finite_mapped_target_property_display_type(
+        &mut self,
+        target_type: TypeId,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        if let Some(mapped_id) = query_common::mapped_type_id(self.ctx.types, target_type) {
+            return crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
+                self.ctx.types,
+                mapped_id,
+                prop_name,
+            );
+        }
+
+        let (base, args) = query_common::application_info(self.ctx.types, target_type)?;
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+        let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+        let mapped_id = query_common::mapped_type_id(self.ctx.types, body_type)?;
+        let substitution =
+            query_common::TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+        let instantiated = query_common::instantiate_type(self.ctx.types, body_type, &substitution);
+        let instantiated_mapped_id =
+            query_common::mapped_type_id(self.ctx.types, instantiated).unwrap_or(mapped_id);
+
+        crate::query_boundaries::state::checking::get_finite_mapped_property_display_type(
+            self.ctx.types,
+            instantiated_mapped_id,
+            prop_name,
+        )
+    }
+
+    pub(in crate::error_reporter) fn mapped_target_property_display_type(
+        &mut self,
+        target_type: TypeId,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        let mapped =
+            if let Some(mapped_id) = query_common::mapped_type_id(self.ctx.types, target_type) {
+                self.ctx.types.mapped_type(mapped_id)
+            } else {
+                let (base, args) = query_common::application_info(self.ctx.types, target_type)?;
+                let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
+                let (body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
+                let mapped_id = query_common::mapped_type_id(self.ctx.types, body_type)?;
+                let substitution =
+                    query_common::TypeSubstitution::from_args(self.ctx.types, &type_params, &args);
+                let instantiated =
+                    query_common::instantiate_type(self.ctx.types, body_type, &substitution);
+                let instantiated_mapped_id =
+                    query_common::mapped_type_id(self.ctx.types, instantiated).unwrap_or(mapped_id);
+                self.ctx.types.mapped_type(instantiated_mapped_id)
+            };
+
+        if mapped.name_type.is_some()
+            && !crate::query_boundaries::state::checking::is_identity_name_mapping(
+                self.ctx.types,
+                &mapped,
+            )
+        {
+            return None;
+        }
+
+        let key_literal = self.ctx.types.literal_string(prop_name);
+        let mut display_type =
+            crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
+                self.ctx.types,
+                mapped.template,
+                mapped.type_param.name,
+                key_literal,
+            );
+        let has_optional_property =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, display_type)
+                .and_then(|(object_type, index_type)| {
+                    let prop_atom = crate::query_boundaries::common::string_literal_value(
+                        self.ctx.types,
+                        index_type,
+                    )?;
+                    let object_members = crate::query_boundaries::common::intersection_members(
+                        self.ctx.types,
+                        object_type,
+                    )
+                    .unwrap_or_else(|| vec![object_type]);
+                    Some(object_members.into_iter().any(|member| {
+                        crate::query_boundaries::common::find_property_in_object(
+                            self.ctx.types,
+                            member,
+                            prop_atom,
+                        )
+                        .is_some_and(|prop| prop.optional)
+                            || crate::query_boundaries::class_type::type_includes_undefined(
+                                self.ctx.types,
+                                self.evaluate_type_with_env(
+                                    self.ctx.types.factory().index_access(member, index_type),
+                                ),
+                            )
+                    }))
+                })
+                .unwrap_or(false);
+        if self.ctx.strict_null_checks()
+            && (has_optional_property
+                || crate::query_boundaries::class_type::type_includes_undefined(
+                    self.ctx.types,
+                    self.evaluate_type_with_env(display_type),
+                ))
+        {
+            display_type = self.ctx.types.union2(display_type, TypeId::UNDEFINED);
+        }
+        Some(display_type)
+    }
+
     pub(in crate::error_reporter) fn object_literal_target_property_type(
         &mut self,
         target_type: TypeId,
@@ -785,6 +894,7 @@ impl<'a> CheckerState<'a> {
         let contextual_target = self.evaluate_contextual_type(target_type);
         let mut contextual_property_type = None;
         let mut env_property_type = None;
+        let mut mapped_property_display_type = None;
         for candidate in [
             contextual_target,
             evaluated_target,
@@ -810,6 +920,11 @@ impl<'a> CheckerState<'a> {
                 && self.should_prefer_property_target_type(env_property_type, type_id)
             {
                 env_property_type = Some(type_id);
+            }
+
+            if mapped_property_display_type.is_none() {
+                mapped_property_display_type =
+                    self.finite_mapped_target_property_display_type(candidate, prop_name);
             }
         }
 
@@ -886,9 +1001,21 @@ impl<'a> CheckerState<'a> {
                     t
                 }
             });
+            let mapped_property_display_type = mapped_property_display_type.map(|t| {
+                if !self.ctx.strict_null_checks() {
+                    crate::query_boundaries::common::remove_undefined(
+                        self.ctx.types.as_type_database(),
+                        t,
+                    )
+                } else {
+                    t
+                }
+            });
             return Some((
                 effective_type,
-                declared_optional_type.unwrap_or(effective_type),
+                mapped_property_display_type
+                    .or(declared_optional_type)
+                    .unwrap_or(effective_type),
             ));
         }
 

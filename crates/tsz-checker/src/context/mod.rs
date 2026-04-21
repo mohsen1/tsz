@@ -750,6 +750,12 @@ pub struct CheckerContext<'a> {
     /// Request-aware cache for audited non-empty request paths only.
     pub request_node_types: FxHashMap<(u32, RequestCacheKey), TypeId>,
 
+    /// Raw object-literal property diagnostic target, keyed by property element for TS2322/TS2345 display recovery.
+    pub object_literal_property_diag_targets: FxHashMap<NodeIndex, TypeId>,
+
+    /// Contextual target type for an object literal, keyed by literal node for per-property diagnostic recovery.
+    pub object_literal_contextual_targets: FxHashMap<NodeIndex, TypeId>,
+
     /// Internal counters for request-aware cache usage and cache-clear churn.
     pub request_cache_counters: RequestCacheCounters,
 
