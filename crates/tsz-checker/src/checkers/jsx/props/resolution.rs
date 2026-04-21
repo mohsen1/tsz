@@ -660,6 +660,17 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
+                        let props_target_has_object_shape =
+                            crate::query_boundaries::common::object_shape_for_type(
+                                self.ctx.types,
+                                props_type,
+                            )
+                            .is_some();
+                        if !props_target_has_object_shape {
+                            needs_special_attr_object_assignability = true;
+                            continue;
+                        }
+
                         // Check if the component has type parameters. This handles cases like
                         // class components with generic props where the display target is
                         // `IntrinsicAttributes & IntrinsicClassAttributes<ElemClass<T>> & { x: number; }`

@@ -1399,9 +1399,16 @@ impl<'a> CheckerState<'a> {
                 if let Some(eap_symbol) = self.ctx.binder.get_symbol(eap_sym_id)
                     && let Some(&decl_idx) = eap_symbol.declarations.first()
                 {
+                    let anchor_idx = self
+                        .ctx
+                        .arena
+                        .get(decl_idx)
+                        .and_then(|node| self.ctx.arena.get_interface(node))
+                        .map(|iface| iface.name)
+                        .unwrap_or(decl_idx);
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
-                        decl_idx,
+                        anchor_idx,
                         diagnostic_codes::THE_GLOBAL_TYPE_JSX_MAY_NOT_HAVE_MORE_THAN_ONE_PROPERTY,
                         &["ElementAttributesProperty"],
                     );
