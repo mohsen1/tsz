@@ -42,6 +42,7 @@ fn parse_radix_digits(text: &str, base: u32) -> Option<f64> {
 
     let mut value = 0.0;
     let base_float = base as f64;
+    let mut saw_digit = false;
 
     for byte in text.bytes() {
         if byte == b'_' {
@@ -59,7 +60,13 @@ fn parse_radix_digits(text: &str, base: u32) -> Option<f64> {
             return None; // Digit too large for base
         }
 
+        saw_digit = true;
         value = value * base_float + (digit as f64);
+    }
+
+    if !saw_digit {
+        // Stripped body contained only separators (e.g. "0x_") — no digits, invalid.
+        return None;
     }
 
     Some(value)
@@ -94,6 +101,19 @@ mod tests {
         assert_eq!(parse_numeric_literal_value("0x"), None);
         assert_eq!(parse_numeric_literal_value("0b"), None);
         assert_eq!(parse_numeric_literal_value("0o"), None);
+    }
+
+    #[test]
+    fn test_parse_numeric_literal_value_rejects_separator_only_radix_body() {
+        // A radix body consisting only of separators has zero digits, which is
+        // invalid per spec. Regression for the previous behavior where
+        // `0x_` / `0b_` / `0o_` silently returned `Some(0.0)`.
+        assert_eq!(parse_numeric_literal_value("0x_"), None);
+        assert_eq!(parse_numeric_literal_value("0X__"), None);
+        assert_eq!(parse_numeric_literal_value("0b_"), None);
+        assert_eq!(parse_numeric_literal_value("0B_"), None);
+        assert_eq!(parse_numeric_literal_value("0o_"), None);
+        assert_eq!(parse_numeric_literal_value("0O___"), None);
     }
 
     #[test]
