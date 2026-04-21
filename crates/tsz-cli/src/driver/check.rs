@@ -1839,7 +1839,12 @@ pub(super) fn check_file_for_parallel<'a>(
         .map(|(_, spec)| spec.clone())
         .collect();
 
-    let mut checker = CheckerState::with_options(
+    // apply_to (below) installs the project-wide shared DefinitionStore and
+    // warms the per-file caches from it. Use the deferred constructor so we
+    // don't build a throwaway per-file store first — that work showed up in
+    // profiles as a non-trivial fraction of total CPU on large projects, all
+    // of it overwritten moments later.
+    let mut checker = CheckerState::with_options_deferred_def_store(
         &file.arena,
         &binder,
         &query_cache,
@@ -1849,7 +1854,8 @@ pub(super) fn check_file_for_parallel<'a>(
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
 
-    // Apply all project-level shared state in one call.
+    // Apply all project-level shared state in one call. This installs the
+    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
     project_env.apply_to(&mut checker.ctx);
 
     // Per-file state that varies across files:

@@ -662,6 +662,33 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Create a new `CheckerState` with compiler options but no per-file
+    /// `DefinitionStore` build.
+    ///
+    /// The caller MUST install a populated store before use (typically via
+    /// `ProjectEnv::apply_to`). See
+    /// [`CheckerContext::with_options_deferred_def_store`] for the full
+    /// contract. The parallel checker path uses this variant because
+    /// `apply_to` immediately overwrites the per-file store with a shared
+    /// project-wide one, so building the per-file one first is pure waste.
+    pub fn with_options_deferred_def_store(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: &CheckerOptions,
+    ) -> Self {
+        CheckerState {
+            ctx: CheckerContext::with_options_deferred_def_store(
+                arena,
+                binder,
+                types,
+                file_name,
+                compiler_options,
+            ),
+        }
+    }
+
     /// Create a new `CheckerState` with explicit compiler options and a shared `DefinitionStore`.
     ///
     /// This is used in parallel checking to ensure all files share the same `DefId` namespace.
