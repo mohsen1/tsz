@@ -542,46 +542,69 @@ impl SymbolIndex {
             }
         }
 
-        // Second pass: Build sub_to_bases mapping
-        // For each ClassDeclaration/InterfaceDeclaration, extract its heritage clauses
+        // Second pass: Build sub_to_bases mapping.
+        //
+        // For each ClassDeclaration/InterfaceDeclaration, walk its own
+        // heritage_clauses directly instead of guessing at which nearby
+        // HERITAGE_CLAUSE nodes belong to this declaration.
+        //
+        // Previously this block called `arena.get_identifier_text(node_idx)`
+        // on the declaration node itself. That helper only returns text for
+        // Identifier nodes — on a ClassDeclaration it always returns None,
+        // so the entire `sub_to_bases` map was silently empty in practice
+        // and upward-heritage lookups (go-to-implementation, upward rename)
+        // produced nothing. The fix: resolve the declaration's `name` field
+        // to get the real Identifier node before asking for its text, and
+        // use the declaration's own `heritage_clauses` list (no 50-node
+        // forward-scan heuristic — classes with large bodies between the
+        // name and heritage clauses would also have missed the window).
         for i in 0..arena.nodes.len() {
             let node_idx = tsz_parser::NodeIndex(i as u32);
-            if let Some(node) = arena.get(node_idx) {
-                let is_class_or_interface = node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::INTERFACE_DECLARATION;
+            let Some(node) = arena.get(node_idx) else {
+                continue;
+            };
 
-                if is_class_or_interface
-                    && let Some(class_name) = arena.get_identifier_text(node_idx)
-                {
-                    let class_name = class_name.to_string();
+            let (name_idx, heritage_list) = match node.kind {
+                kind if kind == syntax_kind_ext::CLASS_DECLARATION => {
+                    let Some(data) = arena.get_class(node) else {
+                        continue;
+                    };
+                    (data.name, data.heritage_clauses.as_ref())
+                }
+                kind if kind == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    let Some(data) = arena.get_interface(node) else {
+                        continue;
+                    };
+                    (data.name, data.heritage_clauses.as_ref())
+                }
+                _ => continue,
+            };
 
-                    // Look for HeritageClause nodes that follow this class declaration
-                    // In TypeScript AST, heritage clauses typically appear as siblings or children
-                    // We'll scan forward a reasonable number of nodes to find them
-                    let search_window = 50_usize; // Look ahead up to 50 nodes
-                    let start = i + 1;
-                    let end = (i + 1 + search_window).min(arena.nodes.len());
+            let Some(heritage_list) = heritage_list else {
+                continue;
+            };
+            let Some(class_name) = arena.get_identifier_text(name_idx) else {
+                continue;
+            };
+            let class_name = class_name.to_string();
 
-                    for j in start..end {
-                        let heritage_idx = tsz_parser::NodeIndex(j as u32);
-                        if let Some(heritage_node) = arena.get(heritage_idx)
-                            && heritage_node.kind == syntax_kind_ext::HERITAGE_CLAUSE
-                        {
-                            // Extract base types from this heritage clause
-                            if let Some(heritage_data) = arena.get_heritage_clause(heritage_node) {
-                                for type_node_idx in &heritage_data.types.nodes {
-                                    if let Some(base_name) =
-                                        self.extract_heritage_type_name(arena, *type_node_idx)
-                                    {
-                                        // Track that this class extends/implements the base type
-                                        self.sub_to_bases
-                                            .entry(class_name.clone())
-                                            .or_default()
-                                            .insert(base_name);
-                                    }
-                                }
-                            }
-                        }
+            for &heritage_idx in &heritage_list.nodes {
+                let Some(heritage_node) = arena.get(heritage_idx) else {
+                    continue;
+                };
+                if heritage_node.kind != syntax_kind_ext::HERITAGE_CLAUSE {
+                    continue;
+                }
+                let Some(heritage_data) = arena.get_heritage_clause(heritage_node) else {
+                    continue;
+                };
+                for type_node_idx in &heritage_data.types.nodes {
+                    if let Some(base_name) = self.extract_heritage_type_name(arena, *type_node_idx)
+                    {
+                        self.sub_to_bases
+                            .entry(class_name.clone())
+                            .or_default()
+                            .insert(base_name);
                     }
                 }
             }
@@ -748,6 +771,12 @@ impl SymbolIndex {
         self.importers.clear();
         self.file_symbols.clear();
         self.sorted_names.clear();
+        // Heritage relationships outlived a `clear()` previously, which
+        // leaked stale class/interface edges into any fully-rebuilt index
+        // (tests reusing an index, or a workspace re-bootstrap after a
+        // root change).
+        self.heritage_clauses.clear();
+        self.sub_to_bases.clear();
     }
 
     /// Get all symbols that start with the given prefix.

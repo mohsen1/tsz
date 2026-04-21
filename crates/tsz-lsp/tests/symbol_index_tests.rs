@@ -1666,3 +1666,98 @@ fn test_index_file_remove_clears_auto_imports() {
         "importers should be cleared after remove_file"
     );
 }
+
+// ── heritage index ───────────────────────────────────────────────────
+
+#[test]
+fn test_index_file_populates_sub_to_bases_for_class() {
+    // Regression: previously the second-pass heritage builder called
+    // get_identifier_text on the ClassDeclaration node itself, which
+    // always returned None — so sub_to_bases was silently empty and
+    // upward heritage lookups returned nothing.
+    let source = r#"
+        class Base {}
+        interface I {}
+        class Sub extends Base implements I {}
+    "#;
+    let (binder, parser) = parse_and_bind("file.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("file.ts", &binder, parser.get_arena(), source);
+
+    let bases = index.get_bases_for_class("Sub");
+    assert!(
+        bases.contains(&"Base".to_string()),
+        "expected Sub -> Base, got {bases:?}"
+    );
+    assert!(
+        bases.contains(&"I".to_string()),
+        "expected Sub -> I (implements), got {bases:?}"
+    );
+}
+
+#[test]
+fn test_index_file_populates_sub_to_bases_for_interface() {
+    let source = r#"
+        interface Base {}
+        interface Mixin {}
+        interface Derived extends Base, Mixin {}
+    "#;
+    let (binder, parser) = parse_and_bind("file.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("file.ts", &binder, parser.get_arena(), source);
+
+    let bases = index.get_bases_for_class("Derived");
+    assert!(bases.contains(&"Base".to_string()), "got {bases:?}");
+    assert!(bases.contains(&"Mixin".to_string()), "got {bases:?}");
+}
+
+#[test]
+fn test_index_file_sub_to_bases_survives_large_class_body() {
+    // Previously the second-pass used a 50-node forward-scan to find
+    // HERITAGE_CLAUSE siblings — classes with big bodies between the
+    // name and heritage clauses would fall outside the window. The fix
+    // walks the declaration's own heritage_clauses list, so body size
+    // is irrelevant.
+    let mut body = String::new();
+    for i in 0..60 {
+        body.push_str(&format!("    m{i}() {{}}\n"));
+    }
+    let source = format!("class Base {{}}\nclass Sub extends Base {{\n{body}}}\n");
+    let (binder, parser) = parse_and_bind("file.ts", &source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("file.ts", &binder, parser.get_arena(), &source);
+
+    assert_eq!(
+        index.get_bases_for_class("Sub"),
+        vec!["Base".to_string()],
+        "heritage lookup should work regardless of class body size"
+    );
+}
+
+#[test]
+fn test_clear_resets_heritage_and_sub_to_bases() {
+    // Regression: clear() used to leave heritage_clauses and sub_to_bases
+    // populated, so a fully-rebuilt index would see stale class edges.
+    let source = r#"class Base {} class Sub extends Base {}"#;
+    let (binder, parser) = parse_and_bind("file.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("file.ts", &binder, parser.get_arena(), source);
+
+    assert!(!index.get_files_with_heritage("Base").is_empty());
+    assert!(!index.get_bases_for_class("Sub").is_empty());
+
+    index.clear();
+
+    assert!(
+        index.get_files_with_heritage("Base").is_empty(),
+        "heritage_clauses should be cleared"
+    );
+    assert!(
+        index.get_bases_for_class("Sub").is_empty(),
+        "sub_to_bases should be cleared"
+    );
+}
