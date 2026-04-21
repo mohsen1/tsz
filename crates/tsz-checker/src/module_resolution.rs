@@ -28,6 +28,9 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::Path;
+use std::sync::Arc;
+
+use tsz_parser::parser::node::NodeArena;
 
 // ---------------------------------------------------------------------------
 // Extension tables
@@ -566,6 +569,188 @@ pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
         out.push(stem.to_string());
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Fast, on-demand specifier resolution via a filename reverse index
+// ---------------------------------------------------------------------------
+//
+// `build_module_resolution_maps` materializes an (src_idx, specifier) →
+// tgt_idx map over the full source × target cross-product. That is O(N²) in
+// space and time and re-walks directory components on every pair. For large
+// projects (thousands of files) it is both slow and a memory explosion, and
+// historically it was re-run inside the checker's import-resolution fallback
+// on every miss, which dominated the CPU profile.
+//
+// The functions below replace that fallback with a pre-built, O(N),
+// project-wide reverse index from normalized absolute file name to file
+// index. At specifier-lookup time we compute the small candidate set the
+// specifier could address (the direct spelling, each TS/JS extension, and
+// directory-index variants) and probe the reverse index O(1) per candidate.
+//
+// The reverse index is shared via Arc across all per-file checker contexts,
+// so the whole project pays the cost once.
+
+/// Project-wide reverse index from normalized file name to file index.
+pub type FileNameIndex = FxHashMap<String, usize>;
+
+/// Build a reverse index `normalized_file_name -> file_idx` from a slice of
+/// arenas. The keys use forward slashes only, matching the forms the
+/// specifier resolver produces.
+pub fn build_file_name_index(arenas: &[Arc<NodeArena>]) -> FileNameIndex {
+    let mut idx: FileNameIndex = FxHashMap::default();
+    idx.reserve(arenas.len());
+    for (file_idx, arena) in arenas.iter().enumerate() {
+        let Some(sf) = arena.source_files.first() else {
+            continue;
+        };
+        let key = if sf.file_name.contains('\\') {
+            sf.file_name.replace('\\', "/")
+        } else {
+            sf.file_name.clone()
+        };
+        idx.insert(key, file_idx);
+    }
+    idx
+}
+
+/// Split a forward-slash path string into segments and lexically resolve
+/// `.` and `..`. Preserves a leading `/` and intentionally ignores Windows
+/// drive prefixes: callers are expected to have normalized backslashes and
+/// the index uses the raw arena form.
+fn lexical_normalize_slash(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut stack: Vec<&str> = Vec::with_capacity(path.matches('/').count() + 1);
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => continue,
+            ".." => {
+                stack.pop();
+            }
+            other => stack.push(other),
+        }
+    }
+    let mut out = String::with_capacity(path.len());
+    if absolute {
+        out.push('/');
+    }
+    for (i, seg) in stack.iter().enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(seg);
+    }
+    out
+}
+
+/// Probe the filename index with every spelling a TypeScript/JavaScript
+/// specifier could plausibly address. Mirrors the matching rules encoded
+/// by `register_canonical_forms`:
+///
+/// 1. Direct hit (`./foo.ts` when the project has `./foo.ts`).
+/// 2. Extension fan-out (`./foo` → `./foo.ts`, `./foo.d.ts`, ...).
+/// 3. Directory-index (`./lib` or `.` → `./lib/index.ts` / `./index.ts`).
+///
+/// Path components are compared as strings after lexical normalization
+/// (`./` and `..` resolved purely textually). Returns the first target
+/// index that matches, or `None` when no project file answers the
+/// specifier.
+pub fn resolve_specifier_via_file_index(
+    source_file_name: &str,
+    specifier: &str,
+    filename_idx: &FileNameIndex,
+) -> Option<usize> {
+    // Normalize the source file name (forward slashes only) and grab its
+    // parent directory as a string. We avoid Path::strip_prefix and
+    // Path::components, which showed up as >40% of total CPU in the
+    // O(N²) fallback profile.
+    let src_norm = if source_file_name.contains('\\') {
+        source_file_name.replace('\\', "/")
+    } else {
+        source_file_name.to_string()
+    };
+    // A bare file name with no directory component (e.g. `other.js` in a
+    // test harness) has no src_dir. Treat it as the "current directory" so
+    // relative specifiers like `./types` still resolve against siblings.
+    let src_dir = match src_norm.rfind('/') {
+        Some(slash) => &src_norm[..slash],
+        None => "",
+    };
+
+    let spec_norm = if specifier.contains('\\') {
+        specifier.replace('\\', "/")
+    } else {
+        specifier.to_string()
+    };
+
+    // Preserve the legacy map boundary: bare aliases are only supported for a
+    // single same-directory segment. Nested bare specifiers are package
+    // subpaths (for example `react/jsx-runtime`) and must not be reinterpreted
+    // as project-relative paths after the primary resolver misses.
+    if !spec_norm.starts_with("./")
+        && !spec_norm.starts_with("../")
+        && !spec_norm.starts_with('/')
+        && spec_norm != "."
+        && spec_norm != ".."
+        && spec_norm.contains('/')
+    {
+        return None;
+    }
+
+    // Join `src_dir + '/' + specifier`, letting the lexical normalizer
+    // resolve the resulting `./`, `../`, and doubled slashes. Pure
+    // dot-chain specifiers (`.`, `./`, `..`, `../..`) fall through here
+    // and resolve to src_dir (or an ancestor) + `/index.<ext>` below.
+    let joined = if src_dir.is_empty() {
+        spec_norm.clone()
+    } else {
+        let mut s = String::with_capacity(src_dir.len() + 1 + spec_norm.len());
+        s.push_str(src_dir);
+        s.push('/');
+        s.push_str(&spec_norm);
+        s
+    };
+    let base = lexical_normalize_slash(&joined);
+
+    // Direct hit: the specifier already spells out the full path (e.g.
+    // `./foo.ts` when `foo.ts` is a project file).
+    if let Some(&idx) = filename_idx.get(&base) {
+        return Some(idx);
+    }
+
+    // Strip a recognized TS/JS extension to get the stem, so both the
+    // extensioned (`./foo.ts`) and stem (`./foo`) spellings exercise the
+    // same ext fan-out. If no known extension is present, `stem` equals
+    // `base`.
+    let stem = strip_ts_extension(&base);
+
+    let mut buf = String::with_capacity(stem.len() + 8);
+    for ext in TS_EXTENSIONS {
+        buf.clear();
+        buf.push_str(stem);
+        buf.push_str(ext);
+        if let Some(&idx) = filename_idx.get(&buf) {
+            return Some(idx);
+        }
+    }
+
+    // Directory-index fallback (`./lib` → `./lib/index.ts`). Don't append
+    // `/index` when the base is already empty (root directory). We always
+    // probe the stem, not `base`, to also cover `./lib.ts` → `./lib/index.ts`
+    // (unusual, but cheap and symmetric with the extension fan-out).
+    if !stem.is_empty() {
+        for ext in TS_EXTENSIONS {
+            buf.clear();
+            buf.push_str(stem);
+            buf.push_str("/index");
+            buf.push_str(ext);
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
