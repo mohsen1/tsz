@@ -1,6 +1,7 @@
 //! Tests for statement parsing in the parser.
 use crate::parser::{NodeIndex, ParserState};
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::position::LineMap;
 
 fn parse_source(source: &str) -> (ParserState, NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -759,6 +760,62 @@ fn modifier_led_try_block_in_class_body_prefers_ts1068() {
     assert!(
         !codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
         "should not emit TS1434 for modifier-led try recovery, got {diags:?}"
+    );
+}
+
+#[test]
+fn bare_try_block_in_class_body_reparses_as_outer_statement() {
+    let source = "class Foo {\n\n    try {\n\n        public bar = someInitThatMightFail();\n\n    } catch(e) {}\n\n\n\n    public baz() {\n\n        return this.bar;\n\n    }\n\n}\n";
+    let (parser, _root) = parse_source(source);
+    let line_map = LineMap::build(source);
+    let diagnostics: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.as_str(),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        diagnostics,
+        vec![
+            (
+                diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                3,
+                5,
+                "Unexpected token. A constructor, method, accessor, or property was expected.",
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                5,
+                9,
+                "Declaration or statement expected.",
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                11,
+                5,
+                "Declaration or statement expected.",
+            ),
+            (
+                diagnostic_codes::EXPECTED,
+                11,
+                18,
+                "';' expected.",
+            ),
+            (
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                17,
+                1,
+                "Declaration or statement expected.",
+            ),
+        ],
     );
 }
 
