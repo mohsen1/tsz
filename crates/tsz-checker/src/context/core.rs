@@ -861,34 +861,65 @@ impl<'a> CheckerContext<'a> {
         })
     }
 
-    /// Build the same file-name key candidates that
-    /// `CheckerState::module_export_file_key_candidates` uses so the
-    /// shared-lookup accessors below can stand alone without reaching
-    /// into `CheckerState`.
-    fn module_export_file_key_candidates_for(file_name: &str) -> smallvec::SmallVec<[String; 4]> {
-        let mut out: smallvec::SmallVec<[String; 4]> = smallvec::SmallVec::new();
-        let mut push = |s: String| {
-            if !out.contains(&s) {
-                out.push(s);
-            }
-        };
-        push(file_name.to_string());
-        let normalized = file_name.replace('\\', "/");
-        if normalized != file_name {
-            push(normalized.clone());
+    /// Try every file-name key variant (`./foo.ts`, `foo.ts`,
+    /// backslash-normalized) against `map` and return the first match.
+    ///
+    /// Avoids allocating a candidate `Vec<String>` up front: direct
+    /// matches and `./`-strip return immediately without building any
+    /// owned strings, and the backslash-normalize / `./`-prefix branches
+    /// only run when the common case misses.
+    #[inline]
+    fn lookup_any_file_key<'m, T>(
+        file_name: &str,
+        map: &'m rustc_hash::FxHashMap<String, T>,
+    ) -> Option<&'m T> {
+        // Direct match — common case, zero allocations.
+        if let Some(v) = map.get(file_name) {
+            return Some(v);
         }
-        for c in [file_name, normalized.as_str()] {
-            if let Some(s) = c.strip_prefix("./") {
-                push(s.to_string());
-            } else if !c.starts_with("../")
+        // Strip a leading `./` without allocating.
+        if let Some(stripped) = file_name.strip_prefix("./")
+            && let Some(v) = map.get(stripped)
+        {
+            return Some(v);
+        }
+        // Backslash-normalized variant (only allocates when input has backslashes).
+        let normalized: Option<String> = if file_name.contains('\\') {
+            let n = file_name.replace('\\', "/");
+            if let Some(v) = map.get(&n) {
+                return Some(v);
+            }
+            Some(n)
+        } else {
+            None
+        };
+        let bare_prefix_needed = |c: &str| {
+            !c.starts_with("./")
+                && !c.starts_with("../")
                 && !c.starts_with('/')
                 && !c.starts_with(".\\")
                 && !c.starts_with("..\\")
-            {
-                push(format!("./{c}"));
+        };
+        if bare_prefix_needed(file_name) {
+            let prefixed = format!("./{file_name}");
+            if let Some(v) = map.get(&prefixed) {
+                return Some(v);
             }
         }
-        out
+        if let Some(ref n) = normalized {
+            if let Some(stripped) = n.strip_prefix("./")
+                && let Some(v) = map.get(stripped)
+            {
+                return Some(v);
+            }
+            if bare_prefix_needed(n) {
+                let prefixed = format!("./{n}");
+                if let Some(v) = map.get(&prefixed) {
+                    return Some(v);
+                }
+            }
+        }
+        None
     }
 
     /// Look up the re-export entries for `file_name` in the cross-file
@@ -896,25 +927,18 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Prefers `ProjectEnv`-level `program_reexports` (a single `Arc`-shared
     /// allocation across all N cross-file lookup binders). Falls back to
-    /// `binder.reexports` so standalone callers without a `ProjectEnv`
-    /// still work. Tries file-name key variants
-    /// (`./foo.ts` / `foo.ts` / backslash-normalized).
+    /// `binder.reexports` for standalone callers without a `ProjectEnv`.
+    /// Tries file-name key variants (`./foo.ts` / `foo.ts` / backslash-
+    /// normalized).
     pub fn reexports_for_file<'b>(
         &'b self,
         binder: &'b tsz_binder::BinderState,
         file_name: &str,
     ) -> Option<&'b tsz_binder::FileReexports> {
-        for c in Self::module_export_file_key_candidates_for(file_name) {
-            if let Some(ref idx) = self.program_reexports
-                && let Some(e) = idx.get(&c)
-            {
-                return Some(e);
-            }
-            if let Some(e) = binder.reexports.get(&c) {
-                return Some(e);
-            }
+        if let Some(ref idx) = self.program_reexports {
+            return Self::lookup_any_file_key(file_name, idx);
         }
-        None
+        Self::lookup_any_file_key(file_name, &binder.reexports)
     }
 
     /// See [`reexports_for_file`]: wildcard `export * from`.
@@ -923,17 +947,10 @@ impl<'a> CheckerContext<'a> {
         binder: &'b tsz_binder::BinderState,
         file_name: &str,
     ) -> Option<&'b Vec<String>> {
-        for c in Self::module_export_file_key_candidates_for(file_name) {
-            if let Some(ref idx) = self.program_wildcard_reexports
-                && let Some(e) = idx.get(&c)
-            {
-                return Some(e);
-            }
-            if let Some(e) = binder.wildcard_reexports.get(&c) {
-                return Some(e);
-            }
+        if let Some(ref idx) = self.program_wildcard_reexports {
+            return Self::lookup_any_file_key(file_name, idx);
         }
-        None
+        Self::lookup_any_file_key(file_name, &binder.wildcard_reexports)
     }
 
     /// See [`reexports_for_file`]: type-only wildcard flags.
@@ -942,17 +959,10 @@ impl<'a> CheckerContext<'a> {
         binder: &'b tsz_binder::BinderState,
         file_name: &str,
     ) -> Option<&'b Vec<(String, bool)>> {
-        for c in Self::module_export_file_key_candidates_for(file_name) {
-            if let Some(ref idx) = self.program_wildcard_reexports_type_only
-                && let Some(e) = idx.get(&c)
-            {
-                return Some(e);
-            }
-            if let Some(e) = binder.wildcard_reexports_type_only.get(&c) {
-                return Some(e);
-            }
+        if let Some(ref idx) = self.program_wildcard_reexports_type_only {
+            return Self::lookup_any_file_key(file_name, idx);
         }
-        None
+        Self::lookup_any_file_key(file_name, &binder.wildcard_reexports_type_only)
     }
 
     /// Resolve an import specifier to its target file index.
