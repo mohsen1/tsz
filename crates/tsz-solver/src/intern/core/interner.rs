@@ -41,7 +41,7 @@ const LOOKUP_CACHE_SIZE: usize = 1 << LOOKUP_CACHE_BITS; // 1024
 const LOOKUP_CACHE_MASK: u32 = (LOOKUP_CACHE_SIZE as u32) - 1;
 
 /// A single cache entry: (tag = TypeId raw value, cached TypeData, owning
-/// interner instance_id).
+/// interner `instance_id`).
 ///
 /// `tag == 0` means empty (`TypeId::NONE` is never looked up for user types).
 /// `instance_id` scopes the cache entry to the interner that inserted it, so
@@ -75,7 +75,7 @@ const INTERN_CACHE_MASK: u64 = (INTERN_CACHE_SIZE as u64) - 1;
 struct InternCacheEntry {
     /// `FxHash` of the TypeData, used as tag
     hash: u64,
-    /// Owning interner instance_id for cross-interner safety.
+    /// Owning interner `instance_id` for cross-interner safety.
     instance_id: u32,
     /// The TypeData that was interned
     key: TypeData,
@@ -996,7 +996,7 @@ impl TypeInterner {
             return id;
         }
 
-        let result = self.intern_slow(key.clone(), hash);
+        let result = self.intern_slow(key, hash);
         if result != TypeId::ERROR {
             TL_CACHE.with(|c| c.intern_insert(hash, self.instance_id, key, result));
         }

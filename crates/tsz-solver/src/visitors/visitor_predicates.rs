@@ -510,7 +510,7 @@ fn contains_error_type_recursive(
 /// Check if a type contains the `this` type anywhere.
 ///
 /// The result is stable per `TypeId` within a single `TypeInterner`, so we
-/// memoize in a project-wide DashMap on the interner to avoid the repeated
+/// memoize in a project-wide `DashMap` on the interner to avoid the repeated
 /// recursive walk that profiled at ~5% of total CPU on multi-file workloads.
 #[inline]
 pub fn contains_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
