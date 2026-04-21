@@ -271,6 +271,134 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().object_with_index(widened_shape)
     }
 
+    pub(crate) fn normalize_property_receiver_application_display_type(
+        &mut self,
+        ty: TypeId,
+    ) -> TypeId {
+        let Some(app) = query::type_application(self.ctx.types, ty) else {
+            return ty;
+        };
+
+        let args: Vec<_> = app
+            .args
+            .iter()
+            .map(|&arg| self.normalize_property_receiver_application_display_arg(arg))
+            .collect();
+
+        if args == app.args {
+            ty
+        } else {
+            self.ctx.types.factory().application(app.base, args)
+        }
+    }
+
+    fn normalize_property_receiver_application_display_arg(&mut self, ty: TypeId) -> TypeId {
+        let evaluated = self.evaluate_type_with_env(ty);
+        if evaluated != ty {
+            return self.normalize_property_receiver_application_display_arg(evaluated);
+        }
+
+        if let Some(app) = query::type_application(self.ctx.types, ty) {
+            let args: Vec<_> = app
+                .args
+                .iter()
+                .map(|&arg| self.normalize_property_receiver_application_display_arg(arg))
+                .collect();
+            return if args == app.args {
+                ty
+            } else {
+                self.ctx.types.factory().application(app.base, args)
+            };
+        }
+
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            let normalized: Vec<_> = members
+                .iter()
+                .map(|&member| self.normalize_property_receiver_application_display_arg(member))
+                .collect();
+            return if normalized == members {
+                ty
+            } else {
+                self.ctx.types.factory().union_preserve_members(normalized)
+            };
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            let normalized: Vec<_> = members
+                .iter()
+                .map(|&member| self.normalize_property_receiver_application_display_arg(member))
+                .collect();
+            return if normalized == members {
+                ty
+            } else {
+                self.ctx.types.factory().intersection(normalized)
+            };
+        }
+
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        else {
+            return ty;
+        };
+        let should_widen_properties =
+            crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, ty)
+                || (self.ctx.types.get_display_properties(ty).is_some() && shape.symbol.is_none());
+        if !should_widen_properties {
+            return ty;
+        }
+
+        let mut normalized_shape = shape.as_ref().clone();
+        let mut changed = self.ctx.types.get_display_properties(ty).is_some();
+
+        for prop in &mut normalized_shape.properties {
+            let normalized_read =
+                self.normalize_property_receiver_application_display_arg(prop.type_id);
+            let normalized_write =
+                self.normalize_property_receiver_application_display_arg(prop.write_type);
+            let widened_read =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, normalized_read);
+            let widened_write = crate::query_boundaries::common::widen_literal_type(
+                self.ctx.types,
+                normalized_write,
+            );
+
+            if widened_read != prop.type_id || widened_write != prop.write_type {
+                changed = true;
+            }
+
+            prop.type_id = widened_read;
+            prop.write_type = widened_write;
+        }
+
+        if let Some(index) = normalized_shape.string_index.as_mut() {
+            let normalized =
+                self.normalize_property_receiver_application_display_arg(index.value_type);
+            let widened =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, normalized);
+            if widened != index.value_type {
+                changed = true;
+                index.value_type = widened;
+            }
+        }
+
+        if let Some(index) = normalized_shape.number_index.as_mut() {
+            let normalized =
+                self.normalize_property_receiver_application_display_arg(index.value_type);
+            let widened =
+                crate::query_boundaries::common::widen_literal_type(self.ctx.types, normalized);
+            if widened != index.value_type {
+                changed = true;
+                index.value_type = widened;
+            }
+        }
+
+        if changed {
+            self.ctx.types.factory().object_with_index(normalized_shape)
+        } else {
+            ty
+        }
+    }
+
     fn terminal_assignment_source_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
         let mut current = expr_idx;
         let mut guard = 0;
