@@ -317,21 +317,26 @@ impl<'a> CheckerState<'a> {
         let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
             .or_else(|| crate::query_boundaries::common::union_members(self.ctx.types, resolved))
             .or_else(|| crate::query_boundaries::common::union_members(self.ctx.types, evaluated))
-            .or_else(|| match classify_for_excess_properties(self.ctx.types, type_id) {
-                ExcessPropertiesKind::Union(members) => Some(members),
-                _ => None,
-            })
-            .or_else(|| match classify_for_excess_properties(self.ctx.types, resolved) {
-                ExcessPropertiesKind::Union(members) => Some(members),
-                _ => None,
-            })
-            .or_else(|| match classify_for_excess_properties(self.ctx.types, evaluated) {
-                ExcessPropertiesKind::Union(members) => Some(members),
-                _ => None,
-            });
+            .or_else(
+                || match classify_for_excess_properties(self.ctx.types, type_id) {
+                    ExcessPropertiesKind::Union(members) => Some(members),
+                    _ => None,
+                },
+            )
+            .or_else(
+                || match classify_for_excess_properties(self.ctx.types, resolved) {
+                    ExcessPropertiesKind::Union(members) => Some(members),
+                    _ => None,
+                },
+            )
+            .or_else(
+                || match classify_for_excess_properties(self.ctx.types, evaluated) {
+                    ExcessPropertiesKind::Union(members) => Some(members),
+                    _ => None,
+                },
+            );
 
-        let Some(members) = members
-        else {
+        let Some(members) = members else {
             return false;
         };
 
@@ -432,7 +437,12 @@ impl<'a> CheckerState<'a> {
         match callable_members.len() {
             0 => None,
             1 => Some(callable_members[0]),
-            _ => Some(self.ctx.types.factory().union_preserve_members(callable_members)),
+            _ => Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .union_preserve_members(callable_members),
+            ),
         }
     }
 
@@ -460,7 +470,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if let Some(callable_only) = self.callable_context_type_from_mixed_union(property_context_type)
+        if let Some(callable_only) =
+            self.callable_context_type_from_mixed_union(property_context_type)
         {
             return Some(callable_only);
         }

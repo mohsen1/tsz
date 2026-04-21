@@ -248,7 +248,10 @@ function foo<T extends { a: string, b: string }>() {
         },
     );
 
-    let ts2322: Vec<_> = diagnostics.iter().filter(|diag| diag.code == 2322).collect();
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
     assert_eq!(
         ts2322.len(),
         1,
@@ -257,8 +260,7 @@ function foo<T extends { a: string, b: string }>() {
 
     let expected_start = source.find("\"c\"").expect("expected c literal") as u32;
     assert_eq!(
-        ts2322[0].start,
-        expected_start,
+        ts2322[0].start, expected_start,
         "Expected TS2322 to anchor at the invalid \"c\" element.\nActual: {diagnostics:#?}"
     );
     assert!(
