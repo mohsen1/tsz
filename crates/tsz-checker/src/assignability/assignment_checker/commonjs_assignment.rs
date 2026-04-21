@@ -722,9 +722,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
-        let Some(direct_export_type) = surface.direct_export_type else {
-            return false;
-        };
+        let direct_export_type = surface
+            .direct_export_type
+            .unwrap_or_else(|| self.get_type_of_node(access.expression));
         if crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
             self.ctx.types,
             direct_export_type,
