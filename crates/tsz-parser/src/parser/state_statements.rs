@@ -2044,7 +2044,19 @@ impl ParserState {
                 }
 
                 // No ASI - emit ',' expected for the unexpected token and stop.
-                self.error_comma_expected();
+                // Use position-only dedup for normal tokens, not the broader
+                // distance heuristic: tsc still reports adjacent declaration-list
+                // comma errors like `var x: typeof function f() { };` at both
+                // `f` and `(`. Keep Unknown tokens on the scanner-shaped TS1127
+                // path instead of forcing TS1005.
+                if self.is_token(SyntaxKind::Unknown) {
+                    self.parse_error_at_current_token(
+                        tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                        diagnostic_codes::INVALID_CHARACTER,
+                    );
+                } else {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                }
 
                 // Otherwise stop the list. We break instead of continuing to avoid
                 // cascading TS1134 errors when the recovery eats into what tsc
