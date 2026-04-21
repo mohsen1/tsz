@@ -99,6 +99,13 @@ impl<'a> CheckerState<'a> {
                             type_name_idx,
                             NameLookupKind::Value,
                         );
+                        // Visit type arguments so nested unresolved identifiers
+                        // (e.g. `T` in `ns.Foo<T>`) surface their own diagnostics.
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node(arg_idx);
+                            }
+                        }
                         return TypeId::ERROR;
                     }
                     TypeSymbolResolution::NotFound => {
@@ -125,6 +132,15 @@ impl<'a> CheckerState<'a> {
                             return self.type_reference_symbol_type(sym_id);
                         }
                         let _ = self.resolve_qualified_name(type_name_idx);
+                        // Visit type arguments so nested unresolved identifiers
+                        // (e.g. `T` in `E.F<T>`) surface their own TS2304 diagnostics.
+                        // Without this, `var v3: E.F<T>` only reports TS2503 for `E`
+                        // and silently drops the unresolved `T`, diverging from tsc.
+                        if let Some(args) = &type_ref.type_arguments {
+                            for &arg_idx in &args.nodes {
+                                let _ = self.get_type_from_type_node(arg_idx);
+                            }
+                        }
                         return TypeId::ERROR;
                     }
                 };
