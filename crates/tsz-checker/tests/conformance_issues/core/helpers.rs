@@ -1193,6 +1193,52 @@ type VarianceFunction<in out Value> = (value: Value) => Value;
 }
 
 #[test]
+fn test_variance_reference_assignability_preserves_literal_alias_display() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+type NumericConstraint<Value extends number> = Value;
+type VarianceConstrainedNumber<in out Value extends number> = NumericConstraint<Value>;
+
+declare let vcn1: VarianceConstrainedNumber<1>;
+declare let vcn12: VarianceConstrainedNumber<1 | 2>;
+vcn1 = vcn12;
+
+interface Shape<Value> {
+  value: Value;
+}
+type VarianceShape<in out Value> = Shape<Value>;
+
+declare let vs1: VarianceShape<1>;
+declare let vs12: VarianceShape<1 | 2>;
+vs1 = vs12;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
+        "Expected direct alias assignment to display evaluated literal union, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|message| message
+            .contains("Type 'VarianceShape<2 | 1>' is not assignable to type 'VarianceShape<1>'.")),
+        "Expected object alias assignment to preserve alias with tsc numeric union order, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_verbatim_module_syntax_const_enum_in_esnext_does_not_report_cjs_errors() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"

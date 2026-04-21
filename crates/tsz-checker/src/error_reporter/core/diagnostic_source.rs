@@ -1118,18 +1118,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 expr_type
             };
-            // Only use the node-derived type when it plausibly represents the
-            // source of the assignment, not the target.  For-of loops pass the
-            // element type as `source` but anchor the diagnostic at the loop
-            // variable whose node type equals the *target* (declared variable
-            // type), not the source.  When the node type matches the target but
-            // not the source, the anchor is the assignment target — skip
-            // node-based resolution to avoid confusing "Type 'X' is not
-            // assignable to type 'X'" messages.
-            //
-            // Also skip when the node type is an array/iterable whose element equals
-            // the passed source — this happens for yield* where we check the element
-            // type but anchor at the array literal. Use the passed source directly.
             let node_is_array_of_source = crate::query_boundaries::common::array_element_type(
                 self.ctx.types,
                 expr_display_type,
@@ -1204,7 +1192,6 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
         }
-
         if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
             if let Some(display) = self.declared_type_annotation_text_for_expression(expr_idx)
                 && display.contains("=>")

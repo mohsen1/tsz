@@ -54,6 +54,12 @@ impl<'a> CheckerState<'a> {
             self.format_assignability_type_for_message(target, source)
         };
         if depth == 0 {
+            if let Some(display) = self.evaluated_literal_alias_source_display(source) {
+                source_str = self.canonicalize_assignment_numeric_literal_union_display(display);
+            }
+            if let Some(display) = self.evaluated_literal_alias_source_display(target) {
+                target_str = self.canonicalize_assignment_numeric_literal_union_display(display);
+            }
             source_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 source, target, source_str,
             );
@@ -225,6 +231,8 @@ impl<'a> CheckerState<'a> {
             };
             return Diagnostic::error(file_name, start, length, message, code);
         }
+
+        source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
 
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
