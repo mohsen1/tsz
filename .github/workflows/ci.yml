@@ -1,0 +1,1329 @@
+name: CI
+
+on:
+  push:
+    branches: [main, rust, 'claude/**']
+  pull_request:
+    branches: [main, rust]
+  merge_group:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TEST_TIMEOUT: 300
+  # sccache settings — mozilla-actions/sccache-action sets up GHA-backed storage
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+# -----------------------------------------------------------------------------
+# Pipeline shape (applies CircleCI-migration learnings from commits
+# cf2d1c1bf6, 42a98deb12, 3bb247f7fe, 808f52a845):
+#
+#   changes ──┬─► lint
+#             ├─► test-foundation / test-binder / test-solver
+#             ├─► test-checker (×4) / test-emitter / test-lsp (×2) / test-root (×2)
+#             ├─► wasm-build
+#             ├─► test-build ──────────┐
+#             ├─► test-build-server ───┤
+#             └─► prep-node ───────────┤
+#                                      ├─► conformance (×10) ──► conformance-aggregate
+#                                      ├─► emit (×10)        ──► emit-aggregate
+#                                      └─► fourslash (×10)   ──► fourslash-aggregate
+#                                                                         │
+#                                                                         ▼
+#                                                                      summary
+#
+# Key learnings carried forward from the CircleCI experiment:
+#   • `prep-node` is a singleton: one npm install + one TypeScript harness
+#     build, consumed as an artifact by all 10 emit and all 10 fourslash
+#     shards. Replaces ~1.5 min × 10 parallel harness builds on fourslash
+#     alone — a meaningful tail-latency win even though GHA has more
+#     concurrency than CircleCI's free tier.
+#   • `test-build` and `test-build-server` are split so the fourslash lane
+#     starts ~1 min earlier — it only needs tsz-server, not tsz +
+#     tsz-conformance.
+#   • `test-build` uses two explicit `cargo build -p ... --bin ...`
+#     invocations. cargo 1.90 applied a combined form's `--bin tsz` filter
+#     to every `-p` flag, silently skipping `tsz-conformance` and breaking
+#     conformance downstream with "No such file or directory".
+#   • Fourslash shards use `--shard=I/N` (index-mod interleave) instead
+#     of `--offset/--max`; heavy language-service clusters spread evenly
+#     across shards instead of concentrating alphabetically.
+#   • The aggregate job accepts up to 2 missing shards gracefully
+#     (SHARD_COUNT >= 8) — a flaky runner shouldn't tank the whole PR.
+#   • All three pass-rate suites guard against regressions via the
+#     committed snapshot files (conformance-snapshot.json,
+#     emit-snapshot.json, fourslash-snapshot.json).
+# -----------------------------------------------------------------------------
+
+jobs:
+  # ─── Detect which workspace crates changed ─────────────────────────────────
+  # A docs-only PR should not spend ~20 minutes re-running conformance.
+  # paths-filter only reads git history, so this stays under ~10 s.
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      common: ${{ steps.filter.outputs.common }}
+      scanner: ${{ steps.filter.outputs.scanner }}
+      parser: ${{ steps.filter.outputs.parser }}
+      binder: ${{ steps.filter.outputs.binder }}
+      solver: ${{ steps.filter.outputs.solver }}
+      checker: ${{ steps.filter.outputs.checker }}
+      emitter: ${{ steps.filter.outputs.emitter }}
+      lsp: ${{ steps.filter.outputs.lsp }}
+      root: ${{ steps.filter.outputs.root }}
+      any_rust: ${{ steps.filter.outputs.any_rust }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            common:
+              - 'crates/tsz-common/**'
+            scanner:
+              - 'crates/tsz-scanner/**'
+            parser:
+              - 'crates/tsz-parser/**'
+            binder:
+              - 'crates/tsz-binder/**'
+            solver:
+              - 'crates/tsz-solver/**'
+            checker:
+              - 'crates/tsz-checker/**'
+            emitter:
+              - 'crates/tsz-emitter/**'
+            lsp:
+              - 'crates/tsz-lsp/**'
+            root:
+              - 'crates/tsz-core/**'
+              - 'crates/tsz-cli/**'
+              - 'crates/tsz-lowering/**'
+              - 'crates/conformance/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'scripts/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+            any_rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'scripts/**'
+              - '.github/workflows/**'
+              - '.github/actions/**'
+
+  # ─── Lint (fmt, clippy, arch guardrails, workspace + crate-root policy) ───
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    if: needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lint-
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Validate workspace metadata
+        run: scripts/arch/check-workspace-metadata.sh
+
+      - name: Check crate root file policy
+        run: scripts/check-crate-root-files.sh
+
+      - name: Clippy (workspace crates, deny warnings)
+        run: |
+          cargo clippy \
+            -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
+            -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
+            --all-targets -- -D warnings
+
+      - name: Checker boundary guardrail
+        run: |
+          mkdir -p target/architecture-reports
+          scripts/arch/check-checker-boundaries.sh
+          cp artifacts/architecture/arch_guard_report.json target/architecture-reports/arch-guard.json
+          cp artifacts/architecture/arch_guard_report.md target/architecture-reports/arch-guard.md
+
+      - name: Upload architecture guard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-guard-report
+          path: |
+            target/architecture-reports/arch-guard.json
+            target/architecture-reports/arch-guard.md
+
+  # ─── Test: Foundation (common, scanner, parser) ────────────────────────────
+  test-foundation:
+    name: "Test: Foundation"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - run: cargo nextest run --profile ci -p tsz-common
+      # exit 4 == "no tests run", benign for leaf crates without unit tests
+      - run: cargo nextest run --profile ci -p tsz-scanner || [ $? -eq 4 ]
+      - run: cargo nextest run --profile ci -p tsz-parser
+
+  # ─── Test: Binder ──────────────────────────────────────────────────────────
+  test-binder:
+    name: "Test: Binder"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - run: cargo nextest run --profile ci -p tsz-binder
+
+  # ─── Test: Solver (largest crate) ──────────────────────────────────────────
+  test-solver:
+    name: "Test: Solver"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - run: cargo nextest run --profile ci -p tsz-solver
+
+  # ─── Test: Checker (4-way hash-partitioned) ────────────────────────────────
+  test-checker:
+    name: "Test: Checker (${{ matrix.shard }}/4)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - run: cargo nextest run --profile ci -p tsz-checker --partition hash:${{ matrix.shard }}/4
+
+  # ─── Test: Emitter ─────────────────────────────────────────────────────────
+  test-emitter:
+    name: "Test: Emitter"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.emitter == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - run: cargo nextest run --profile ci -p tsz-emitter || [ $? -eq 4 ]
+
+  # ─── Test: LSP (2-way hash-partitioned) ────────────────────────────────────
+  test-lsp:
+    name: "Test: LSP (${{ matrix.shard }}/2)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    if: >-
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.lsp == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - run: cargo nextest run --profile ci -p tsz-lsp --partition hash:${{ matrix.shard }}/2 || [ $? -eq 4 ]
+
+  # ─── Test: Root (2-way hash-partitioned) ───────────────────────────────────
+  test-root:
+    name: "Test: Root (${{ matrix.shard }}/2)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    if: >-
+      needs.changes.outputs.root == 'true' ||
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+      - uses: taiki-e/install-action@nextest
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+            ${{ runner.os }}-cargo-
+
+      - run: cargo nextest run --profile ci -p tsz-core --partition hash:${{ matrix.shard }}/2
+
+  # ─── WASM build ────────────────────────────────────────────────────────────
+  wasm-build:
+    name: WASM Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install wasm-opt (binaryen)
+        run: sudo apt-get update -y && sudo apt-get install -y binaryen
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            !.target/**/incremental
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+            ${{ runner.os }}-cargo-
+
+      - name: Build WASM (nodejs target)
+        working-directory: crates/tsz-wasm
+        run: wasm-pack build --target nodejs --out-dir ../../pkg --no-opt
+
+      - name: Copy TypeScript lib files into pkg
+        run: |
+          mkdir -p pkg/lib
+          cp -R TypeScript/src/lib/. pkg/lib/
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: pkg/
+          retention-days: 1
+
+  # ─── Build tsz + tsz-conformance binaries (dist-fast profile) ──────────────
+  # Two explicit cargo invocations: combining them as
+  #   -p tsz-cli --bin tsz -p tsz-conformance
+  # silently applies `--bin tsz` to every listed package on cargo 1.90,
+  # skipping tsz-conformance and breaking the conformance lane downstream.
+  test-build:
+    name: "Test Suite: Build (tsz, tsz-conformance)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: >-
+      needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+          key: ${{ runner.os }}-test-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-test-build-
+            ${{ runner.os }}-cargo-
+
+      - name: Build tsz
+        run: cargo build --profile dist-fast -p tsz-cli --bin tsz
+      - name: Build tsz-conformance
+        run: cargo build --profile dist-fast -p tsz-conformance --bin tsz-conformance
+
+      - name: Verify binaries exist
+        run: ls -l .target/dist-fast/tsz .target/dist-fast/tsz-conformance
+
+      - name: Upload test binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: |
+            .target/dist-fast/tsz
+            .target/dist-fast/tsz-conformance
+          retention-days: 1
+
+  # ─── Build tsz-server (smaller; lets fourslash start earlier) ─────────────
+  test-build-server:
+    name: "Test Suite: Build tsz-server"
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    needs: changes
+    if: >-
+      needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache cargo registry + .target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+          key: ${{ runner.os }}-test-build-server-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-test-build-server-
+            ${{ runner.os }}-test-build-
+            ${{ runner.os }}-cargo-
+
+      - name: Build tsz-server
+        run: cargo build --profile dist-fast -p tsz-cli --bin tsz-server
+
+      - name: Upload tsz-server
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-fast-server
+          path: .target/dist-fast/tsz-server
+          retention-days: 1
+
+  # ─── Prep node artifacts once (singleton) ─────────────────────────────────
+  # Produces a single `node-prep` artifact containing:
+  #   • scripts/node_modules, scripts/emit/dist (for the emit lanes)
+  #   • TypeScript/node_modules, TypeScript/built/local (for the fourslash
+  #     lanes — the compiled fourslashImpl.js harness)
+  # The 10 emit shards and 10 fourslash shards download this instead of
+  # each running `npm ci` + `tsc -b src/testRunner` independently.
+  prep-node:
+    name: "Test Suite: Prep Node (harness + emit runner)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: >-
+      needs.changes.outputs.any_rust == 'true' ||
+      needs.changes.outputs.root == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache prep-node output
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            scripts/node_modules
+            scripts/emit/dist
+            TypeScript/node_modules
+            TypeScript/built/local
+          key: ${{ runner.os }}-prep-node-v1-${{ hashFiles('scripts/package-lock.json', 'TypeScript/package-lock.json', 'scripts/emit/tsconfig.json') }}
+
+      - name: Install scripts/ npm deps + build emit runner
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd scripts
+          npm install --silent
+          cd emit
+          npx tsc -p tsconfig.json
+
+      - name: Build fourslash TypeScript harness
+        if: steps.cache.outputs.cache-hit != 'true'
+        # --prep-only implies --skip-cargo-build and exits after building the
+        # harness; no tsz-server needed here.
+        run: ./scripts/fourslash/run-fourslash.sh --prep-only
+
+      - name: Upload prep-node artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-prep
+          include-hidden-files: false
+          path: |
+            scripts/node_modules
+            scripts/emit/dist
+            TypeScript/node_modules
+            TypeScript/built/local
+          retention-days: 1
+
+  # ─── Conformance: 10 parallel shards ──────────────────────────────────────
+  conformance:
+    name: "Conformance (${{ matrix.shard }}/10)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [changes, test-build]
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    if: >-
+      needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - name: Download conformance binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .target/dist-fast/
+
+      - name: Make binaries executable
+        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-conformance
+
+      - name: Run conformance shard
+        id: shard-results
+        run: |
+          set -euo pipefail
+          # ~12,600 tests / 10 shards = ~1260; 1300 chunk gives headroom.
+          CHUNK=1300
+          OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
+
+          TMPOUT=$(mktemp)
+          CLEANOUT=$(mktemp)
+          trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
+
+          # ubuntu-latest = 4 vCPU / 16 GB (post-2024 upgrade). workers=2 +
+          # per-worker RSS cap 1024 MB keeps conformance well under the cap;
+          # recycle every 50 compiles so memory-hungry tests (JSX, JSDoc,
+          # multi-file) cannot drag the worker RSS up monotonically; 30 s
+          # timeout accommodates complex tests on CI hardware.
+          .target/dist-fast/tsz-conformance \
+            --offset "$OFFSET" --max "$CHUNK" \
+            --workers 2 --timeout 30 \
+            --max-compilations-per-worker 50 \
+            --max-worker-rss-mb 1024 \
+            --cache-file scripts/conformance/tsc-cache-full.json \
+            --print-test \
+            2>&1 | tee "$TMPOUT" || true
+          sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
+
+          FINAL_LINE=$(grep -a "FINAL RESULTS:" "$CLEANOUT" | tail -1 || true)
+          PASSED=$(echo "$FINAL_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+) passed.*/\1/' || true)
+          TOTAL=$(echo "$FINAL_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+) passed.*/\2/' || true)
+
+          echo "passed=${PASSED:-0}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL:-0}" >> "$GITHUB_OUTPUT"
+          echo "Shard ${{ matrix.shard }}: ${PASSED:-0}/${TOTAL:-0} passed"
+
+          mkdir -p .ci-metrics
+          grep -aE '^(PASS|FAIL|CRASH|TIMEOUT) ' "$CLEANOUT" \
+            > ".ci-metrics/shard-${{ matrix.shard }}-results.txt" || true
+
+      - name: Save shard JSON result
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --argjson shard "${{ matrix.shard }}" \
+            --arg passed "${{ steps.shard-results.outputs.passed }}" \
+            --arg total "${{ steps.shard-results.outputs.total }}" \
+            '{shard:$shard, passed:$passed, total:$total}' \
+            > .ci-metrics/shard-${{ matrix.shard }}.json
+
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-shard-${{ matrix.shard }}
+          path: |
+            .ci-metrics/shard-${{ matrix.shard }}.json
+            .ci-metrics/shard-${{ matrix.shard }}-results.txt
+          retention-days: 7
+
+  # ─── Conformance: aggregate results ────────────────────────────────────────
+  conformance-aggregate:
+    name: Conformance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [conformance]
+    if: always() && needs.conformance.result != 'skipped'
+    outputs:
+      pass_rate: ${{ steps.aggregate.outputs.pass_rate }}
+      passed: ${{ steps.aggregate.outputs.passed }}
+      total: ${{ steps.aggregate.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/conformance/conformance-snapshot.json
+          sparse-checkout-cone-mode: false
+
+      - name: Download all shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: conformance-shard-*
+          path: .ci-metrics/
+          merge-multiple: true
+
+      - name: Aggregate shard results
+        id: aggregate
+        run: |
+          set -euo pipefail
+
+          TOTAL_PASSED=0
+          TOTAL_TESTS=0
+          SHARD_COUNT=0
+          mkdir -p .ci-metrics
+          for f in .ci-metrics/shard-*.json; do
+            [ -f "$f" ] || continue
+            P=$(jq -r '.passed' "$f")
+            T=$(jq -r '.total' "$f")
+            TOTAL_PASSED=$((TOTAL_PASSED + P))
+            TOTAL_TESTS=$((TOTAL_TESTS + T))
+            SHARD_COUNT=$((SHARD_COUNT + 1))
+            echo "  $(basename "$f"): ${P}/${T}"
+          done
+          echo "Received results from ${SHARD_COUNT}/10 shards"
+
+          # Tolerant to up to 2 flaky-runner losses; below that we cannot
+          # trust the aggregate for regression gating.
+          if [ "$SHARD_COUNT" -lt 8 ]; then
+            echo "::error::Too many shards failed (${SHARD_COUNT}/10 reported)"
+            exit 1
+          fi
+
+          if [ "$TOTAL_TESTS" -eq 0 ]; then
+            echo "::error::Conformance produced no results"
+            exit 1
+          fi
+
+          RATE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_PASSED / $TOTAL_TESTS) * 100}")
+          echo "pass_rate=${RATE}" >> "$GITHUB_OUTPUT"
+          echo "passed=${TOTAL_PASSED}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL_TESTS}" >> "$GITHUB_OUTPUT"
+          echo "Aggregate: ${TOTAL_PASSED}/${TOTAL_TESTS} passed (${RATE}%)"
+
+          BASELINE=$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)
+          if [ -n "$BASELINE" ] && [ "$BASELINE" -gt 0 ]; then
+            echo "Actual: ${TOTAL_PASSED} passed | Baseline: ${BASELINE} passed"
+            if [ "$TOTAL_PASSED" -lt "$BASELINE" ]; then
+              echo "::error::Conformance regression: ${TOTAL_PASSED} < ${BASELINE} passing tests"
+              exit 1
+            else
+              echo "::notice::Conformance OK: ${TOTAL_PASSED} >= ${BASELINE} passing tests"
+            fi
+          else
+            echo "::warning::No conformance-snapshot.json baseline; skipping regression check"
+          fi
+
+      - name: Report pass rate
+        if: always()
+        run: |
+          RATE="${{ steps.aggregate.outputs.pass_rate }}"
+          PASSED="${{ steps.aggregate.outputs.passed }}"
+          TOTAL="${{ steps.aggregate.outputs.total }}"
+          [ -n "$RATE" ] || RATE="n/a"
+          [ -n "$PASSED" ] || PASSED="n/a"
+          [ -n "$TOTAL" ] || TOTAL="n/a"
+          {
+            echo "### Conformance"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            if [ "$RATE" = "n/a" ]; then
+              echo "| Conformance | $PASSED | $TOTAL | n/a |"
+            else
+              echo "| Conformance | $PASSED | $TOTAL | ${RATE}% |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload aggregated metrics
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --arg suite "conformance" \
+            --arg pass_rate "${{ steps.aggregate.outputs.pass_rate }}" \
+            --arg passed "${{ steps.aggregate.outputs.passed }}" \
+            --arg total "${{ steps.aggregate.outputs.total }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, run_id:$run_id, sha:$sha}' \
+            > .ci-metrics/conformance.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-metrics-conformance
+          path: .ci-metrics/conformance.json
+          retention-days: 14
+
+  # ─── Emit: 10 parallel shards ─────────────────────────────────────────────
+  emit:
+    name: "Emit (${{ matrix.shard }}/10)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [changes, test-build, prep-node]
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    if: >-
+      needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download test binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .target/dist-fast/
+
+      - name: Make tsz executable
+        run: chmod +x .target/dist-fast/tsz
+
+      - name: Download node-prep (scripts + emit runner + harness)
+        uses: actions/download-artifact@v4
+        with:
+          name: node-prep
+          path: .
+
+      - name: Run emit shard
+        id: shard-results
+        env:
+          TSZ_BIN: ${{ github.workspace }}/.target/dist-fast/tsz
+        run: |
+          set -euo pipefail
+          CHUNK=1900
+          OFFSET=$(( ${{ matrix.shard }} * CHUNK ))
+
+          TMPOUT=$(mktemp)
+          CLEANOUT=$(mktemp)
+          trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
+
+          ./scripts/emit/run.sh --skip-build --max=$CHUNK --offset=$OFFSET 2>&1 | tee "$TMPOUT" || true
+          sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
+
+          JS_LINE=$(grep "Pass Rate:" "$CLEANOUT" | sed -n '1p' || true)
+          DTS_LINE=$(grep "Pass Rate:" "$CLEANOUT" | sed -n '2p' || true)
+          JS_COUNTS=$(echo "$JS_LINE" | grep -oE '\([0-9]+/[0-9]+\)' | tr -d '()' || true)
+          DTS_COUNTS=$(echo "$DTS_LINE" | grep -oE '\([0-9]+/[0-9]+\)' | tr -d '()' || true)
+          JS_P=$(echo "$JS_COUNTS" | cut -d/ -f1); JS_T=$(echo "$JS_COUNTS" | cut -d/ -f2)
+          DTS_P=$(echo "$DTS_COUNTS" | cut -d/ -f1); DTS_T=$(echo "$DTS_COUNTS" | cut -d/ -f2)
+
+          echo "js_passed=${JS_P:-0}" >> "$GITHUB_OUTPUT"
+          echo "js_total=${JS_T:-0}" >> "$GITHUB_OUTPUT"
+          echo "dts_passed=${DTS_P:-0}" >> "$GITHUB_OUTPUT"
+          echo "dts_total=${DTS_T:-0}" >> "$GITHUB_OUTPUT"
+          echo "Shard ${{ matrix.shard }}: JS ${JS_P:-0}/${JS_T:-0}, DTS ${DTS_P:-0}/${DTS_T:-0}"
+
+      - name: Save shard JSON result
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --argjson shard "${{ matrix.shard }}" \
+            --arg js_passed "${{ steps.shard-results.outputs.js_passed }}" \
+            --arg js_total "${{ steps.shard-results.outputs.js_total }}" \
+            --arg dts_passed "${{ steps.shard-results.outputs.dts_passed }}" \
+            --arg dts_total "${{ steps.shard-results.outputs.dts_total }}" \
+            '{shard:$shard, js_passed:$js_passed, js_total:$js_total, dts_passed:$dts_passed, dts_total:$dts_total}' \
+            > .ci-metrics/emit-shard-${{ matrix.shard }}.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emit-shard-${{ matrix.shard }}
+          path: .ci-metrics/emit-shard-${{ matrix.shard }}.json
+          retention-days: 1
+
+  # ─── Emit: aggregate results ──────────────────────────────────────────────
+  emit-aggregate:
+    name: Emit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [emit]
+    if: always() && needs.emit.result != 'skipped'
+    outputs:
+      js_pass_rate: ${{ steps.aggregate.outputs.js_pass_rate }}
+      js_passed: ${{ steps.aggregate.outputs.js_passed }}
+      js_total: ${{ steps.aggregate.outputs.js_total }}
+      dts_pass_rate: ${{ steps.aggregate.outputs.dts_pass_rate }}
+      dts_passed: ${{ steps.aggregate.outputs.dts_passed }}
+      dts_total: ${{ steps.aggregate.outputs.dts_total }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/emit/emit-snapshot.json
+          sparse-checkout-cone-mode: false
+
+      - name: Download all shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: emit-shard-*
+          path: .ci-metrics/
+          merge-multiple: true
+
+      - name: Aggregate shard results
+        id: aggregate
+        run: |
+          set -euo pipefail
+
+          JS_PASSED=0 JS_TOTAL=0 DTS_PASSED=0 DTS_TOTAL=0 SHARD_COUNT=0
+          mkdir -p .ci-metrics
+          for f in .ci-metrics/emit-shard-*.json; do
+            [ -f "$f" ] || continue
+            JP=$(jq -r '.js_passed' "$f"); JT=$(jq -r '.js_total' "$f")
+            DP=$(jq -r '.dts_passed' "$f"); DT=$(jq -r '.dts_total' "$f")
+            JS_PASSED=$((JS_PASSED + JP)); JS_TOTAL=$((JS_TOTAL + JT))
+            DTS_PASSED=$((DTS_PASSED + DP)); DTS_TOTAL=$((DTS_TOTAL + DT))
+            SHARD_COUNT=$((SHARD_COUNT + 1))
+            echo "  $(basename "$f"): JS ${JP}/${JT}, DTS ${DP}/${DT}"
+          done
+          echo "Received results from ${SHARD_COUNT}/10 shards"
+
+          if [ "$SHARD_COUNT" -lt 8 ]; then
+            echo "::error::Too many emit shards failed (${SHARD_COUNT}/10 reported)"
+            exit 1
+          fi
+
+          if [ "$JS_TOTAL" -eq 0 ]; then
+            echo "::error::Emit produced no JS results"
+            exit 1
+          fi
+
+          JS_RATE=$(awk "BEGIN {printf \"%.1f\", ($JS_PASSED / $JS_TOTAL) * 100}")
+          DTS_RATE=$(awk "BEGIN {printf \"%.1f\", ($DTS_PASSED / $DTS_TOTAL) * 100}")
+          echo "js_pass_rate=${JS_RATE}" >> "$GITHUB_OUTPUT"
+          echo "js_passed=${JS_PASSED}" >> "$GITHUB_OUTPUT"
+          echo "js_total=${JS_TOTAL}" >> "$GITHUB_OUTPUT"
+          echo "dts_pass_rate=${DTS_RATE}" >> "$GITHUB_OUTPUT"
+          echo "dts_passed=${DTS_PASSED}" >> "$GITHUB_OUTPUT"
+          echo "dts_total=${DTS_TOTAL}" >> "$GITHUB_OUTPUT"
+          echo "Aggregate: JS ${JS_PASSED}/${JS_TOTAL} (${JS_RATE}%), DTS ${DTS_PASSED}/${DTS_TOTAL} (${DTS_RATE}%)"
+
+          BASE_JS=$(jq -r '.summary.jsPass // 0' scripts/emit/emit-snapshot.json 2>/dev/null || echo 0)
+          BASE_DTS=$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json 2>/dev/null || echo 0)
+
+          REGRESSION=0
+          if [ -n "$BASE_JS" ] && [ "$BASE_JS" -gt 0 ] && [ "$JS_PASSED" -lt "$BASE_JS" ]; then
+            echo "::error::Emit JS regression: ${JS_PASSED} < ${BASE_JS} passing tests"
+            REGRESSION=1
+          fi
+          if [ -n "$BASE_DTS" ] && [ "$BASE_DTS" -gt 0 ] && [ "$DTS_PASSED" -lt "$BASE_DTS" ]; then
+            echo "::error::Emit DTS regression: ${DTS_PASSED} < ${BASE_DTS} passing tests"
+            REGRESSION=1
+          fi
+          [ "$REGRESSION" -eq 0 ] || exit 1
+
+      - name: Report pass rates
+        if: always()
+        run: |
+          JS_RATE="${{ steps.aggregate.outputs.js_pass_rate }}"
+          DTS_RATE="${{ steps.aggregate.outputs.dts_pass_rate }}"
+          JS_P="${{ steps.aggregate.outputs.js_passed }}"
+          JS_T="${{ steps.aggregate.outputs.js_total }}"
+          DTS_P="${{ steps.aggregate.outputs.dts_passed }}"
+          DTS_T="${{ steps.aggregate.outputs.dts_total }}"
+          {
+            echo "### Emit"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            echo "| Emit JavaScript | ${JS_P:-n/a} | ${JS_T:-n/a} | ${JS_RATE:-n/a}% |"
+            echo "| Emit Declaration | ${DTS_P:-n/a} | ${DTS_T:-n/a} | ${DTS_RATE:-n/a}% |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload aggregated metrics
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --arg suite "emit" \
+            --arg js_pass_rate "${{ steps.aggregate.outputs.js_pass_rate }}" \
+            --arg js_passed "${{ steps.aggregate.outputs.js_passed }}" \
+            --arg js_total "${{ steps.aggregate.outputs.js_total }}" \
+            --arg dts_pass_rate "${{ steps.aggregate.outputs.dts_pass_rate }}" \
+            --arg dts_passed "${{ steps.aggregate.outputs.dts_passed }}" \
+            --arg dts_total "${{ steps.aggregate.outputs.dts_total }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            '{suite:$suite, js_pass_rate:$js_pass_rate, js_passed:$js_passed, js_total:$js_total, dts_pass_rate:$dts_pass_rate, dts_passed:$dts_passed, dts_total:$dts_total, run_id:$run_id, sha:$sha}' \
+            > .ci-metrics/emit.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-metrics-emit
+          path: .ci-metrics/emit.json
+          retention-days: 14
+
+  # ─── Fourslash: 10 parallel shards ────────────────────────────────────────
+  # --shard=I/N interleaves tests (idx % N == I) so heavy language-service
+  # clusters spread across shards instead of concentrating alphabetically
+  # (prior --offset/--max behaviour left shard 7 ~3.2× heavier than shard 9).
+  fourslash:
+    name: "Fourslash (${{ matrix.shard }}/10)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [changes, test-build-server, prep-node]
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    if: >-
+      needs.changes.outputs.any_rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download tsz-server
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-server
+          path: .target/dist-fast/
+
+      - name: Prep tsz-server
+        run: |
+          chmod +x .target/dist-fast/tsz-server
+          mkdir -p .target/release
+          ln -sf "$PWD/.target/dist-fast/tsz-server" .target/release/tsz-server
+
+      - name: Download node-prep (harness + node_modules)
+        uses: actions/download-artifact@v4
+        with:
+          name: node-prep
+          path: .
+
+      - name: Run fourslash shard
+        id: shard-results
+        run: |
+          set -euo pipefail
+
+          TMPOUT=$(mktemp)
+          CLEANOUT=$(mktemp)
+          trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
+
+          # --skip-cargo-build: use the downloaded tsz-server binary.
+          # --skip-ts-build:    harness already compiled in prep-node.
+          # workers=2 / 512 MB limit keeps us under the 16 GB runner cap.
+          ./scripts/fourslash/run-fourslash.sh \
+            --skip-cargo-build \
+            --skip-ts-build \
+            --shard=${{ matrix.shard }}/10 \
+            --workers=2 --memory-limit=512 \
+            2>&1 | tee "$TMPOUT" || true
+          sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
+
+          RESULTS_LINE=$(grep "^Results:" "$CLEANOUT" | tail -1 || true)
+          PASSED=$(echo "$RESULTS_LINE" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)
+          RAN=$(echo "$RESULTS_LINE" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)
+
+          echo "passed=${PASSED:-0}" >> "$GITHUB_OUTPUT"
+          echo "total=${RAN:-0}" >> "$GITHUB_OUTPUT"
+          echo "Shard ${{ matrix.shard }}: ${PASSED:-0}/${RAN:-0} passed"
+
+      - name: Save shard JSON result
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --argjson shard "${{ matrix.shard }}" \
+            --arg passed "${{ steps.shard-results.outputs.passed }}" \
+            --arg total "${{ steps.shard-results.outputs.total }}" \
+            '{shard:$shard, passed:$passed, total:$total}' \
+            > .ci-metrics/fourslash-shard-${{ matrix.shard }}.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fourslash-shard-${{ matrix.shard }}
+          path: .ci-metrics/fourslash-shard-${{ matrix.shard }}.json
+          retention-days: 1
+
+  # ─── Fourslash: aggregate results ─────────────────────────────────────────
+  fourslash-aggregate:
+    name: Fourslash Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [fourslash]
+    if: always() && needs.fourslash.result != 'skipped'
+    outputs:
+      pass_rate: ${{ steps.aggregate.outputs.pass_rate }}
+      passed: ${{ steps.aggregate.outputs.passed }}
+      total: ${{ steps.aggregate.outputs.total }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/fourslash/fourslash-snapshot.json
+          sparse-checkout-cone-mode: false
+
+      - name: Download all shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fourslash-shard-*
+          path: .ci-metrics/
+          merge-multiple: true
+
+      - name: Aggregate shard results
+        id: aggregate
+        run: |
+          set -euo pipefail
+
+          TOTAL_PASSED=0 TOTAL_TESTS=0 SHARD_COUNT=0
+          mkdir -p .ci-metrics
+          for f in .ci-metrics/fourslash-shard-*.json; do
+            [ -f "$f" ] || continue
+            P=$(jq -r '.passed' "$f"); T=$(jq -r '.total' "$f")
+            TOTAL_PASSED=$((TOTAL_PASSED + P)); TOTAL_TESTS=$((TOTAL_TESTS + T))
+            SHARD_COUNT=$((SHARD_COUNT + 1))
+            echo "  $(basename "$f"): ${P}/${T}"
+          done
+          echo "Received results from ${SHARD_COUNT}/10 shards"
+
+          if [ "$SHARD_COUNT" -lt 8 ]; then
+            echo "::error::Too many fourslash shards failed (${SHARD_COUNT}/10 reported)"
+            exit 1
+          fi
+
+          if [ "$TOTAL_TESTS" -eq 0 ]; then
+            echo "::error::Fourslash produced no results"
+            exit 1
+          fi
+
+          RATE=$(awk "BEGIN {printf \"%.1f\", ($TOTAL_PASSED / $TOTAL_TESTS) * 100}")
+          echo "pass_rate=${RATE}" >> "$GITHUB_OUTPUT"
+          echo "passed=${TOTAL_PASSED}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL_TESTS}" >> "$GITHUB_OUTPUT"
+          echo "Aggregate: ${TOTAL_PASSED}/${TOTAL_TESTS} passed (${RATE}%)"
+
+          BASELINE=$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json 2>/dev/null || echo 0)
+          if [ -n "$BASELINE" ] && [ "$BASELINE" -gt 0 ]; then
+            if [ "$TOTAL_PASSED" -lt "$BASELINE" ]; then
+              echo "::error::Fourslash regression: ${TOTAL_PASSED} < ${BASELINE} passing tests"
+              exit 1
+            else
+              echo "::notice::Fourslash OK: ${TOTAL_PASSED} >= ${BASELINE} passing tests"
+            fi
+          fi
+
+      - name: Report pass rate
+        if: always()
+        run: |
+          RATE="${{ steps.aggregate.outputs.pass_rate }}"
+          PASSED="${{ steps.aggregate.outputs.passed }}"
+          TOTAL="${{ steps.aggregate.outputs.total }}"
+          {
+            echo "### Fourslash"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            echo "| Fourslash | ${PASSED:-n/a} | ${TOTAL:-n/a} | ${RATE:-n/a}% |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload aggregated metrics
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --arg suite "fourslash" \
+            --arg pass_rate "${{ steps.aggregate.outputs.pass_rate }}" \
+            --arg passed "${{ steps.aggregate.outputs.passed }}" \
+            --arg total "${{ steps.aggregate.outputs.total }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, run_id:$run_id, sha:$sha}' \
+            > .ci-metrics/fourslash.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-metrics-fourslash
+          path: .ci-metrics/fourslash.json
+          retention-days: 14
+
+  # ─── CI Summary (single required status check) ────────────────────────────
+  # This job fails if any upstream lane failed. Branch protection should
+  # require only this one check; adding/removing jobs above doesn't force
+  # a ruleset update.
+  summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - lint
+      - test-foundation
+      - test-binder
+      - test-solver
+      - test-checker
+      - test-emitter
+      - test-lsp
+      - test-root
+      - wasm-build
+      - conformance-aggregate
+      - emit-aggregate
+      - fourslash-aggregate
+    steps:
+      - name: Publish pass-rate summary
+        run: |
+          conf_rate="${{ needs.conformance-aggregate.outputs.pass_rate }}"
+          conf_passed="${{ needs.conformance-aggregate.outputs.passed }}"
+          conf_total="${{ needs.conformance-aggregate.outputs.total }}"
+
+          emit_js_rate="${{ needs.emit-aggregate.outputs.js_pass_rate }}"
+          emit_js_passed="${{ needs.emit-aggregate.outputs.js_passed }}"
+          emit_js_total="${{ needs.emit-aggregate.outputs.js_total }}"
+          emit_dts_rate="${{ needs.emit-aggregate.outputs.dts_pass_rate }}"
+          emit_dts_passed="${{ needs.emit-aggregate.outputs.dts_passed }}"
+          emit_dts_total="${{ needs.emit-aggregate.outputs.dts_total }}"
+
+          fs_rate="${{ needs.fourslash-aggregate.outputs.pass_rate }}"
+          fs_passed="${{ needs.fourslash-aggregate.outputs.passed }}"
+          fs_total="${{ needs.fourslash-aggregate.outputs.total }}"
+
+          format_row() {
+            local suite="$1" passed="$2" total="$3" rate="$4"
+            [ -n "$passed" ] || passed="n/a"
+            [ -n "$total" ] || total="n/a"
+            if [ -z "$rate" ]; then
+              echo "| $suite | $passed | $total | n/a |"
+            else
+              echo "| $suite | $passed | $total | ${rate}% |"
+            fi
+          }
+
+          {
+            echo "## Pass-rate overview"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            format_row "Conformance" "$conf_passed" "$conf_total" "$conf_rate"
+            format_row "Emit JavaScript" "$emit_js_passed" "$emit_js_total" "$emit_js_rate"
+            format_row "Emit Declaration" "$emit_dts_passed" "$emit_dts_total" "$emit_dts_rate"
+            format_row "Fourslash" "$fs_passed" "$fs_total" "$fs_rate"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check results
+        run: |
+          check_job() {
+            local name="$1" result="$2"
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "::error::$name: $result"
+              exit 1
+            fi
+          }
+
+          check_job "Lint" "${{ needs.lint.result }}"
+          check_job "Foundation Tests" "${{ needs.test-foundation.result }}"
+          check_job "Binder Tests" "${{ needs.test-binder.result }}"
+          check_job "Solver Tests" "${{ needs.test-solver.result }}"
+          check_job "Checker Tests" "${{ needs.test-checker.result }}"
+          check_job "Emitter Tests" "${{ needs.test-emitter.result }}"
+          check_job "LSP Tests" "${{ needs.test-lsp.result }}"
+          check_job "Root Tests" "${{ needs.test-root.result }}"
+          check_job "WASM Build" "${{ needs.wasm-build.result }}"
+          check_job "Conformance" "${{ needs.conformance-aggregate.result }}"
+          check_job "Emit" "${{ needs.emit-aggregate.result }}"
+          check_job "Fourslash" "${{ needs.fourslash-aggregate.result }}"
+
+          echo "All critical jobs passed (or were skipped for a docs-only change)."
