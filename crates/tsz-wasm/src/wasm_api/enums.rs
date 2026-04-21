@@ -149,6 +149,8 @@ pub enum ScriptTarget {
     ES2021 = 8,
     ES2022 = 9,
     ES2023 = 10,
+    ES2024 = 11,
+    ES2025 = 12,
     #[default]
     ESNext = 99,
     JSON = 100,
@@ -170,6 +172,8 @@ pub enum ModuleKind {
     ES2022 = 7,
     ESNext = 99,
     Node16 = 100,
+    Node18 = 101,
+    Node20 = 102,
     NodeNext = 199,
     Preserve = 200,
 }

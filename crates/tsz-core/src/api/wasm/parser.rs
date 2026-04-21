@@ -355,32 +355,8 @@ impl Parser {
     #[wasm_bindgen(js_name = generateTransforms)]
     pub fn generate_transforms(&self, target: u32, module: u32) -> WasmTransformContext {
         let options = PrinterOptions {
-            target: match target {
-                0 => ScriptTarget::ES3,
-                1 => ScriptTarget::ES5,
-                2 => ScriptTarget::ES2015,
-                3 => ScriptTarget::ES2016,
-                4 => ScriptTarget::ES2017,
-                5 => ScriptTarget::ES2018,
-                6 => ScriptTarget::ES2019,
-                7 => ScriptTarget::ES2020,
-                8 => ScriptTarget::ES2021,
-                9 => ScriptTarget::ES2022,
-                _ => ScriptTarget::ESNext,
-            },
-            module: match module {
-                1 => ModuleKind::CommonJS,
-                2 => ModuleKind::AMD,
-                3 => ModuleKind::UMD,
-                4 => ModuleKind::System,
-                5 => ModuleKind::ES2015,
-                6 => ModuleKind::ES2020,
-                7 => ModuleKind::ES2022,
-                99 => ModuleKind::ESNext,
-                100 => ModuleKind::Node16,
-                199 => ModuleKind::NodeNext,
-                _ => ModuleKind::None,
-            },
+            target: ScriptTarget::from_ts_numeric(target).unwrap_or(ScriptTarget::ESNext),
+            module: ModuleKind::from_ts_numeric(module).unwrap_or(ModuleKind::None),
             ..Default::default()
         };
 

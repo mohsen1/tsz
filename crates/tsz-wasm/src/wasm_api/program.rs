@@ -67,22 +67,10 @@ pub struct TsCompilerOptions {
 }
 
 impl TsCompilerOptions {
-    const fn resolve_module(&self) -> tsz::common::ModuleKind {
-        match self.module {
-            Some(1) => tsz::common::ModuleKind::CommonJS,
-            Some(2) => tsz::common::ModuleKind::AMD,
-            Some(3) => tsz::common::ModuleKind::UMD,
-            Some(4) => tsz::common::ModuleKind::System,
-            Some(5) => tsz::common::ModuleKind::ES2015,
-            Some(6) => tsz::common::ModuleKind::ES2020,
-            Some(7) => tsz::common::ModuleKind::ES2022,
-            Some(99) => tsz::common::ModuleKind::ESNext,
-            Some(100) => tsz::common::ModuleKind::Node16,
-            Some(101) => tsz::common::ModuleKind::Node18,
-            Some(102) => tsz::common::ModuleKind::Node20,
-            Some(199) => tsz::common::ModuleKind::NodeNext,
-            _ => tsz::common::ModuleKind::None,
-        }
+    fn resolve_module(&self) -> tsz::common::ModuleKind {
+        self.module
+            .and_then(|module| tsz::common::ModuleKind::from_ts_numeric(u32::from(module)))
+            .unwrap_or(tsz::common::ModuleKind::None)
     }
 
     /// Convert to internal `CheckerOptions`
@@ -533,19 +521,14 @@ impl TsProgram {
         let mut emitted_files: Vec<serde_json::Value> = Vec::new();
 
         // Determine target and module from options
-        let target = match self.options.target.unwrap_or(1) {
-            0 => tsz::emitter::ScriptTarget::ES3,
-            2 => tsz::emitter::ScriptTarget::ES2015,
-            99 => tsz::emitter::ScriptTarget::ESNext,
-            _ => tsz::emitter::ScriptTarget::ES5,
-        };
+        let target = tsz::emitter::ScriptTarget::from_ts_numeric(u32::from(
+            self.options.target.unwrap_or(1),
+        ))
+        .unwrap_or(tsz::emitter::ScriptTarget::ES5);
 
-        let module = match self.options.module.unwrap_or(0) {
-            1 => tsz::emitter::ModuleKind::CommonJS,
-            6 => tsz::emitter::ModuleKind::ES2015,
-            99 => tsz::emitter::ModuleKind::ESNext,
-            _ => tsz::emitter::ModuleKind::None,
-        };
+        let module =
+            tsz::emitter::ModuleKind::from_ts_numeric(u32::from(self.options.module.unwrap_or(0)))
+                .unwrap_or(tsz::emitter::ModuleKind::None);
 
         // Emit each file
         for (idx, bound_file) in merged.files.iter().enumerate() {
@@ -609,19 +592,15 @@ impl TsProgram {
                     ""
                 };
 
-                let target = match self.options.target.unwrap_or(1) {
-                    0 => tsz::emitter::ScriptTarget::ES3,
-                    2 => tsz::emitter::ScriptTarget::ES2015,
-                    99 => tsz::emitter::ScriptTarget::ESNext,
-                    _ => tsz::emitter::ScriptTarget::ES5,
-                };
+                let target = tsz::emitter::ScriptTarget::from_ts_numeric(u32::from(
+                    self.options.target.unwrap_or(1),
+                ))
+                .unwrap_or(tsz::emitter::ScriptTarget::ES5);
 
-                let module = match self.options.module.unwrap_or(0) {
-                    1 => tsz::emitter::ModuleKind::CommonJS,
-                    6 => tsz::emitter::ModuleKind::ES2015,
-                    99 => tsz::emitter::ModuleKind::ESNext,
-                    _ => tsz::emitter::ModuleKind::None,
-                };
+                let module = tsz::emitter::ModuleKind::from_ts_numeric(u32::from(
+                    self.options.module.unwrap_or(0),
+                ))
+                .unwrap_or(tsz::emitter::ModuleKind::None);
 
                 return super::emit::emit_file(
                     &bound_file.arena,

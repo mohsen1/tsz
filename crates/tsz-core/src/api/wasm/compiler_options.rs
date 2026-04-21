@@ -35,11 +35,11 @@ pub(crate) struct CompilerOptions {
     no_implicit_this: Option<bool>,
 
     /// Specify ECMAScript target version (accepts string like "ES5" or numeric).
-    #[serde(default, deserialize_with = "deserialize_target_or_module")]
+    #[serde(default, deserialize_with = "deserialize_target")]
     target: Option<u32>,
 
     /// Specify module code generation mode (accepts string like `ESNext` or numeric).
-    #[serde(default, deserialize_with = "deserialize_target_or_module")]
+    #[serde(default, deserialize_with = "deserialize_module")]
     module: Option<u32>,
 
     /// Interpret optional property types as written, rather than adding 'undefined'.
@@ -123,15 +123,40 @@ where
     deserializer.deserialize_any(BoolOptionVisitor)
 }
 
+#[derive(Clone, Copy)]
+enum WasmCompilerOptionKind {
+    Target,
+    Module,
+}
+
+fn deserialize_target<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_target_or_module(deserializer, WasmCompilerOptionKind::Target)
+}
+
+fn deserialize_module<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_target_or_module(deserializer, WasmCompilerOptionKind::Module)
+}
+
 /// Deserialize target/module values that can be either strings or numbers.
 /// TypeScript test files often use strings like "ES5", "ES2015", "CommonJS", etc.
-fn deserialize_target_or_module<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+fn deserialize_target_or_module<'de, D>(
+    deserializer: D,
+    kind: WasmCompilerOptionKind,
+) -> Result<Option<u32>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     use serde::de::{self, Visitor};
 
-    struct TargetOrModuleVisitor;
+    struct TargetOrModuleVisitor {
+        kind: WasmCompilerOptionKind,
+    }
 
     impl<'de> Visitor<'de> for TargetOrModuleVisitor {
         type Value = Option<u32>;
@@ -172,33 +197,17 @@ where
         where
             E: de::Error,
         {
-            // Parse string values to their TypeScript enum equivalents
-            // Note: For shared values like ES2015/ES6, we use the ScriptTarget value
-            // because both target and module use the same match arm
-            let result = match value.to_uppercase().as_str() {
-                // ScriptTarget values (0-10, 99) and ModuleKind-specific values
-                // Combined arms where ScriptTarget and ModuleKind share the same numeric value
-                "ES3" | "NONE" => 0,
-                "ES5" | "COMMONJS" => 1,
-                "ES2015" | "ES6" | "AMD" => 2,
-                "ES2016" | "UMD" => 3,
-                "ES2017" | "SYSTEM" => 4,
-                "ES2018" => 5,
-                "ES2019" => 6,
-                "ES2020" => 7,
-                "ES2021" => 8,
-                "ES2022" => 9,
-                "ES2023" => 10,
-                "ESNEXT" => 99,
-                "NODE16" => 100,
-                "NODENEXT" => 199,
-                _ => return Ok(None), // Unknown value, treat as unset
+            let result = match self.kind {
+                WasmCompilerOptionKind::Target => crate::common::ScriptTarget::from_ts_str(value)
+                    .map(|target| u32::from(target.ts_numeric_value())),
+                WasmCompilerOptionKind::Module => crate::common::ModuleKind::from_ts_str(value)
+                    .map(crate::common::ModuleKind::ts_numeric_value),
             };
-            Ok(Some(result))
+            Ok(result)
         }
     }
 
-    deserializer.deserialize_any(TargetOrModuleVisitor)
+    deserializer.deserialize_any(TargetOrModuleVisitor { kind })
 }
 
 impl CompilerOptions {
@@ -264,20 +273,10 @@ impl CompilerOptions {
         }
     }
 
-    const fn resolve_module(&self) -> crate::common::ModuleKind {
-        match self.module {
-            Some(1) => crate::common::ModuleKind::CommonJS,
-            Some(2) => crate::common::ModuleKind::AMD,
-            Some(3) => crate::common::ModuleKind::UMD,
-            Some(4) => crate::common::ModuleKind::System,
-            Some(5) => crate::common::ModuleKind::ES2015,
-            Some(6) => crate::common::ModuleKind::ES2020,
-            Some(7) => crate::common::ModuleKind::ES2022,
-            Some(99) => crate::common::ModuleKind::ESNext,
-            Some(100) => crate::common::ModuleKind::Node16,
-            Some(199) => crate::common::ModuleKind::NodeNext,
-            _ => crate::common::ModuleKind::None,
-        }
+    fn resolve_module(&self) -> crate::common::ModuleKind {
+        self.module
+            .and_then(crate::common::ModuleKind::from_ts_numeric)
+            .unwrap_or(crate::common::ModuleKind::None)
     }
 
     /// Convert to `CheckerOptions` for type checking.
@@ -357,5 +356,18 @@ mod tests {
     fn parse_compiler_options_json_accepts_valid_input() {
         let parsed = parse_compiler_options_json(r#"{"strict":true,"module":99}"#);
         assert!(parsed.is_ok(), "valid options JSON should parse");
+    }
+
+    #[test]
+    fn parse_compiler_options_json_uses_separate_target_and_module_domains() {
+        let parsed =
+            parse_compiler_options_json(r#"{"target":"ES2015","module":"ES2015"}"#).unwrap();
+
+        assert_eq!(parsed.target, Some(2));
+        assert_eq!(parsed.module, Some(5));
+        assert_eq!(
+            parsed.to_checker_options().module,
+            crate::common::ModuleKind::ES2015
+        );
     }
 }

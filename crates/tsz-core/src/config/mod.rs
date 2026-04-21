@@ -455,6 +455,102 @@ pub enum ModuleResolutionKind {
     Bundler,
 }
 
+impl ModuleResolutionKind {
+    /// Parse a TypeScript compiler option `moduleResolution` value.
+    ///
+    /// This accepts comma-separated directive values, taking the first entry to
+    /// match multi-target conformance directives.
+    #[must_use]
+    pub fn from_ts_str(value: &str) -> Option<Self> {
+        let normalized = normalize_option(value.split(',').next().unwrap_or(value).trim());
+        match normalized.as_str() {
+            "classic" => Some(Self::Classic),
+            "node" | "node10" => Some(Self::Node),
+            "node16" => Some(Self::Node16),
+            "nodenext" => Some(Self::NodeNext),
+            "bundler" => Some(Self::Bundler),
+            _ => None,
+        }
+    }
+
+    /// Return a canonical TypeScript option spelling.
+    #[must_use]
+    pub const fn as_ts_str(self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Node => "node10",
+            Self::Node16 => "node16",
+            Self::NodeNext => "nodenext",
+            Self::Bundler => "bundler",
+        }
+    }
+
+    #[must_use]
+    pub const fn is_modern(self) -> bool {
+        matches!(self, Self::Node16 | Self::NodeNext | Self::Bundler)
+    }
+}
+
+/// Default module kind used when `module` is omitted.
+///
+/// The default differs depending on whether `target` was explicitly supplied,
+/// matching the existing tsc-parity behavior used by config resolution.
+#[must_use]
+pub const fn default_module_kind_for_target(
+    target: ScriptTarget,
+    target_explicitly_set: bool,
+) -> ModuleKind {
+    if !target_explicitly_set {
+        return ModuleKind::ESNext;
+    }
+
+    match target {
+        ScriptTarget::ES3 | ScriptTarget::ES5 => ModuleKind::CommonJS,
+        ScriptTarget::ES2015
+        | ScriptTarget::ES2016
+        | ScriptTarget::ES2017
+        | ScriptTarget::ES2018
+        | ScriptTarget::ES2019 => ModuleKind::ES2015,
+        ScriptTarget::ES2020 | ScriptTarget::ES2021 => ModuleKind::ES2020,
+        ScriptTarget::ES2022
+        | ScriptTarget::ES2023
+        | ScriptTarget::ES2024
+        | ScriptTarget::ES2025 => ModuleKind::ES2022,
+        ScriptTarget::ESNext => ModuleKind::ESNext,
+    }
+}
+
+/// Default `moduleResolution` used when it is omitted for a module kind.
+#[must_use]
+pub const fn default_module_resolution_for_module(module: ModuleKind) -> ModuleResolutionKind {
+    match module {
+        ModuleKind::None | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
+            ModuleResolutionKind::Classic
+        }
+        ModuleKind::NodeNext => ModuleResolutionKind::NodeNext,
+        ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 => {
+            ModuleResolutionKind::Node16
+        }
+        ModuleKind::CommonJS
+        | ModuleKind::ES2015
+        | ModuleKind::ES2020
+        | ModuleKind::ES2022
+        | ModuleKind::ESNext
+        | ModuleKind::Preserve => ModuleResolutionKind::Bundler,
+    }
+}
+
+/// Default `moduleDetection` shown by tsc-style config output for a module kind.
+#[must_use]
+pub const fn default_module_detection_for_module(module: ModuleKind) -> &'static str {
+    match module {
+        ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 | ModuleKind::NodeNext => {
+            "force"
+        }
+        _ => "auto",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PathMapping {
     pub pattern: String,
@@ -493,23 +589,7 @@ impl ResolvedCompilerOptions {
             return resolution;
         }
 
-        // Match tsc 6.0's computed moduleResolution defaults:
-        // None/AMD/UMD/System → Classic (deprecated module kinds)
-        // CommonJS → Bundler (changed in tsc 6.0, was Node/node10)
-        // ES2015/ES2020/ES2022/ESNext/Preserve → Bundler (changed in tsc 6.0, was Classic)
-        // NodeNext → NodeNext
-        // Node16/Node18/Node20 → Node16
-        match self.printer.module {
-            ModuleKind::None | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
-                ModuleResolutionKind::Classic
-            }
-            ModuleKind::NodeNext => ModuleResolutionKind::NodeNext,
-            ModuleKind::Node16 | ModuleKind::Node18 | ModuleKind::Node20 => {
-                ModuleResolutionKind::Node16
-            }
-            // tsc 6.0: ES module kinds and CommonJS default to Bundler resolution
-            _ => ModuleResolutionKind::Bundler,
-        }
+        default_module_resolution_for_module(self.printer.module)
     }
 }
 
@@ -544,31 +624,8 @@ pub fn resolve_compiler_options(
         resolved.printer.module = kind;
         resolved.checker.module = kind;
     } else {
-        // Match our tsc parity defaults when --module is omitted:
-        // target omitted -> ESNext
-        // ES3 / ES5 -> CommonJS
-        // ES2015..ES2019 -> ES2015
-        // ES2020..ES2021 -> ES2020
-        // ES2022..ES2025 -> ES2022
-        // ESNext -> ESNext
-        let default_module = if options.target.is_some() {
-            match resolved.printer.target {
-                ScriptTarget::ES3 | ScriptTarget::ES5 => ModuleKind::CommonJS,
-                ScriptTarget::ES2015
-                | ScriptTarget::ES2016
-                | ScriptTarget::ES2017
-                | ScriptTarget::ES2018
-                | ScriptTarget::ES2019 => ModuleKind::ES2015,
-                ScriptTarget::ES2020 | ScriptTarget::ES2021 => ModuleKind::ES2020,
-                ScriptTarget::ES2022
-                | ScriptTarget::ES2023
-                | ScriptTarget::ES2024
-                | ScriptTarget::ES2025 => ModuleKind::ES2022,
-                ScriptTarget::ESNext => ModuleKind::ESNext,
-            }
-        } else {
-            ModuleKind::ESNext
-        };
+        let default_module =
+            default_module_kind_for_target(resolved.printer.target, options.target.is_some());
         resolved.printer.module = default_module;
         resolved.checker.module = default_module;
     }
@@ -3238,68 +3295,18 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
 }
 
 fn parse_script_target(value: &str) -> Result<ScriptTarget> {
-    // Handle comma-separated target values (e.g., "ES5, ES2015" from multi-target
-    // test directives) by taking only the first value, matching tsc behavior.
-    let first = value.split(',').next().unwrap_or(value);
-    let normalized = normalize_option(first);
-    let target = match normalized.as_str() {
-        "es3" => ScriptTarget::ES3,
-        "es5" => ScriptTarget::ES5,
-        "es6" | "es2015" => ScriptTarget::ES2015,
-        "es2016" => ScriptTarget::ES2016,
-        "es2017" => ScriptTarget::ES2017,
-        "es2018" => ScriptTarget::ES2018,
-        "es2019" => ScriptTarget::ES2019,
-        "es2020" => ScriptTarget::ES2020,
-        "es2021" => ScriptTarget::ES2021,
-        "es2022" => ScriptTarget::ES2022,
-        "es2023" => ScriptTarget::ES2023,
-        "es2024" => ScriptTarget::ES2024,
-        "es2025" => ScriptTarget::ES2025,
-        "esnext" => ScriptTarget::ESNext,
-        _ => bail!("unsupported compilerOptions.target '{value}'"),
-    };
-
-    Ok(target)
+    ScriptTarget::from_ts_str(value)
+        .ok_or_else(|| anyhow!("unsupported compilerOptions.target '{value}'"))
 }
 
 fn parse_module_kind(value: &str) -> Result<ModuleKind> {
-    let cleaned = value.split(',').next().unwrap_or(value).trim();
-    let normalized = normalize_option(cleaned);
-    let module = match normalized.as_str() {
-        "none" => ModuleKind::None,
-        "commonjs" => ModuleKind::CommonJS,
-        "amd" => ModuleKind::AMD,
-        "umd" => ModuleKind::UMD,
-        "system" => ModuleKind::System,
-        "es6" | "es2015" => ModuleKind::ES2015,
-        "es2020" => ModuleKind::ES2020,
-        "es2022" => ModuleKind::ES2022,
-        "esnext" => ModuleKind::ESNext,
-        "node16" => ModuleKind::Node16,
-        "node18" => ModuleKind::Node18,
-        "node20" => ModuleKind::Node20,
-        "nodenext" => ModuleKind::NodeNext,
-        "preserve" => ModuleKind::Preserve,
-        _ => bail!("unsupported compilerOptions.module '{value}'"),
-    };
-
-    Ok(module)
+    ModuleKind::from_ts_str(value)
+        .ok_or_else(|| anyhow!("unsupported compilerOptions.module '{value}'"))
 }
 
 fn parse_module_resolution(value: &str) -> Result<ModuleResolutionKind> {
-    let cleaned = value.split(',').next().unwrap_or(value).trim();
-    let normalized = normalize_option(cleaned);
-    let resolution = match normalized.as_str() {
-        "classic" => ModuleResolutionKind::Classic,
-        "node" | "node10" => ModuleResolutionKind::Node,
-        "node16" => ModuleResolutionKind::Node16,
-        "nodenext" => ModuleResolutionKind::NodeNext,
-        "bundler" => ModuleResolutionKind::Bundler,
-        _ => bail!("unsupported compilerOptions.moduleResolution '{value}'"),
-    };
-
-    Ok(resolution)
+    ModuleResolutionKind::from_ts_str(value)
+        .ok_or_else(|| anyhow!("unsupported compilerOptions.moduleResolution '{value}'"))
 }
 
 fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
@@ -4383,6 +4390,46 @@ mod tests {
         assert_eq!(
             resolved.module_resolution,
             Some(ModuleResolutionKind::Node16)
+        );
+    }
+
+    #[test]
+    fn test_shared_module_defaults_cover_targets_and_resolution() {
+        assert_eq!(
+            default_module_kind_for_target(ScriptTarget::ES5, true),
+            ModuleKind::CommonJS
+        );
+        assert_eq!(
+            default_module_kind_for_target(ScriptTarget::ES2019, true),
+            ModuleKind::ES2015
+        );
+        assert_eq!(
+            default_module_kind_for_target(ScriptTarget::ES2021, true),
+            ModuleKind::ES2020
+        );
+        assert_eq!(
+            default_module_kind_for_target(ScriptTarget::ES2025, true),
+            ModuleKind::ES2022
+        );
+        assert_eq!(
+            default_module_kind_for_target(ScriptTarget::ES2025, false),
+            ModuleKind::ESNext
+        );
+        assert_eq!(
+            default_module_resolution_for_module(ModuleKind::System),
+            ModuleResolutionKind::Classic
+        );
+        assert_eq!(
+            default_module_resolution_for_module(ModuleKind::CommonJS),
+            ModuleResolutionKind::Bundler
+        );
+        assert_eq!(
+            default_module_resolution_for_module(ModuleKind::Node20),
+            ModuleResolutionKind::Node16
+        );
+        assert_eq!(
+            default_module_resolution_for_module(ModuleKind::NodeNext),
+            ModuleResolutionKind::NodeNext
         );
     }
 
