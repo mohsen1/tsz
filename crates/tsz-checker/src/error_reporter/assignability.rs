@@ -1431,12 +1431,21 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
                 )
             } else {
-                let source_name = if src_str.starts_with("typeof ") {
+                let source_generic_base = src_str.split_once('<').map(|(base, _)| base);
+                let target_generic_base = tgt_str.split_once('<').map(|(base, _)| base);
+                let preserve_generic_nominal_pair = src_str.contains('<')
+                    && tgt_str.contains('<')
+                    && authoritative_src == authoritative_tgt
+                    && source_generic_base == target_generic_base
+                    && authoritative_src.as_deref() == source_generic_base;
+                let source_name = if src_str.starts_with("typeof ") || preserve_generic_nominal_pair
+                {
                     src_str.as_str()
                 } else {
                     authoritative_src.as_deref().unwrap_or(&src_str)
                 };
-                let target_name = if tgt_str.starts_with("typeof ") {
+                let target_name = if tgt_str.starts_with("typeof ") || preserve_generic_nominal_pair
+                {
                     tgt_str.as_str()
                 } else {
                     authoritative_tgt.as_deref().unwrap_or(&tgt_str)

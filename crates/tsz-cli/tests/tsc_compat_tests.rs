@@ -203,6 +203,69 @@ fn normalize_output(s: &str) -> String {
     stripped.replace("\r\n", "\n")
 }
 
+#[test]
+fn generic_private_class_assignment_preserves_type_arguments_in_cli_output() {
+    let temp = TempDir::new("generic_private_class_assignment").expect("temp dir");
+    let source = r#"
+class C<T> {
+    #foo: T;
+    #method(): T { return this.#foo; }
+    get #prop(): T { return this.#foo; }
+    set #prop(value: T) { this.#foo = value; }
+
+    bar(x: C<T>) { return x.#foo; }
+    bar2(x: C<T>) { return x.#method(); }
+    bar3(x: C<T>) { return x.#prop; }
+
+    baz(x: C<number>) { return x.#foo; }
+    baz2(x: C<number>) { return x.#method; }
+    baz3(x: C<number>) { return x.#prop; }
+
+    quux(x: C<string>) { return x.#foo; }
+    quux2(x: C<string>) { return x.#method; }
+    quux3(x: C<string>) { return x.#prop; }
+}
+
+declare let a: C<number>;
+declare let b: C<string>;
+a.#foo;
+a.#method;
+a.#prop;
+a = b;
+b = a;
+"#;
+    write_file(&temp.path.join("test.ts"), source);
+
+    let (_, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--pretty",
+            "false",
+            "--noEmit",
+            "--strict",
+            "--target",
+            "es6",
+            "--strictPropertyInitialization",
+            "false",
+            "test.ts",
+        ],
+    )
+    .expect("tsz should run");
+
+    assert!(
+        output.contains("Type 'C<string>' is not assignable to type 'C<number>'."),
+        "expected C<string> -> C<number> display in CLI output, got:\n{output}"
+    );
+    assert!(
+        output.contains("Type 'C<number>' is not assignable to type 'C<string>'."),
+        "expected C<number> -> C<string> display in CLI output, got:\n{output}"
+    );
+    assert!(
+        !output.contains("Type 'C' is not assignable to type 'C'."),
+        "generic class CLI diagnostic should not erase type arguments, got:\n{output}"
+    );
+}
+
 /// Strip ANSI escape sequences from a string.
 fn strip_ansi(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
