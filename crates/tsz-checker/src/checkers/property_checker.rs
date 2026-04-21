@@ -653,17 +653,80 @@ impl<'a> CheckerState<'a> {
     /// Find accessor visibility levels in a class hierarchy for divergent get/set.
     /// Returns (`getter_level`, `setter_level`, `declaring_class_idx`) if the property
     /// has accessors with different visibility levels.
-    const fn find_accessor_levels_in_hierarchy(
+    fn find_accessor_levels_in_hierarchy(
         &mut self,
-        _class_idx: NodeIndex,
-        _property_name: &str,
-        _is_static: bool,
+        class_idx: NodeIndex,
+        property_name: &str,
+        is_static: bool,
     ) -> Option<(
         Option<MemberAccessLevel>,
         Option<MemberAccessLevel>,
         NodeIndex,
     )> {
-        // TODO: Implement accessor level checking across class hierarchy
+        use rustc_hash::FxHashSet;
+
+        let mut current = class_idx;
+        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
+
+        while visited.insert(current) {
+            let Some(class_node) = self.ctx.arena.get(current) else {
+                return None;
+            };
+            let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+                return None;
+            };
+
+            let mut getter_seen = false;
+            let mut setter_seen = false;
+            let mut getter_level = None;
+            let mut setter_level = None;
+
+            for &member_idx in &class_data.members.nodes {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind != syntax_kind_ext::GET_ACCESSOR
+                    && member_node.kind != syntax_kind_ext::SET_ACCESSOR
+                {
+                    continue;
+                }
+
+                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                    continue;
+                };
+                if self.has_static_modifier(&accessor.modifiers) != is_static {
+                    continue;
+                }
+                let Some(accessor_name) = self.get_property_name(accessor.name) else {
+                    continue;
+                };
+                if accessor_name != property_name {
+                    continue;
+                }
+
+                let level = if self.is_private_identifier_name(accessor.name) {
+                    Some(MemberAccessLevel::Private)
+                } else {
+                    self.member_access_level_from_modifiers(&accessor.modifiers)
+                        .or_else(|| self.jsdoc_access_level(member_idx))
+                };
+
+                if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    getter_seen = true;
+                    getter_level = level;
+                } else {
+                    setter_seen = true;
+                    setter_level = level;
+                }
+            }
+
+            if getter_seen && setter_seen {
+                return Some((getter_level, setter_level, current));
+            }
+
+            current = self.get_base_class_idx(current)?;
+        }
+
         None
     }
 
@@ -1253,6 +1316,56 @@ mod tests {
         assert!(!has_code(&diagnostics, 2339));
         assert!(!has_code(&diagnostics, 2445));
         assert!(!has_code(&diagnostics, 2341));
+    }
+
+    #[test]
+    fn divergent_accessor_public_get_private_set_checks_write_visibility() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                get value() { return 0; }
+                private set value(v) {}
+            }
+            class Derived extends Base {
+                test() {
+                    this.value = 1;
+                    void this.value;
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            has_code(&diagnostics, 2341),
+            "Expected TS2341 for writing through private setter, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn divergent_accessor_private_get_protected_set_checks_read_visibility() {
+        let diagnostics = check_diagnostics(
+            r#"
+            class Base {
+                private get value() { return 0; }
+                protected set value(v) {}
+            }
+            class Derived extends Base {
+                test() {
+                    void this.value;
+                    this.value = 1;
+                }
+            }
+        "#,
+        );
+
+        assert!(
+            has_code(&diagnostics, 2341),
+            "Expected TS2341 for reading through private getter, got: {diagnostics:?}"
+        );
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "Read should use the private getter, not protected setter, got: {diagnostics:?}"
+        );
     }
 
     // =========================================================================
