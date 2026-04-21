@@ -845,6 +845,33 @@ fn test_fast_resolver_miss_for_unknown_specifier() {
 }
 
 #[test]
+fn test_fast_resolver_rejects_nested_bare_package_subpaths() {
+    let files = [
+        "/proj/main.ts",
+        "/proj/lib/utils.ts",
+        "/proj/react/jsx-runtime/index.ts",
+        "/proj/lib/index.ts",
+    ];
+    let idx = file_index_from(&files);
+
+    // Only same-directory single-segment bare aliases are supported. Nested
+    // bare specifiers are package subpaths, so the fallback must not reinterpret
+    // them as project-relative files after the primary resolver misses.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "lib/utils", &idx),
+        None,
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "react/jsx-runtime", &idx),
+        None,
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "lib", &idx),
+        Some(3),
+    );
+}
+
+#[test]
 fn test_fast_resolver_tsx_and_dts_fanout() {
     let files = ["/proj/a.tsx", "/proj/b/main.ts"];
     let idx = file_index_from(&files);

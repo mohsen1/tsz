@@ -683,6 +683,20 @@ pub fn resolve_specifier_via_file_index(
         specifier.to_string()
     };
 
+    // Preserve the legacy map boundary: bare aliases are only supported for a
+    // single same-directory segment. Nested bare specifiers are package
+    // subpaths (for example `react/jsx-runtime`) and must not be reinterpreted
+    // as project-relative paths after the primary resolver misses.
+    if !spec_norm.starts_with("./")
+        && !spec_norm.starts_with("../")
+        && !spec_norm.starts_with('/')
+        && spec_norm != "."
+        && spec_norm != ".."
+        && spec_norm.contains('/')
+    {
+        return None;
+    }
+
     // Join `src_dir + '/' + specifier`, letting the lexical normalizer
     // resolve the resulting `./`, `../`, and doubled slashes. Pure
     // dot-chain specifiers (`.`, `./`, `..`, `../..`) fall through here
