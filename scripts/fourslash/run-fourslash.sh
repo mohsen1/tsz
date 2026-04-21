@@ -93,6 +93,8 @@ OPTIONS:
     --skip-build        Skip all build steps (use existing binaries)
     --skip-ts-build     Skip TypeScript build (use existing harness)
     --skip-cargo-build  Skip cargo build (use existing tsz-server)
+    --prep-only         Run install/build steps, then exit (no test run).
+                        Implies --skip-cargo-build. Intended for CI prep jobs.
 
     Output:
     --verbose           Show detailed output for each test
@@ -272,6 +274,7 @@ main() {
     local skip_build=false
     local skip_ts_build=false
     local skip_cargo_build=false
+    local prep_only=false
     local runner_args=()
 
     for arg in "$@"; do
@@ -287,6 +290,13 @@ main() {
                 skip_ts_build=true
                 ;;
             --skip-cargo-build)
+                skip_cargo_build=true
+                ;;
+            --prep-only)
+                # Run build/install steps, then exit before the binary check
+                # and test run. Used by CI prep jobs that persist artifacts
+                # via workspace without needing tsz-server on the same host.
+                prep_only=true
                 skip_cargo_build=true
                 ;;
             *)
@@ -324,6 +334,11 @@ main() {
         # Always apply harness patches even when skipping builds, since the
         # compiled harness files may have been rebuilt without the patches.
         "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
+    fi
+
+    if [[ "$prep_only" == "true" ]]; then
+        log_success "Prep-only mode: build complete, skipping test run"
+        exit 0
     fi
 
     # Resolve tsz-server path
