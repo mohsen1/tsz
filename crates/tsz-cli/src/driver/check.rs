@@ -1228,7 +1228,7 @@ pub(super) fn collect_diagnostics(
                 } else {
                     QueryCache::new(&program.type_interner)
                 };
-                let (lib_diags, lib_counters, lib_ds_stats) = check_checker_lib_file(
+                let (lib_diags, lib_counters, _lib_ds_stats) = check_checker_lib_file(
                     &checker_lib_file_env,
                     lib_idx,
                     &query_cache,
@@ -1239,7 +1239,9 @@ pub(super) fn collect_diagnostics(
                 diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
                 parallel_qc_stats.merge(&query_cache.statistics());
-                parallel_ds_stats.merge(&lib_ds_stats);
+                // Per-lib DefinitionStore stats are discarded: libs share the
+                // same `shared_definition_store` whose aggregate is captured
+                // once below (see `aggregated_ds_stats` assignment).
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
