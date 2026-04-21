@@ -2462,60 +2462,33 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
     // Collect the set of explicitly provided option keys (owned to avoid borrow conflicts)
     let provided: std::collections::HashSet<String> = map.keys().cloned().collect();
 
-    // --- Helper: parse target string to numeric level ---
-    fn parse_target(s: &str) -> u8 {
-        match s.to_lowercase().as_str() {
-            "es3" => 0,
-            "es5" => 1,
-            "es6" | "es2015" => 2,
-            "es2016" => 3,
-            "es2017" => 4,
-            "es2018" => 5,
-            "es2019" => 6,
-            "es2020" => 7,
-            "es2021" => 8,
-            "es2022" => 9,
-            "es2023" => 10,
-            "es2024" => 11,
-            "esnext" => 99,
-            _ => 12, // default ES2025 (also covers "es2025" explicitly)
-        }
+    // --- Helper: parse target string ---
+    fn parse_target(s: &str) -> tsz::common::ScriptTarget {
+        tsz::common::ScriptTarget::from_ts_str(s).unwrap_or(tsz::common::ScriptTarget::ES2025)
     }
 
     // --- Helper: compute module from target ---
-    const fn compute_module(target: u8) -> &'static str {
-        if target == 99 {
-            "esnext"
-        } else if target >= 9 {
-            // >= ES2022
-            "es2022"
-        } else if target >= 7 {
-            // >= ES2020
-            "es2020"
-        } else if target >= 2 {
-            // >= ES2015
-            "es6"
-        } else {
-            "commonjs"
+    const fn compute_module(target: tsz::common::ScriptTarget) -> &'static str {
+        match tsz_cli::config::default_module_kind_for_target(target, true) {
+            // tsc still prints this computed default as "es6" in --showConfig.
+            tsz::common::ModuleKind::ES2015 => "es6",
+            module => module.as_ts_str(),
         }
     }
 
     // --- Helper: compute moduleResolution from module string ---
     fn compute_module_resolution(module_str: &str) -> &'static str {
-        match module_str.to_lowercase().as_str() {
-            "none" | "amd" | "umd" | "system" => "classic",
-            "nodenext" => "nodenext",
-            "node16" | "node18" | "node20" => "node16",
-            _ => "bundler",
-        }
+        tsz::common::ModuleKind::from_ts_str(module_str)
+            .map(tsz_cli::config::default_module_resolution_for_module)
+            .unwrap_or(tsz_cli::config::ModuleResolutionKind::Bundler)
+            .as_ts_str()
     }
 
     // --- Helper: compute moduleDetection from module string ---
     fn compute_module_detection(module_str: &str) -> &'static str {
-        match module_str.to_lowercase().as_str() {
-            "node16" | "node18" | "node20" | "nodenext" => "force",
-            _ => "auto",
-        }
+        tsz::common::ModuleKind::from_ts_str(module_str)
+            .map(tsz_cli::config::default_module_detection_for_module)
+            .unwrap_or("auto")
     }
 
     // v6 defaults (empty config):
@@ -2523,7 +2496,7 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
     // esModuleInterop=true, allowSyntheticDefaultImports=true
     // useDefineForClassFields=true (es2025 >= ES2022)
     // strict sub-flags: false, declaration=false, incremental=false
-    const DEFAULT_TARGET: u8 = 12; // ES2025
+    const DEFAULT_TARGET: tsz::common::ScriptTarget = tsz::common::ScriptTarget::ES2025;
     const DEFAULT_MODULE_RESOLUTION: &str = "bundler";
     const DEFAULT_MODULE_DETECTION: &str = "auto";
 
@@ -2597,8 +2570,8 @@ fn show_config_add_implied_options(map: &mut serde_json::Map<String, serde_json:
 
     // --- useDefineForClassFields: deps=["target","module"] ---
     if !provided.contains("useDefineForClassFields") && depends_on_provided(&["target", "module"]) {
-        let computed = user_target >= 9; // >= ES2022
-        let default_val = DEFAULT_TARGET >= 9; // true
+        let computed = user_target.supports_es2022();
+        let default_val = DEFAULT_TARGET.supports_es2022(); // true
         if computed != default_val {
             map.insert("useDefineForClassFields".into(), Value::Bool(computed));
         }

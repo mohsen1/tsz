@@ -632,7 +632,6 @@ impl NodeArena {
                     Self::add_list(children, &data.parameters);
                     Self::add_opt_child(children, data.type_annotation);
                     children.push(data.body);
-                    children.push(data.body);
                     return true;
                 }
             }

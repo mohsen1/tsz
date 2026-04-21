@@ -15,6 +15,18 @@
 //!
 //! No module should depend on a module that appears later in this chain.
 
+fn normalize_ts_option(value: &str) -> String {
+    let first = value.split(',').next().unwrap_or(value).trim();
+    let mut normalized = String::with_capacity(first.len());
+    for ch in first.chars() {
+        if ch == '-' || ch == '_' || ch.is_whitespace() {
+            continue;
+        }
+        normalized.push(ch.to_ascii_lowercase());
+    }
+    normalized
+}
+
 /// ECMAScript target version.
 ///
 /// This determines which language features are available during compilation.
@@ -66,6 +78,80 @@ pub enum ScriptTarget {
 }
 
 impl ScriptTarget {
+    /// Parse a TypeScript compiler option target value.
+    ///
+    /// This accepts tsc spelling variants and comma-separated directive values,
+    /// taking the first entry to match multi-target conformance directives.
+    #[must_use]
+    pub fn from_ts_str(value: &str) -> Option<Self> {
+        match normalize_ts_option(value).as_str() {
+            "es3" => Some(Self::ES3),
+            "es5" => Some(Self::ES5),
+            "es6" | "es2015" => Some(Self::ES2015),
+            "es2016" => Some(Self::ES2016),
+            "es2017" => Some(Self::ES2017),
+            "es2018" => Some(Self::ES2018),
+            "es2019" => Some(Self::ES2019),
+            "es2020" => Some(Self::ES2020),
+            "es2021" => Some(Self::ES2021),
+            "es2022" => Some(Self::ES2022),
+            "es2023" => Some(Self::ES2023),
+            "es2024" => Some(Self::ES2024),
+            "es2025" => Some(Self::ES2025),
+            "esnext" => Some(Self::ESNext),
+            _ => None,
+        }
+    }
+
+    /// Parse TypeScript's numeric target enum value.
+    #[must_use]
+    pub const fn from_ts_numeric(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::ES3),
+            1 => Some(Self::ES5),
+            2 => Some(Self::ES2015),
+            3 => Some(Self::ES2016),
+            4 => Some(Self::ES2017),
+            5 => Some(Self::ES2018),
+            6 => Some(Self::ES2019),
+            7 => Some(Self::ES2020),
+            8 => Some(Self::ES2021),
+            9 => Some(Self::ES2022),
+            10 => Some(Self::ES2023),
+            11 => Some(Self::ES2024),
+            12 => Some(Self::ES2025),
+            99 => Some(Self::ESNext),
+            _ => None,
+        }
+    }
+
+    /// Return TypeScript's numeric target ordering value.
+    #[must_use]
+    pub const fn ts_numeric_value(self) -> u8 {
+        self as u8
+    }
+
+    /// Return a canonical TypeScript option spelling.
+    #[must_use]
+    pub const fn as_ts_str(self) -> &'static str {
+        match self {
+            Self::ES3 => "es3",
+            Self::ES5 => "es5",
+            Self::ES2015 => "es2015",
+            Self::ES2016 => "es2016",
+            Self::ES2017 => "es2017",
+            Self::ES2018 => "es2018",
+            Self::ES2019 => "es2019",
+            Self::ES2020 => "es2020",
+            Self::ES2021 => "es2021",
+            Self::ES2022 => "es2022",
+            Self::ES2023 => "es2023",
+            Self::ES2024 => "es2024",
+            Self::ES2025 => "es2025",
+            Self::ESNext => "esnext",
+        }
+    }
+
     /// Check if this target supports ES2016+ features (exponentiation operator).
     #[must_use]
     pub const fn supports_es2016(self) -> bool {
@@ -190,6 +276,80 @@ pub enum ModuleKind {
 }
 
 impl ModuleKind {
+    /// Parse a TypeScript compiler option module value.
+    ///
+    /// This accepts tsc spelling variants and comma-separated directive values,
+    /// taking the first entry to match multi-target conformance directives.
+    #[must_use]
+    pub fn from_ts_str(value: &str) -> Option<Self> {
+        match normalize_ts_option(value).as_str() {
+            "none" => Some(Self::None),
+            "commonjs" => Some(Self::CommonJS),
+            "amd" => Some(Self::AMD),
+            "umd" => Some(Self::UMD),
+            "system" => Some(Self::System),
+            "es6" | "es2015" => Some(Self::ES2015),
+            "es2020" => Some(Self::ES2020),
+            "es2022" => Some(Self::ES2022),
+            "esnext" => Some(Self::ESNext),
+            "node16" => Some(Self::Node16),
+            "node18" => Some(Self::Node18),
+            "node20" => Some(Self::Node20),
+            "nodenext" => Some(Self::NodeNext),
+            "preserve" => Some(Self::Preserve),
+            _ => None,
+        }
+    }
+
+    /// Parse TypeScript's numeric module enum value.
+    #[must_use]
+    pub const fn from_ts_numeric(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::None),
+            1 => Some(Self::CommonJS),
+            2 => Some(Self::AMD),
+            3 => Some(Self::UMD),
+            4 => Some(Self::System),
+            5 => Some(Self::ES2015),
+            6 => Some(Self::ES2020),
+            7 => Some(Self::ES2022),
+            99 => Some(Self::ESNext),
+            100 => Some(Self::Node16),
+            101 => Some(Self::Node18),
+            102 => Some(Self::Node20),
+            199 => Some(Self::NodeNext),
+            200 => Some(Self::Preserve),
+            _ => None,
+        }
+    }
+
+    /// Return a canonical TypeScript option spelling.
+    #[must_use]
+    pub const fn as_ts_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CommonJS => "commonjs",
+            Self::AMD => "amd",
+            Self::UMD => "umd",
+            Self::System => "system",
+            Self::ES2015 => "es2015",
+            Self::ES2020 => "es2020",
+            Self::ES2022 => "es2022",
+            Self::ESNext => "esnext",
+            Self::Node16 => "node16",
+            Self::Node18 => "node18",
+            Self::Node20 => "node20",
+            Self::NodeNext => "nodenext",
+            Self::Preserve => "preserve",
+        }
+    }
+
+    /// Return TypeScript's numeric module enum value.
+    #[must_use]
+    pub const fn ts_numeric_value(self) -> u32 {
+        self as u32
+    }
+
     /// Check if this is a CommonJS-like module system
     #[must_use]
     pub const fn is_commonjs(self) -> bool {

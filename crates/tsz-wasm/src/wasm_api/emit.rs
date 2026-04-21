@@ -79,33 +79,10 @@ pub struct TranspileOptions {
 
 impl TranspileOptions {
     fn to_printer_options(&self) -> PrinterOptions {
-        let target = match self.target.unwrap_or(1) {
-            0 => ScriptTarget::ES3,
-            2 => ScriptTarget::ES2015,
-            3 => ScriptTarget::ES2016,
-            4 => ScriptTarget::ES2017,
-            5 => ScriptTarget::ES2018,
-            6 => ScriptTarget::ES2019,
-            7 => ScriptTarget::ES2020,
-            8 => ScriptTarget::ES2021,
-            9 => ScriptTarget::ES2022,
-            99 => ScriptTarget::ESNext,
-            _ => ScriptTarget::ES5,
-        };
-        let module = match self.module.unwrap_or(0) {
-            1 => ModuleKind::CommonJS,
-            2 => ModuleKind::AMD,
-            4 => ModuleKind::System,
-            5 => ModuleKind::UMD,
-            6 => ModuleKind::ES2015,
-            7 => ModuleKind::ES2020,
-            99 => ModuleKind::ESNext,
-            100 => ModuleKind::Node16,
-            101 => ModuleKind::Node18,
-            102 => ModuleKind::Node20,
-            199 => ModuleKind::NodeNext,
-            _ => ModuleKind::None,
-        };
+        let target = ScriptTarget::from_ts_numeric(u32::from(self.target.unwrap_or(1)))
+            .unwrap_or(ScriptTarget::ES5);
+        let module = ModuleKind::from_ts_numeric(u32::from(self.module.unwrap_or(0)))
+            .unwrap_or(ModuleKind::None);
         let mut opts = PrinterOptions {
             target,
             module,
@@ -192,18 +169,10 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     let arena = parser.into_arena();
 
     // Create emit context with specified options
-    let target = match target.unwrap_or(1) {
-        0 => ScriptTarget::ES3,
-        2 => ScriptTarget::ES2015,
-        99 => ScriptTarget::ESNext,
-        _ => ScriptTarget::ES5,
-    };
-    let module = match module.unwrap_or(0) {
-        1 => ModuleKind::CommonJS,
-        6 => ModuleKind::ES2015,
-        99 => ModuleKind::ESNext,
-        _ => ModuleKind::None,
-    };
+    let target =
+        ScriptTarget::from_ts_numeric(u32::from(target.unwrap_or(1))).unwrap_or(ScriptTarget::ES5);
+    let module =
+        ModuleKind::from_ts_numeric(u32::from(module.unwrap_or(0))).unwrap_or(ModuleKind::None);
     let opts = PrinterOptions {
         target,
         module,
