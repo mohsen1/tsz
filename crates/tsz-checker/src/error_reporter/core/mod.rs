@@ -5,4 +5,5 @@
 //! - `diagnostic_source`: diagnostic source/target expression analysis
 
 mod diagnostic_source;
+mod identifier_source_display;
 mod type_display;
