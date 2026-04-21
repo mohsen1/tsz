@@ -1404,6 +1404,10 @@ pub struct CheckerContext<'a> {
     /// Key is `Arc::as_ptr(arena) as usize` for `Send`/`Sync` safety.
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
 
+    /// Normalized-file-name → file-index reverse index consumed by
+    /// `resolve_import_target_from_file` via `resolve_specifier_via_file_index`.
+    pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
+
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
     ///
@@ -1661,6 +1665,8 @@ pub struct ProjectEnv {
     pub global_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
     /// Pre-computed arena-pointer → file-index map. O(1) arena→binder lookups.
     pub global_arena_index: Option<Arc<FxHashMap<usize, usize>>>,
+    /// Pre-computed filename reverse index; see `CheckerContext::global_file_name_index`.
+    pub global_file_name_index: Option<Arc<crate::module_resolution::FileNameIndex>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module paths keyed by (`source_file_idx`, specifier, resolution-mode override).
@@ -1704,6 +1710,7 @@ impl Default for ProjectEnv {
             global_augmentation_targets_index: None,
             global_module_binder_index: None,
             global_arena_index: None,
+            global_file_name_index: None,
             resolved_module_paths: Arc::new(FxHashMap::default()),
             resolved_module_request_paths: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
@@ -1762,6 +1769,9 @@ impl ProjectEnv {
         }
         if let Some(ref idx) = self.global_arena_index {
             ctx.global_arena_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = self.global_file_name_index {
+            ctx.global_file_name_index = Some(Arc::clone(idx));
         }
         // Install the shared DefinitionStore before gating expensive semantic-def
         // prepopulation so `is_fully_populated()` reflects project-wide state.
@@ -1943,6 +1953,10 @@ impl ProjectEnv {
             arena_idx.insert(Arc::as_ptr(arena) as usize, file_idx);
         }
         self.global_arena_index = Some(Arc::new(arena_idx));
+
+        // Filename reverse index: one O(N) build replaces the O(N²) fallback rebuild.
+        let file_name_idx = crate::module_resolution::build_file_name_index(&self.all_arenas);
+        self.global_file_name_index = Some(Arc::new(file_name_idx));
     }
 
     /// Build the shared `SymbolId` → file-index map from `symbol_file_targets`.

@@ -234,6 +234,7 @@ impl<'a> CheckerContext<'a> {
             global_augmentation_targets_index: None,
             global_module_binder_index: None,
             global_arena_index: None,
+            global_file_name_index: None,
             resolved_module_paths: None,
             resolved_module_request_paths: None,
             current_file_idx: 0,
