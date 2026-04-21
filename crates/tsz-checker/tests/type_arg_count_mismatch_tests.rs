@@ -7,6 +7,7 @@
 
 use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -180,5 +181,160 @@ var r = pair<number>(1);
     assert!(
         !codes.contains(&2554),
         "Should not emit TS2554 when type arg count is wrong, got: {codes:?}"
+    );
+}
+
+// =============================================================================
+// Type-argument walking on unresolved heritage and qualified-name type refs
+// =============================================================================
+//
+// Regression tests for `parserGenericsInTypeContexts1.ts` conformance failure:
+// tsc visits the `<T>` type arguments of a type reference / heritage clause
+// even when the base name is unresolved, so identifiers inside the type args
+// surface their own diagnostics (e.g., TS2304 "Cannot find name 'T'").
+// Previously tsz silently dropped those type args along several paths:
+//   - unresolved heritage expression: `class C extends A<T> implements B<T>`
+//   - unresolved qualified-name type ref: `var v3: E.F<T>`
+//   - value-only qualified-name type ref
+//
+// The fix walks every type argument via `get_type_from_type_node` before
+// returning the error type, matching the simple-identifier path that already
+// handled `var v2: D<T>` correctly.
+
+fn check_diagnostics(source: &str) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
+}
+
+fn count_ts2304_for_name(diags: &[Diagnostic], name: &str) -> usize {
+    let needle = format!("'{name}'");
+    diags
+        .iter()
+        .filter(|d| d.code == 2304 && d.message_text.contains(&needle))
+        .count()
+}
+
+/// `class C extends A<T> {}` — when `A` doesn't resolve, tsc still reports
+/// TS2304 for `T` inside the type arguments.
+#[test]
+fn unresolved_heritage_extends_walks_type_arguments() {
+    let diags = check_diagnostics("class C extends A<T> {}\n");
+
+    assert_eq!(
+        count_ts2304_for_name(&diags, "A"),
+        1,
+        "expected TS2304 for unresolved base name 'A', got: {diags:?}",
+    );
+    assert_eq!(
+        count_ts2304_for_name(&diags, "T"),
+        1,
+        "expected TS2304 for unresolved type argument 'T' inside heritage extends clause, got: {diags:?}",
+    );
+}
+
+/// `class C implements B<T> {}` — `B` unresolved still reports `T`.
+#[test]
+fn unresolved_heritage_implements_walks_type_arguments() {
+    let diags = check_diagnostics("class C implements B<T> {}\n");
+
+    assert_eq!(
+        count_ts2304_for_name(&diags, "B"),
+        1,
+        "expected TS2304 for unresolved base name 'B', got: {diags:?}",
+    );
+    assert_eq!(
+        count_ts2304_for_name(&diags, "T"),
+        1,
+        "expected TS2304 for unresolved type argument 'T' inside heritage implements clause, got: {diags:?}",
+    );
+}
+
+/// Combined heritage: both extends and implements have unresolved type args.
+/// From `parserGenericsInTypeContexts1.ts`.
+#[test]
+fn unresolved_heritage_extends_and_implements_walk_type_arguments() {
+    let diags = check_diagnostics("class C extends A<T> implements B<T> {}\n");
+
+    assert_eq!(
+        count_ts2304_for_name(&diags, "A"),
+        1,
+        "missing TS2304 for 'A'"
+    );
+    assert_eq!(
+        count_ts2304_for_name(&diags, "B"),
+        1,
+        "missing TS2304 for 'B'"
+    );
+    assert_eq!(
+        count_ts2304_for_name(&diags, "T"),
+        2,
+        "expected two TS2304 diagnostics for 'T' (one per heritage clause), got: {diags:?}",
+    );
+}
+
+/// `var v: E.F<T>` — when namespace `E` doesn't resolve, tsc emits TS2503 for
+/// `E` AND TS2304 for `T`. Previously tsz only emitted TS2503 and dropped `T`.
+#[test]
+fn unresolved_qualified_name_type_reference_walks_type_arguments() {
+    let diags = check_diagnostics("var v: E.F<T>;\n");
+
+    let ts2503_count = diags
+        .iter()
+        .filter(|d| d.code == 2503 && d.message_text.contains("'E'"))
+        .count();
+    assert_eq!(
+        ts2503_count, 1,
+        "expected TS2503 for unresolved namespace 'E', got: {diags:?}",
+    );
+    assert_eq!(
+        count_ts2304_for_name(&diags, "T"),
+        1,
+        "expected TS2304 for unresolved type argument 'T' inside qualified-name type ref, got: {diags:?}",
+    );
+}
+
+/// Deeper qualified names are also covered (e.g., `G.H.I<T>`).
+#[test]
+fn unresolved_deeply_qualified_name_type_reference_walks_type_arguments() {
+    let diags = check_diagnostics("var v: G.H.I<T>;\n");
+
+    assert_eq!(
+        count_ts2304_for_name(&diags, "T"),
+        1,
+        "expected TS2304 for 'T' inside deeply qualified unresolved type ref, got: {diags:?}",
+    );
+}
+
+/// Sanity: the simple-identifier path (`var v: D<T>`) already worked before
+/// this fix. This test locks it in so the newly-added paths stay consistent
+/// with the established behaviour.
+#[test]
+fn unresolved_simple_type_reference_walks_type_arguments() {
+    let diags = check_diagnostics("var v: D<T>;\n");
+
+    assert_eq!(
+        count_ts2304_for_name(&diags, "D"),
+        1,
+        "expected TS2304 for unresolved simple type name 'D', got: {diags:?}",
+    );
+    assert_eq!(
+        count_ts2304_for_name(&diags, "T"),
+        1,
+        "expected TS2304 for 'T' inside simple unresolved type ref, got: {diags:?}",
     );
 }

@@ -821,6 +821,19 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
+                    // Even when the heritage base name fails to resolve, tsc still
+                    // visits the type arguments so identifiers inside them surface
+                    // diagnostics (e.g., TS2304 for `T` in `extends A<T>`). Walk
+                    // them eagerly — this is a no-op for resolvable args and emits
+                    // the expected unresolved-name errors otherwise.
+                    if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(type_node)
+                        && let Some(type_args) = expr_type_args.type_arguments.as_ref()
+                    {
+                        for &arg_idx in &type_args.nodes {
+                            let _ = self.get_type_from_type_node(arg_idx);
+                        }
+                    }
+
                     // Heritage expression with explicit type arguments over a call expression
                     // (e.g. `class C extends getBase()<T> {}`) should report TS2315 when
                     // the expression resolves but is not generic.
