@@ -128,7 +128,9 @@ impl<'a> CheckerState<'a> {
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
         // Check direct exports (module_exports)
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) = exports.get(export_name)
         {
             // If this is an alias, follow it to the source module

@@ -1419,6 +1419,12 @@ pub struct CheckerContext<'a> {
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
     /// Program-wide type-only wildcard re-exports map; see `program_reexports`.
     pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    /// Program-wide module-exports index keyed by file name (or ambient
+    /// module specifier). Consulted by `ctx.module_exports_for_module`
+    /// in preference to per-binder `module_exports`. Driver wraps
+    /// `program.module_exports` in a single `Arc` so N cross-file lookup
+    /// binders don't each deep-clone the merged map.
+    pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
 
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
@@ -1684,6 +1690,8 @@ pub struct ProjectEnv {
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
     pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    /// Program-wide module-exports index; see `CheckerContext::program_module_exports`.
+    pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module paths keyed by (`source_file_idx`, specifier, resolution-mode override).
@@ -1731,6 +1739,7 @@ impl Default for ProjectEnv {
             program_reexports: None,
             program_wildcard_reexports: None,
             program_wildcard_reexports_type_only: None,
+            program_module_exports: None,
             resolved_module_paths: Arc::new(FxHashMap::default()),
             resolved_module_request_paths: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
@@ -1801,6 +1810,9 @@ impl ProjectEnv {
         }
         if let Some(ref m) = self.program_wildcard_reexports_type_only {
             ctx.program_wildcard_reexports_type_only = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = self.program_module_exports {
+            ctx.program_module_exports = Some(Arc::clone(m));
         }
         // Install the shared DefinitionStore before gating expensive semantic-def
         // prepopulation so `is_fully_populated()` reflects project-wide state.

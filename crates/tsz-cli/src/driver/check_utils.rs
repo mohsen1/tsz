@@ -1646,7 +1646,14 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             global_augmentations: augmentations.global_augmentations.clone(),
             module_augmentations: augmentations.module_augmentations.clone(),
             augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
-            module_exports: program.module_exports.clone(),
+            // Per-binder `module_exports` is left empty intentionally.
+            // The program-wide merged `module_exports` lives once on
+            // `ProjectEnv` as `program_module_exports` and is read via
+            // `ctx.module_exports_for_module`. Cross-file lookup binders
+            // used to deep-clone the entire merged map (thousands of
+            // entries on large repos) into every one of N per-file
+            // binders.
+            module_exports: Default::default(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             // Per-binder re-export maps left empty intentionally. The
             // program-wide merged re-export maps are stored once on

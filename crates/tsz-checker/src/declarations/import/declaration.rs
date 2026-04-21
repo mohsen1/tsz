@@ -1684,7 +1684,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check direct exports
-        if let Some(exports) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && exports.has(import_name)
         {
             return true;

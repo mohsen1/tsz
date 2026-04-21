@@ -847,7 +847,7 @@ impl<'a> CheckerState<'a> {
                     if key.is_empty() {
                         continue;
                     }
-                    if let Some(exports) = target_binder.module_exports.get(key)
+                    if let Some(exports) = self.ctx.module_exports_for_module(target_binder, key)
                         && let Some(sym) = exports.get(ident_name)
                     {
                         target_ns_sym_id = Some(sym);
@@ -1284,7 +1284,7 @@ impl<'a> CheckerState<'a> {
         let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name) else {
             return false;
         };
-        let Some(exports) = target_binder.module_exports.get(file_name) else {
+        let Some(exports) = self.ctx.module_exports_for_module(target_binder, file_name) else {
             return false;
         };
         let Some(export_eq_sym_id) = exports.get("export=") else {
@@ -1404,7 +1404,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check direct exports in target binder
-        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) = exports_table.get(export_name)
         {
             // Look up the symbol using the target binder first (which owns the export),
@@ -1764,7 +1766,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) = exports_table.get(export_name)
         {
             let sym_opt = target_binder
@@ -1880,7 +1884,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check direct exports
-        if let Some(exports_table) = target_binder.module_exports.get(&target_file_name)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && exports_table.get(export_name).is_some()
         {
             return true;

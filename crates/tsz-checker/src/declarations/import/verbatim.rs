@@ -95,7 +95,10 @@ impl<'a> CheckerState<'a> {
             else {
                 return false;
             };
-            if let Some(exports) = target_binder.module_exports.get(&target_file_name) {
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(target_binder, &target_file_name)
+            {
                 return exports.iter().any(|(_, &member_id)| {
                     target_binder
                         .get_symbol(member_id)
@@ -305,7 +308,10 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        let Some(exports) = target_binder.module_exports.get(&target_file_name) else {
+        let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
+        else {
             return false;
         };
         let Some(sym_id) = exports.get(import_name) else {
@@ -380,7 +386,7 @@ impl<'a> CheckerState<'a> {
                 if key.is_empty() {
                     continue;
                 }
-                if let Some(exports) = target_binder.module_exports.get(&key) {
+                if let Some(exports) = self.ctx.module_exports_for_module(target_binder, &key) {
                     for candidate_name in import_names {
                         if let Some(sym_id) = exports.get(candidate_name)
                             && self.binder_symbol_is_type_only(target_binder, sym_id)

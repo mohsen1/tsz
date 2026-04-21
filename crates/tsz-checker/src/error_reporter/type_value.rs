@@ -465,7 +465,8 @@ impl<'a> CheckerState<'a> {
             {
                 let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                 if let Some(file_name) = target_arena.source_files.first().map(|f| &f.file_name)
-                    && let Some(exports) = target_binder.module_exports.get(file_name)
+                    && let Some(exports) =
+                        self.ctx.module_exports_for_module(target_binder, file_name)
                     && let Some(export_eq_sym) = exports.get("export=")
                 {
                     // Check if the export= symbol itself is type-only
@@ -538,7 +539,9 @@ impl<'a> CheckerState<'a> {
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let target_file_name = target_arena.source_files.first()?.file_name.clone();
 
-        let exports_table = target_binder.module_exports.get(&target_file_name)?;
+        let exports_table = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)?;
         let sym_id = exports_table.get(export_name)?;
         let sym = self.ctx.binder.get_symbol(sym_id)?;
 
