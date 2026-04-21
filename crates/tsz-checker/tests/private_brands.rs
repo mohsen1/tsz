@@ -52,7 +52,15 @@ fn test_private_brands_with_codes(source: &str, expected_errors: usize, error_co
 }
 
 fn collect_private_brand_diagnostics(source: &str) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    collect_private_brand_diagnostics_with_options(source, "test.ts", CheckerOptions::default())
+}
+
+fn collect_private_brand_diagnostics_with_options(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
     let mut binder = BinderState::new();
@@ -63,8 +71,8 @@ fn collect_private_brand_diagnostics(source: &str) -> Vec<Diagnostic> {
         parser.get_arena(),
         &binder,
         &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
+        file_name.to_string(),
+        options,
     );
 
     checker.check_source_file(root);
@@ -340,6 +348,28 @@ fn test_ts18016_private_id_on_any_outside_class() {
             18016,
         ),
         "Should emit TS18016 for undeclared private name on any outside class"
+    );
+}
+
+/// Private identifier on a function prototype assignment outside class body -> TS18016.
+#[test]
+fn test_ts18016_private_id_on_js_prototype_assignment_outside_class() {
+    let diagnostics = collect_private_brand_diagnostics_with_options(
+        r"
+        function A() {}
+        A.prototype.#no = 2;
+        ",
+        "test.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts18016_count = diagnostics.iter().filter(|d| d.code == 18016).count();
+    assert_eq!(
+        ts18016_count, 1,
+        "Should emit TS18016 for private name assignment on a JS prototype outside class, got: {diagnostics:?}"
     );
 }
 

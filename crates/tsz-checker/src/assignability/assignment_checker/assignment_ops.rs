@@ -39,6 +39,30 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn is_js_prototype_private_name_assignment_target(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let outer_access = self.ctx.arena.get_access_expr(node)?;
+        let name_node = self.ctx.arena.get(outer_access.name_or_argument)?;
+        if name_node.kind != SyntaxKind::PrivateIdentifier as u16 {
+            return None;
+        }
+
+        let proto_node = self.ctx.arena.get(outer_access.expression)?;
+        if proto_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let proto_access = self.ctx.arena.get_access_expr(proto_node)?;
+        let is_prototype = self
+            .ctx
+            .arena
+            .get_identifier_at(proto_access.name_or_argument)
+            .is_some_and(|ident| ident.escaped_text == "prototype");
+        is_prototype.then_some(outer_access.name_or_argument)
+    }
+
     // =========================================================================
     // Assignment Expression Checking
     // =========================================================================
@@ -500,6 +524,17 @@ impl<'a> CheckerState<'a> {
             self.get_type_of_node(left_idx);
             self.get_type_of_node(right_idx);
             return TypeId::ANY;
+        }
+
+        if self.is_js_file()
+            && let Some(private_name_idx) =
+                self.is_js_prototype_private_name_assignment_target(left_idx)
+        {
+            self.error_at_node(
+                private_name_idx,
+                "Private identifiers are not allowed outside class bodies.",
+                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+            );
         }
 
         // TS2779: The left-hand side of an assignment expression may not be an optional property access.
