@@ -518,6 +518,11 @@ pub struct TypeInterner {
     pub(super) applications: ConcurrentValueInterner<TypeApplication>,
     /// Cache for `is_identity_comparable_type` checks (memoized O(1) lookup after first computation)
     pub(super) identity_comparable_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Cache for `contains_this_type` checks. Result is stable per TypeId
+    /// within a single interner, so memoizing project-wide eliminates the
+    /// repeated recursive walk that showed up at ~5% of total CPU on
+    /// multi-file workloads.
+    pub(crate) contains_this_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -619,6 +624,7 @@ impl TypeInterner {
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_this_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
