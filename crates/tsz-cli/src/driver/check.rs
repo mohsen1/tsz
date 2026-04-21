@@ -910,6 +910,12 @@ pub(super) fn collect_diagnostics(
     // authoritative cross-file exports table; wrap once, share via `Arc`
     // to avoid N deep-clones into per-file cross-file lookup binders.
     let program_module_exports = Arc::new(program.module_exports.clone());
+    // Same rationale for `program.cross_file_node_symbols`: the outer
+    // map is `FxHashMap<usize, Arc<…>>` (~24 bytes * N_files for the
+    // entries plus hash overhead). Cloning into every one of N per-file
+    // binders scales outer-map allocation with N². Wrap once here and
+    // route consumers through `ctx.cross_file_node_symbols_for_arena`.
+    let program_cross_file_node_symbols = Arc::new(program.cross_file_node_symbols.clone());
 
     let mut project_env = tsz::checker::context::ProjectEnv {
         lib_contexts: std::sync::Arc::new(checker_libs.contexts.clone()),
@@ -930,6 +936,7 @@ pub(super) fn collect_diagnostics(
         program_wildcard_reexports: Some(program_wildcard_reexports),
         program_wildcard_reexports_type_only: Some(program_wildcard_reexports_type_only),
         program_module_exports: Some(program_module_exports),
+        program_cross_file_node_symbols: Some(program_cross_file_node_symbols),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.
