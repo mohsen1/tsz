@@ -6,6 +6,7 @@ use crate::types::*;
 use crate::{
     evaluation::evaluate::evaluate_type,
     intern::TypeInterner,
+    relations::subtype::SubtypeChecker,
     type_queries::{collect_finite_mapped_property_names, get_finite_mapped_property_type},
 };
 
@@ -913,5 +914,107 @@ fn test_finite_mapped_property_names_do_not_materialize_string_index_keys() {
     assert!(
         get_finite_mapped_property_type(&interner, mapped_id, "anything").is_none(),
         "string index constraints should not synthesize exact property types"
+    );
+}
+
+#[test]
+fn test_keyof_string_indexed_object_preserves_unique_symbol_property() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let sym_ref = crate::SymbolRef(77);
+    let sym_name = interner.intern_string("__unique_77");
+    let source = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![
+            PropertyInfo::new(interner.intern_string("str"), TypeId::STRING),
+            PropertyInfo::new(sym_name, TypeId::NUMBER),
+        ],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+
+    let keyof_source = evaluate_type(&interner, interner.keyof(source));
+
+    assert!(
+        checker.is_subtype_of(interner.literal_string("str"), keyof_source),
+        "explicit string property should remain in keyof, got {:?}",
+        interner.lookup(keyof_source)
+    );
+    assert!(
+        checker.is_subtype_of(interner.unique_symbol(sym_ref), keyof_source),
+        "explicit unique symbol property should remain in keyof, got {:?}",
+        interner.lookup(keyof_source)
+    );
+    assert!(
+        checker.is_subtype_of(TypeId::NUMBER, keyof_source),
+        "string index signature should still contribute number to keyof, got {:?}",
+        interner.lookup(keyof_source)
+    );
+}
+
+#[test]
+fn test_keyof_generic_remapped_mapped_type_keeps_concrete_lower_bound_keys() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let sym_ref = crate::SymbolRef(91);
+    let sym_name = interner.intern_string("__unique_91");
+    let concrete_source = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![
+            PropertyInfo::new(interner.intern_string("str"), TypeId::STRING),
+            PropertyInfo::new(sym_name, TypeId::NUMBER),
+        ],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let generic_tail = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let source = interner.intersection(vec![concrete_source, generic_tail]);
+
+    let key_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_param = interner.intern(TypeData::TypeParameter(key_param_info));
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param_info,
+        constraint: interner.keyof(source),
+        name_type: Some(key_param),
+        template: TypeId::BOOLEAN,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let keyof_mapped = evaluate_type(&interner, interner.keyof(mapped));
+
+    assert!(
+        checker.is_subtype_of(interner.literal_string("str"), keyof_mapped),
+        "lower-bound literal key should survive remapped keyof, got {:?}",
+        interner.lookup(keyof_mapped)
+    );
+    assert!(
+        checker.is_subtype_of(interner.unique_symbol(sym_ref), keyof_mapped),
+        "lower-bound unique symbol key should survive remapped keyof, got {:?}",
+        interner.lookup(keyof_mapped)
     );
 }

@@ -3,9 +3,13 @@
 //! Handles TypeScript's keyof operator: `keyof T`
 
 use crate::TypeDatabase;
+use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
-use crate::types::{IntrinsicKind, LiteralValue, TupleElement, TypeData, TypeId, TypeListId};
+use crate::types::{
+    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, TupleElement, TypeData, TypeId,
+    TypeListId,
+};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
@@ -70,6 +74,119 @@ impl KeyofKeySet {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn property_name_atom_to_key_type(&self, name: Atom) -> TypeId {
+        let name_text = self.interner().resolve_atom_ref(name);
+        if let Some(symbol_ref) = name_text.strip_prefix("__unique_")
+            && let Ok(id) = symbol_ref.parse::<u32>()
+        {
+            return self.interner().unique_symbol(crate::types::SymbolRef(id));
+        }
+        self.interner().literal_string_atom(name)
+    }
+
+    fn push_remapped_key_type(&mut self, key_types: &mut Vec<TypeId>, remapped_key: TypeId) {
+        if remapped_key == TypeId::STRING {
+            key_types.push(TypeId::STRING);
+            key_types.push(TypeId::NUMBER);
+        } else {
+            key_types.push(remapped_key);
+        }
+    }
+
+    fn collect_keyof_for_remapped_mapped_type(
+        &mut self,
+        mapped_id: MappedTypeId,
+        mapped: &MappedType,
+    ) -> Option<TypeId> {
+        let name_type = mapped.name_type?;
+        let mut key_types = Vec::new();
+
+        let constraint_source = crate::keyof_inner_type(self.interner(), mapped.constraint)
+            .or_else(|| {
+                let evaluated = self.evaluate(mapped.constraint);
+                (evaluated != mapped.constraint)
+                    .then(|| crate::keyof_inner_type(self.interner(), evaluated))
+                    .flatten()
+            });
+
+        if let Some(source) = constraint_source {
+            let resolved_source = self.evaluate(source);
+            match collect_properties(resolved_source, self.interner(), self.resolver()) {
+                PropertyCollectionResult::Properties {
+                    properties,
+                    string_index,
+                    number_index,
+                } => {
+                    for prop in properties {
+                        let source_key = self.property_name_atom_to_key_type(prop.name);
+                        match self.remap_key_type_for_mapped(mapped, source_key) {
+                            Ok(Some(remapped_key)) => {
+                                self.push_remapped_key_type(&mut key_types, remapped_key);
+                            }
+                            Ok(None) => {}
+                            Err(()) => return None,
+                        }
+                    }
+                    if string_index.is_some() {
+                        match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
+                            Ok(Some(remapped_key)) => {
+                                self.push_remapped_key_type(&mut key_types, remapped_key);
+                            }
+                            Ok(None) => {}
+                            Err(()) => return None,
+                        }
+                    } else if number_index.is_some() {
+                        match self.remap_key_type_for_mapped(mapped, TypeId::NUMBER) {
+                            Ok(Some(remapped_key)) => key_types.push(remapped_key),
+                            Ok(None) => {}
+                            Err(()) => return None,
+                        }
+                    }
+                }
+                PropertyCollectionResult::Any => {
+                    match self.remap_key_type_for_mapped(mapped, TypeId::STRING) {
+                        Ok(Some(remapped_key)) => {
+                            self.push_remapped_key_type(&mut key_types, remapped_key);
+                        }
+                        Ok(None) => {}
+                        Err(()) => return None,
+                    }
+                    match self.remap_key_type_for_mapped(mapped, TypeId::NUMBER) {
+                        Ok(Some(remapped_key)) => key_types.push(remapped_key),
+                        Ok(None) => {}
+                        Err(()) => return None,
+                    }
+                    match self.remap_key_type_for_mapped(mapped, TypeId::SYMBOL) {
+                        Ok(Some(remapped_key)) => key_types.push(remapped_key),
+                        Ok(None) => {}
+                        Err(()) => return None,
+                    }
+                }
+                PropertyCollectionResult::NonObject => {}
+            }
+        } else if let Some(names) =
+            crate::type_queries::collect_finite_mapped_property_names(self.interner(), mapped_id)
+        {
+            let mut sorted_names: Vec<_> = names.into_iter().collect();
+            sorted_names.sort_by_key(|atom| atom.0);
+            for name in sorted_names {
+                key_types.push(self.property_name_atom_to_key_type(name));
+            }
+        }
+
+        if crate::type_queries::contains_type_parameters_db(self.interner(), mapped.constraint) {
+            key_types.push(name_type);
+        }
+
+        if key_types.is_empty() {
+            None
+        } else if key_types.len() == 1 {
+            Some(key_types[0])
+        } else {
+            Some(self.interner().union(key_types))
+        }
+    }
+
     fn should_include_keyof_property(&self, prop: &crate::PropertyInfo) -> bool {
         prop.visibility == crate::Visibility::Public
             && !self
@@ -156,8 +273,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::Mapped(mapped_id) => {
                     let mapped = self.interner().get_mapped(mapped_id);
-                    if let Some(name_type) = mapped.name_type {
-                        self.evaluate(name_type)
+                    if mapped.name_type.is_some() {
+                        self.collect_keyof_for_remapped_mapped_type(mapped_id, &mapped)
+                            .unwrap_or_else(|| {
+                                self.evaluate(mapped.name_type.unwrap_or(TypeId::ERROR))
+                            })
                     } else {
                         self.evaluate(mapped.constraint)
                     }
@@ -210,7 +330,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .properties
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
-                        .map(|p| self.interner().literal_string_atom(p.name))
+                        .map(|p| self.property_name_atom_to_key_type(p.name))
                         .collect();
                     if key_types.is_empty() {
                         return TypeId::NEVER;
@@ -223,7 +343,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .properties
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
-                        .map(|p| self.interner().literal_string_atom(p.name))
+                        .map(|p| self.property_name_atom_to_key_type(p.name))
                         .collect();
 
                     if shape.string_index.is_some() {
@@ -245,7 +365,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .properties
                         .iter()
                         .filter(|p| self.should_include_keyof_property(p))
-                        .map(|p| self.interner().literal_string_atom(p.name))
+                        .map(|p| self.property_name_atom_to_key_type(p.name))
                         .collect();
 
                     if shape.string_index.is_some() {
