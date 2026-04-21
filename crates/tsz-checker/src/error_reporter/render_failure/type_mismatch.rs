@@ -71,6 +71,14 @@ impl<'a> CheckerState<'a> {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
             }
+
+            if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
+                &source_str,
+                &target_str,
+                target,
+            ) {
+                source_str = widened;
+            }
         }
         source_str = self.normalize_template_placeholder_spacing_for_display(&source_str);
         target_str = self.normalize_template_placeholder_spacing_for_display(&target_str);

@@ -357,7 +357,7 @@ impl<'a> CheckerState<'a> {
                 source_type,
                 target_union_members: _,
             } => {
-                let (source_str, target_str) = if depth == 0 {
+                let (mut source_str, target_str) = if depth == 0 {
                     let use_structural_source_display =
                         crate::query_boundaries::common::enum_def_id(self.ctx.types, source)
                             .is_none();
@@ -379,6 +379,13 @@ impl<'a> CheckerState<'a> {
                         self.format_type_diagnostic(target),
                     )
                 };
+                if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
+                    &source_str,
+                    &target_str,
+                    target,
+                ) {
+                    source_str = widened;
+                }
                 // TS2820 prefers "did you mean X?" and uses the expanded union
                 // form rather than the alias name.
                 let evaluated_target_for_suggestion = self.evaluate_type_with_env(target);

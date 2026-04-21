@@ -32,7 +32,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         key_type = key_type.0,
         has_name_type = mapped.name_type.is_some(),
     ))]
-    fn remap_key_type_for_mapped(
+    pub(crate) fn remap_key_type_for_mapped(
         &mut self,
         mapped: &MappedType,
         key_type: TypeId,

@@ -448,6 +448,44 @@ function f4<T extends { [K in keyof T]: string }>(k: keyof T) {
 }
 
 #[test]
+fn test_assignment_diagnostic_widens_literal_for_named_keyof_display_target() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+declare const sym: unique symbol;
+
+function g<T>() {
+    type Orig = { [k: string]: any, str: any, [sym]: any } & T;
+    type NonIndex<T extends PropertyKey> = {} extends Record<T, any> ? never : T;
+    type DistributiveNonIndex<T extends PropertyKey> = T extends unknown ? NonIndex<T> : never;
+    type Remapped = { [K in keyof Orig as DistributiveNonIndex<K>]: any };
+    let x: keyof Remapped;
+    x = "whatever";
+}
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type 'string' is not assignable to type 'keyof Remapped'")
+        }),
+        "Expected named `keyof` target display to widen literal source text.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    .contains("Type '\"whatever\"' is not assignable to type 'keyof Remapped'")
+        }),
+        "Did not expect literal source text for named `keyof` target display.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_string_index_constraint_allows_read_but_rejects_write_via_dot_access() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
