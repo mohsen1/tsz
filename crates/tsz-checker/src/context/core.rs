@@ -416,6 +416,7 @@ impl<'a> CheckerContext<'a> {
         self.program_wildcard_reexports_type_only =
             parent.program_wildcard_reexports_type_only.clone();
         self.program_module_exports = parent.program_module_exports.clone();
+        self.program_cross_file_node_symbols = parent.program_cross_file_node_symbols.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
@@ -991,6 +992,21 @@ impl<'a> CheckerContext<'a> {
         module_key: &str,
     ) -> bool {
         self.module_exports_for_module(binder, module_key).is_some()
+    }
+
+    /// Resolve a node → symbol lookup by arena pointer against the
+    /// cross-file node-symbol map. Prefers the shared project-wide map
+    /// installed by `ProjectEnv::apply_to`; falls back to the per-binder
+    /// copy for tests and standalone callers.
+    pub fn cross_file_node_symbols_for_arena<'b>(
+        &'b self,
+        binder: &'b tsz_binder::BinderState,
+        arena_ptr: usize,
+    ) -> Option<&'b Arc<FxHashMap<u32, SymbolId>>> {
+        if let Some(ref idx) = self.program_cross_file_node_symbols {
+            return idx.get(&arena_ptr);
+        }
+        binder.cross_file_node_symbols.get(&arena_ptr)
     }
 
     /// Resolve an import specifier to its target file index.
