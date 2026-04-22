@@ -84,6 +84,7 @@ EMIT_WORKERS="${TSZ_CI_EMIT_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_emit_work
 FOURSLASH_WORKERS="${TSZ_CI_FOURSLASH_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_fourslash_workers)}}"
 CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers)}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
+EMIT_TIMEOUT_MS="${TSZ_CI_EMIT_TIMEOUT_MS:-30000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
 LOG_DIR="${TSZ_CI_LOG_DIR:-.ci-logs}"
 if [[ "$METRICS_DIR" != /* ]]; then
@@ -448,7 +449,7 @@ run_emit_shards() {
   ci_section "Emit shards"
   mkdir -p "$LOG_DIR/emit"
   export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
-  echo "Emit shard config: shards=${SHARD_COUNT} workers_per_shard=${EMIT_WORKERS} chunk=${EMIT_CHUNK}"
+  echo "Emit shard config: shards=${SHARD_COUNT} workers_per_shard=${EMIT_WORKERS} chunk=${EMIT_CHUNK} timeout_ms=${EMIT_TIMEOUT_MS}"
 
   for shard in $(seq 0 $((SHARD_COUNT - 1))); do
     (
@@ -456,6 +457,7 @@ run_emit_shards() {
       offset=$((shard * EMIT_CHUNK))
       detail_json="$METRICS_DIR/emit-detail-${shard}.json"
       ./scripts/emit/run.sh --skip-build --max="$EMIT_CHUNK" --offset="$offset" --concurrency="$EMIT_WORKERS" \
+        --timeout="$EMIT_TIMEOUT_MS" \
         --json-out="$detail_json" \
         >"$LOG_DIR/emit/shard-${shard}.log" 2>&1
       rc="$?"

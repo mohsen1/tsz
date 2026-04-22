@@ -25,8 +25,9 @@ keeps the old CI gates: Rust formatting, metadata guardrails,
 clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
 regression checks. Conformance defaults to up to 216 workers on the current
 224-vCPU pool. Emit and fourslash default to 4 shards. Emit uses up to 32
-workers per shard, while fourslash uses up to 16 workers per shard to avoid
-crashing the Node worker pool before it can record shard results.
+workers per shard with a 30s per-test timeout, while fourslash uses up to 16
+workers per shard to avoid crashing the Node worker pool before it can record
+shard results.
 
 Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
 `lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
