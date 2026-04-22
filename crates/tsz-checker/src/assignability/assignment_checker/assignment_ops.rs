@@ -401,7 +401,7 @@ impl<'a> CheckerState<'a> {
         // Import bindings are readonly in ESM — you cannot reassign them.
         if let Some(local_sym_id) = self.ctx.binder.file_locals.get(name)
             && let Some(local_sym) = self.ctx.binder.get_symbol(local_sym_id)
-            && local_sym.flags & symbol_flags::ALIAS != 0
+            && local_sym.has_any_flags(symbol_flags::ALIAS)
         {
             self.error_at_node_msg(
                 inner,
@@ -424,9 +424,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check for uninstantiated namespaces first (TS2708)
-        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let is_namespace = symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE);
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+        let has_other_value = symbol.has_any_flags(value_flags_except_module);
 
         if is_namespace && !has_other_value {
             let mut is_instantiated = false;
@@ -447,7 +447,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for type-only symbols used as values in assignment position (TS2693)
-        if symbol.flags & symbol_flags::TYPE != 0 && symbol.flags & symbol_flags::VALUE == 0 {
+        if symbol.has_any_flags(symbol_flags::TYPE) && !symbol.has_any_flags(symbol_flags::VALUE) {
             self.report_wrong_meaning_diagnostic(
                 name,
                 inner,
@@ -457,13 +457,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if this symbol is a class, enum, function, or namespace (TS2629, TS2628, TS2630, TS2631)
-        let code = if symbol.flags & symbol_flags::MODULE != 0 {
+        let code = if symbol.has_any_flags(symbol_flags::MODULE) {
             diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE
-        } else if symbol.flags & symbol_flags::CLASS != 0 {
+        } else if symbol.has_any_flags(symbol_flags::CLASS) {
             diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_CLASS
-        } else if symbol.flags & symbol_flags::ENUM != 0 {
+        } else if symbol.has_any_flags(symbol_flags::ENUM) {
             diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_AN_ENUM
-        } else if symbol.flags & symbol_flags::FUNCTION != 0 {
+        } else if symbol.has_any_flags(symbol_flags::FUNCTION) {
             diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION
         } else {
             return false;
