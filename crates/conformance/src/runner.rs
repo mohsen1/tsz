@@ -169,6 +169,88 @@ fn suppress_tsz_semantic_diagnostics_after_tsc_option_error(
         .retain(|fingerprint| fingerprint.code == 5024);
 }
 
+/// Compare filtered tsz and tsc diagnostics and produce a `TestResult`.
+///
+/// Inputs are expected to have all path-specific filtering (lib, config-level,
+/// `@noLib`, option-error suppression) already applied. This helper performs
+/// only the final set diff, fingerprint sort, and pass/fail classification so
+/// the variant, UTF-16, and binary branches of `run_single_test` share one
+/// implementation.
+///
+/// `options` is threaded into `TestResult::Fail` unchanged — callers that
+/// intentionally drop the options map (e.g. the UTF-16 path) can pass
+/// `HashMap::new()`.
+fn compare_diagnostics(
+    compile_result: &tsz_wrapper::CompilationResult,
+    tsc_error_codes: &[u32],
+    tsc_fps: &[DiagnosticFingerprint],
+    options: HashMap<String, String>,
+) -> TestResult {
+    let tsc_codes: std::collections::HashSet<u32> = tsc_error_codes.iter().copied().collect();
+    let tsz_codes: std::collections::HashSet<u32> =
+        compile_result.error_codes.iter().copied().collect();
+
+    let missing: Vec<u32> = tsc_codes.difference(&tsz_codes).copied().collect();
+    let extra: Vec<u32> = tsz_codes.difference(&tsc_codes).copied().collect();
+
+    let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
+        tsc_fps.iter().cloned().collect();
+    let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> = compile_result
+        .diagnostic_fingerprints
+        .iter()
+        .cloned()
+        .collect();
+    let use_fingerprint_compare = use_fingerprint_compare(&tsc_fingerprints, &tsz_fingerprints);
+
+    let mut missing_fingerprints: Vec<DiagnosticFingerprint> = if use_fingerprint_compare {
+        tsc_fingerprints
+            .difference(&tsz_fingerprints)
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut extra_fingerprints: Vec<DiagnosticFingerprint> = if use_fingerprint_compare {
+        tsz_fingerprints
+            .difference(&tsc_fingerprints)
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let fp_sort_key = |f: &DiagnosticFingerprint| {
+        (
+            f.code,
+            f.file.clone(),
+            f.line,
+            f.column,
+            f.message_key.clone(),
+        )
+    };
+    missing_fingerprints.sort_by_key(fp_sort_key);
+    extra_fingerprints.sort_by_key(fp_sort_key);
+
+    let fingerprints_match = !use_fingerprint_compare
+        || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty());
+    if missing.is_empty() && extra.is_empty() && fingerprints_match {
+        TestResult::Pass
+    } else {
+        let mut expected = tsc_error_codes.to_vec();
+        let mut actual = compile_result.error_codes.clone();
+        expected.sort_unstable();
+        actual.sort_unstable();
+        TestResult::Fail {
+            expected,
+            actual,
+            missing,
+            extra,
+            missing_fingerprints,
+            extra_fingerprints,
+            options,
+        }
+    }
+}
+
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -1092,90 +1174,14 @@ impl Runner {
                         &mut compile_result,
                     );
 
-                    // Compare error codes
-                    let tsc_codes: std::collections::HashSet<_> =
-                        tsc_error_codes.iter().cloned().collect();
-                    let tsz_codes: std::collections::HashSet<_> =
-                        compile_result.error_codes.iter().cloned().collect();
-
-                    // Find missing (in TSC but not tsz)
-                    let missing: Vec<_> = tsc_codes.difference(&tsz_codes).cloned().collect();
-                    // Find extra (in tsz but not TSC)
-                    let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
-
-                    let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        tsc_fps.iter().cloned().collect();
-                    let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        compile_result
-                            .diagnostic_fingerprints
-                            .iter()
-                            .cloned()
-                            .collect();
-                    let use_fingerprint_compare =
-                        use_fingerprint_compare(&tsc_fingerprints, &tsz_fingerprints);
-                    let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
-                        if use_fingerprint_compare {
-                            tsc_fingerprints
-                                .difference(&tsz_fingerprints)
-                                .cloned()
-                                .collect()
-                        } else {
-                            vec![]
-                        };
-                    let mut extra_fingerprints: Vec<DiagnosticFingerprint> =
-                        if use_fingerprint_compare {
-                            tsz_fingerprints
-                                .difference(&tsc_fingerprints)
-                                .cloned()
-                                .collect()
-                        } else {
-                            vec![]
-                        };
-                    missing_fingerprints.sort_by_key(|f| {
-                        (
-                            f.code,
-                            f.file.clone(),
-                            f.line,
-                            f.column,
-                            f.message_key.clone(),
-                        )
-                    });
-                    extra_fingerprints.sort_by_key(|f| {
-                        (
-                            f.code,
-                            f.file.clone(),
-                            f.line,
-                            f.column,
-                            f.message_key.clone(),
-                        )
-                    });
-
-                    if missing.is_empty()
-                        && extra.is_empty()
-                        && (!use_fingerprint_compare
-                            || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
-                    {
-                        Ok((TestResult::Pass, file_preview.take()))
-                    } else {
-                        // Sort the codes for consistent display
-                        // Use filtered codes (tsc_error_codes) not unfiltered (tsc_result.error_codes)
-                        let mut expected = tsc_error_codes.clone();
-                        let mut actual = compile_result.error_codes.clone();
-                        expected.sort();
-                        actual.sort();
-                        Ok((
-                            TestResult::Fail {
-                                expected,
-                                actual,
-                                missing,
-                                extra,
-                                missing_fingerprints,
-                                extra_fingerprints,
-                                options: compile_result.options,
-                            },
-                            file_preview.take(),
-                        ))
-                    }
+                    let options_for_fail = compile_result.options.clone();
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
+                    );
+                    Ok((outcome, file_preview.take()))
                 } else {
                     debug!("Cache miss for {}", path.display());
 
@@ -1327,86 +1333,15 @@ impl Runner {
                         ..compile_result
                     };
 
-                    let tsc_codes: std::collections::HashSet<_> =
-                        tsc_error_codes.iter().cloned().collect();
-                    let tsz_codes: std::collections::HashSet<_> =
-                        compile_result.error_codes.iter().cloned().collect();
-
-                    let missing: Vec<_> = tsc_codes.difference(&tsz_codes).cloned().collect();
-                    let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
-
-                    let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        tsc_fps.iter().cloned().collect();
-                    let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        compile_result
-                            .diagnostic_fingerprints
-                            .iter()
-                            .cloned()
-                            .collect();
-                    let use_fingerprint_compare =
-                        use_fingerprint_compare(&tsc_fingerprints, &tsz_fingerprints);
-                    let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
-                        if use_fingerprint_compare {
-                            tsc_fingerprints
-                                .difference(&tsz_fingerprints)
-                                .cloned()
-                                .collect()
-                        } else {
-                            vec![]
-                        };
-                    let mut extra_fingerprints: Vec<DiagnosticFingerprint> =
-                        if use_fingerprint_compare {
-                            tsz_fingerprints
-                                .difference(&tsc_fingerprints)
-                                .cloned()
-                                .collect()
-                        } else {
-                            vec![]
-                        };
-                    missing_fingerprints.sort_by_key(|f| {
-                        (
-                            f.code,
-                            f.file.clone(),
-                            f.line,
-                            f.column,
-                            f.message_key.clone(),
-                        )
-                    });
-                    extra_fingerprints.sort_by_key(|f| {
-                        (
-                            f.code,
-                            f.file.clone(),
-                            f.line,
-                            f.column,
-                            f.message_key.clone(),
-                        )
-                    });
-
-                    if missing.is_empty()
-                        && extra.is_empty()
-                        && (!use_fingerprint_compare
-                            || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
-                    {
-                        Ok((TestResult::Pass, file_preview.take()))
-                    } else {
-                        // Use filtered codes (tsc_error_codes) not unfiltered (tsc_result.error_codes)
-                        let mut expected = tsc_error_codes.clone();
-                        let mut actual = compile_result.error_codes.clone();
-                        expected.sort();
-                        actual.sort();
-                        Ok((
-                            TestResult::Fail {
-                                expected,
-                                actual,
-                                missing,
-                                extra,
-                                missing_fingerprints,
-                                extra_fingerprints,
-                                options: HashMap::new(),
-                            },
-                            file_preview.take(),
-                        ))
-                    }
+                    // UTF-16 path historically drops the resolved options from the
+                    // failure record — preserve that behavior by passing an empty map.
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        HashMap::new(),
+                    );
+                    Ok((outcome, file_preview.take()))
                 } else {
                     Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
                 }
@@ -1532,85 +1467,14 @@ impl Runner {
                         ..compile_result
                     };
 
-                    let tsc_codes: std::collections::HashSet<_> =
-                        tsc_error_codes.iter().cloned().collect();
-                    let tsz_codes: std::collections::HashSet<_> =
-                        compile_result.error_codes.iter().cloned().collect();
-
-                    let missing: Vec<_> = tsc_codes.difference(&tsz_codes).cloned().collect();
-                    let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
-                    let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        tsc_fps.iter().cloned().collect();
-                    let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
-                        compile_result
-                            .diagnostic_fingerprints
-                            .iter()
-                            .cloned()
-                            .collect();
-                    let use_fingerprint_compare =
-                        use_fingerprint_compare(&tsc_fingerprints, &tsz_fingerprints);
-                    let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
-                        if use_fingerprint_compare {
-                            tsc_fingerprints
-                                .difference(&tsz_fingerprints)
-                                .cloned()
-                                .collect()
-                        } else {
-                            vec![]
-                        };
-                    let mut extra_fingerprints: Vec<DiagnosticFingerprint> =
-                        if use_fingerprint_compare {
-                            tsz_fingerprints
-                                .difference(&tsc_fingerprints)
-                                .cloned()
-                                .collect()
-                        } else {
-                            vec![]
-                        };
-                    missing_fingerprints.sort_by_key(|f| {
-                        (
-                            f.code,
-                            f.file.clone(),
-                            f.line,
-                            f.column,
-                            f.message_key.clone(),
-                        )
-                    });
-                    extra_fingerprints.sort_by_key(|f| {
-                        (
-                            f.code,
-                            f.file.clone(),
-                            f.line,
-                            f.column,
-                            f.message_key.clone(),
-                        )
-                    });
-
-                    if missing.is_empty()
-                        && extra.is_empty()
-                        && (!use_fingerprint_compare
-                            || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
-                    {
-                        Ok((TestResult::Pass, file_preview.take()))
-                    } else {
-                        // Use filtered codes (tsc_error_codes) not unfiltered (tsc_result.error_codes)
-                        let mut expected = tsc_error_codes.clone();
-                        let mut actual = compile_result.error_codes.clone();
-                        expected.sort();
-                        actual.sort();
-                        Ok((
-                            TestResult::Fail {
-                                expected,
-                                actual,
-                                missing,
-                                extra,
-                                missing_fingerprints,
-                                extra_fingerprints,
-                                options: compile_result.options,
-                            },
-                            file_preview.take(),
-                        ))
-                    }
+                    let options_for_fail = compile_result.options.clone();
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
+                    );
+                    Ok((outcome, file_preview.take()))
                 } else {
                     debug!("Cache miss for {}", path.display());
                     Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
@@ -1924,5 +1788,195 @@ mod tests {
                     .to_string()
             );
         });
+    }
+
+    fn compilation(
+        codes: &[u32],
+        fps: Vec<DiagnosticFingerprint>,
+    ) -> tsz_wrapper::CompilationResult {
+        tsz_wrapper::CompilationResult {
+            error_codes: codes.to_vec(),
+            diagnostic_fingerprints: fps,
+            crashed: false,
+            options: HashMap::new(),
+        }
+    }
+
+    fn assert_fail_codes(
+        result: &TestResult,
+        expected_codes: &[u32],
+        actual_codes: &[u32],
+        missing_codes: &[u32],
+        extra_codes: &[u32],
+    ) {
+        match result {
+            TestResult::Fail {
+                expected,
+                actual,
+                missing,
+                extra,
+                ..
+            } => {
+                assert_eq!(expected, expected_codes, "expected codes mismatch");
+                assert_eq!(actual, actual_codes, "actual codes mismatch");
+                let mut m = missing.clone();
+                m.sort_unstable();
+                let mut e = extra.clone();
+                e.sort_unstable();
+                let mut want_m = missing_codes.to_vec();
+                want_m.sort_unstable();
+                let mut want_e = extra_codes.to_vec();
+                want_e.sort_unstable();
+                assert_eq!(m, want_m, "missing codes mismatch");
+                assert_eq!(e, want_e, "extra codes mismatch");
+            }
+            other => panic!("expected TestResult::Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_passes_on_exact_match() {
+        let tsc_codes = vec![2304];
+        let tsc_fps = vec![fp(2304, "a.ts", "Cannot find name 'foo'.")];
+        let compile = compilation(&[2304], vec![fp(2304, "a.ts", "Cannot find name 'foo'.")]);
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        assert_eq!(result, TestResult::Pass);
+    }
+
+    #[test]
+    fn compare_diagnostics_detects_missing_code() {
+        let tsc_codes = vec![2304, 2322];
+        let tsc_fps: Vec<DiagnosticFingerprint> = vec![];
+        let compile = compilation(&[2304], vec![]);
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        assert_fail_codes(&result, &[2304, 2322], &[2304], &[2322], &[]);
+    }
+
+    #[test]
+    fn compare_diagnostics_detects_extra_code() {
+        let tsc_codes = vec![2304];
+        let tsc_fps: Vec<DiagnosticFingerprint> = vec![];
+        let compile = compilation(&[2304, 7027], vec![]);
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        assert_fail_codes(&result, &[2304], &[2304, 7027], &[], &[7027]);
+    }
+
+    #[test]
+    fn compare_diagnostics_skips_fingerprints_when_tsc_has_none() {
+        // When the tsc cache carries no fingerprints, code-level parity is the
+        // only thing that matters. Extra tsz fingerprints must not fail the run.
+        let tsc_codes = vec![2304];
+        let compile = compilation(
+            &[2304],
+            vec![fp(2304, "a.ts", "Cannot find name 'foo' on line 1.")],
+        );
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &[], HashMap::new());
+        assert_eq!(result, TestResult::Pass);
+    }
+
+    #[test]
+    fn compare_diagnostics_detects_fingerprint_only_mismatch() {
+        // Codes match but fingerprints disagree (e.g. wrong file or message).
+        // This is the "fingerprint-only failure" case that dominates the
+        // close-to-passing bucket in the conformance dashboard.
+        let tsc_codes = vec![2304];
+        let tsc_fps = vec![fp(2304, "expected.ts", "Cannot find name 'foo'.")];
+        let compile = compilation(
+            &[2304],
+            vec![fp(2304, "actual.ts", "Cannot find name 'foo'.")],
+        );
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        match result {
+            TestResult::Fail {
+                missing,
+                extra,
+                missing_fingerprints,
+                extra_fingerprints,
+                ..
+            } => {
+                assert!(
+                    missing.is_empty() && extra.is_empty(),
+                    "codes should match exactly"
+                );
+                assert_eq!(missing_fingerprints.len(), 1);
+                assert_eq!(missing_fingerprints[0].file, "expected.ts");
+                assert_eq!(extra_fingerprints.len(), 1);
+                assert_eq!(extra_fingerprints[0].file, "actual.ts");
+            }
+            other => panic!("expected Fail with fingerprint diff, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_sorts_expected_and_actual() {
+        // Callers rely on sorted `expected` and `actual` for stable failure
+        // rendering and snapshot stability.
+        let tsc_codes = vec![2345, 2304];
+        let tsc_fps: Vec<DiagnosticFingerprint> = vec![];
+        let compile = compilation(&[7027, 2304], vec![]);
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        match result {
+            TestResult::Fail {
+                expected, actual, ..
+            } => {
+                assert_eq!(expected, vec![2304, 2345]);
+                assert_eq!(actual, vec![2304, 7027]);
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_sorts_fingerprint_diffs() {
+        // Fingerprint lists must be deterministic so failure output is stable.
+        // tsz must carry at least one fingerprint to activate the fingerprint
+        // comparison path (server-mode parity guard in `use_fingerprint_compare`).
+        let tsc_codes = vec![2322, 2304];
+        let tsc_fps = vec![
+            fp(2322, "b.ts", "Type mismatch."),
+            fp(2304, "a.ts", "Cannot find."),
+        ];
+        let compile = compilation(&[], vec![fp(9999, "z.ts", "sentinel")]);
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        match result {
+            TestResult::Fail {
+                missing_fingerprints,
+                ..
+            } => {
+                // Sort key is (code, file, line, column, message_key).
+                assert_eq!(
+                    missing_fingerprints
+                        .iter()
+                        .map(|f| (f.code, f.file.clone()))
+                        .collect::<Vec<_>>(),
+                    vec![(2304, "a.ts".into()), (2322, "b.ts".into())],
+                );
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_threads_options_into_fail() {
+        let mut options = HashMap::new();
+        options.insert("target".to_string(), "es2020".to_string());
+        let tsc_codes = vec![2304];
+        let compile = compilation(&[], vec![]);
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &[], options.clone());
+        match result {
+            TestResult::Fail {
+                options: got_options,
+                ..
+            } => assert_eq!(got_options, options),
+            other => panic!("expected Fail, got {other:?}"),
+        }
     }
 }
