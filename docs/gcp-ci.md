@@ -3,9 +3,20 @@
 CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoint is `cloudbuild.yaml`, which runs
-`scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. Both checked-in
-build configs currently target the `tsz-ci-n2d-224` pool so all suite checks can
-run concurrently without consuming the small C3 quota. The script
+`scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. The configured
+suite pools use 592 of the 600 available private-pool CPUs in `us-central1`, so
+all six suite checks can run concurrently without falling back into queueing:
+
+```text
+conformance  n2d-highcpu-224
+emit         n2d-highcpu-128
+fourslash    n2d-highcpu-128
+unit         n2d-highcpu-48
+lint         n2d-highcpu-32
+wasm         n2d-highcpu-32
+```
+
+The script
 keeps the old CI gates: Rust formatting, metadata guardrails,
 clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
 regression checks. Conformance defaults to up to 216 workers on the current
@@ -35,15 +46,6 @@ On a miss, Cloud Build downloads the GitHub source archive for the pinned commit
 writes `TypeScript/.tsz-cache-ref`, and uploads the tarball for later runs. The
 main CI step accepts that source-only tree and avoids a git submodule clone.
 
-Rust builds use `sccache` with a GCS backend scoped under:
-
-```text
-gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/sccache/rust-v1
-```
-
-Main branch builds write to that cache. Pull request builds default to read-only
-cache mode.
-
 Create the private pool before running builds or creating triggers:
 
 ```bash
@@ -51,6 +53,24 @@ gcloud builds worker-pools create tsz-ci-n2d-224 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
   --worker-machine-type=n2d-highcpu-224 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-n2d-128 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-128 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-n2d-48 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-48 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-n2d-32 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-32 \
   --worker-disk-size=200GB
 ```
 
@@ -81,7 +101,10 @@ Create one pull request trigger per suite in the GCP project:
 ```bash
 pool_for_suite() {
   case "$1" in
-    lint|unit|wasm) printf '%s\n' cloudbuild.e2.yaml ;;
+    lint|wasm) printf '%s\n' cloudbuild.n2d-32.yaml ;;
+    unit) printf '%s\n' cloudbuild.n2d-48.yaml ;;
+    emit|fourslash) printf '%s\n' cloudbuild.n2d-128.yaml ;;
+    conformance) printf '%s\n' cloudbuild.yaml ;;
     *) printf '%s\n' cloudbuild.yaml ;;
   esac
 }
