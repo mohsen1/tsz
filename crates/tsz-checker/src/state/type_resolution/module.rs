@@ -3,6 +3,8 @@
 //! Constructor type operations have been extracted to
 //! `type_resolution/constructors.rs`.
 
+mod interop;
+
 use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -1986,33 +1988,6 @@ impl<'a> CheckerState<'a> {
         name.ends_with(".mjs") || name.ends_with(".mts")
     }
 
-    /// Check if the target module is a pure ESM module (from a package with
-    /// `"type": "module"` or using `.mjs`/`.mts` extension).
-    pub(crate) fn module_is_esm(&self, module_specifier: &str) -> bool {
-        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
-            return false;
-        };
-        let arena = self.ctx.get_arena_for_file(target_idx as u32);
-        let Some(source_file) = arena.source_files.first() else {
-            return false;
-        };
-        let file_name = source_file.file_name.as_str();
-
-        if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
-            return true;
-        }
-        if file_name.ends_with(".cjs") || file_name.ends_with(".cts") {
-            return false;
-        }
-
-        self.ctx
-            .file_is_esm_map
-            .as_ref()
-            .and_then(|map| map.get(file_name))
-            .copied()
-            .unwrap_or(false)
-    }
-
     pub(crate) fn module_has_export_equals(&self, module_specifier: &str) -> bool {
         if self
             .ctx
@@ -2415,7 +2390,12 @@ impl<'a> CheckerState<'a> {
 
         let has_default =
             if let Some(exports_table) = self.resolve_effective_module_exports(module_specifier) {
-                exports_table.has("default") || exports_table.has("export=")
+                exports_table.has("default")
+                    || exports_table.has("export=")
+                    || self.module_uses_module_exports_interop(
+                        module_specifier,
+                        Some(self.current_file_emit_resolution_mode()),
+                    )
             } else {
                 false
             };
