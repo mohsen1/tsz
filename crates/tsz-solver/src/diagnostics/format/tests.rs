@@ -1675,7 +1675,10 @@ fn display_alias_does_not_repaint_preexisting_structural_type() {
 #[test]
 fn concrete_display_alias_can_name_preexisting_structural_type() {
     let db = TypeInterner::new();
-    let evaluated = db.object(vec![]);
+    let evaluated = db.object(vec![PropertyInfo::new(
+        db.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
     let app = db.application(
         db.lazy(crate::def::DefId(1)),
         vec![TypeId::NUMBER, TypeId::VOID, TypeId::UNKNOWN],
@@ -1687,6 +1690,83 @@ fn concrete_display_alias_can_name_preexisting_structural_type() {
         db.get_display_alias(evaluated),
         Some(app),
         "Concrete application aliases should still name reused structural interface shapes"
+    );
+}
+
+/// The empty object shape `{}` is a universally-shared interning target:
+/// many generic reductions (e.g., `T50<unknown>` where
+/// `T50<T> = { [P in keyof T]: number }`) evaluate to `{}` because
+/// `keyof unknown = never`. Aliasing `{}` to the application's nominal form
+/// causes user-written `{}` annotations to misprint as the helper alias in
+/// unrelated diagnostics. Guard: `store_display_alias` must reject
+/// empty-object evaluatees, matching the treatment of intrinsic sentinels.
+#[test]
+fn display_alias_is_not_stored_for_empty_object_type() {
+    let db = TypeInterner::new();
+    let evaluated = db.object(vec![]);
+    let app = db.application(db.lazy(crate::def::DefId(1)), vec![TypeId::UNKNOWN]);
+
+    db.store_display_alias(evaluated, app);
+
+    assert_eq!(
+        db.get_display_alias(evaluated),
+        None,
+        "Empty object `{{}}` must not carry a display_alias — many generic \
+         reductions evaluate to `{{}}`, so aliasing would repaint every \
+         user-written `{{}}` annotation."
+    );
+}
+
+/// Regression test for the `unknownType1` conformance failure: when a generic
+/// mapped-type application (`T50<unknown>`) reduces to `{}` and is stored as
+/// a `display_alias`, later diagnostics that reference `{}` (e.g.,
+/// `let v6: {} = x` where `x: unknown`) would print the target type as
+/// `T50<unknown>` instead of `{}`. The fix skips alias storage for `{}` so
+/// the formatter falls through to the structural form.
+#[test]
+fn empty_object_formats_as_braces_after_mapped_reduction() {
+    let db = TypeInterner::new();
+    // Simulate the result of evaluating `T50<unknown>`: an application over a
+    // (fake) type alias with `unknown` as the sole argument reduces to `{}`.
+    let evaluated = db.object(vec![]);
+    let app = db.application(db.lazy(crate::def::DefId(1)), vec![TypeId::UNKNOWN]);
+
+    db.store_display_alias(evaluated, app);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(evaluated);
+    assert_eq!(
+        result, "{}",
+        "Empty object must format as `{{}}` even when a generic application \
+         has reduced to the same interned shape."
+    );
+}
+
+/// Second half of the `unknownType1` regression: the type-alias `T52` is
+/// declared as `type T52 = T50<unknown>`, and the checker registers the
+/// evaluated body `{}` against `T52` via `register_type_to_def`. Without
+/// the formatter guard, every user-written `{}` annotation in diagnostics
+/// would pick up `T52` (or any sibling def that also reduces to `{}`).
+/// The formatter must render `{}` structurally regardless of what def is
+/// keyed on the empty-object `TypeId`.
+#[test]
+fn empty_object_formats_as_braces_when_def_registered() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let evaluated = db.object(vec![]);
+    let name = db.intern_string("T52");
+    let info = crate::def::DefinitionInfo::type_alias(name, vec![], evaluated);
+    let def_id = def_store.register(info);
+    def_store.register_type_to_def(evaluated, def_id);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(evaluated);
+    assert_eq!(
+        result, "{}",
+        "Empty object must format as `{{}}` even when a type alias's body \
+         happens to reduce to the same interned shape (would otherwise \
+         repaint every `{{}}` annotation with the alias name)."
     );
 }
 
@@ -2087,13 +2167,25 @@ fn format_const_type_param() {
 
 #[test]
 fn generic_class_type_shows_type_params() {
-    // When a generic class (e.g., `class B<T>`) has its instance type formatted,
-    // the formatter should show `B<T>` not just `B`.
+    // When a generic class (e.g., `class B<T> { value: T }`) has its instance
+    // type formatted, the formatter should show `B<T>`, not just `B` nor
+    // the structural body.
+    //
+    // Note: we give the class body one property so its instance TypeId does
+    // not intern to the universally-shared empty object `{}`. Real classes
+    // and interfaces in the checker that happen to have zero properties still
+    // render their structural form `{}` in diagnostics, matching tsc's
+    // behaviour where user-written `{}` annotations stay `{}` regardless of
+    // any alias whose body happens to reduce to the empty shape.
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
-    // Create an empty object type as the class instance body
-    let instance_type = db.object(vec![]);
+    // One fake property so the instance TypeId is distinct from the
+    // universally-shared empty object `{}`.
+    let instance_type = db.object(vec![PropertyInfo::new(
+        db.intern_string("value"),
+        TypeId::STRING,
+    )]);
 
     // Register a class definition with one type parameter T
     let name = db.intern_string("B");
@@ -2129,12 +2221,12 @@ fn generic_class_type_shows_type_params() {
     // Register the instance type -> def mapping
     def_store.register_type_to_def(instance_type, def_id);
 
-    // Without def_store: should show structural form
+    // Without def_store: should show structural form.
     let mut fmt = TypeFormatter::new(&db);
     let without = fmt.format(instance_type);
-    assert_eq!(without, "{}");
+    assert_eq!(without, "{ value: string; }");
 
-    // With def_store: should show `B<T>` with type parameter name
+    // With def_store: should show `B<T>` with type parameter name.
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let with = fmt.format(instance_type);
     assert_eq!(with, "B<T>", "Generic class should show type params");
