@@ -556,6 +556,57 @@ fn no_ts1345_void_in_logical_and_without_strict() {
     );
 }
 
+#[test]
+fn type_predicate_logical_and_property_access_keeps_narrowed_property_types() {
+    let diags = check_source_diagnostics(
+        r#"
+interface C1 {
+    (): C1;
+    prototype: C1;
+    p1: string;
+}
+interface C2 {
+    (): C2;
+    prototype: C2;
+    p2: number;
+}
+interface D1 extends C1 {
+    prototype: D1;
+    p3: number;
+}
+var str: string;
+var num: number;
+function isC2(x: any): x is C2 { return true; }
+function isD1(x: any): x is D1 { return true; }
+var c1Orc2: C1 | C2 = undefined as any;
+var c2Ord1: C2 | D1 = undefined as any;
+num = isC2(c1Orc2) && c1Orc2.p2;
+str = isD1(c1Orc2) && c1Orc2.p1;
+num = isD1(c1Orc2) && c1Orc2.p3;
+num = isD1(c2Ord1) && c2Ord1.p3;
+str = isD1(c2Ord1) && c2Ord1.p1;
+"#,
+    );
+
+    let ts2322_count = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        5,
+        "Expected 5 TS2322 errors for `&&` false-union assignment shape, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "Should not emit TS2339 for narrowed predicate property access, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2454),
+        "Should not emit TS2454 when test initializes union vars, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 // Tests for optional property overlap (TS2365/TS2367)
 
 #[test]
