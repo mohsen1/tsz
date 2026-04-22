@@ -136,6 +136,8 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
             Some(TypeData::Union(_))
             | Some(TypeData::Intersection(_))
             | Some(TypeData::Lazy(_))
+            | Some(TypeData::Conditional(_))
+            | Some(TypeData::IndexAccess(_, _))
             | Some(TypeData::KeyOf(_))
             | Some(TypeData::TemplateLiteral(_)) => Some(type_id),
             _ if type_id.is_intrinsic() => Some(type_id),

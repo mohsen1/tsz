@@ -1026,6 +1026,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
+        if matches!(
+            self.interner().lookup(true_inst),
+            Some(TypeData::Application(_))
+        ) && crate::type_queries::contains_generic_type_parameters_db(self.interner(), true_inst)
+        {
+            return true_inst;
+        }
         self.evaluate(true_inst)
     }
 

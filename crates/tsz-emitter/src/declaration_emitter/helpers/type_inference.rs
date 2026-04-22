@@ -1285,22 +1285,19 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(ret) = self.arena.get_return_statement(stmt_node) else {
                     return false;
                 };
-                let type_text =
-                    if let Some(text) = self.array_flat_call_return_type_text(ret.expression) {
-                        text
-                    } else if let Some(text) = self
-                        .preferred_expression_type_text(ret.expression)
-                        .filter(|text| !text.is_empty())
-                    {
-                        text
-                    } else if let Some(text) = self
-                        .infer_fallback_type_text_at(ret.expression, 0)
-                        .filter(|text| !text.is_empty())
-                    {
-                        text
-                    } else {
-                        return false;
-                    };
+                let type_text = if let Some(text) = self
+                    .preferred_expression_type_text(ret.expression)
+                    .filter(|text| !text.is_empty())
+                {
+                    text
+                } else if let Some(text) = self
+                    .infer_fallback_type_text_at(ret.expression, 0)
+                    .filter(|text| !text.is_empty())
+                {
+                    text
+                } else {
+                    return false;
+                };
                 if let Some(existing) = preferred.as_ref() {
                     existing == &type_text
                 } else {
@@ -1356,64 +1353,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
-    }
-
-    fn array_flat_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-
-        let call = self.arena.get_call_expr(expr_node)?;
-        let callee_node = self.arena.get(call.expression)?;
-        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-
-        let access = self.arena.get_access_expr(callee_node)?;
-        if self.get_identifier_text(access.name_or_argument).as_deref() != Some("flat") {
-            return None;
-        }
-
-        let receiver_type = self.reference_declared_type_annotation_text(access.expression)?;
-        let element_type = Self::array_element_type_text(&receiver_type)?;
-        let depth_type = call
-            .arguments
-            .as_ref()
-            .and_then(|args| args.nodes.first().copied())
-            .and_then(|arg_idx| {
-                self.preferred_expression_type_text(arg_idx)
-                    .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
-            })
-            .unwrap_or_else(|| "1".to_string());
-        let depth_type = if depth_type == "number" {
-            "0 | 1 | -1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20"
-        } else {
-            depth_type.as_str()
-        };
-
-        Some(format!("FlatArray<{element_type}, {depth_type}>[]"))
-    }
-
-    fn array_element_type_text(type_text: &str) -> Option<String> {
-        let trimmed = type_text.trim();
-        if let Some(element) = trimmed.strip_suffix("[]") {
-            return Some(element.trim().to_string());
-        }
-        if let Some(inner) = trimmed
-            .strip_prefix("Array<")
-            .and_then(|text| text.strip_suffix('>'))
-        {
-            return Some(inner.trim().to_string());
-        }
-        if let Some(inner) = trimmed
-            .strip_prefix("ReadonlyArray<")
-            .and_then(|text| text.strip_suffix('>'))
-        {
-            return Some(inner.trim().to_string());
-        }
-        None
     }
 
     pub(in crate::declaration_emitter) fn infer_object_literal_type_text_at(

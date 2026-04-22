@@ -53,6 +53,7 @@ interface TestCase {
   expectedDtsFileName: string | null;
   target: number;
   module: number;
+  lib?: string[];
   alwaysStrict: boolean;
   sourceMap: boolean;
   inlineSourceMap: boolean;
@@ -141,6 +142,7 @@ function getCacheKey(
   sourceKey: string,
   target: number,
   module: number,
+  lib: string = '',
   alwaysStrict: boolean,
   declaration: boolean,
   sourceMap: boolean = false,
@@ -187,7 +189,7 @@ function getCacheKey(
   } catch {
     runnerSalt = 'runner-unknown';
   }
-  return hashString(`${sourceKey}:${target}:${module}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${rewriteRelativeImportExtensions}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
+  return hashString(`${sourceKey}:${target}:${module}:${lib}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${rewriteRelativeImportExtensions}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
 }
 
 let cache: Map<string, CacheEntry> = new Map();
@@ -336,6 +338,18 @@ function parseSourceTest(content: string): ParsedSourceTest {
   };
 }
 
+function parseLibList(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const libs = value.map(String).map(s => s.trim()).filter(Boolean);
+    return libs.length > 0 ? libs : undefined;
+  }
+  if (typeof value === 'string') {
+    const libs = value.split(',').map(s => s.trim()).filter(Boolean);
+    return libs.length > 0 ? libs : undefined;
+  }
+  return undefined;
+}
+
 function loadDtsDiscoveryCache(): DtsDiscoveryCache {
   if (!fs.existsSync(DTS_DISCOVERY_CACHE)) return {};
   try {
@@ -472,6 +486,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : directives.module ? parseModule(String(directives.module))
       : tsconfigModule !== undefined ? tsconfigModule
       : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
+    const lib = parseLibList(directives.lib) ?? parseLibList(tsconfigOptions.lib);
 
     // TS6: alwaysStrict defaults to true unless explicitly set to false.
     // Note: @strict: false does NOT affect alwaysStrict in TS6 — they are independent.
@@ -566,6 +581,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       expectedDtsFileName: baseline.dtsFileName,
       target,
       module,
+      lib,
       alwaysStrict,
       sourceMap,
       inlineSourceMap,
@@ -676,6 +692,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       sourceKey,
       testCase.target,
       testCase.module,
+      testCase.lib?.join(',') ?? '',
       testCase.alwaysStrict,
       emitDeclarations,
       testCase.sourceMap,
@@ -718,6 +735,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       const transpileResult = await transpiler.transpile(testCase.source, testCase.target, testCase.module, {
         sourceFileName: testCase.sourceFileName ?? undefined,
         declaration: emitDeclarations,
+        lib: testCase.lib,
         alwaysStrict: testCase.alwaysStrict,
         sourceMap: testCase.sourceMap,
         inlineSourceMap: testCase.inlineSourceMap,
