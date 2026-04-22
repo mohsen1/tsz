@@ -49,5 +49,5 @@ substitutions:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
   _TSZ_CI_SUITE: all
 
-queueTtl: 900s
+queueTtl: 300s
 timeout: 3600s

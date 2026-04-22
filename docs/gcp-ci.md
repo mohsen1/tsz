@@ -4,20 +4,20 @@ CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoint is `cloudbuild.yaml`, which runs
 `scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. Heavy suites
-use `cloudbuild.yaml` on the `c3-highcpu-88` pool, while lighter suites use
-`cloudbuild.e2.yaml` on the `e2-highcpu-32` pool so they do not occupy scarce C3
-capacity. The script keeps the old CI gates: Rust formatting, metadata guardrails,
+use `cloudbuild.yaml` on the `tsz-ci-c3-88` pool, while lighter suites use
+`cloudbuild.e2.yaml` on the light-suite private pool so they do not occupy heavy
+pool capacity. The current pools are sized for 176-vCPU machines. The script
+keeps the old CI gates: Rust formatting, metadata guardrails,
 clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
-regression checks. Conformance runs through the repository wrapper with 80
-workers, while emit and fourslash default to 4 shards with 20 workers per shard.
-That keeps process overhead lower on the 88-vCPU pool while still saturating the
-larger machine.
+regression checks. Conformance defaults to up to 160 workers on the current
+176-vCPU pools. Emit and fourslash default to 4 shards and compute workers per
+shard from the detected CPU count, leaving a small reserve for system overhead.
 
 Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
 `lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
 that substitution keeps the `all` default for ad hoc full builds.
 
-Builds use `queueTtl: 900s`, so a build that cannot start within 15 minutes is
+Builds use `queueTtl: 300s`, so a build that cannot start within 5 minutes is
 expired instead of waiting indefinitely behind newer commits.
 
 Cloud Build source archives do not preserve git submodule metadata, so
@@ -36,19 +36,28 @@ On a miss, Cloud Build downloads the GitHub source archive for the pinned commit
 writes `TypeScript/.tsz-cache-ref`, and uploads the tarball for later runs. The
 main CI step accepts that source-only tree and avoids a git submodule clone.
 
+Rust builds use `sccache` with a GCS backend scoped under:
+
+```text
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/sccache/rust-v1
+```
+
+Main branch builds write to that cache. Pull request builds default to read-only
+cache mode.
+
 Create the private pool before running builds or creating triggers:
 
 ```bash
 gcloud builds worker-pools create tsz-ci-c3-88 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=c3-highcpu-88 \
+  --worker-machine-type=c3-highcpu-176 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-e2-32 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=e2-highcpu-32 \
+  --worker-machine-type=c3-standard-176 \
   --worker-disk-size=200GB
 ```
 
