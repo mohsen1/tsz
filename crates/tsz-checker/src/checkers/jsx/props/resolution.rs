@@ -9,6 +9,26 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn compute_jsx_attr_value_type_without_context(&mut self, initializer: NodeIndex) -> TypeId {
+        if initializer.is_none() {
+            return TypeId::BOOLEAN_TRUE;
+        }
+        let init_node_idx = initializer;
+        if let Some(init_node) = self.ctx.arena.get(init_node_idx) {
+            let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_jsx_expression(init_node)
+                    .map(|expr| expr.expression)
+                    .unwrap_or(init_node_idx)
+            } else {
+                init_node_idx
+            };
+            return self.compute_type_of_node(value_idx);
+        }
+        TypeId::ANY
+    }
+
     fn collect_jsx_union_resolution_attr_value_type(
         &mut self,
         value_idx: NodeIndex,
@@ -608,6 +628,11 @@ impl<'a> CheckerState<'a> {
                     } => {
                         // data-*/aria-* via index signature: skip (HTML convention).
                         if is_data_or_aria && from_index_signature {
+                            if let Some(entry) = provided_attrs.last_mut() {
+                                entry.1 = self.compute_jsx_attr_value_type_without_context(
+                                    attr_data.initializer,
+                                );
+                            }
                             continue;
                         }
                         let write_check_type = crate::query_boundaries::common::remove_undefined(
@@ -635,22 +660,8 @@ impl<'a> CheckerState<'a> {
                     }
                     PropertyAccessResult::PropertyNotFound { .. } => {
                         // Compute actual value type (replacing ANY placeholder) for error messages.
-                        let attr_value_type = if attr_data.initializer.is_none() {
-                            TypeId::BOOLEAN_TRUE // shorthand boolean literal
-                        } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
-                            let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
-                                self.ctx
-                                    .arena
-                                    .get_jsx_expression(init_node)
-                                    .map(|e| e.expression)
-                                    .unwrap_or(attr_data.initializer)
-                            } else {
-                                attr_data.initializer
-                            };
-                            self.compute_type_of_node(value_idx)
-                        } else {
-                            TypeId::ANY
-                        };
+                        let attr_value_type =
+                            self.compute_jsx_attr_value_type_without_context(attr_data.initializer);
                         if let Some(entry) = provided_attrs.last_mut() {
                             entry.1 = attr_value_type;
                         }

@@ -67,6 +67,33 @@ fn jsx_data_attribute_type_not_any_placeholder() {
 }
 
 #[test]
+fn jsx_ignored_data_attribute_keeps_real_type_in_missing_prop_display() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace JSX { interface Element {} }
+        interface Props {
+            foo: string;
+            [dataProp: string]: string;
+        }
+        declare function Comp(props: Props): JSX.Element;
+        <Comp bar="hello" data-yadda={42} />;
+        "#,
+    );
+    let ts2741 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing required prop");
+    assert!(
+        ts2741.message_text.contains("\"data-yadda\": number"),
+        "Expected ignored data-* attr to keep its real type in TS2741 display, got: {ts2741:?}"
+    );
+    assert!(
+        !ts2741.message_text.contains("\"data-yadda\": any"),
+        "Ignored data-* attr should not fall back to any in TS2741 display, got: {ts2741:?}"
+    );
+}
+
+#[test]
 fn jsx_key_error_in_parenthesized_callback_body_is_not_dropped() {
     let diagnostics = check_jsx(
         r#"
