@@ -774,7 +774,8 @@ impl<'a> CheckerState<'a> {
             .and_then(|sym_id| {
                 let lib_binders = self.get_lib_binders();
                 let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                ((symbol.flags & tsz_binder::symbol_flags::CLASS) != 0)
+                symbol
+                    .has_any_flags(tsz_binder::symbol_flags::CLASS)
                     .then(|| self.class_instance_type_from_symbol(sym_id))
                     .flatten()
             });
