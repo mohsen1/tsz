@@ -1846,14 +1846,13 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
                         {
-                            let mut has_value = (resolved_sym.flags
-                                & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
-                                != 0;
+                            let mut has_value = resolved_sym
+                                .has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
                             if has_value
-                                && (resolved_sym.flags & symbol_flags::VALUE_MODULE) != 0
-                                && (resolved_sym.flags
-                                    & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
-                                    == 0
+                                && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
+                                && !resolved_sym.has_any_flags(
+                                    symbol_flags::VALUE & !symbol_flags::VALUE_MODULE,
+                                )
                             {
                                 let mut any_instantiated = false;
                                 for &decl_idx in &resolved_sym.declarations {
@@ -1878,10 +1877,10 @@ impl<'a> CheckerState<'a> {
                             // Check if the imported symbol carries type semantics
                             // (e.g. enum, class, interface). When it does, local type
                             // aliases or interfaces with the same name conflict.
-                            if (resolved_sym.flags & symbol_flags::TYPE) != 0 {
+                            if resolved_sym.has_any_flags(symbol_flags::TYPE) {
                                 import_has_type = true;
                             }
-                            if (resolved_sym.flags & symbol_flags::ALIAS) != 0
+                            if resolved_sym.has_any_flags(symbol_flags::ALIAS)
                                 && sym.import_module.is_some()
                                 && sym.import_name.is_none()
                             {
@@ -1916,14 +1915,12 @@ impl<'a> CheckerState<'a> {
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
                                         {
-                                            if (target_sym.flags
-                                                & (symbol_flags::VALUE
-                                                    | symbol_flags::EXPORT_VALUE))
-                                                != 0
-                                            {
+                                            if target_sym.has_any_flags(
+                                                symbol_flags::VALUE | symbol_flags::EXPORT_VALUE,
+                                            ) {
                                                 import_has_value = true;
                                             }
-                                            if (target_sym.flags & symbol_flags::TYPE) != 0 {
+                                            if target_sym.has_any_flags(symbol_flags::TYPE) {
                                                 import_has_type = true;
                                             }
                                             if import_has_value {
@@ -1940,14 +1937,12 @@ impl<'a> CheckerState<'a> {
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
                                         {
-                                            if (target_sym.flags
-                                                & (symbol_flags::VALUE
-                                                    | symbol_flags::EXPORT_VALUE))
-                                                != 0
-                                            {
+                                            if target_sym.has_any_flags(
+                                                symbol_flags::VALUE | symbol_flags::EXPORT_VALUE,
+                                            ) {
                                                 import_has_value = true;
                                             }
-                                            if (target_sym.flags & symbol_flags::TYPE) != 0 {
+                                            if target_sym.has_any_flags(symbol_flags::TYPE) {
                                                 import_has_type = true;
                                             }
                                             if import_has_value {
@@ -1974,18 +1969,17 @@ impl<'a> CheckerState<'a> {
                                     if let Some(resolved_sym) =
                                         resolved_binder.and_then(|b| b.symbols.get(resolved_sym_id))
                                     {
-                                        if (resolved_sym.flags
-                                            & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
-                                            != 0
-                                        {
+                                        if resolved_sym.has_any_flags(
+                                            symbol_flags::VALUE | symbol_flags::EXPORT_VALUE,
+                                        ) {
                                             import_has_value = true;
                                         }
-                                        if (resolved_sym.flags & symbol_flags::TYPE) != 0 {
+                                        if resolved_sym.has_any_flags(symbol_flags::TYPE) {
                                             import_has_type = true;
                                         }
                                         // Non-type-only re-export aliases forward values
                                         if !import_has_value
-                                            && (resolved_sym.flags & symbol_flags::ALIAS) != 0
+                                            && resolved_sym.has_any_flags(symbol_flags::ALIAS)
                                             && !resolved_sym.is_type_only
                                         {
                                             import_has_value = true;
@@ -1994,7 +1988,7 @@ impl<'a> CheckerState<'a> {
                                         // follow alias_partners to the partner ALIAS
                                         // and check its import chain for value semantics.
                                         if !import_has_value
-                                            && (resolved_sym.flags & symbol_flags::TYPE_ALIAS) != 0
+                                            && resolved_sym.has_any_flags(symbol_flags::TYPE_ALIAS)
                                             && !resolved_sym.is_type_only
                                             && let Some(resolved_binder) =
                                                 self.ctx.get_binder_for_file(resolved_file_idx)
@@ -2003,7 +1997,7 @@ impl<'a> CheckerState<'a> {
                                                 .alias_partner_for(resolved_binder, resolved_sym_id)
                                             && let Some(partner) =
                                                 resolved_binder.symbols.get(partner_id)
-                                            && (partner.flags & symbol_flags::ALIAS) != 0
+                                            && partner.has_any_flags(symbol_flags::ALIAS)
                                             && !partner.is_type_only
                                             && let Some(ref src_module) = partner.import_module
                                         {
@@ -2028,10 +2022,10 @@ impl<'a> CheckerState<'a> {
                                                         self.ctx.get_binder_for_file(src_file_idx)
                                                     && let Some(src_sym) =
                                                         src_binder.symbols.get(src_sym_id)
-                                                    && (src_sym.flags
-                                                        & (symbol_flags::VALUE
-                                                            | symbol_flags::EXPORT_VALUE))
-                                                        != 0
+                                                    && src_sym.has_any_flags(
+                                                        symbol_flags::VALUE
+                                                            | symbol_flags::EXPORT_VALUE,
+                                                    )
                                                 {
                                                     import_has_value = true;
                                                 }
@@ -2186,8 +2180,8 @@ impl<'a> CheckerState<'a> {
                                 }
                                 if let Some(other_sym) = self.ctx.binder.symbols.get(other_sym_id) {
                                     // Skip if the other symbol is purely an alias (another import)
-                                    if (other_sym.flags & symbol_flags::ALIAS) != 0
-                                        && (other_sym.flags & !symbol_flags::ALIAS) == 0
+                                    if other_sym.has_any_flags(symbol_flags::ALIAS)
+                                        && !other_sym.has_any_flags(!symbol_flags::ALIAS)
                                     {
                                         continue;
                                     }
@@ -2199,8 +2193,8 @@ impl<'a> CheckerState<'a> {
                                         let type_only_flags = symbol_flags::TYPE_ALIAS
                                             | symbol_flags::INTERFACE
                                             | symbol_flags::TYPE_PARAMETER;
-                                        if (other_sym.flags & type_only_flags) != 0
-                                            && (other_sym.flags & symbol_flags::VALUE) == 0
+                                        if other_sym.has_any_flags(type_only_flags)
+                                            && !other_sym.has_any_flags(symbol_flags::VALUE)
                                         {
                                             continue;
                                         }
