@@ -182,6 +182,9 @@ pub struct CompilerOptions {
     pub incremental: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub strict: Option<bool>,
+    /// Enable experimental Sound Mode checks.
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub sound: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
@@ -893,6 +896,10 @@ pub fn resolve_compiler_options(
             resolved.checker.strict_builtin_iterator_return = false;
             resolved.printer.always_strict = false;
         }
+    }
+
+    if let Some(sound) = options.sound {
+        resolved.checker.sound_mode = sound;
     }
 
     // tsc 6.0 defaults: strict-family options are true when not explicitly set.
@@ -2627,6 +2634,7 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "skipLibCheck"
         | "sourceMap"
         | "strict"
+        | "sound"
         | "strictBindCallApply"
         | "strictBuiltinIteratorReturn"
         | "strictFunctionTypes"
@@ -2780,6 +2788,7 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "sourcemap" => Some("sourceMap"),
         "sourceroot" => Some("sourceRoot"),
         "strict" => Some("strict"),
+        "sound" => Some("sound"),
         "strictbindcallapply" => Some("strictBindCallApply"),
         "strictbuiltiniteratorreturn" => Some("strictBuiltinIteratorReturn"),
         "strictfunctiontypes" => Some("strictFunctionTypes"),
@@ -3257,6 +3266,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             ts_build_info_file,
             incremental,
             strict,
+            sound,
             no_emit,
             no_emit_on_error,
             isolated_modules,
@@ -5772,6 +5782,44 @@ mod tests {
         let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
 
         assert!(resolved.checker.no_property_access_from_index_signature);
+    }
+
+    #[test]
+    fn test_sound_resolves_from_tsconfig() {
+        let source = r#"{
+            "compilerOptions": {
+                "sound": true
+            }
+        }"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .all(|diag| diag.code != diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "sound should be recognized as a compiler option, got diagnostics: {:?}",
+            parsed.diagnostics
+        );
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(resolved.checker.sound_mode);
+    }
+
+    #[test]
+    fn test_sound_mis_cased_option_reports_did_you_mean() {
+        let source = r#"{
+            "compilerOptions": {
+                "Sound": true
+            }
+        }"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
+            "Expected TS5025-style diagnostic for miscased sound option, got: {:?}",
+            parsed.diagnostics
+        );
     }
 
     #[test]

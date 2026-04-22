@@ -23,15 +23,23 @@ Once the contract stabilizes, this doc should split into separate status, contra
 ## Quick Start
 
 ```bash
-# Enable sound mode via CLI (current implementation and only supported entrypoint today)
+# Enable sound mode via CLI
 tsz check --sound src/
 ```
 
-Planned configuration surfaces such as tsconfig support or per-file pragmas are not wired yet, and the public config shape is intentionally still open.
+```json
+{
+  "compilerOptions": {
+    "sound": true
+  }
+}
+```
+
+Per-file pragmas and broader `sound*` option families are still not wired, and the full public config shape remains intentionally open.
 
 ## Implementation Status
 
-Today, sound mode is effectively a **CLI-only boolean** (`--sound`). The planned `sound` tsconfig option, per-file pragma, and server/LSP exposure are not wired yet. The live implementation works by tightening the existing Lawyer (`CompatChecker`) with `strict_subtype_checking` and `strict_any_propagation` flags on `RelationPolicy`. Errors are still emitted as standard TS diagnostic codes (TS2322, TS2345, etc.), not dedicated TSZ-family sound diagnostics yet.
+Today, sound mode is a project-wide boolean exposed through both CLI (`--sound`) and tsconfig (`compilerOptions.sound`). Per-file pragmas and server/LSP exposure are not wired yet. The live implementation works by tightening the existing Lawyer (`CompatChecker`) with `strict_subtype_checking` and `strict_any_propagation` flags on `RelationPolicy`. Errors are still emitted as standard TS diagnostic codes (TS2322, TS2345, etc.), not dedicated TSZ-family sound diagnostics yet.
 
 **Note on diagnostic codes:** The codebase defines `SoundDiagnosticCode` with codes TS9001–TS9005 in `crates/tsz-solver/src/sound.rs`. Those should be treated as temporary implementation placeholders, not the public contract. This doc uses the target **family-based TSZNNNN taxonomy** (`TSZ1000`, `TSZ2000`, etc.), which has not yet been applied to the implementation. A `DiagnosticDomain::Sound` infrastructure exists but is not yet used by the checker.
 
@@ -50,7 +58,7 @@ Today, sound mode is effectively a **CLI-only boolean** (`--sound`). The planned
 - `SoundLawyer` struct in `sound.rs` is fully defined but never called from the checker pipeline (dead code)
 - `SoundModeConfig` struct with granular flags is defined but never consumed
 - cache correctness still needs a precise sound-policy audit: method-bivariance disablement is now represented in relation flags, but `strict_any_propagation` still piggybacks on `FLAG_STRICT_FUNCTION_TYPES`, and some query-cache helper paths still construct keys with `any_mode = 0`
-- The tsconfig `sound` option described in this doc is not currently parsed into `CheckerOptions`
+- Only `compilerOptions.sound` is currently wired; broader flat `sound*` family options remain planned
 - `tsz-server` / LSP currently hardcodes `sound_mode: false`
 - CLI help / dead prototype code still reference older `TS900x` semantics and should not be treated as the product contract
 
@@ -79,7 +87,7 @@ Important limits:
 
 Today, even that narrow target is not fully implemented:
 
-1. Sound mode is effectively a CLI-only project-wide boolean.
+1. Sound mode is currently a project-wide boolean from CLI (`--sound`) or tsconfig (`compilerOptions.sound`).
 2. Method bivariance tightening is live.
 3. `any` handling is only partial: nested restrictions exist, but top-level `any` still behaves too permissively.
 4. Declaration-boundary quarantine is **not** implemented.
