@@ -12,6 +12,7 @@ use crate::query_boundaries::flow_analysis::{
     call_signatures_for_type, function_return_type, get_application_info, is_promise_like_type,
     union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
 };
+use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -135,19 +136,11 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(ty);
         }
 
+        if let Some(builtin) = keyword_syntax_to_type_id(node.kind) {
+            return Some(builtin);
+        }
+
         match node.kind {
-            k if k == SyntaxKind::NumberKeyword as u16 => Some(TypeId::NUMBER),
-            k if k == SyntaxKind::StringKeyword as u16 => Some(TypeId::STRING),
-            k if k == SyntaxKind::BooleanKeyword as u16 => Some(TypeId::BOOLEAN),
-            k if k == SyntaxKind::VoidKeyword as u16 => Some(TypeId::VOID),
-            k if k == SyntaxKind::AnyKeyword as u16 => Some(TypeId::ANY),
-            k if k == SyntaxKind::NeverKeyword as u16 => Some(TypeId::NEVER),
-            k if k == SyntaxKind::UnknownKeyword as u16 => Some(TypeId::UNKNOWN),
-            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
-            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
-            k if k == SyntaxKind::ObjectKeyword as u16 => Some(TypeId::OBJECT),
-            k if k == SyntaxKind::BigIntKeyword as u16 => Some(TypeId::BIGINT),
-            k if k == SyntaxKind::SymbolKeyword as u16 => Some(TypeId::SYMBOL),
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => self
                 .arena
                 .get_wrapped_type(node)
