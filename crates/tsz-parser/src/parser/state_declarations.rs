@@ -561,6 +561,23 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
         self.parse_expected(SyntaxKind::CloseParenToken);
+
+        // TS1005: method signatures cannot place `?` after the parameter list.
+        // tsc reports that at `?`, then reports TS1131 at a following `:`.
+        if self.is_token(SyntaxKind::QuestionToken) {
+            self.parse_error_at_current_token(
+                "';' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+            self.next_token();
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.parse_error_at_current_token(
+                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                );
+            }
+        }
+
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
         } else {
