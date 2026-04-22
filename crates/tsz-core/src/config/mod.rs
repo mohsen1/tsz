@@ -2693,9 +2693,13 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "diagnostics" => Some("diagnostics"),
         "disablereferencedprojectload" => Some("disableReferencedProjectLoad"),
         "disablesizelimt" => Some("disableSizeLimit"),
+        "disablesolutionsearching" => Some("disableSolutionSearching"),
         "disablesolutiontypecheck" => Some("disableSolutionTypeCheck"),
         "disablesolutioncaching" => Some("disableSolutionCaching"),
         "disablesolutiontypechecking" => Some("disableSolutionTypeChecking"),
+        "disablesourceofprojectreferenceredirect" => {
+            Some("disableSourceOfProjectReferenceRedirect")
+        }
         "disablesourceofreferencedprojectload" => Some("disableSourceOfReferencedProjectLoad"),
         "downleveliteration" => Some("downlevelIteration"),
         "emitbom" => Some("emitBOM"),
@@ -4378,6 +4382,36 @@ mod tests {
                 .contains("'my-React-Lib' is not a valid identifier"),
             "Unexpected TS5059 message: {}",
             ts5059.message_text
+        );
+    }
+
+    #[test]
+    fn test_disable_solution_searching_option_is_recognized() {
+        let source = r#"{
+  "compilerOptions": {
+    "disableSolutionSearching": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "disableSolutionSearching should not report unknown compiler option, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_disable_source_of_project_reference_redirect_option_is_recognized() {
+        let source = r#"{
+  "compilerOptions": {
+    "disableSourceOfProjectReferenceRedirect": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "disableSourceOfProjectReferenceRedirect should not report unknown compiler option, got: {codes:?}"
         );
     }
 
