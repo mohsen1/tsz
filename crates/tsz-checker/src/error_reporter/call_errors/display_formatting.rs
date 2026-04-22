@@ -1170,7 +1170,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(in crate::error_reporter::call_errors) fn format_call_argument_type_for_diagnostic(
+    pub(in crate::error_reporter) fn format_call_argument_type_for_diagnostic(
         &mut self,
         arg_type: TypeId,
         param_type: TypeId,
@@ -1551,7 +1551,7 @@ impl<'a> CheckerState<'a> {
             .map(|element| self.format_type_for_assignability_message(element))
     }
 
-    pub(in crate::error_reporter::call_errors) fn format_call_parameter_type_for_diagnostic(
+    pub(in crate::error_reporter) fn format_call_parameter_type_for_diagnostic(
         &mut self,
         param_type: TypeId,
         arg_type: TypeId,
