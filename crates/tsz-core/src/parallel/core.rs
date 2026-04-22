@@ -493,7 +493,7 @@ pub struct BindResult {
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Shorthand ambient modules (`declare module "foo"` without body)
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
@@ -625,7 +625,7 @@ impl BindResult {
         }
 
         // shorthand_ambient_modules
-        for s in &self.shorthand_ambient_modules {
+        for s in self.shorthand_ambient_modules.iter() {
             size += s.capacity() + std::mem::size_of::<u64>();
         }
 
@@ -1568,7 +1568,7 @@ pub struct MergedProgram {
     /// Ambient module declarations across all files
     pub declared_modules: FxHashSet<String>,
     /// Shorthand ambient modules (`declare module "foo"` without body) - imports from these are `any`
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Module exports: maps file name (or module specifier) to its exported symbols
     /// This enables cross-file module resolution: import { X } from './file' can find X's symbol
     pub module_exports: FxHashMap<String, SymbolTable>,
@@ -3268,7 +3268,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         globals,
         file_locals: file_locals_list,
         declared_modules,
-        shorthand_ambient_modules,
+        shorthand_ambient_modules: Arc::new(shorthand_ambient_modules),
         module_exports,
         reexports: Arc::new(reexports),
         wildcard_reexports,

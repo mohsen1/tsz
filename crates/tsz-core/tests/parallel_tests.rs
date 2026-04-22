@@ -3673,7 +3673,7 @@ fn skeleton_validate_against_merged_shorthand_ambient() {
 
     let idx = program.skeleton_index.as_ref().unwrap();
     assert_eq!(
-        idx.shorthand_ambient_modules, program.shorthand_ambient_modules,
+        idx.shorthand_ambient_modules, *program.shorthand_ambient_modules,
         "skeleton and legacy shorthand_ambient_modules must match"
     );
     // Verify actual content
