@@ -30,6 +30,10 @@ pub struct Args {
     #[arg(short = 'o', long, default_value_t = 0)]
     pub offset: usize,
 
+    /// Round-robin shard spec, formatted as index/count after sorting and filtering
+    #[arg(long)]
+    pub shard: Option<String>,
+
     /// Number of parallel workers
     #[arg(short = 'w', long, default_value_t = num_cpus::get().saturating_sub(1))]
     pub workers: usize,

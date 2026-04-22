@@ -237,6 +237,12 @@ def conformance_summary(metrics_dir: Path, logs_dir: Path, lines: list[str], exi
             f"- Passed {code(metrics.get('passed', 0))} of {code(metrics.get('total', 0))} tests "
             f"with {code(metrics.get('workers', '?'))} workers."
         )
+        shard_count = int(metrics.get("shard_count") or 1)
+        if shard_count > 1:
+            lines.append(
+                f"- Shard {code(metrics.get('shard_index', 0))} of {code(shard_count)} "
+                f"(baseline {code(metrics.get('expected_passed', 0))}/{code(metrics.get('expected_total', 0))})."
+            )
         lines.append(f"- Wrapper exit: {code(metrics.get('rc', '?'))}")
         lines.append("")
 

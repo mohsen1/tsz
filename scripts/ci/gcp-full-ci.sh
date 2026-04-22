@@ -113,6 +113,8 @@ default_conformance_workers() {
 EMIT_WORKERS="${TSZ_CI_EMIT_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_emit_workers)}}"
 FOURSLASH_WORKERS="${TSZ_CI_FOURSLASH_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_fourslash_workers)}}"
 CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers)}"
+CONFORMANCE_SHARD_INDEX="${_TSZ_CI_CONFORMANCE_SHARD_INDEX:-${TSZ_CI_CONFORMANCE_SHARD_INDEX:-0}}"
+CONFORMANCE_SHARD_COUNT="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-1}}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
 EMIT_TIMEOUT_MS="${TSZ_CI_EMIT_TIMEOUT_MS:-30000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
@@ -427,6 +429,26 @@ show_log_tails() {
   done
 }
 
+conformance_shard_plan() {
+  local shard_index="$1" shard_count="$2"
+  python3 - "$shard_index" "$shard_count" <<'PY'
+import sys
+from pathlib import Path
+
+index = int(sys.argv[1])
+count = int(sys.argv[2])
+baseline = Path("scripts/conformance/conformance-baseline.txt")
+lines = baseline.read_text(encoding="utf-8", errors="replace").splitlines()
+if count < 1:
+    count = 1
+if index < 0 or index >= count:
+    raise SystemExit(f"invalid conformance shard {index}/{count}")
+selected = [line for i, line in enumerate(lines) if i % count == index]
+passed = sum(1 for line in selected if line.startswith("PASS "))
+print(passed, len(selected))
+PY
+}
+
 run_conformance() {
   ci_section "Conformance"
   mkdir -p "$LOG_DIR/conformance"
@@ -434,8 +456,28 @@ run_conformance() {
   local last_run="scripts/conformance/conformance-last-run.txt"
   rm -f "$last_run"
 
+  local shard_index shard_count shard_offset shard_max shard_expected_passed shard_expected_total
+  local conformance_args=()
+  shard_index="$(num_or_zero "$CONFORMANCE_SHARD_INDEX")"
+  shard_count="$(num_or_zero "$CONFORMANCE_SHARD_COUNT")"
+  if [[ "$shard_count" -lt 1 ]]; then
+    shard_count=1
+  fi
+  if [[ "$shard_count" -gt 1 ]]; then
+    read -r shard_expected_passed shard_expected_total < <(conformance_shard_plan "$shard_index" "$shard_count")
+    shard_offset=0
+    shard_max=0
+    conformance_args+=(--shard "${shard_index}/${shard_count}")
+    echo "Conformance shard: ${shard_index}/${shard_count} expected=${shard_expected_passed}/${shard_expected_total}"
+  else
+    shard_offset=0
+    shard_max=0
+    shard_expected_passed=0
+    shard_expected_total=0
+  fi
+
   set +e
-  ./scripts/conformance/conformance.sh run --workers "$CONFORMANCE_WORKERS" >"$log_file" 2>&1
+  ./scripts/conformance/conformance.sh run --workers "$CONFORMANCE_WORKERS" "${conformance_args[@]}" >"$log_file" 2>&1
   local rc="$?"
   set -e
 
@@ -448,8 +490,9 @@ run_conformance() {
   total_passed="$(num_or_zero "$total_passed")"
   total_tests="$(num_or_zero "$total_tests")"
 
-  printf '{"rc":%s,"passed":%s,"total":%s,"workers":%s}\n' \
+  printf '{"rc":%s,"passed":%s,"total":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s}\n' \
     "$rc" "$total_passed" "$total_tests" "$CONFORMANCE_WORKERS" \
+    "$shard_index" "$shard_count" "$shard_offset" "$shard_max" "$shard_expected_passed" "$shard_expected_total" \
     > "$METRICS_DIR/conformance.json"
   echo "Conformance workers: ${CONFORMANCE_WORKERS}"
   echo "Conformance wrapper exit: ${rc}"
@@ -459,6 +502,20 @@ run_conformance() {
     echo "error: conformance wrapper failed" >&2
     show_log_tail "$log_file"
     return 1
+  fi
+
+  if [[ "$shard_count" -gt 1 ]]; then
+    if [[ "$shard_expected_total" -gt 0 && "$total_tests" -lt "$shard_expected_total" ]]; then
+      echo "error: conformance shard coverage is incomplete: ${total_tests} < ${shard_expected_total}" >&2
+      show_log_tail "$log_file"
+      return 1
+    fi
+    if [[ "$shard_expected_passed" -gt 0 && "$total_passed" -lt "$shard_expected_passed" ]]; then
+      echo "error: conformance shard regression: ${total_passed} < ${shard_expected_passed}" >&2
+      show_log_tail "$log_file"
+      return 1
+    fi
+    return 0
   fi
 
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"

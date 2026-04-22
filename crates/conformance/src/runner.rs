@@ -323,6 +323,28 @@ pub struct Runner {
 }
 
 impl Runner {
+    fn parse_shard_spec(&self) -> anyhow::Result<Option<(usize, usize)>> {
+        let Some(spec) = self.args.shard.as_deref() else {
+            return Ok(None);
+        };
+        let Some((index, count)) = spec.split_once('/') else {
+            anyhow::bail!("--shard must be formatted as index/count, got {spec:?}");
+        };
+        let index = index
+            .parse::<usize>()
+            .with_context(|| format!("invalid --shard index in {spec:?}"))?;
+        let count = count
+            .parse::<usize>()
+            .with_context(|| format!("invalid --shard count in {spec:?}"))?;
+        if count == 0 {
+            anyhow::bail!("--shard count must be greater than zero");
+        }
+        if index >= count {
+            anyhow::bail!("--shard index {index} must be less than count {count}");
+        }
+        Ok(Some((index, count)))
+    }
+
     fn absolutize_binary_path(path: &Path) -> String {
         let absolute = if path.is_absolute() {
             path.to_path_buf()
@@ -843,6 +865,20 @@ impl Runner {
 
         // Sort for deterministic order
         files.sort();
+
+        if let Some((shard_index, shard_count)) = self.parse_shard_spec()? {
+            files = files
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, path)| {
+                    if index % shard_count == shard_index {
+                        Some(path)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+        }
 
         // Apply offset (skip first N tests)
         if self.args.offset > 0 {
