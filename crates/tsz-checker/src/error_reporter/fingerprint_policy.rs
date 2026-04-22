@@ -11,6 +11,7 @@ use crate::diagnostics::{
     diagnostic_messages, format_message,
 };
 use crate::error_reporter::assignability::is_object_prototype_method;
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -249,7 +250,10 @@ impl<'a> CheckerState<'a> {
                 {
                     return None;
                 }
-                let tgt_str = self.format_type_diagnostic(*target_type);
+                let tgt_str = self.format_type_for_diagnostic_role(
+                    *target_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
                     return None;
                 }
@@ -264,7 +268,10 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let widened = self.widen_type_for_display(*source_type);
-                let src_str = self.format_type_diagnostic(widened);
+                let src_str = self.format_type_for_diagnostic_role(
+                    widened,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 let (src_str, tgt_str) = self.finalize_pair_display_for_diagnostic(
                     *source_type,
                     *target_type,
@@ -292,7 +299,10 @@ impl<'a> CheckerState<'a> {
                 {
                     return None;
                 }
-                let tgt_str = self.format_type_diagnostic(*target_type);
+                let tgt_str = self.format_type_for_diagnostic_role(
+                    *target_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 if matches!(tgt_str.as_str(), "Boolean" | "Number" | "String" | "Object") {
                     return None;
                 }
@@ -302,7 +312,10 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return None;
                 }
-                let src_str = self.format_type_diagnostic(*source_type);
+                let src_str = self.format_type_for_diagnostic_role(
+                    *source_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 let (src_str, tgt_str) = self.finalize_pair_display_for_diagnostic(
                     *source_type,
                     *target_type,
@@ -361,8 +374,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *target_property_type
                 };
-                let source_str = self.format_type_diagnostic(*source_property_type);
-                let target_str = self.format_type_diagnostic(target_property_type);
+                let source_str = self.format_type_for_diagnostic_role(
+                    *source_property_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
+                let target_str = self.format_type_for_diagnostic_role(
+                    target_property_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
                     *source_property_type,
                     target_property_type,
@@ -396,8 +415,14 @@ impl<'a> CheckerState<'a> {
                 ]
             }
             SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
-                let src_str = self.format_type_diagnostic(source);
-                let tgt_str = self.format_type_diagnostic(target);
+                let src_str = self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
+                let tgt_str = self.format_type_for_diagnostic_role(
+                    target,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 let (src_str, tgt_str) =
                     self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
                 vec![DiagnosticRelatedInformation {
@@ -421,8 +446,14 @@ impl<'a> CheckerState<'a> {
                 target_return,
                 nested_reason,
             } => {
-                let source_str = self.format_type_diagnostic(*source_return);
-                let target_str = self.format_type_diagnostic(*target_return);
+                let source_str = self.format_type_for_diagnostic_role(
+                    *source_return,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
+                let target_str = self.format_type_for_diagnostic_role(
+                    *target_return,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
                     *source_return,
                     *target_return,
