@@ -6,13 +6,13 @@ The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
 save updated caches, then report the original suite status. Main and PR builds
 use separate worker pools so a PR build storm cannot sit ahead of main builds
-in the same pool queue. Main conformance uses the largest C3 pool; PR
-conformance uses a smaller C3 pool so both can run under the current C3 CPU
-quota:
+in the same pool queue. Conformance is split into eight Cloud Build checks on
+dedicated N2D-96 pools so the slowest gate is parallel instead of one long
+monolithic run:
 
 ```text
-main conformance  tsz-ci-c3-88       c3-highcpu-176
-PR conformance    tsz-ci-pr-c3-88    c3-highcpu-88
+main conformance  tsz-ci-main-conf-n2d-96  n2d-highcpu-96
+PR conformance    tsz-ci-pr-conf-n2d-96    n2d-highcpu-96
 emit              tsz-ci-n2d-96      n2d-highcpu-96
 fourslash         tsz-ci-n2d-96      n2d-highcpu-96
 unit              tsz-ci-n2d-64      n2d-highcpu-64
@@ -31,13 +31,16 @@ clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
 regression checks. Conformance is CPU- and memory-capped, defaulting to at most
 128 workers and about one worker per 2GB of RAM, because over-filling a highcpu
 machine with conformance batch workers can be slower than leaving headroom. Emit
-and fourslash default to 4 shards. Emit uses up to 32 workers per shard with a
+and fourslash default to 4 shards. Conformance trigger shards pass
+`_TSZ_CI_CONFORMANCE_SHARD_INDEX` and `_TSZ_CI_CONFORMANCE_SHARD_COUNT`, then
+each shard runs a round-robin slice of the sorted conformance corpus and
+validates only that baseline slice. Emit uses up to 32 workers per shard with a
 30s per-test timeout, while fourslash uses up to 16 workers per shard to avoid
 crashing the Node worker pool before it can record shard results.
 
-Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
-`lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
-that substitution keeps the `all` default for ad hoc full builds.
+Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category, with
+conformance split into numbered shard checks. Running without that substitution
+keeps the `all` default for ad hoc full builds.
 
 Every build writes a sanitized markdown digest to
 `.ci-status/check-summary.md` and prints it from the final Cloud Build step.
@@ -119,6 +122,18 @@ gcloud builds worker-pools create tsz-ci-pr-n2d-96 \
   --worker-machine-type=n2d-highcpu-96 \
   --worker-disk-size=200GB
 
+gcloud builds worker-pools create tsz-ci-main-conf-n2d-96 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-96 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-pr-conf-n2d-96 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-96 \
+  --worker-disk-size=200GB
+
 gcloud builds worker-pools create tsz-ci-n2d-48 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
@@ -174,7 +189,7 @@ pr_config_for_suite() {
     lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
     unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
     emit|fourslash) printf '%s\n' cloudbuild.n2d-96.yaml ;;
-    conformance) printf '%s\n' cloudbuild.pr-conformance.yaml ;;
+    conformance) printf '%s\n' cloudbuild.yaml ;;
     *) printf '%s\n' cloudbuild.yaml ;;
   esac
 }
@@ -184,12 +199,12 @@ pr_pool_for_suite() {
     lint|wasm) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
     unit) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-64 ;;
     emit|fourslash) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-96 ;;
-    conformance) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-c3-88 ;;
+    conformance) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-conf-n2d-96 ;;
     *) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
   esac
 }
 
-for suite in lint unit wasm conformance emit fourslash; do
+for suite in lint unit wasm emit fourslash; do
   config="$(pr_config_for_suite "$suite")"
   pool="$(pr_pool_for_suite "$suite")"
   gcloud builds triggers create github \
@@ -203,6 +218,21 @@ for suite in lint unit wasm conformance emit fourslash; do
     --include-logs-with-status \
     --no-require-approval \
     --substitutions="_TSZ_CI_SUITE=${suite},_TSZ_CI_POOL=${pool}" \
+    --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
+done
+
+for shard in 0 1 2 3 4 5 6 7; do
+  gcloud builds triggers create github \
+    --project=thirdface-ai-oauth \
+    --region=us-central1 \
+    --name="tsz-pr-conformance-${shard}" \
+    --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
+    --pull-request-pattern='^main$' \
+    --comment-control=COMMENTS_DISABLED \
+    --build-config=cloudbuild.yaml \
+    --include-logs-with-status \
+    --no-require-approval \
+    --substitutions="_TSZ_CI_SUITE=conformance,_TSZ_CI_POOL=projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-conf-n2d-96,_TSZ_CI_CONFORMANCE_SHARD_INDEX=${shard},_TSZ_CI_CONFORMANCE_SHARD_COUNT=8" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 ```
@@ -220,7 +250,7 @@ main_config_for_suite() {
   esac
 }
 
-for suite in lint unit wasm conformance emit fourslash; do
+for suite in lint unit wasm emit fourslash; do
   config="$(main_config_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
@@ -232,6 +262,20 @@ for suite in lint unit wasm conformance emit fourslash; do
     --include-logs-with-status \
     --no-require-approval \
     --substitutions="_TSZ_CI_SUITE=${suite}" \
+    --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
+done
+
+for shard in 0 1 2 3 4 5 6 7; do
+  gcloud builds triggers create github \
+    --project=thirdface-ai-oauth \
+    --region=us-central1 \
+    --name="tsz-main-conformance-${shard}" \
+    --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
+    --branch-pattern='^main$' \
+    --build-config=cloudbuild.yaml \
+    --include-logs-with-status \
+    --no-require-approval \
+    --substitutions="_TSZ_CI_SUITE=conformance,_TSZ_CI_POOL=projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-main-conf-n2d-96,_TSZ_CI_CONFORMANCE_SHARD_INDEX=${shard},_TSZ_CI_CONFORMANCE_SHARD_COUNT=8" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 ```

@@ -54,6 +54,7 @@ Run options:
   --filter PAT      Filter test files by pattern
   --max N           Maximum number of tests to run (default: all)
   --offset N        Skip first N tests (default: 0)
+  --shard I/N       Run one round-robin shard after sorting and filtering
   --workers N       Number of parallel workers (default: 16)
   --profile NAME    Cargo build profile (default: dist-fast)
   --test-dir PATH   Override TypeScript test corpus path
