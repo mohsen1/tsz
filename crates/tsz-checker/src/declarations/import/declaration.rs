@@ -1996,8 +1996,9 @@ impl<'a> CheckerState<'a> {
                                             && !resolved_sym.is_type_only
                                             && let Some(resolved_binder) =
                                                 self.ctx.get_binder_for_file(resolved_file_idx)
-                                            && let Some(&partner_id) =
-                                                resolved_binder.alias_partners.get(&resolved_sym_id)
+                                            && let Some(partner_id) = self
+                                                .ctx
+                                                .alias_partner_for(resolved_binder, resolved_sym_id)
                                             && let Some(partner) =
                                                 resolved_binder.symbols.get(partner_id)
                                             && (partner.flags & symbol_flags::ALIAS) != 0
