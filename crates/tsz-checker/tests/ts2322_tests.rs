@@ -3647,3 +3647,28 @@ function foo<T, U>(x: T) {
         "mapped conditional assignment should not fail, got: {ts2322_messages:?}"
     );
 }
+
+#[test]
+fn exact_optional_property_write_uses_ts2412() {
+    let source = r#"
+interface U2 {
+    email?: string | number;
+}
+declare const e: string | boolean | undefined;
+declare let u2: U2;
+u2.email = e;
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| {
+            *code
+                == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2
+        }),
+        "Expected TS2412 for exact-optional property write mismatch, got: {diagnostics:#?}"
+    );
+}

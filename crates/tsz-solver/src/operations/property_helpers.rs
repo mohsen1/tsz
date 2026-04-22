@@ -864,7 +864,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     pub(crate) fn optional_property_write_type(&self, prop: &PropertyInfo) -> TypeId {
-        crate::utils::optional_property_write_type(self.interner(), prop)
+        let write = if prop.write_type == TypeId::NONE {
+            prop.type_id
+        } else {
+            prop.write_type
+        };
+        if prop.optional && !self.exact_optional_property_types {
+            self.interner().union2(write, TypeId::UNDEFINED)
+        } else {
+            write
+        }
     }
 
     fn resolve_apparent_property(

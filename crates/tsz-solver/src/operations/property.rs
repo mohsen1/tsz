@@ -153,6 +153,7 @@ pub struct PropertyAccessEvaluator<'a> {
     pub(crate) db: &'a dyn QueryDatabase,
     resolver: Option<&'a dyn TypeResolver>,
     pub(crate) no_unchecked_indexed_access: bool,
+    pub(crate) exact_optional_property_types: bool,
     /// Unified recursion guard for cycle detection and depth limiting.
     pub(crate) guard: RefCell<crate::recursion::RecursionGuard<TypeId>>,
     // Context for visitor pattern (set during property access resolution)
@@ -182,6 +183,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             db,
             resolver: None,
             no_unchecked_indexed_access: false,
+            exact_optional_property_types: db.exact_optional_property_types(),
             guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::PropertyAccess,
             )),
@@ -199,6 +201,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     pub const fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         self.no_unchecked_indexed_access = enabled;
+    }
+
+    pub const fn set_exact_optional_property_types(&mut self, enabled: bool) {
+        self.exact_optional_property_types = enabled;
     }
 
     /// Skip `this` binding during property resolution. When set, raw `ThisType`

@@ -193,7 +193,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                if !self.check_subtype(s_elem.type_id, t_elem.type_id).is_true() {
+                // A required source element can satisfy an optional target slot
+                // when its type already includes `undefined` (e.g. `[string | undefined]`
+                // assignable to `[string?]`).
+                let target_elem_type = if t_elem.optional && !s_elem.optional {
+                    self.interner.union2(t_elem.type_id, TypeId::UNDEFINED)
+                } else {
+                    t_elem.type_id
+                };
+
+                if !self
+                    .check_subtype(s_elem.type_id, target_elem_type)
+                    .is_true()
+                {
                     return SubtypeResult::False;
                 }
             } else if !t_elem.optional {

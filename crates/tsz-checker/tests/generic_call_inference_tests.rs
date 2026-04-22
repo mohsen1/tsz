@@ -254,6 +254,22 @@ foo2([match(y => y > 0)]);
 }
 
 #[test]
+fn optional_tuple_generic_param_accepts_required_undefined_union_tuple() {
+    let source = r#"
+declare let tx2: [string | undefined];
+declare function f12<T>(x: [T?]): T;
+declare function f13<T>(x: Partial<T>): T;
+f12(tx2);
+f13(tx2);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "Expected no TS2345 for [string | undefined] against [T?]-based generics. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
 fn speculative_callback_recheck_drops_stale_property_errors_after_instantiation() {
     let source = r#"
 type Mapper<T, U> = (x: T) => U;
