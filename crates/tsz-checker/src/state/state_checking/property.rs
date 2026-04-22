@@ -343,7 +343,8 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .map(|i| target_shapes[i].clone())
                 .collect::<Vec<_>>();
-            let effective_shapes = if discriminant_shapes.is_empty() {
+            let had_discriminant_narrowing = !discriminant_shapes.is_empty();
+            let effective_shapes = if !had_discriminant_narrowing {
                 if has_unresolved_member {
                     let matching_shapes = target_shapes
                         .iter()
@@ -429,11 +430,27 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         target_prop_types.clone(),
                     );
-                    let nested_target = self.nested_property_target_type(
-                        effective_target,
-                        source_prop.name,
-                        nested_target,
-                    );
+                    let nested_target = if had_discriminant_narrowing {
+                        nested_target
+                    } else {
+                        self.nested_property_target_type(
+                            effective_target,
+                            source_prop.name,
+                            nested_target,
+                        )
+                    };
+
+                    if had_discriminant_narrowing
+                        && self.try_emit_nested_discriminated_union_assignability_error(
+                            source,
+                            target,
+                            idx,
+                            source_prop.name,
+                            nested_target,
+                        )
+                    {
+                        return;
+                    }
 
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
@@ -1087,6 +1104,191 @@ impl<'a> CheckerState<'a> {
     fn index_value_type_is_deferred(types: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
         crate::query_boundaries::common::is_index_access_type(types, type_id)
             || crate::query_boundaries::common::contains_type_parameters(types, type_id)
+    }
+
+    fn try_emit_nested_discriminated_union_assignability_error(
+        &mut self,
+        outer_source: TypeId,
+        outer_target: TypeId,
+        obj_literal_idx: NodeIndex,
+        prop_name: Atom,
+        nested_target: TypeId,
+    ) -> bool {
+        if !self.is_object_like_nested_target(nested_target) {
+            return false;
+        }
+
+        let literal_idx = if self
+            .ctx
+            .arena
+            .get(obj_literal_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        {
+            obj_literal_idx
+        } else {
+            let Some(literal_idx) = self.find_rhs_object_literal(obj_literal_idx) else {
+                return false;
+            };
+            literal_idx
+        };
+
+        let Some((report_idx, value_idx)) =
+            self.object_literal_property_name_and_value(literal_idx, prop_name)
+        else {
+            return false;
+        };
+        let effective_value_idx = self.ctx.arena.skip_parenthesized(value_idx);
+        let Some(value_node) = self.ctx.arena.get(effective_value_idx) else {
+            return false;
+        };
+        if value_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(rejected_property) =
+            self.nested_literal_rejected_fresh_property(effective_value_idx, nested_target)
+        else {
+            return false;
+        };
+
+        let source_str = self.format_type(outer_source);
+        let target_str = self.format_type(outer_target);
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        if let Some((start, length)) =
+            self.find_excess_property_anchor(effective_value_idx, rejected_property)
+        {
+            self.error(
+                start,
+                length,
+                message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        } else {
+            self.error_at_anchor(
+                report_idx,
+                crate::error_reporter::DiagnosticAnchorKind::PropertyToken,
+                &message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+        true
+    }
+
+    fn is_object_like_nested_target(&mut self, nested_target: TypeId) -> bool {
+        let nested_target = self.evaluate_type_with_env(nested_target);
+        let nested_target = self.resolve_type_for_property_access(nested_target);
+
+        if query::object_shape(self.ctx.types, nested_target).is_some() {
+            return true;
+        }
+
+        let resolved_target = self.prune_impossible_object_union_members_with_env(nested_target);
+        query::union_members(self.ctx.types, resolved_target).is_some_and(|members| {
+            members.iter().any(|member| {
+                let resolved_member = self.resolve_type_for_property_access(*member);
+                query::object_shape(self.ctx.types, resolved_member).is_some()
+            })
+        })
+    }
+
+    fn nested_literal_rejected_fresh_property(
+        &mut self,
+        nested_literal_idx: NodeIndex,
+        nested_target: TypeId,
+    ) -> Option<Atom> {
+        let nested_target = self.evaluate_type_with_env(nested_target);
+        let nested_target = self.resolve_type_for_property_access(nested_target);
+        let resolved_target = self.prune_impossible_object_union_members_with_env(nested_target);
+        let Some(members) = query::union_members(self.ctx.types, resolved_target) else {
+            return None;
+        };
+
+        let mut target_shapes = Vec::new();
+        for &member in &members {
+            let resolved_member = self.resolve_type_for_property_access(member);
+            let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
+                return None;
+            };
+            target_shapes.push(shape);
+        }
+        if target_shapes.is_empty() {
+            return None;
+        }
+
+        let nested_node = self.ctx.arena.get(nested_literal_idx)?;
+        let nested_literal = self.ctx.arena.get_literal_expr(nested_node)?;
+        for &elem_idx in &nested_literal.elements.nodes {
+            let elem_node = self.ctx.arena.get(elem_idx)?;
+            let prop_name = match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                    self.get_property_name(prop.name)
+                }
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_shorthand_property(elem_node)?;
+                    self.get_property_name(prop.name)
+                }
+                _ => None,
+            };
+            let Some(prop_name) = prop_name.map(|name| self.ctx.types.intern_string(&name)) else {
+                continue;
+            };
+            let accepted_by_target = target_shapes.iter().any(|shape| {
+                shape
+                    .properties
+                    .iter()
+                    .any(|target_prop| target_prop.name == prop_name)
+                    || shape.string_index.is_some()
+                    || (shape.number_index.is_some()
+                        && tsz_solver::utils::is_numeric_literal_name(
+                            &self.ctx.types.resolve_atom(prop_name),
+                        ))
+            });
+            if !accepted_by_target {
+                return Some(prop_name);
+            }
+        }
+
+        None
+    }
+
+    fn object_literal_property_name_and_value(
+        &self,
+        obj_literal_idx: NodeIndex,
+        prop_name: Atom,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+        let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+
+        for &elem_idx in obj_lit.elements.nodes.iter().rev() {
+            let elem_node = self.ctx.arena.get(elem_idx)?;
+            match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                    let elem_prop_name = self
+                        .get_property_name(prop.name)
+                        .map(|name| self.ctx.types.intern_string(&name));
+                    if elem_prop_name == Some(prop_name) {
+                        return Some((prop.name, prop.initializer));
+                    }
+                }
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_shorthand_property(elem_node)?;
+                    let elem_prop_name = self
+                        .get_property_name(prop.name)
+                        .map(|name| self.ctx.types.intern_string(&name));
+                    if elem_prop_name == Some(prop_name) {
+                        return Some((prop.name, prop.name));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     fn object_literal_direct_unit_discriminants(

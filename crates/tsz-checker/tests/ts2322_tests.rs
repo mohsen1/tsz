@@ -3692,6 +3692,70 @@ const obj2: { [x: string]: number } | { a: number } = { a: 5, c: 'abc' };
     );
 }
 
+#[test]
+fn test_nested_discriminated_union_property_mismatch_emits_ts2322() {
+    let source = r#"
+type AN = { a: string } | { c: string }
+type BN = { b: string }
+type AB = { kind: "A", n: AN } | { kind: "B", n: BN }
+
+const abab: AB = {
+    kind: "A",
+    n: {
+        a: "a",
+        b: "b",
+    }
+}
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one nested union TS2322 mismatch. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diagnostic| {
+            diagnostic.message_text.contains(
+            "Type '{ kind: \"A\"; n: { a: string; b: string; }; }' is not assignable to type 'AB'."
+        )
+        }),
+        "Expected outer AB assignability message. Got: {diagnostics:?}"
+    );
+    let expected_start = source.find("b: \"b\"").expect("expected b property") as u32;
+    assert_eq!(
+        ts2322[0].start, expected_start,
+        "Expected TS2322 to anchor at the rejected nested property. Got: {diagnostics:?}"
+    );
+
+    let ok_source = r#"
+type AN = { a: string } | { c: string }
+type BN = { b: string }
+type AB = { kind: "A", n: AN } | { kind: "B", n: BN }
+
+const abac: AB = {
+    kind: "A",
+    n: {
+        a: "a",
+        c: "c",
+    }
+}
+"#;
+
+    let ok_diagnostics = get_all_diagnostics(ok_source);
+    assert!(
+        !ok_diagnostics.iter().any(|(code, _)| matches!(
+            *code,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE | 2353
+        )),
+        "Expected valid nested union object to stay accepted. Got: {ok_diagnostics:?}"
+    );
+}
+
 /// Regression: assignFromStringInterface2.ts
 /// When both source and target have number index signatures but the source is
 /// missing named properties from the target, TS2739/TS2740 should be emitted
