@@ -345,3 +345,38 @@ function f() {
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn jsdoc_nongeneric_instantiation_reports_ts2315_and_ts2304() {
+    let diags = check_js(
+        r#"
+/**
+ * @param {Void<Missing>} c
+ * @param {<T>(m: Boolean<T>) => string} fn
+ */
+function sample(c, fn) {
+  return fn(c);
+}
+"#,
+    );
+
+    let ts2315 = diags.iter().filter(|d| d.code == 2315).count();
+    let ts2304 = diags.iter().filter(|d| d.code == 2304).count();
+
+    assert!(
+        ts2315 >= 2,
+        "Expected at least two TS2315 diagnostics for non-generic JSDoc instantiation attempts, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        ts2304 >= 1,
+        "Expected at least one TS2304 diagnostic for unresolved JSDoc type arguments, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message))
+            .collect::<Vec<_>>()
+    );
+}
