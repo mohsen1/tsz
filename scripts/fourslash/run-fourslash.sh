@@ -183,27 +183,14 @@ build_typescript_harness() {
     log_step "Building TypeScript harness (non-bundled)..."
     cd "$TS_DIR"
 
+    ensure_typescript_harness_deps
+
     # CI restores built/local from the pinned TypeScript ref. If it is present,
-    # no npm install is needed just to discover that the harness is already built.
+    # reuse it after confirming runtime deps such as chai are present.
     if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
         "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
         log_success "TypeScript harness already built"
         return
-    fi
-
-    # Install all dependencies first (npm ci gives a clean, reproducible install)
-    if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
-        log_info "Installing TypeScript dependencies..."
-        npm ci --silent 2>/dev/null || npm ci
-    fi
-
-    # Pin TypeScript version after deps are installed
-    "$ROOT_DIR/scripts/setup/ensure-pinned-typescript.sh" "$TS_DIR"
-
-    # Restore deps that may have been removed by ensure-pinned-typescript.sh
-    if [[ ! -d "node_modules/chai" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
-        log_info "Restoring test dependencies..."
-        npm install --no-save --no-audit --no-fund --ignore-scripts --legacy-peer-deps 2>/dev/null || true
     fi
 
     # Generate diagnostics (needed before compiling)
@@ -247,6 +234,32 @@ build_typescript_harness() {
 
     # Apply tsz-specific patches to the compiled harness
     "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
+}
+
+ensure_typescript_harness_deps() {
+    # The built harness requires runtime packages from TypeScript/node_modules.
+    # Cloud Build may restore built/local without node_modules, so validate both.
+    if [[ ! -f "node_modules/typescript/lib/tsc.js" ]] \
+        || [[ ! -d "node_modules/chai" ]] \
+        || [[ ! -d "node_modules/@types/mocha" ]]; then
+        log_info "Installing TypeScript dependencies..."
+        npm ci --silent 2>/dev/null || npm ci
+    else
+        log_info "Using cached TypeScript dependencies"
+    fi
+
+    # Pin TypeScript version after deps are installed.
+    "$ROOT_DIR/scripts/setup/ensure-pinned-typescript.sh" "$TS_DIR"
+
+    # Restore deps that may have been removed by ensure-pinned-typescript.sh.
+    if [[ ! -d "node_modules/chai" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
+        log_info "Restoring test dependencies..."
+        npm install --no-save --no-audit --no-fund --ignore-scripts --legacy-peer-deps 2>/dev/null || true
+    fi
+
+    if [[ ! -d "node_modules/chai" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
+        die "TypeScript harness dependencies are incomplete"
+    fi
 }
 
 build_tsz_server() {

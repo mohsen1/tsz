@@ -50,6 +50,7 @@ gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/cargo-home/<Cargo.lock hash>.tar
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/npm/<scripts deps hash>.tar.gz
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/scripts-node-modules/<scripts deps hash>.tar.gz
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/typescript-harness/<sha>.tar.gz
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/typescript-node-modules/<sha>-<TypeScript deps hash>.tar.gz
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/dist-fast/<commit sha>.tar.gz
 ```
 
@@ -60,9 +61,9 @@ submodule clone.
 
 The other caches cover Cargo registry/git state, npm download state,
 `scripts/node_modules`, the built fourslash harness under `TypeScript/built`,
-and dist-fast binaries for repeated jobs on the same commit. Cache saving runs
-after the suite command even when that command fails, then the final Cloud Build
-step exits with the original suite status.
+`TypeScript/node_modules`, and dist-fast binaries for repeated jobs on the same
+commit. Cache saving runs after the suite command even when that command fails,
+then the final Cloud Build step exits with the original suite status.
 
 Create the private pool before running builds or creating triggers:
 

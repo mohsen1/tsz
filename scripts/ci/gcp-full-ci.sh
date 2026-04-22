@@ -86,6 +86,12 @@ CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
 LOG_DIR="${TSZ_CI_LOG_DIR:-.ci-logs}"
+if [[ "$METRICS_DIR" != /* ]]; then
+  METRICS_DIR="$ROOT_DIR/$METRICS_DIR"
+fi
+if [[ "$LOG_DIR" != /* ]]; then
+  LOG_DIR="$ROOT_DIR/$LOG_DIR"
+fi
 SYNTHETIC_GIT_CHECKOUT=0
 
 mkdir -p "$METRICS_DIR" "$LOG_DIR"
