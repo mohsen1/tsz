@@ -1,37 +1,8 @@
-//! Sound Mode: Strict type checking beyond TypeScript's defaults.
+//! Prototype-only sound-checking helpers used by tests.
 //!
-//! TypeScript's type system has intentional unsoundness for pragmatic reasons.
-//! Sound Mode provides opt-in stricter checking that catches common bugs.
-//!
-//! ## Activation
-//!
-//! - CLI: `tsz check --sound`
-//! - tsconfig.json: `{ "compilerOptions": { "sound": true } }`
-//! - Per-file pragma: `// @tsz-sound`
-//!
-//! ## What Sound Mode Catches
-//!
-//! | Issue | TypeScript | Sound Mode |
-//! |-------|-----------|------------|
-//! | Covariant mutable arrays | ✅ Allowed | ❌ TS9002 |
-//! | Method parameter bivariance | ✅ Allowed | ❌ TS9003 |
-//! | `any` escapes | ✅ Allowed | ❌ TS9004 |
-//! | Excess property bypass | ✅ Allowed | ❌ TS9001 |
-//! | Enum-number assignment | ✅ Allowed | ❌ TS9005 |
-//!
-//! ## Sticky Freshness
-//!
-//! TypeScript's excess property checking has a bypass:
-//!
-//! ```typescript
-//! const point3d = { x: 1, y: 2, z: 3 };
-//! const point2d: { x: number; y: number } = point3d; // ✅ No error!
-//! ```
-//!
-//! Sound Mode introduces "Sticky Freshness" - object literals remain subject
-//! to excess property checks as long as they flow through inferred types.
-//!
-//! See `docs/architecture/SOLVER_REFACTORING_PROPOSAL.md` Section 1.3.1
+//! This module is intentionally `#[cfg(test)]` and is NOT wired into production
+//! checker/CLI/LSP code paths. Keep names, docs, and behavior here scoped to
+//! experimentation so they do not imply shipped Sound Mode semantics.
 
 use crate::TypeDatabase;
 use crate::judge::JudgeConfig;
