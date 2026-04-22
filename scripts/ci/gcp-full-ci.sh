@@ -69,13 +69,43 @@ default_fourslash_workers() {
   cap_workers "$per"
 }
 
+host_memory_mb() {
+  if [[ -r /proc/meminfo ]]; then
+    awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo
+  elif command -v sysctl >/dev/null 2>&1; then
+    local bytes
+    bytes="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+    if [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt 0 ]]; then
+      printf '%s\n' $((bytes / 1024 / 1024))
+    else
+      printf '0\n'
+    fi
+  else
+    printf '0\n'
+  fi
+}
+
 default_conformance_workers() {
-  local workers
+  local workers mem_mb mem_per_worker_mb mem_cap
   workers=$((HOST_CPUS - 8))
   if (( workers < 1 )); then
     workers="$HOST_CPUS"
-  elif (( workers > 216 )); then
-    workers=216
+  fi
+
+  mem_mb="$(host_memory_mb)"
+  mem_per_worker_mb="${TSZ_CI_CONFORMANCE_MB_PER_WORKER:-2048}"
+  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_worker_mb" =~ ^[0-9]+$ && "$mem_per_worker_mb" -gt 0 ]]; then
+    mem_cap=$((mem_mb / mem_per_worker_mb))
+    if (( mem_cap < 8 )); then
+      mem_cap=8
+    fi
+    if (( workers > mem_cap )); then
+      workers="$mem_cap"
+    fi
+  fi
+
+  if (( workers > 128 )); then
+    workers=128
   fi
   cap_workers "$workers"
 }
@@ -371,7 +401,7 @@ passed = 0
 recorded = 0
 with open(sys.argv[1], encoding="utf-8", errors="replace") as f:
     for line in f:
-        if line.startswith(("PASS ", "FAIL ", "CRASH ", "TIMEOUT ")):
+        if line.startswith(("PASS ", "FAIL ", "XFAIL ", "CRASH ", "TIMEOUT ")):
             recorded += 1
         if line.startswith("PASS "):
             passed += 1
@@ -550,11 +580,13 @@ run_fourslash_shards() {
   for shard in $(seq 0 $((SHARD_COUNT - 1))); do
     (
       set +e
+      detail_json="$METRICS_DIR/fourslash-detail-${shard}.json"
       ./scripts/fourslash/run-fourslash.sh \
         --skip-cargo-build \
         --skip-ts-build \
         --shard="${shard}/${SHARD_COUNT}" \
         --workers="$FOURSLASH_WORKERS" --memory-limit=512 \
+        --json-out="$detail_json" \
         >"$LOG_DIR/fourslash/shard-${shard}.log" 2>&1
       rc="$?"
       results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard}.log" | tail -1 || true)"
