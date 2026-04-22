@@ -1040,6 +1040,10 @@ pub struct CheckerContext<'a> {
     /// `program.cross_file_node_symbols` in a single `Arc` so N per-file
     /// binders don't each deep-clone the outer `FxHashMap<usize, Arc<…>>`.
     pub program_cross_file_node_symbols: Option<Arc<tsz_binder::CrossFileNodeSymbols>>,
+    /// Program-wide alias-partners map; consulted by
+    /// `ctx.alias_partner_for` in preference to per-binder `alias_partners`.
+    /// Driver wraps `program.alias_partners` in a single `Arc`.
+    pub program_alias_partners: Option<Arc<FxHashMap<SymbolId, SymbolId>>>,
 
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
@@ -1310,6 +1314,8 @@ pub struct ProjectEnv {
     /// Program-wide cross-file node-symbol map; see
     /// `CheckerContext::program_cross_file_node_symbols`.
     pub program_cross_file_node_symbols: Option<Arc<tsz_binder::CrossFileNodeSymbols>>,
+    /// see `CheckerContext::program_alias_partners`.
+    pub program_alias_partners: Option<Arc<FxHashMap<SymbolId, SymbolId>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module paths keyed by (`source_file_idx`, specifier, resolution-mode override).
@@ -1359,6 +1365,7 @@ impl Default for ProjectEnv {
             program_wildcard_reexports_type_only: None,
             program_module_exports: None,
             program_cross_file_node_symbols: None,
+            program_alias_partners: None,
             resolved_module_paths: Arc::new(FxHashMap::default()),
             resolved_module_request_paths: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
@@ -1435,6 +1442,9 @@ impl ProjectEnv {
         }
         if let Some(ref m) = self.program_cross_file_node_symbols {
             ctx.program_cross_file_node_symbols = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = self.program_alias_partners {
+            ctx.program_alias_partners = Some(Arc::clone(m));
         }
         // Install the shared DefinitionStore before gating expensive semantic-def
         // prepopulation so `is_fully_populated()` reflects project-wide state.

@@ -417,6 +417,7 @@ impl<'a> CheckerContext<'a> {
             parent.program_wildcard_reexports_type_only.clone();
         self.program_module_exports = parent.program_module_exports.clone();
         self.program_cross_file_node_symbols = parent.program_cross_file_node_symbols.clone();
+        self.program_alias_partners = parent.program_alias_partners.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
@@ -1022,6 +1023,33 @@ impl<'a> CheckerContext<'a> {
             return dm.exact.contains(module_name);
         }
         binder.declared_modules.contains(module_name)
+    }
+
+    /// Resolve `sym_id` to its alias partner. Prefers the project-wide
+    /// `program_alias_partners` map installed by `ProjectEnv::apply_to`;
+    /// falls back to per-binder `alias_partners` for tests/standalone callers.
+    pub fn alias_partner_for(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: SymbolId,
+    ) -> Option<SymbolId> {
+        if let Some(ref ap) = self.program_alias_partners {
+            return ap.get(&sym_id).copied();
+        }
+        binder.alias_partners.get(&sym_id).copied()
+    }
+
+    /// Test whether `sym_id` has an alias partner. Prefers the project-wide
+    /// map; falls back to per-binder.
+    pub fn alias_partners_contains(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: SymbolId,
+    ) -> bool {
+        if let Some(ref ap) = self.program_alias_partners {
+            return ap.contains_key(&sym_id);
+        }
+        binder.alias_partners.contains_key(&sym_id)
     }
 
     /// Resolve an import specifier to its target file index.

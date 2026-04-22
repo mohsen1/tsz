@@ -1601,7 +1601,9 @@ impl<'a> CheckerState<'a> {
 
                     // TYPE_ALIAS + ALIAS merge: cache type alias body for type contexts,
                     // return namespace type for value contexts.
-                    if let Some(&alias_id) = self.ctx.binder.alias_partners.get(&export_sym_id) {
+                    if let Some(alias_id) =
+                        self.ctx.alias_partner_for(self.ctx.binder, export_sym_id)
+                    {
                         let ta_type = self.get_type_of_symbol(export_sym_id);
                         self.ctx.import_type_alias_types.insert(sym_id, ta_type);
                         self.record_cross_file_symbol_if_needed(alias_id, export_name, module_name);
