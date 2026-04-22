@@ -737,7 +737,7 @@ impl<'a> CheckerState<'a> {
         source_display: String,
         target_display: String,
     ) -> (String, String) {
-        if source == target || source_display != target_display {
+        if source == target {
             return (source_display, target_display);
         }
 

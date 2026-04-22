@@ -551,6 +551,64 @@ acceptsM(n);
     );
 }
 
+#[test]
+fn test_ts2345_related_property_mismatch_uses_qualified_pair() {
+    let code = r#"
+declare namespace N {
+    export class Token {
+        kind: "n";
+    }
+}
+declare namespace M {
+    export class Token {
+        kind: "m";
+    }
+}
+
+interface Source {
+    value: N.Token;
+}
+interface Target {
+    value: M.Token;
+}
+
+declare const source: Source;
+function acceptsTarget(value: Target): void {}
+acceptsTarget(source);
+"#;
+
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "test.ts",
+        code,
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 2345)
+        .unwrap_or_else(|| panic!("Expected TS2345, got: {diagnostics:?}"));
+    let related_messages: Vec<&str> = diagnostic
+        .related_information
+        .iter()
+        .map(|related| related.message_text.as_str())
+        .collect();
+
+    assert!(
+        related_messages
+            .iter()
+            .any(|message| message.contains("Types of property 'value' are incompatible.")),
+        "Expected property mismatch related info. Related: {related_messages:#?}"
+    );
+    assert!(
+        related_messages
+            .iter()
+            .any(|message| message.contains("Type 'N.Token' is not assignable to type 'M.Token'.")),
+        "Expected qualified Token pair in related info. Related: {related_messages:#?}"
+    );
+}
+
 /// Union of tuple types with `.filter()` should contextually type callback parameters
 /// as the union of element types, matching tsc behavior.
 ///

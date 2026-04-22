@@ -265,6 +265,12 @@ impl<'a> CheckerState<'a> {
                 }
                 let widened = self.widen_type_for_display(*source_type);
                 let src_str = self.format_type_diagnostic(widened);
+                let (src_str, tgt_str) = self.finalize_pair_display_for_diagnostic(
+                    *source_type,
+                    *target_type,
+                    src_str,
+                    tgt_str,
+                );
                 vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,
                     code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -297,6 +303,12 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let src_str = self.format_type_diagnostic(*source_type);
+                let (src_str, tgt_str) = self.finalize_pair_display_for_diagnostic(
+                    *source_type,
+                    *target_type,
+                    src_str,
+                    tgt_str,
+                );
                 let names: Vec<String> = property_names
                     .iter()
                     .filter(|a| !is_object_prototype_method(self.ctx.types.resolve_atom_ref(**a)))
@@ -349,6 +361,15 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *target_property_type
                 };
+                let source_str = self.format_type_diagnostic(*source_property_type);
+                let target_str = self.format_type_diagnostic(target_property_type);
+                let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                    *source_property_type,
+                    target_property_type,
+                    source_str,
+                    target_str,
+                );
+
                 vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
@@ -369,15 +390,16 @@ impl<'a> CheckerState<'a> {
                         length,
                         message_text: format_message(
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[
-                                &self.format_type_diagnostic(*source_property_type),
-                                &self.format_type_diagnostic(target_property_type),
-                            ],
+                            &[&source_str, &target_str],
                         ),
                     },
                 ]
             }
             SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                let src_str = self.format_type_diagnostic(source);
+                let tgt_str = self.format_type_diagnostic(target);
+                let (src_str, tgt_str) =
+                    self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
                 vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,
                     code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -388,8 +410,8 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[
                             &self.ctx.types.resolve_atom_ref(*property_name),
-                            &self.format_type_diagnostic(source),
-                            &self.format_type_diagnostic(target),
+                            &src_str,
+                            &tgt_str,
                         ],
                     ),
                 }]
@@ -401,6 +423,12 @@ impl<'a> CheckerState<'a> {
             } => {
                 let source_str = self.format_type_diagnostic(*source_return);
                 let target_str = self.format_type_diagnostic(*target_return);
+                let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                    *source_return,
+                    *target_return,
+                    source_str,
+                    target_str,
+                );
                 let mut items = vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
