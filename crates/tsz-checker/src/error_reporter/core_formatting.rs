@@ -164,6 +164,11 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|shape| !shape.type_params.is_empty())
         };
 
+        // Diagnostics for alias-wrapped string mappings and similar evaluated
+        // surfaces need nested lazy refs ready before we decide whether to show
+        // the original alias text or the evaluated result.
+        self.ensure_relation_input_ready(ty);
+
         // If the type is a TypeParameter or Infer, format it directly as
         // its name.  This must happen before any evaluation/resolution that
         // could replace the type parameter with its constraint type.
@@ -235,6 +240,42 @@ impl<'a> CheckerState<'a> {
         }
         if ty == TypeId::BOOLEAN_FALSE {
             return "false".to_string();
+        }
+
+        // Alias bodies like `Uppercase<A>` often arrive here before the nested
+        // lazy arg has been reduced, even though the fully evaluated surface is
+        // a concrete literal or template pattern that tsc prints in TS2322.
+        if let Some((kind, type_arg)) =
+            crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, ty)
+        {
+            let resolved_arg =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_arg)
+                    .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                    .filter(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+                    .and_then(|def| def.body)
+                    .map(|body| self.evaluate_type_for_assignability(body))
+                    .unwrap_or_else(|| self.evaluate_type_for_assignability(type_arg));
+            if resolved_arg != type_arg {
+                let remapped = self.ctx.types.string_intrinsic(kind, resolved_arg);
+                let evaluated_remapped = self.evaluate_type_for_assignability(remapped);
+                if crate::query_boundaries::common::literal_value(
+                    self.ctx.types,
+                    evaluated_remapped,
+                )
+                .is_some()
+                    || crate::query_boundaries::common::is_template_literal_type(
+                        self.ctx.types,
+                        evaluated_remapped,
+                    )
+                    || crate::query_boundaries::common::string_intrinsic_components(
+                        self.ctx.types,
+                        evaluated_remapped,
+                    )
+                    .is_some()
+                {
+                    return self.format_type_for_assignability_message(evaluated_remapped);
+                }
+            }
         }
 
         // For deferred conditional types, check if the conditional is ambiguous
