@@ -5,6 +5,7 @@ use crate::diagnostics::{
     diagnostic_messages, format_message,
 };
 use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -305,8 +306,13 @@ impl<'a> CheckerState<'a> {
                 target_value_type,
             } => {
                 if depth == 0 {
-                    let source_str =
-                        self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                    let source_str = self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    );
                     let target_str = self.format_assignability_type_for_message(target, source);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -330,8 +336,13 @@ impl<'a> CheckerState<'a> {
 
             SubtypeFailureReason::MissingIndexSignature { index_kind } => {
                 if depth == 0 {
-                    let source_str =
-                        self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                    let source_str = self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    );
                     let target_str = self.format_assignability_type_for_message(target, source);
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -363,12 +374,24 @@ impl<'a> CheckerState<'a> {
                             .is_none();
                     (
                         if use_structural_source_display {
-                            self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                            self.format_type_for_diagnostic_role(
+                                source,
+                                DiagnosticTypeDisplayRole::AssignmentSource {
+                                    target,
+                                    anchor_idx: idx,
+                                },
+                            )
                         } else {
                             self.format_type_diagnostic(*source_type)
                         },
                         if use_structural_source_display {
-                            self.format_assignment_target_type_for_diagnostic(target, source, idx)
+                            self.format_type_for_diagnostic_role(
+                                target,
+                                DiagnosticTypeDisplayRole::AssignmentTarget {
+                                    source,
+                                    anchor_idx: idx,
+                                },
+                            )
                         } else {
                             self.format_type_diagnostic(target)
                         },
