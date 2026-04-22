@@ -19,6 +19,14 @@ Examples:
     --fingerprint-log /tmp/tsz-fingerprint-deltas.txt \
     --json-output /tmp/render-corpus.json \
     --csv-output /tmp/render-corpus.csv
+
+  # Isolate Phase 5 anchor/count work.
+  python3 scripts/conformance/classify-render-corpus.py \
+    --fingerprint-log /tmp/tsz-fingerprint-deltas.txt \
+    --category location-only
+  python3 scripts/conformance/classify-render-corpus.py \
+    --fingerprint-log /tmp/tsz-fingerprint-deltas.txt \
+    --category under-count --category over-count --paths-only
 """
 
 from __future__ import annotations
@@ -38,6 +46,42 @@ DEFAULT_DETAIL = SCRIPT_DIR / "conformance-detail.json"
 FINGERPRINT_RE = re.compile(
     r"^\s*-\s+(TS\d+)\s+(.+?):(\d+):(\d+)\s+(.*)$"
 )
+
+ANCHOR_SURFACE_BY_CODE = {
+    # Assignment-like relation diagnostics usually flow through
+    # DiagnosticAnchorKind::RewriteAssignment or Exact fallback.
+    "TS2322": "DiagnosticAnchorKind::RewriteAssignment",
+    "TS2416": "DiagnosticAnchorKind::RewriteAssignment",
+    "TS2739": "DiagnosticAnchorKind::RewriteAssignment",
+    "TS2740": "DiagnosticAnchorKind::RewriteAssignment",
+    "TS2741": "DiagnosticAnchorKind::RewriteAssignment",
+    # Call and overload diagnostics choose between argument anchors and
+    # call/overload-primary anchors in call_errors/error_emission.rs.
+    "TS2345": "DiagnosticAnchorKind::CallPrimary/Exact",
+    "TS2554": "DiagnosticAnchorKind::CallPrimary",
+    "TS2555": "DiagnosticAnchorKind::CallPrimary",
+    "TS2769": "DiagnosticAnchorKind::OverloadPrimary",
+    # Property/member diagnostics are centralized in properties.rs.
+    "TS2339": "DiagnosticAnchorKind::PropertyToken",
+    "TS2551": "DiagnosticAnchorKind::PropertyToken",
+    "TS4111": "DiagnosticAnchorKind::PropertyToken",
+    "TS7053": "DiagnosticAnchorKind::ElementAccessExpr/ElementIndexArg",
+    # Special semantic anchor policies.
+    "TS2352": "DiagnosticAnchorKind::TypeAssertionOverlap",
+    "TS2353": "manual excess-property anchor",
+}
+
+COUNT_CATEGORIES = {"under-count", "over-count", "same-code count drift"}
+ANCHOR_CATEGORIES = {"location-only"}
+FINGERPRINT_DETAIL_CATEGORIES = {
+    "message-only",
+    "location-only",
+    "under-count",
+    "over-count",
+    "per-instance wrong code",
+    "mixed",
+    "fingerprint-unclassified",
+}
 
 
 def normalize_code(code: str) -> str:
@@ -193,34 +237,66 @@ def classify_fingerprint_delta(missing: list[dict], extra: list[dict]) -> str:
     return "mixed"
 
 
+def code_counter(codes: list[str]) -> Counter:
+    return Counter(normalize_code(code) for code in codes)
+
+
 def failure_category(failure: dict) -> str:
     expected = failure.get("e", [])
     actual = failure.get("a", [])
     missing = failure.get("m", [])
     extra = failure.get("x", [])
 
-    if expected and actual and expected == actual:
-        return "fingerprint-only"
-    if not expected and actual:
+    if expected and actual:
+        expected_counts = code_counter(expected)
+        actual_counts = code_counter(actual)
+        if expected_counts == actual_counts:
+            return "fingerprint-only"
+        if set(expected_counts) == set(actual_counts):
+            return "same-code count drift"
+    elif not expected and actual:
         return "false-positive"
-    if expected and not actual:
+    elif expected and not actual:
         return "all-missing"
     if missing or extra:
         return "wrong-code"
     return "unknown"
 
 
+def fingerprint_codes(record: dict) -> set[str]:
+    codes = set(record.get("codes", []))
+    codes.update(record.get("actual_codes", []))
+    codes.update(record.get("missing_codes", []))
+    codes.update(record.get("extra_codes", []))
+    for fp in record.get("missing_fingerprints", []):
+        codes.add(fp["code"])
+    for fp in record.get("extra_fingerprints", []):
+        codes.add(fp["code"])
+    return codes
+
+
+def anchor_surface_for_codes(codes: set[str]) -> str:
+    surfaces = []
+    for code in sorted(codes):
+        if code in ANCHOR_SURFACE_BY_CODE:
+            surfaces.append(ANCHOR_SURFACE_BY_CODE[code])
+        elif re.match(r"TS1\d\d\d$", code):
+            surfaces.append("parser/scanner")
+    if not surfaces:
+        return "DiagnosticAnchorKind::Exact/unknown"
+    return " + ".join(sorted(set(surfaces)))
+
+
 def code_filter_matches(record: dict, codes: set[str]) -> bool:
     if not codes:
         return True
-    record_codes = set(record.get("codes", []))
-    record_codes.update(record.get("missing_codes", []))
-    record_codes.update(record.get("extra_codes", []))
-    for fp in record.get("missing_fingerprints", []):
-        record_codes.add(fp["code"])
-    for fp in record.get("extra_fingerprints", []):
-        record_codes.add(fp["code"])
-    return bool(record_codes & codes)
+    return bool(fingerprint_codes(record) & codes)
+
+
+def category_filter_matches(record: dict, categories: set[str]) -> bool:
+    if not categories:
+        return True
+    return record["category"] in categories or record["base_category"] in categories
 
 
 def build_records(detail: dict, fingerprint_log: dict[str, dict[str, list[dict]]] | None) -> list[dict]:
@@ -245,6 +321,13 @@ def build_records(detail: dict, fingerprint_log: dict[str, dict[str, list[dict]]
         for fp in extra_fps:
             delta_codes[(fp["code"], "extra")] += 1
 
+        record_codes = set(failure.get("e", []))
+        record_codes.update(failure.get("a", []))
+        for fp in missing_fps:
+            record_codes.add(fp["code"])
+        for fp in extra_fps:
+            record_codes.add(fp["code"])
+
         records.append(
             {
                 "path": path,
@@ -252,6 +335,7 @@ def build_records(detail: dict, fingerprint_log: dict[str, dict[str, list[dict]]
                 "area": area_of(path),
                 "category": render_class,
                 "base_category": category,
+                "anchor_surface": anchor_surface_for_codes(record_codes),
                 "codes": failure.get("e", []),
                 "actual_codes": failure.get("a", []),
                 "missing_codes": failure.get("m", []),
@@ -275,15 +359,22 @@ def summarize(records: list[dict]) -> dict:
     code_deltas = Counter()
     class_code_counts: dict[str, Counter] = {}
     area_counts = Counter()
+    anchor_surface_counts = Counter()
 
     for record in records:
         category = record["category"]
         class_code_counts.setdefault(category, Counter())
         if record["area"]:
             area_counts[record["area"]] += 1
+        if category in ANCHOR_CATEGORIES:
+            anchor_surface_counts[record["anchor_surface"]] += 1
 
-        for code in record.get("codes", []):
-            if record["base_category"] == "fingerprint-only":
+        for code in fingerprint_codes(record):
+            if (
+                record["base_category"] == "fingerprint-only"
+                or category in FINGERPRINT_DETAIL_CATEGORIES
+                or category in COUNT_CATEGORIES
+            ):
                 class_code_counts[category][code] += 1
 
         for fp in record.get("missing_fingerprints", []):
@@ -299,16 +390,10 @@ def summarize(records: list[dict]) -> dict:
 
     total_fingerprint_only = base_category_counts.get("fingerprint-only", 0)
     classified_fingerprint_only = sum(
-        count
-        for category, count in category_counts.items()
-        if category
-        not in {
-            "fingerprint-unclassified",
-            "wrong-code",
-            "all-missing",
-            "false-positive",
-            "unknown",
-        }
+        1
+        for record in records
+        if record["base_category"] == "fingerprint-only"
+        and record["category"] != "fingerprint-unclassified"
     )
 
     return {
@@ -317,6 +402,7 @@ def summarize(records: list[dict]) -> dict:
             "fingerprint_only": total_fingerprint_only,
             "classified_fingerprint_only": classified_fingerprint_only,
             "unclassified_fingerprint_only": category_counts.get("fingerprint-unclassified", 0),
+            "same_code_count_drift": base_category_counts.get("same-code count drift", 0),
             "wrong_code": base_category_counts.get("wrong-code", 0),
             "all_missing": base_category_counts.get("all-missing", 0),
             "false_positive": base_category_counts.get("false-positive", 0),
@@ -338,6 +424,10 @@ def summarize(records: list[dict]) -> dict:
         "areas": [
             {"area": area, "tests": count} for area, count in area_counts.most_common(20)
         ],
+        "location_anchor_surfaces": [
+            {"anchor_surface": surface, "tests": count}
+            for surface, count in anchor_surface_counts.most_common()
+        ],
     }
 
 
@@ -354,6 +444,7 @@ def print_summary(summary: dict, records: list[dict], top: int, paths_only: bool
     print(f"Fingerprint-only:          {s['fingerprint_only']}")
     print(f"Classified fingerprint-only: {s['classified_fingerprint_only']}")
     print(f"Unclassified fingerprint-only: {s['unclassified_fingerprint_only']}")
+    print(f"Same-code count drift:     {s['same_code_count_drift']}")
     print(f"Wrong-code:                {s['wrong_code']}")
     print(f"All-missing:               {s['all_missing']}")
     print(f"False-positive:            {s['false_positive']}")
@@ -373,14 +464,48 @@ def print_summary(summary: dict, records: list[dict], top: int, paths_only: bool
             )
         print()
 
+    if summary["location_anchor_surfaces"]:
+        print("Location-only anchor surfaces:")
+        for item in summary["location_anchor_surfaces"][:10]:
+            print(f"  {item['anchor_surface']:<48} {item['tests']:>4}")
+        print()
+
+    class_rows = [
+        (
+            category,
+            summary["class_top_codes"].get(category, []),
+        )
+        for category in [
+            "location-only",
+            "under-count",
+            "over-count",
+            "message-only",
+            "mixed",
+            "same-code count drift",
+        ]
+    ]
+    class_rows = [(category, codes) for category, codes in class_rows if codes]
+    if class_rows:
+        print("Top codes by render/count class:")
+        for category, codes in class_rows:
+            top_codes = ", ".join(
+                f"{item['code']}={item['tests']}" for item in codes[:5]
+            )
+            print(f"  {category:<24} {top_codes}")
+        print()
+
     interesting = [
         record
         for record in records
-        if record["base_category"] == "fingerprint-only"
+        if (
+            record["base_category"] == "fingerprint-only"
+            or record["category"] in COUNT_CATEGORIES
+        )
         and (
             record["missing_fingerprint_count"]
             or record["extra_fingerprint_count"]
             or record["category"] == "fingerprint-unclassified"
+            or record["category"] in COUNT_CATEGORIES
         )
     ]
     interesting.sort(
@@ -401,6 +526,8 @@ def print_summary(summary: dict, records: list[dict], top: int, paths_only: bool
             f"extra={record['extra_fingerprint_count']:>2} "
             f"codes=[{codes}] {record['name']}"
         )
+        if record["category"] == "location-only":
+            print(f"    anchor-surface: {record['anchor_surface']}")
     if len(interesting) > top:
         print(f"  ... and {len(interesting) - top} more")
 
@@ -419,6 +546,7 @@ def write_csv(path: Path, records: list[dict]) -> None:
         "area",
         "category",
         "base_category",
+        "anchor_surface",
         "codes",
         "actual_codes",
         "missing_codes",
@@ -464,6 +592,15 @@ def main() -> int:
         default=[],
         help="Restrict printed/exported records to a diagnostic code, e.g. TS2322",
     )
+    parser.add_argument(
+        "--category",
+        action="append",
+        default=[],
+        help=(
+            "Restrict printed/exported records to a category, e.g. "
+            "location-only, under-count, over-count, message-only"
+        ),
+    )
     parser.add_argument("--top", type=int, default=25, help="Rows to show in text output")
     parser.add_argument("--paths-only", action="store_true", help="Print only matching paths")
     args = parser.parse_args()
@@ -479,7 +616,9 @@ def main() -> int:
 
     records = build_records(detail, fingerprint_log)
     codes = {normalize_code(code) for code in args.code}
+    categories = set(args.category)
     records = [record for record in records if code_filter_matches(record, codes)]
+    records = [record for record in records if category_filter_matches(record, categories)]
     summary = summarize(records)
 
     print_summary(summary, records, args.top, args.paths_only)
