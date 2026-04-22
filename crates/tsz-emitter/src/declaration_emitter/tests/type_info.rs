@@ -924,6 +924,55 @@ export const value = null as any;
 }
 
 #[test]
+fn test_display_alias_preserves_generic_class_type_arguments() {
+    let source = r#"
+export namespace C {
+    export class A<T> {}
+    export class B {}
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let c_sym = binder
+        .file_locals
+        .get("C")
+        .expect("missing namespace symbol");
+    let c_symbol = binder.symbols.get(c_sym).expect("missing namespace data");
+    let exports = c_symbol
+        .exports
+        .as_ref()
+        .expect("expected namespace exports");
+    let a_sym = exports.get("A").expect("missing class A symbol");
+    let b_sym = exports.get("B").expect("missing class B symbol");
+
+    let interner = TypeInterner::new();
+    let a_def = tsz_solver::DefId(9201);
+    let b_def = tsz_solver::DefId(9202);
+    let app_type = interner.application(interner.lazy(a_def), vec![interner.lazy(b_def)]);
+    let evaluated_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(a_sym),
+    });
+    interner.store_display_alias(evaluated_type, app_type);
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(a_def, a_sym);
+    type_cache.def_to_symbol.insert(b_def, b_sym);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(evaluated_type);
+
+    assert_eq!(printed, "C.A<C.B>");
+}
+
+#[test]
 fn test_object_literal_enum_values_preserve_typeof_and_widen_members() {
     let output = emit_dts_with_binding(
         r#"
