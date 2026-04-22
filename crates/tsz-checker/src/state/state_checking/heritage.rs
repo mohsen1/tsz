@@ -25,9 +25,9 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol_with_libs(sym_to_check, &lib_binders)?;
 
-        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let is_namespace = symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE);
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+        let has_other_value = symbol.has_any_flags(value_flags_except_module);
         if !is_namespace || has_other_value {
             return None;
         }
@@ -55,9 +55,9 @@ impl<'a> CheckerState<'a> {
             || (is_class_declaration
                 && is_extends_clause
                 && self.get_cross_file_symbol(heritage_sym).is_some_and(|s| {
-                    (s.flags & symbol_flags::VARIABLE) != 0
-                        || ((s.flags & symbol_flags::INTERFACE) != 0
-                            && (s.flags & symbol_flags::CLASS) == 0)
+                    s.has_any_flags(symbol_flags::VARIABLE)
+                        || (s.has_any_flags(symbol_flags::INTERFACE)
+                            && !s.has_any_flags(symbol_flags::CLASS))
                 }))
     }
 
@@ -450,10 +450,9 @@ impl<'a> CheckerState<'a> {
                             self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
                         let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
                         if let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
-                            let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
-                            let has_non_namespace_value = (symbol.flags
-                                & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
-                                != 0;
+                            let is_namespace = symbol.has_any_flags(symbol_flags::MODULE);
+                            let has_non_namespace_value = symbol
+                                .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE);
                             if is_namespace && !has_non_namespace_value {
                                 if let Some(name) = self.heritage_name_text(expr_idx) {
                                     self.error_namespace_used_as_type_at(&name, expr_idx);
@@ -481,19 +480,18 @@ impl<'a> CheckerState<'a> {
                             .contains(&sym_to_check);
 
                         if let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
-                            let is_namespace = (symbol.flags & symbol_flags::MODULE) != 0;
+                            let is_namespace = symbol.has_any_flags(symbol_flags::MODULE);
                             // Merged declarations like `namespace N {}` + `class N {}`
                             // are valid values in `extends`. Only emit TS2708 for
                             // namespace-only symbols.
-                            let has_non_namespace_value = (symbol.flags
-                                & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
-                                != 0;
+                            let has_non_namespace_value = symbol
+                                .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE);
                             if is_namespace && !has_non_namespace_value {
                                 // SUPPRESSION: For import aliases like `import * as A from "mod"`,
                                 // suppress TS2708 when the module resolution has failed (TS2307).
                                 // The namespace object from an import is always usable as a value
                                 // reference, even if the module has no value exports or failed to resolve.
-                                let has_alias = (symbol.flags & symbol_flags::ALIAS) != 0;
+                                let has_alias = symbol.has_any_flags(symbol_flags::ALIAS);
                                 if has_alias && symbol.import_module.is_some() {
                                     // Skip TS2708 for import aliases - this handles cases like
                                     // `import * as A from ""` where the module fails to resolve.
@@ -564,9 +562,9 @@ impl<'a> CheckerState<'a> {
                         // and the variable provides the constructor for extends.
                         let is_interface_only =
                             self.get_cross_file_symbol(sym_to_check).is_some_and(|s| {
-                                (s.flags & symbol_flags::INTERFACE) != 0
-                                    && (s.flags & symbol_flags::CLASS) == 0
-                                    && (s.flags & symbol_flags::VARIABLE) == 0
+                                s.has_any_flags(symbol_flags::INTERFACE)
+                                    && !s.has_any_flags(symbol_flags::CLASS)
+                                    && !s.has_any_flags(symbol_flags::VARIABLE)
                             });
 
                         if is_interface_only && is_class_declaration {
@@ -592,8 +590,8 @@ impl<'a> CheckerState<'a> {
                             // constructor validation because their value side may be non-newable.
                             let skip_constructor_check =
                                 self.get_cross_file_symbol(sym_to_check).is_some_and(|s| {
-                                    (s.flags & symbol_flags::CLASS) != 0
-                                        && (s.flags & symbol_flags::VARIABLE) == 0
+                                    s.has_any_flags(symbol_flags::CLASS)
+                                        && !s.has_any_flags(symbol_flags::VARIABLE)
                                 });
 
                             // When a user class shadows a lib variable of the same name
@@ -704,9 +702,9 @@ impl<'a> CheckerState<'a> {
                                     && self
                                         .get_cross_file_symbol(sym_to_check)
                                         .is_none_or(|s| {
-                                            !((s.flags & symbol_flags::INTERFACE) != 0
-                                                && (s.flags & symbol_flags::VARIABLE) != 0
-                                                && (s.flags & symbol_flags::CLASS) == 0)
+                                            !(s.has_any_flags(symbol_flags::INTERFACE)
+                                                && s.has_any_flags(symbol_flags::VARIABLE)
+                                                && !s.has_any_flags(symbol_flags::CLASS))
                                         });
 
                                 if should_check_constructor {
@@ -1184,7 +1182,7 @@ impl<'a> CheckerState<'a> {
         let name = symbol.escaped_name.clone();
 
         // The heritage symbol must have a CLASS flag (from user code)
-        if (symbol.flags & symbol_flags::CLASS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
 
@@ -1212,7 +1210,7 @@ impl<'a> CheckerState<'a> {
         // CLASS|INTERFACE|VARIABLE). Use itself as the lib variable symbol.
         // Case B: Heritage symbol lacks VARIABLE. Search lib_symbol_ids for a
         // DIFFERENT lib symbol with the same name and VARIABLE flag.
-        let shadowed_lib_id = if (symbol.flags & symbol_flags::VARIABLE) != 0
+        let shadowed_lib_id = if symbol.has_any_flags(symbol_flags::VARIABLE)
             && self.ctx.binder.lib_symbol_ids.contains(&heritage_sym)
         {
             Some(heritage_sym)
@@ -1222,7 +1220,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 self.ctx.binder.get_symbol(lib_id).and_then(|s| {
-                    if s.escaped_name == name && (s.flags & symbol_flags::VARIABLE) != 0 {
+                    if s.escaped_name == name && s.has_any_flags(symbol_flags::VARIABLE) {
                         Some(lib_id)
                     } else {
                         None
@@ -1599,8 +1597,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let is_class = symbol.flags & symbol_flags::CLASS != 0;
-        let is_enum = symbol.flags & symbol_flags::REGULAR_ENUM != 0;
+        let is_class = symbol.has_any_flags(symbol_flags::CLASS);
+        let is_enum = symbol.has_any_flags(symbol_flags::REGULAR_ENUM);
         if !is_class && !is_enum {
             return;
         }
