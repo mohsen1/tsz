@@ -595,6 +595,11 @@ impl<'a> CheckerState<'a> {
 
                 // Skip prop-type checking when props type is any/error/contains-error
                 if skip_prop_checks {
+                    let attr_value_type =
+                        self.compute_jsx_attr_value_type_without_context(attr_data.initializer);
+                    if let Some(entry) = provided_attrs.last_mut() {
+                        entry.1 = attr_value_type;
+                    }
                     continue;
                 }
 
@@ -821,7 +826,7 @@ impl<'a> CheckerState<'a> {
                     let expected_context_type =
                         self.evaluate_application_type(expected_context_type);
                     let expected_context_type = self.evaluate_type_with_env(expected_context_type);
-                    let mut function_value_span = None;
+                    let mut function_param_diagnostic_span = None;
                     if let Some(value_node) = self.ctx.arena.get(value_node_idx)
                         && matches!(
                             value_node.kind,
@@ -852,7 +857,13 @@ impl<'a> CheckerState<'a> {
                             .implicit_any_checked_closures
                             .insert(value_node_idx);
                         self.invalidate_function_like_for_contextual_retry(value_node_idx);
-                        function_value_span = Some((value_node.pos, value_node.end));
+                        let param_span_end = self
+                            .ctx
+                            .arena
+                            .get_function(value_node)
+                            .and_then(|func| self.ctx.arena.get(func.body))
+                            .map_or(value_node.end, |body_node| body_node.pos);
+                        function_param_diagnostic_span = Some((value_node.pos, param_span_end));
                     }
                     let contextual_expected_type =
                         if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
@@ -864,7 +875,8 @@ impl<'a> CheckerState<'a> {
                             expected_context_type
                         };
                     // Set contextual type to preserve narrow literal types.
-                    let diag_snap = function_value_span.map(|_| self.ctx.snapshot_diagnostics());
+                    let diag_snap =
+                        function_param_diagnostic_span.map(|_| self.ctx.snapshot_diagnostics());
                     let actual_type = self.compute_type_of_node_with_request(
                         value_node_idx,
                         &request
@@ -872,7 +884,8 @@ impl<'a> CheckerState<'a> {
                             .normal_origin()
                             .contextual(contextual_expected_type),
                     );
-                    if let (Some((start, end)), Some(diag_snap)) = (function_value_span, diag_snap)
+                    if let (Some((start, end)), Some(diag_snap)) =
+                        (function_param_diagnostic_span, diag_snap)
                     {
                         self.ctx.rollback_diagnostics_filtered(&diag_snap, |diag| {
                             !(matches!(diag.code, 7006 | 7019 | 7031 | 7051)
