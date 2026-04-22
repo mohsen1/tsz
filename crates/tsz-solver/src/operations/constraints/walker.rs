@@ -1117,41 +1117,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                 if s_fn.type_params.is_empty() {
                     // Non-generic source function - direct comparison
-                    // Unpack tuple rest parameters for proper matching
-                    use crate::type_queries::unpack_tuple_rest_parameter;
-                    let s_params_unpacked: Vec<ParamInfo> = s_fn
-                        .params
-                        .iter()
-                        .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
-                        .collect();
-                    let t_params_unpacked: Vec<ParamInfo> = t_fn
-                        .params
-                        .iter()
-                        .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
-                        .collect();
-
-                    // Contravariant parameters: target_param <: source_param
-                    for (s_p, t_p) in s_params_unpacked.iter().zip(t_params_unpacked.iter()) {
-                        if t_p.rest || s_p.rest {
-                            // If target has a rest parameter, we stop the 1-to-1 mapping
-                            // The special cases below will handle inferring the rest tuple
-                            // or array element type.
-                            break;
-                        }
-                        self.constrain_parameter_types(
-                            ctx,
-                            var_map,
-                            s_p.type_id,
-                            t_p.type_id,
-                            priority,
-                        );
-                    }
-
-                    self.infer_rest_param_tuple_candidate(
+                    self.constrain_params_with_rest(
                         ctx,
                         var_map,
-                        &s_params_unpacked,
-                        &t_params_unpacked,
+                        &s_fn.params,
+                        &t_fn.params,
+                        priority,
                     );
 
                     if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {

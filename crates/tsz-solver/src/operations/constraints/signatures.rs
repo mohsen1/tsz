@@ -133,7 +133,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// Example: source `(a: string, b: number)` vs target `(...args: T)` where
     /// T is an inference variable → infers T = [string, number].
-    fn constrain_params_with_rest(
+    pub(super) fn constrain_params_with_rest(
         &mut self,
         ctx: &mut InferenceContext,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
@@ -164,21 +164,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // If target has a rest param typed as an inference variable, collect
         // remaining source params into a tuple and infer against the variable.
+        let target_has_rest = t_params.last().is_some_and(|t| t.rest);
         let target_rest_is_typevar = t_params
             .last()
             .is_some_and(|t| t.rest && var_map.contains_key(&t.type_id));
         if target_rest_is_typevar {
             self.infer_rest_param_tuple_candidate(ctx, var_map, &s_params, &t_params);
-        } else if let Some(s_last) = s_params.last()
+        } else if !target_has_rest
+            && let Some(s_last) = s_params.last()
             && s_last.rest
         {
             // Source has rest param, target doesn't — infer each remaining
             // target param against the source rest element type.
+            let source_rest_elem = self.rest_element_type(s_last.type_id);
             for t_p in t_params.iter().skip(matched) {
-                if t_p.rest {
-                    break;
-                }
-                self.constrain_parameter_types(ctx, var_map, s_last.type_id, t_p.type_id, priority);
+                self.constrain_parameter_types(
+                    ctx,
+                    var_map,
+                    source_rest_elem,
+                    t_p.type_id,
+                    priority,
+                );
             }
         }
     }
