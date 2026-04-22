@@ -4,13 +4,13 @@ CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoint is `cloudbuild.yaml`, which runs
 `scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. The configured
-suite pools use 592 of the 600 available private-pool CPUs in `us-central1`, so
+suite pools use 528 of the 600 available private-pool CPUs in `us-central1`, so
 all six suite checks can run concurrently without falling back into queueing:
 
 ```text
 conformance  n2d-highcpu-224
-emit         n2d-highcpu-128
-fourslash    n2d-highcpu-128
+emit         n2d-highcpu-96
+fourslash    n2d-highcpu-96
 unit         n2d-highcpu-48
 lint         n2d-highcpu-32
 wasm         n2d-highcpu-32
@@ -55,10 +55,10 @@ gcloud builds worker-pools create tsz-ci-n2d-224 \
   --worker-machine-type=n2d-highcpu-224 \
   --worker-disk-size=200GB
 
-gcloud builds worker-pools create tsz-ci-n2d-128 \
+gcloud builds worker-pools create tsz-ci-n2d-96 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-128 \
+  --worker-machine-type=n2d-highcpu-96 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-48 \
@@ -103,7 +103,7 @@ pool_for_suite() {
   case "$1" in
     lint|wasm) printf '%s\n' cloudbuild.n2d-32.yaml ;;
     unit) printf '%s\n' cloudbuild.n2d-48.yaml ;;
-    emit|fourslash) printf '%s\n' cloudbuild.n2d-128.yaml ;;
+    emit|fourslash) printf '%s\n' cloudbuild.n2d-96.yaml ;;
     conformance) printf '%s\n' cloudbuild.yaml ;;
     *) printf '%s\n' cloudbuild.yaml ;;
   esac
