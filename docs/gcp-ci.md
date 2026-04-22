@@ -7,12 +7,12 @@ shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
 save updated caches, then report the original suite status. Main and PR builds
 use separate worker pools so a PR build storm cannot sit ahead of main builds
 in the same pool queue. Conformance is split into eight Cloud Build checks on
-dedicated N2D-96 pools so the slowest gate is parallel instead of one long
-monolithic run:
+N2D-32 workers so the slowest gate is parallel and fits under the tighter
+effective N2D private-pool capacity path:
 
 ```text
-main conformance  tsz-ci-main-conf-n2d-96  n2d-highcpu-96
-PR conformance    tsz-ci-pr-conf-n2d-96    n2d-highcpu-96
+main conformance  tsz-ci-n2d-32      n2d-highcpu-32
+PR conformance    tsz-ci-n2d-32      n2d-highcpu-32
 emit              tsz-ci-n2d-96      n2d-highcpu-96
 fourslash         tsz-ci-n2d-96      n2d-highcpu-96
 unit              tsz-ci-n2d-64      n2d-highcpu-64
@@ -122,16 +122,10 @@ gcloud builds worker-pools create tsz-ci-pr-n2d-96 \
   --worker-machine-type=n2d-highcpu-96 \
   --worker-disk-size=200GB
 
-gcloud builds worker-pools create tsz-ci-main-conf-n2d-96 \
+gcloud builds worker-pools create tsz-ci-n2d-32 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-96 \
-  --worker-disk-size=200GB
-
-gcloud builds worker-pools create tsz-ci-pr-conf-n2d-96 \
-  --project=thirdface-ai-oauth \
-  --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-96 \
+  --worker-machine-type=n2d-highcpu-32 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-48 \
@@ -199,7 +193,7 @@ pr_pool_for_suite() {
     lint|wasm) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
     unit) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-64 ;;
     emit|fourslash) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-96 ;;
-    conformance) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-conf-n2d-96 ;;
+    conformance) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-32 ;;
     *) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
   esac
 }
@@ -232,7 +226,7 @@ for shard in 0 1 2 3 4 5 6 7; do
     --build-config=cloudbuild.yaml \
     --include-logs-with-status \
     --no-require-approval \
-    --substitutions="_TSZ_CI_SUITE=conformance,_TSZ_CI_POOL=projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-conf-n2d-96,_TSZ_CI_CONFORMANCE_SHARD_INDEX=${shard},_TSZ_CI_CONFORMANCE_SHARD_COUNT=8" \
+    --substitutions="_TSZ_CI_SUITE=conformance,_TSZ_CI_POOL=projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-32,_TSZ_CI_CONFORMANCE_SHARD_INDEX=${shard},_TSZ_CI_CONFORMANCE_SHARD_COUNT=8" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 ```
@@ -275,7 +269,7 @@ for shard in 0 1 2 3 4 5 6 7; do
     --build-config=cloudbuild.yaml \
     --include-logs-with-status \
     --no-require-approval \
-    --substitutions="_TSZ_CI_SUITE=conformance,_TSZ_CI_POOL=projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-main-conf-n2d-96,_TSZ_CI_CONFORMANCE_SHARD_INDEX=${shard},_TSZ_CI_CONFORMANCE_SHARD_COUNT=8" \
+    --substitutions="_TSZ_CI_SUITE=conformance,_TSZ_CI_POOL=projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-32,_TSZ_CI_CONFORMANCE_SHARD_INDEX=${shard},_TSZ_CI_CONFORMANCE_SHARD_COUNT=8" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 ```
