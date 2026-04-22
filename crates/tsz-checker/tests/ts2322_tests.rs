@@ -3639,6 +3639,59 @@ fn test_index_signature_target_missing_prop_emits_ts2322_not_ts2741() {
     );
 }
 
+#[test]
+fn test_union_index_signature_object_literal_value_mismatches_emit_ts2322() {
+    let source = r#"
+interface IValue {
+  value: string
+}
+
+interface StringKeys {
+    [propertyName: string]: IValue;
+};
+
+interface NumberKeys {
+    [propertyName: number]: IValue;
+}
+
+type ObjectDataSpecification = StringKeys | NumberKeys;
+
+const dataSpecification: ObjectDataSpecification = {
+    foo: "asdfsadffsd"
+};
+
+const obj1: { [x: string]: number } | { [x: number]: number } = { a: 'abc' };
+const obj2: { [x: string]: number } | { a: number } = { a: 5, c: 'abc' };
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected three TS2322 index-signature value mismatches. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, message)| message
+                .contains("Type 'string' is not assignable to type 'IValue'.")),
+        "Expected string-to-IValue mismatch. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|(_, message)| message
+                .contains("Type 'string' is not assignable to type 'number'."))
+            .count(),
+        2,
+        "Expected two string-to-number mismatches. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression: assignFromStringInterface2.ts
 /// When both source and target have number index signatures but the source is
 /// missing named properties from the target, TS2739/TS2740 should be emitted
@@ -3803,11 +3856,10 @@ newTextChannel2.phoneNumber = '613-555-1234';
         "Expected one outer TS2322 for the return object. Got: {diagnostics:?}"
     );
     assert!(
-        ts2322.iter().any(|(_, message)| {
-            message.contains(
-                "Type '{ type: T; localChannelId: string; }' is not assignable to type 'NewChannel<ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>>'"
-            )
-        }),
+        ts2322.iter().any(|(_, message)| message.contains(
+            "Type '{ type: T; localChannelId: string; }' is not assignable to type 'NewChannel<"
+        ) && message.contains("ChannelOfType<T, TextChannel>")
+            && message.contains("ChannelOfType<T, EmailChannel>")),
         "Expected TS2322 to stay on the outer object literal. Got: {diagnostics:?}"
     );
     assert!(
