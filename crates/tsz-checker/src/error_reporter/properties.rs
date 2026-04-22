@@ -2,6 +2,7 @@
 
 use crate::diagnostics::diagnostic_codes;
 use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_parser::parser::NodeIndex;
@@ -429,7 +430,10 @@ impl<'a> CheckerState<'a> {
                 || self.ctx.types.get_display_alias(type_id).is_some()
                 || self.ctx.namespace_module_names.contains_key(&type_id);
             if has_named_receiver_identity {
-                return self.format_property_receiver_type_for_diagnostic(type_id);
+                return self.format_type_for_diagnostic_role(
+                    type_id,
+                    DiagnosticTypeDisplayRole::PropertyReceiver,
+                );
             }
             if let Some(init_type) = self.object_literal_initializer_display_type_for_receiver(idx)
             {
@@ -439,7 +443,7 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic_structural(type_id);
         }
 
-        self.format_property_receiver_type_for_diagnostic(type_id)
+        self.format_type_for_diagnostic_role(type_id, DiagnosticTypeDisplayRole::PropertyReceiver)
     }
 
     // =========================================================================
