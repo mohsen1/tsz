@@ -380,6 +380,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.guard.is_exceeded()
     }
 
+    /// Run `f` with subtype flags configured for tsc's `isTypeIdenticalTo`
+    /// identity checking (TS2403 and related redeclaration/identity paths).
+    ///
+    /// Temporarily sets `any_propagation = TopLevelOnly`, enables
+    /// `identity_cycle_check`, disables method bivariance, and forces
+    /// `strict_function_types = true` — matching tsc's strict bidirectional
+    /// structural equality. All four flags are restored on return, even if
+    /// `f` returns early.
+    pub fn with_identity_check_mode<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let saved_any_mode = self.any_propagation;
+        let saved_identity_cycle = self.identity_cycle_check;
+        let saved_method_bivariance = self.disable_method_bivariance;
+        let saved_strict_fn = self.strict_function_types;
+        self.any_propagation = AnyPropagationMode::TopLevelOnly;
+        self.identity_cycle_check = true;
+        self.disable_method_bivariance = true;
+        self.strict_function_types = true;
+        let result = f(self);
+        self.any_propagation = saved_any_mode;
+        self.identity_cycle_check = saved_identity_cycle;
+        self.disable_method_bivariance = saved_method_bivariance;
+        self.strict_function_types = saved_strict_fn;
+        result
+    }
+
     /// Apply compiler flags from a packed u16 bitmask.
     ///
     /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
@@ -2306,3 +2331,38 @@ mod overlap_tests;
 #[cfg(test)]
 #[path = "../../../tests/intersection_optional_subtype_tests.rs"]
 mod intersection_optional_subtype_tests;
+
+#[cfg(test)]
+mod with_identity_check_mode_tests {
+    use super::*;
+    use crate::TypeInterner;
+
+    #[test]
+    fn restores_flags_after_closure() {
+        let interner = TypeInterner::new();
+        let mut checker = SubtypeChecker::new(&interner);
+        checker.any_propagation = AnyPropagationMode::All;
+        checker.identity_cycle_check = false;
+        checker.disable_method_bivariance = false;
+        checker.strict_function_types = false;
+
+        let inside = checker.with_identity_check_mode(|sub| {
+            (
+                sub.any_propagation,
+                sub.identity_cycle_check,
+                sub.disable_method_bivariance,
+                sub.strict_function_types,
+            )
+        });
+
+        assert_eq!(inside.0, AnyPropagationMode::TopLevelOnly);
+        assert!(inside.1);
+        assert!(inside.2);
+        assert!(inside.3);
+
+        assert_eq!(checker.any_propagation, AnyPropagationMode::All);
+        assert!(!checker.identity_cycle_check);
+        assert!(!checker.disable_method_bivariance);
+        assert!(!checker.strict_function_types);
+    }
+}
