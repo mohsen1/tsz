@@ -650,7 +650,13 @@ impl<'a> CheckerState<'a> {
     ) -> Diagnostic {
         // Primitive sources use TS2322 rather than missing-property wording.
         let display_src_str = if depth == 0 && source_type != tsz_solver::TypeId::OBJECT {
-            self.format_assignment_source_type_for_diagnostic(source, target, idx)
+            self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target,
+                    anchor_idx: idx,
+                },
+            )
         } else {
             self.format_type_diagnostic(source_type)
         };
@@ -699,7 +705,13 @@ impl<'a> CheckerState<'a> {
                 );
         if is_source_fn && !target_has_call_sigs {
             let src_str = if depth == 0 {
-                self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
             } else {
                 self.format_type_diagnostic(source_type)
             };
@@ -749,7 +761,13 @@ impl<'a> CheckerState<'a> {
                 .is_some();
                 if !target_has_named_prop {
                     let src_str = if depth == 0 {
-                        self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                        self.format_type_for_diagnostic_role(
+                            source,
+                            DiagnosticTypeDisplayRole::AssignmentSource {
+                                target,
+                                anchor_idx: idx,
+                            },
+                        )
                     } else {
                         self.format_type_diagnostic(source_type)
                     };
@@ -882,7 +900,13 @@ impl<'a> CheckerState<'a> {
             || (depth == 0 && self.anchor_source_has_intersection_annotation(idx))
         {
             let src_str = if depth == 0 {
-                self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
             } else {
                 self.format_type_diagnostic(source_type)
             };
@@ -921,7 +945,13 @@ impl<'a> CheckerState<'a> {
                     );
             if base_is_intersection {
                 let src_str = if depth == 0 {
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
                 } else {
                     self.format_type_diagnostic(source_type)
                 };
@@ -948,7 +978,13 @@ impl<'a> CheckerState<'a> {
         let prop_name = self.ctx.types.resolve_atom_ref(property_name);
         if prop_name.starts_with("__private_brand") {
             let src_str = if depth == 0 {
-                self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
             } else {
                 self.format_type_for_assignability_message(source_type)
             };
