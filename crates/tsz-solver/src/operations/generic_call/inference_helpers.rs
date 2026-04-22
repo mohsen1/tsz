@@ -41,8 +41,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // we also have contravariant evidence, preserve the combined direct
                 // argument information. This prevents over-narrowing from first-wins in
                 // co/contra scenarios such as callback predicates over union arrays.
+                //
+                // ANY / UNKNOWN / ERROR bounds are not meaningful inference evidence —
+                // they usually leak in from unresolved callback parameters or error
+                // recovery. Filter them out before unioning so one stray ANY doesn't
+                // widen every concrete candidate back to ANY (which would silence
+                // downstream diagnostics like TS2488/TS2769).
                 if has_usable_contra_candidates && !inferred_is_union {
-                    return crate::utils::union_or_single(self.interner, lower_bounds.to_vec());
+                    let concrete_bounds: Vec<TypeId> = lower_bounds
+                        .iter()
+                        .copied()
+                        .filter(|ty| !matches!(*ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
+                        .collect();
+                    if !concrete_bounds.is_empty() {
+                        return crate::utils::union_or_single(self.interner, concrete_bounds);
+                    }
                 }
                 return inferred;
             }
