@@ -74,6 +74,10 @@ pub const CONTEXT_FLAG_IN_TUPLE_ELEMENT: u32 = 65536;
 /// Suppresses TS1213 for `yield` in computed property names of generator methods
 /// (tsc does not emit TS1213 in this position).
 pub const CONTEXT_FLAG_GENERATOR_MEMBER_NAME: u32 = 131072;
+/// Context flag: parsing a `${...}` template span expression.
+/// Empty spans at EOF report TS1109 from template-span recovery so the
+/// expression error can anchor before trailing trivia while TS1005 anchors at EOF.
+pub const CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION: u32 = 262144;
 
 // =============================================================================
 // Parse Diagnostic
