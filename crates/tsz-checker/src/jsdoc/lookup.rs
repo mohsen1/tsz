@@ -474,7 +474,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Must actually be a value (variable, function, etc.).
-        if symbol.flags & symbol_flags::VALUE == 0 {
+        if !symbol.has_any_flags(symbol_flags::VALUE) {
             return;
         }
         // CommonJS `var mod = require("./x")` binds `mod` to the module's
