@@ -4,18 +4,19 @@ CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
-save updated caches, then report the original suite status. The active suite
-pools use 224-vCPU N2D workers. PR conformance has its own pool so it does not
-wait behind main conformance:
+save updated caches, then report the original suite status. Conformance uses
+224-vCPU N2D workers, while the other suites stay smaller so one full PR run
+fits under the current private-pool CPU quota. PR conformance has its own pool
+so it does not wait behind main conformance:
 
 ```text
 main conformance  tsz-ci-n2d-224     n2d-highcpu-224
 PR conformance    tsz-ci-n2d-224-pr  n2d-highcpu-224
-emit              tsz-ci-n2d-96      n2d-highcpu-224
-fourslash         tsz-ci-n2d-96      n2d-highcpu-224
-unit              tsz-ci-n2d-64      n2d-highcpu-224
-lint              tsz-ci-n2d-48      n2d-highcpu-224
-wasm              tsz-ci-n2d-48      n2d-highcpu-224
+emit              tsz-ci-n2d-96      n2d-highcpu-96
+fourslash         tsz-ci-n2d-96      n2d-highcpu-96
+unit              tsz-ci-n2d-64      n2d-highcpu-64
+lint              tsz-ci-n2d-48      n2d-highcpu-48
+wasm              tsz-ci-n2d-48      n2d-highcpu-48
 ```
 
 The script
@@ -29,8 +30,9 @@ Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
 `lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
 that substitution keeps the `all` default for ad hoc full builds.
 
-Builds use `queueTtl: 300s`, so a build that cannot start within 5 minutes is
-expired instead of waiting indefinitely behind newer commits.
+Builds use `queueTtl: 900s`, so a build can survive Cloud Build private-pool
+cold starts and quota scheduling without waiting indefinitely behind newer
+commits.
 
 Cloud Build source archives do not preserve git submodule metadata, so
 `scripts/ci/typescript-submodule-ref` records the TypeScript submodule commit
@@ -77,19 +79,19 @@ gcloud builds worker-pools create tsz-ci-n2d-224-pr \
 gcloud builds worker-pools create tsz-ci-n2d-96 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-224 \
+  --worker-machine-type=n2d-highcpu-96 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-48 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-224 \
+  --worker-machine-type=n2d-highcpu-48 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-64 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-224 \
+  --worker-machine-type=n2d-highcpu-64 \
   --worker-disk-size=200GB
 ```
 
