@@ -23,6 +23,7 @@ mod operator_errors;
 mod properties;
 mod render_failure;
 mod suggestions;
+mod type_display_policy;
 mod type_value;
 
 pub(crate) use fingerprint_policy::{
