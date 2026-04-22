@@ -2511,7 +2511,10 @@ impl ParserState {
     }
 
     fn parse_template_expression_span(&mut self) -> (u32, NodeIndex, bool) {
+        let saved_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION;
         let expression = self.parse_expression();
+        self.context_flags = saved_flags;
         if expression.is_none() {
             // Emit TS1109 "Expression expected." for empty template expressions.
             // Position depends on the current token:

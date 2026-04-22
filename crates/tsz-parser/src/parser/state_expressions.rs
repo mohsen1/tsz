@@ -2811,7 +2811,12 @@ impl ParserState {
                 if self.is_token(SyntaxKind::EndOfFileToken) {
                     // At EOF while expecting an expression: emit TS1109 to match tsc.
                     // Examples: `[#abc]=` or `var x =` at end of file.
-                    self.error_expression_expected();
+                    if (self.context_flags
+                        & crate::parser::state::CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION)
+                        == 0
+                    {
+                        self.error_expression_expected();
+                    }
                     return NodeIndex::NONE;
                 }
                 if self.is_at_expression_end()
