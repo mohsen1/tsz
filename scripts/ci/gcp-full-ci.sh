@@ -400,10 +400,13 @@ aggregate_fourslash() {
   fi
 }
 
-main() {
+run_common_setup() {
   timed ensure_host_tools ensure_host_tools
   timed ensure_source_git_context ensure_source_git_context
   timed init_typescript_submodule init_typescript_submodule
+}
+
+run_all_suites() {
   timed run_lint run_lint
   timed run_unit_tests run_unit_tests
   timed build_test_binaries build_test_binaries
@@ -414,6 +417,48 @@ main() {
   timed aggregate_emit aggregate_emit
   timed run_fourslash_shards run_fourslash_shards
   timed aggregate_fourslash aggregate_fourslash
+}
+
+main() {
+  local suite="${1:-${TSZ_CI_SUITE:-all}}"
+
+  run_common_setup
+
+  case "$suite" in
+    all|full)
+      run_all_suites
+      ;;
+    lint)
+      timed run_lint run_lint
+      ;;
+    unit)
+      timed run_unit_tests run_unit_tests
+      ;;
+    wasm)
+      timed build_wasm build_wasm
+      ;;
+    conformance)
+      timed build_test_binaries build_test_binaries
+      timed run_conformance run_conformance
+      ;;
+    emit)
+      timed build_test_binaries build_test_binaries
+      timed prep_node_artifacts prep_node_artifacts
+      timed run_emit_shards run_emit_shards
+      timed aggregate_emit aggregate_emit
+      ;;
+    fourslash)
+      timed build_test_binaries build_test_binaries
+      timed prep_node_artifacts prep_node_artifacts
+      timed run_fourslash_shards run_fourslash_shards
+      timed aggregate_fourslash aggregate_fourslash
+      ;;
+    *)
+      echo "error: unknown CI suite '${suite}'" >&2
+      echo "valid suites: all, lint, unit, wasm, conformance, emit, fourslash" >&2
+      return 2
+      ;;
+  esac
 }
 
 main "$@"

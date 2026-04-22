@@ -11,6 +11,10 @@ workers, while emit and fourslash default to 4 shards with 20 workers per shard.
 That keeps process overhead lower on the 88-vCPU pool while still saturating the
 larger machine.
 
+Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
+`lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
+that substitution keeps the `all` default for ad hoc full builds.
+
 Cloud Build source archives do not preserve git submodule metadata, so
 `scripts/ci/typescript-submodule-ref` records the TypeScript submodule commit
 used when a git checkout is unavailable. If the TypeScript submodule is bumped,
@@ -59,35 +63,41 @@ gcloud builds repositories create tsz \
   --remote-uri=https://github.com/mohsen1/tsz.git
 ```
 
-Create the pull request trigger in the GCP project:
+Create one pull request trigger per suite in the GCP project:
 
 ```bash
-gcloud builds triggers create github \
-  --project=thirdface-ai-oauth \
-  --region=us-central1 \
-  --name=tsz-pr-ci \
-  --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
-  --pull-request-pattern='^main$' \
-  --comment-control=COMMENTS_DISABLED \
-  --build-config=cloudbuild.yaml \
-  --include-logs-with-status \
-  --no-require-approval \
-  --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
+for suite in lint unit wasm conformance emit fourslash; do
+  gcloud builds triggers create github \
+    --project=thirdface-ai-oauth \
+    --region=us-central1 \
+    --name="tsz-pr-${suite}" \
+    --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
+    --pull-request-pattern='^main$' \
+    --comment-control=COMMENTS_DISABLED \
+    --build-config=cloudbuild.yaml \
+    --include-logs-with-status \
+    --no-require-approval \
+    --substitutions="_TSZ_CI_SUITE=${suite}" \
+    --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
+done
 ```
 
-Create the main branch trigger:
+Create one main branch trigger per suite:
 
 ```bash
-gcloud builds triggers create github \
-  --project=thirdface-ai-oauth \
-  --region=us-central1 \
-  --name=tsz-main-ci \
-  --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
-  --branch-pattern='^main$' \
-  --build-config=cloudbuild.yaml \
-  --include-logs-with-status \
-  --no-require-approval \
-  --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
+for suite in lint unit wasm conformance emit fourslash; do
+  gcloud builds triggers create github \
+    --project=thirdface-ai-oauth \
+    --region=us-central1 \
+    --name="tsz-main-${suite}" \
+    --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
+    --branch-pattern='^main$' \
+    --build-config=cloudbuild.yaml \
+    --include-logs-with-status \
+    --no-require-approval \
+    --substitutions="_TSZ_CI_SUITE=${suite}" \
+    --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
+done
 ```
 
 No GitHub repository secrets are required for this path. Cloud Build owns the
