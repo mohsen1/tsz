@@ -869,8 +869,10 @@ impl<'a> CheckerState<'a> {
 
         // TS2375: exactOptionalPropertyTypes — undefined assigned to optional property without undefined.
         if self.has_exact_optional_property_mismatch(source, target) {
-            let src_str =
-                self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+            let src_str = self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+            );
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
@@ -891,8 +893,10 @@ impl<'a> CheckerState<'a> {
 
         // TS2412: exactOptionalPropertyTypes write target mismatch (property/element write).
         if self.has_exact_optional_write_target_mismatch(source, target, anchor_idx) {
-            let src_str =
-                self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+            let src_str = self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+            );
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2,
@@ -1004,10 +1008,14 @@ impl<'a> CheckerState<'a> {
                     && let Some(missing_props) =
                         self.missing_required_properties_from_index_signature_source(source, target)
                 {
-                    let src_str = self
-                        .format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-                    let tgt_str = self
-                        .format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+                    let src_str = self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                    );
+                    let tgt_str = self.format_type_for_diagnostic_role(
+                        target,
+                        DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+                    );
                     let (message, code) = if missing_props.len() == 1 {
                         let prop_name = self
                             .ctx
@@ -1589,10 +1597,14 @@ impl<'a> CheckerState<'a> {
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {
-                let src_str =
-                    self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-                let tgt_str =
-                    self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+                let src_str = self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                );
+                let tgt_str = self.format_type_for_diagnostic_role(
+                    target,
+                    DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+                );
                 let (message, code) = if missing_props.len() == 1 {
                     let prop_name = self
                         .ctx
@@ -1674,10 +1686,14 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let src_str =
-                self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
-            let tgt_str =
-                self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+            let src_str = self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+            );
+            let tgt_str = self.format_type_for_diagnostic_role(
+                target,
+                DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+            );
             let (src_str, tgt_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
             // TS2719: when both types display identically but are different,
