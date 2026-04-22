@@ -623,18 +623,37 @@ pub(super) fn collect_diagnostics(
             .map(|file| Arc::clone(&file.arena))
             .collect()
     });
-    let symbol_file_targets: Arc<Vec<(tsz::binder::SymbolId, usize)>> = Arc::new(
+    // Build symbol → file_idx mapping in O(symbols + files) instead of
+    // O(symbols × files). Previously each symbol scanned `all_arenas` linearly
+    // looking for the matching `Arc<NodeArena>` via `ptr_eq` — on a large
+    // project (~100K-500K symbols × 6000+ files) that exploded into
+    // billion-scale pointer comparisons just to populate the map.
+    //
+    // `Arc::ptr_eq` compares the inner allocation address, so the raw pointer
+    // value uniquely identifies an arena. A small one-shot pointer→idx
+    // hashmap drops the per-symbol cost from O(N_files) to O(1).
+    let symbol_file_targets: Arc<Vec<(tsz::binder::SymbolId, usize)>> = Arc::new({
+        let _span = tracing::info_span!(
+            "build_symbol_file_targets",
+            symbols = program.symbol_arenas.len(),
+            files = all_arenas.len()
+        )
+        .entered();
+        let arena_ptr_to_idx: FxHashMap<*const tsz::parser::NodeArena, usize> = all_arenas
+            .iter()
+            .enumerate()
+            .map(|(idx, arena)| (Arc::as_ptr(arena), idx))
+            .collect();
         program
             .symbol_arenas
             .iter()
             .filter_map(|(sym_id, arena)| {
-                all_arenas
-                    .iter()
-                    .position(|file_arena| Arc::ptr_eq(file_arena, arena))
-                    .map(|file_idx| (*sym_id, file_idx))
+                arena_ptr_to_idx
+                    .get(&Arc::as_ptr(arena))
+                    .map(|&file_idx| (*sym_id, file_idx))
             })
-            .collect(),
-    );
+            .collect()
+    });
 
     // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
     let mut module_resolver = ModuleResolver::new(options);
