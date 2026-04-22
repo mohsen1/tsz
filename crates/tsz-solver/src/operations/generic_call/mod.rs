@@ -25,7 +25,7 @@ pub(crate) fn unique_placeholder_name(buf: &mut String) {
     write!(buf, "__infer_{id}").expect("write to String is infallible");
 }
 
-/// Check if a type constraint is a primitive type (string, number, boolean, bigint)
+/// Check if a type constraint is a primitive type (string, number, boolean, bigint, symbol)
 /// or a union containing a primitive. Used to preserve literal types during inference
 /// when the constraint implies literals should be kept (e.g., `T extends string`).
 fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: TypeId) -> bool {
@@ -33,6 +33,7 @@ fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: Ty
         || type_id == TypeId::NUMBER
         || type_id == TypeId::BOOLEAN
         || type_id == TypeId::BIGINT
+        || type_id == TypeId::SYMBOL
     {
         return true;
     }
@@ -53,6 +54,57 @@ fn constraint_is_primitive_type(interner: &dyn crate::QueryDatabase, type_id: Ty
             members
                 .iter()
                 .any(|&m| constraint_is_primitive_type(interner, m))
+        }
+        _ => false,
+    }
+}
+
+/// Check whether a type constraint contains a type parameter whose own declared
+/// constraint preserves primitive literals.
+///
+/// This covers dependent generic constraints like Object.freeze's
+/// `T extends { [idx: string]: U | null | undefined | object }, U extends string | ...`.
+/// `T`'s constraint is object-shaped, but its index value is governed by primitive-
+/// constrained `U`, so fresh literal property values must not be widened away.
+fn constraint_contains_primitive_constrained_type_param(
+    interner: &dyn crate::QueryDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 4 {
+        return false;
+    }
+
+    match interner.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => info
+            .constraint
+            .is_some_and(|constraint| constraint_is_primitive_type(interner, constraint)),
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            interner.type_list(list_id).iter().any(|&member| {
+                constraint_contains_primitive_constrained_type_param(interner, member, depth + 1)
+            })
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            shape.properties.iter().any(|prop| {
+                constraint_contains_primitive_constrained_type_param(
+                    interner,
+                    prop.type_id,
+                    depth + 1,
+                )
+            }) || shape.string_index.as_ref().is_some_and(|index| {
+                constraint_contains_primitive_constrained_type_param(
+                    interner,
+                    index.value_type,
+                    depth + 1,
+                )
+            }) || shape.number_index.as_ref().is_some_and(|index| {
+                constraint_contains_primitive_constrained_type_param(
+                    interner,
+                    index.value_type,
+                    depth + 1,
+                )
+            })
         }
         _ => false,
     }
