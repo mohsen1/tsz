@@ -995,6 +995,18 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.is_identity_comparable_type(type_id)
     }
 
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        self.interner.get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.interner.get_array_base_type_params()
+    }
+
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        self.interner.get_array_display_base_type()
+    }
+
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         self.interner.get_boxed_type(kind)
     }
@@ -1060,6 +1072,10 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.interner.set_array_base_type(type_id, type_params);
+    }
+
+    fn register_array_display_base_type(&self, type_id: TypeId) {
+        self.interner.set_array_display_base_type(type_id);
     }
 
     fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {

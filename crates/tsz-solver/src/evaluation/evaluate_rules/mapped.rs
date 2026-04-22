@@ -218,6 +218,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This avoids repeated O(N) collect_properties calls inside the loop.
         // Also capture resolved_source once to avoid double evaluate(source) calls.
         let mut source_prop_map = FxHashMap::default();
+        let mut source_decl_order = Vec::new();
         let mut resolved_source_id = None;
         if let Some(source) = source_object {
             // Evaluate the source to resolve Application types (e.g., Partial<X> is
@@ -235,18 +236,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //
             // Previously this returned TypeId::ANY, which was incorrect for the
             // `Objectish<any>` case and required a checker-local workaround.
-
-            match collect_properties(resolved_source, self.interner(), self.resolver()) {
-                PropertyCollectionResult::Properties { properties, .. } => {
-                    source_prop_map.reserve(properties.len());
-                    for prop in properties {
-                        source_prop_map
-                            .insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
+            let source_props = {
+                let ordered = crate::type_queries::collect_homomorphic_source_property_infos(
+                    self.interner(),
+                    source,
+                );
+                if !ordered.is_empty() {
+                    ordered
+                } else {
+                    match collect_properties(resolved_source, self.interner(), self.resolver()) {
+                        PropertyCollectionResult::Properties { properties, .. } => properties,
+                        _ => Vec::new(),
                     }
                 }
-                PropertyCollectionResult::Any | PropertyCollectionResult::NonObject => {
-                    // Any type properties are treated as (false, false, ANY)
-                }
+            };
+            source_prop_map.reserve(source_props.len());
+            source_decl_order.reserve(source_props.len());
+            for prop in source_props {
+                source_decl_order.push(prop.name);
+                source_prop_map.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
             }
         }
 
@@ -254,26 +262,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // order. tsc preserves declaration order in mapped type results (e.g., Required<Foo>
         // lists properties in the same order as Foo). Our key extraction sorts by Atom ID
         // which can differ from declaration order. We fix this by re-sorting the output
-        // properties to match the source's declaration order.
-        // PERF: Reuse resolved_source_id from above to avoid re-evaluating source.
-        let source_decl_order: Vec<Atom> = if is_homomorphic {
-            if let Some(resolved) = resolved_source_id {
-                let order: Vec<Atom> = match self.interner().lookup(resolved) {
-                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                        let shape = self.interner().object_shape(shape_id);
-                        let mut props: Vec<&PropertyInfo> = shape.properties.iter().collect();
-                        props.sort_by_key(|p| p.declaration_order);
-                        props.iter().map(|p| p.name).collect()
-                    }
-                    _ => Vec::new(),
-                };
-                order
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
+        // properties to match the source's declaration order. For array sources, the
+        // helper above instantiates the registered `Array<T>` base type so remapped
+        // object displays preserve lib.d.ts member order.
+        if !is_homomorphic {
+            source_decl_order.clear();
+        }
 
         // HOMOMORPHIC ARRAY/TUPLE PRESERVATION
         // If source_object is an Array or Tuple, preserve the structure instead of

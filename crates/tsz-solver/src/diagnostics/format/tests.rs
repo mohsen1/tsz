@@ -815,6 +815,53 @@ fn format_object_with_index_many_properties_truncated() {
     );
 }
 
+#[test]
+fn format_object_with_index_prefers_symbol_tail_over_later_string_member() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let mut props: Vec<PropertyInfo> = (1..=24)
+        .map(|i| PropertyInfo::new(db.intern_string(&format!("p{i}")), TypeId::NUMBER))
+        .collect();
+    let mut symbol_tail = PropertyInfo::new(
+        db.intern_string("[Symbol.unscopables]"),
+        db.object(vec![PropertyInfo::new(
+            db.intern_string("a"),
+            TypeId::NUMBER,
+        )]),
+    );
+    symbol_tail.readonly = true;
+    props.push(symbol_tail);
+    props.push(PropertyInfo::new(db.intern_string("flat"), TypeId::NUMBER));
+
+    let shape = crate::types::ObjectShape {
+        properties: props,
+        string_index: None,
+        number_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: Default::default(),
+    };
+    let obj = db.object_with_index(shape);
+    let result = fmt.format(obj);
+    assert!(
+        result.contains("readonly [Symbol.unscopables]:"),
+        "Expected indexed-object truncation to preserve the last symbol-named member, got: {result}"
+    );
+    assert!(
+        result.contains("readonly [Symbol.unscopables]: { ...; }"),
+        "Expected preserved symbol tail to collapse nested object detail, got: {result}"
+    );
+    assert!(
+        !result.contains("flat: number"),
+        "Expected later string members to be omitted when a symbol tail is preserved, got: {result}"
+    );
+}
+
 // =================================================================
 // Function type formatting
 // =================================================================
@@ -2125,6 +2172,55 @@ fn format_callable_multiple_call_signatures() {
     assert!(
         result.contains("{") && result.contains("}"),
         "Multiple sigs should use object format, got: {result}"
+    );
+}
+
+#[test]
+fn format_callable_displays_zero_arg_overload_first() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let callable = db.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![ParamInfo {
+                    name: Some(db.intern_string("locales")),
+                    type_id: TypeId::STRING,
+                    optional: true,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: TypeId::STRING,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: None,
+                return_type: TypeId::STRING,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+    let result = fmt.format(callable);
+    let zero_pos = result
+        .find("(): string")
+        .expect("expected zero-arg overload");
+    let opt_pos = result
+        .find("(locales?: string): string")
+        .expect("expected optional-arg overload");
+    assert!(
+        zero_pos < opt_pos,
+        "Expected zero-arg overload to display first, got: {result}"
     );
 }
 

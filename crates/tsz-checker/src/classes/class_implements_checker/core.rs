@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
         if interface_name == "Array" && type_args.len() == 1 {
             let display_name = array_display_name(self);
 
-            if let Some(array_base) = self.ctx.types.get_array_base_type()
+            if let Some(array_base) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
                 && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                     self.ctx.types,
                     array_base,
@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
             {
                 let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                     self.ctx.types,
-                    self.ctx.types.get_array_base_type_params(),
+                    tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types),
                     type_args,
                 );
                 let properties = shape
