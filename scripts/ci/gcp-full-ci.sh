@@ -12,15 +12,6 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$HOST_CPUS}"
-export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
-export SCCACHE_GCS_BUCKET="${SCCACHE_GCS_BUCKET:-thirdface-ai-oauth_cloudbuild}"
-export SCCACHE_GCS_KEY_PREFIX="${SCCACHE_GCS_KEY_PREFIX:-tsz-ci-cache/sccache/rust-v1}"
-
-if [[ "${BRANCH_NAME:-}" == "main" && -z "${PULL_REQUEST_ID:-}" ]]; then
-  export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_WRITE}"
-else
-  export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_ONLY}"
-fi
 
 cap_workers() {
   local requested="$1"
@@ -137,7 +128,6 @@ ensure_host_tools() {
       jq
       python3
       pkg-config
-      sccache
     )
     if suite_needs_group "$suite" wasm; then
       apt_packages+=(binaryen)
@@ -167,12 +157,6 @@ ensure_host_tools() {
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
   fi
 
-  if command -v sccache >/dev/null 2>&1; then
-    sccache --start-server || true
-  else
-    unset RUSTC_WRAPPER
-  fi
-
   rustc -V
   cargo -V
   if command -v node >/dev/null 2>&1; then
@@ -182,9 +166,6 @@ ensure_host_tools() {
     npm -v
   fi
   nproc
-  if command -v sccache >/dev/null 2>&1; then
-    sccache --show-stats || true
-  fi
 }
 
 ensure_source_git_context() {
@@ -560,14 +541,5 @@ main() {
       ;;
   esac
 }
-
-show_sccache_stats() {
-  if command -v sccache >/dev/null 2>&1; then
-    ci_section "sccache stats"
-    sccache --show-stats || true
-  fi
-}
-
-trap show_sccache_stats EXIT
 
 main "$@"
