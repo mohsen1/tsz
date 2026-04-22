@@ -602,9 +602,15 @@ run_project_benchmark() {
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB (project)"
 
-    # For project fixtures (except nextjs, which is currently tsgo-only), require
-    # a clean tsc pass before benchmarking.
-    if [ "$name" != "nextjs" ]; then
+    # For project fixtures (except nextjs, which is currently tsgo-only, and
+    # large-ts-repo, which is a synthetic fixture we control), require a clean
+    # tsc pass before benchmarking.
+    #
+    # large-ts-repo is excluded because tsc on 6000+ files routinely takes
+    # several minutes and tripped the precheck timeout, causing the entire
+    # large-repo bench to be silently skipped from the website results. The
+    # fixture is generated and pinned, so a tsc precheck adds no value.
+    if [ "$name" != "nextjs" ] && [ "$name" != "large-ts-repo" ]; then
         local project_tsc_timeout=$((BENCH_TIMEOUT * 2))
         local tsc_check=0
         run_with_timeout "$project_tsc_timeout" $TSC --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
@@ -620,9 +626,15 @@ run_project_benchmark() {
         fi
     fi
 
-    # Pre-validate with timeout: record errors/timeouts in summary table
-    # Project-level benchmarks get a longer timeout since they check many files
-    local project_timeout=$((BENCH_TIMEOUT * 2))
+    # Pre-validate with timeout: record errors/timeouts in summary table.
+    # Project-level benchmarks get a longer timeout since they check many files.
+    # Very large fixtures (6000+ files) need an even longer timeout.
+    local project_timeout
+    if [ "$name" = "large-ts-repo" ]; then
+        project_timeout=$((BENCH_TIMEOUT * 5))
+    else
+        project_timeout=$((BENCH_TIMEOUT * 2))
+    fi
     local tsz_check=0
     run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
     local tsgo_check=0
@@ -672,13 +684,31 @@ run_project_benchmark() {
     echo -e "${GREEN}$name${NC} ($info)"
 
     # Run benchmark with -p (project mode).
-    # Use longer per-run timeout (120s) for project benchmarks.
-    local run_timeout=120
+    # Use longer per-run timeout for project benchmarks; very large fixtures
+    # (6000+ files) need more headroom because tsz/tsgo cold runs can exceed
+    # the default 120s on lower-spec CI runners.
+    local run_timeout
+    local proj_warmup
+    local proj_min
+    local proj_max
+    if [ "$name" = "large-ts-repo" ]; then
+        run_timeout=300
+        # Few runs are enough for a 6000-file project — variance is small in
+        # absolute % terms and total wall-clock matters for CI budget.
+        proj_warmup=1
+        proj_min=3
+        proj_max=5
+    else
+        run_timeout=120
+        proj_warmup="$WARMUP"
+        proj_min="$MIN_RUNS"
+        proj_max="$MAX_RUNS"
+    fi
     local json_file=$(mktemp)
     if ! hyperfine \
-        --warmup "$WARMUP" \
-        --min-runs "$MIN_RUNS" \
-        --max-runs "$MAX_RUNS" \
+        --warmup "$proj_warmup" \
+        --min-runs "$proj_min" \
+        --max-runs "$proj_max" \
         --style full \
         --ignore-failure \
         --export-json "$json_file" \
