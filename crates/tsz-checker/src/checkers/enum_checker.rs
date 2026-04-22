@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            return (symbol.flags & symbol_flags::ENUM) != 0;
+            return symbol.has_any_flags(symbol_flags::ENUM);
         }
         false
     }
@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            return (symbol.flags & (symbol_flags::ENUM | symbol_flags::ENUM_MEMBER)) != 0;
+            return symbol.has_any_flags(symbol_flags::ENUM | symbol_flags::ENUM_MEMBER);
         }
         false
     }
@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        if (symbol.flags & symbol_flags::INTERFACE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::INTERFACE) {
             return false;
         }
 
