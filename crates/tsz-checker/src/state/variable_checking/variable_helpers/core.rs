@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
             && let Some(parent_node) = self.ctx.arena.get(ext.parent)
         {
             let parent_flags = parent_node.flags as u32;
-            if parent_flags & (node_flags::LET | node_flags::CONST) != 0 {
+            if node_flags::is_let_or_const(parent_flags) {
                 return;
             }
         } else {
@@ -329,7 +329,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|parent| {
                 let flags = parent.flags as u32;
                 parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                    && (flags & (node_flags::LET | node_flags::CONST)) == 0
+                    && !node_flags::is_let_or_const(flags)
             });
         if !is_var {
             return false;

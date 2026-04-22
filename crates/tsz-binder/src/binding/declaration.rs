@@ -27,14 +27,14 @@ impl BinderState {
     ) {
         if let Some(decl) = arena.get_variable_declaration(node) {
             let mut decl_flags = u32::from(node.flags);
-            if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
+            if !node_flags::is_let_or_const(decl_flags)
                 && let Some(ext) = arena.get_extended(idx)
                 && let Some(parent_node) = arena.get(ext.parent)
                 && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
             {
                 decl_flags |= u32::from(parent_node.flags);
             }
-            let is_block_scoped = (decl_flags & (node_flags::LET | node_flags::CONST)) != 0;
+            let is_block_scoped = node_flags::is_let_or_const(decl_flags);
             if let Some(name) = Self::get_identifier_name(arena, decl.name) {
                 // Determine if block-scoped (let/const) or function-scoped (var)
                 let flags = if is_block_scoped {

@@ -406,7 +406,7 @@ impl BinderState {
         let Some(list) = arena.get_variable(node) else {
             return;
         };
-        let is_var = (u32::from(node.flags) & (node_flags::LET | node_flags::CONST)) == 0;
+        let is_var = !node_flags::is_let_or_const(u32::from(node.flags));
         if !include_block_scoped && !is_var {
             return;
         }

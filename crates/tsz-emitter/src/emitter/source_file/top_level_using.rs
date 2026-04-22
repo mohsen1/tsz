@@ -19,8 +19,7 @@ impl<'a> Printer<'a> {
                 self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
                     let flags = decl_list_node.flags as u32;
                     (flags & tsz_parser::parser::node_flags::USING) != 0
-                        || (flags & tsz_parser::parser::node_flags::AWAIT_USING)
-                            == tsz_parser::parser::node_flags::AWAIT_USING
+                        || tsz_parser::parser::node_flags::is_await_using(flags)
                 })
             })
         })
@@ -45,8 +44,7 @@ impl<'a> Printer<'a> {
             };
             var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
                 self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
-                    (decl_list_node.flags as u32 & tsz_parser::parser::node_flags::AWAIT_USING)
-                        == tsz_parser::parser::node_flags::AWAIT_USING
+                    tsz_parser::parser::node_flags::is_await_using(decl_list_node.flags as u32)
                 })
             })
         });
@@ -872,8 +870,7 @@ impl<'a> Printer<'a> {
             };
             let flags = decl_list_node.flags as u32;
             let is_using = (flags & tsz_parser::parser::node_flags::USING) != 0;
-            let using_async = (flags & tsz_parser::parser::node_flags::AWAIT_USING)
-                == tsz_parser::parser::node_flags::AWAIT_USING;
+            let using_async = tsz_parser::parser::node_flags::is_await_using(flags);
 
             for &decl_idx in &decl_list.declarations.nodes {
                 let Some(decl_node) = self.arena.get(decl_idx) else {
