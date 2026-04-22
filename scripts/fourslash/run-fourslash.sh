@@ -183,6 +183,14 @@ build_typescript_harness() {
     log_step "Building TypeScript harness (non-bundled)..."
     cd "$TS_DIR"
 
+    # CI restores built/local from the pinned TypeScript ref. If it is present,
+    # no npm install is needed just to discover that the harness is already built.
+    if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
+        "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
+        log_success "TypeScript harness already built"
+        return
+    fi
+
     # Install all dependencies first (npm ci gives a clean, reproducible install)
     if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
         log_info "Installing TypeScript dependencies..."
@@ -196,14 +204,6 @@ build_typescript_harness() {
     if [[ ! -d "node_modules/chai" ]] || [[ ! -d "node_modules/@types/mocha" ]]; then
         log_info "Restoring test dependencies..."
         npm install --no-save --no-audit --no-fund --ignore-scripts --legacy-peer-deps 2>/dev/null || true
-    fi
-
-    # Check if harness is already built
-    if [[ -f "built/local/harness/fourslashImpl.js" ]]; then
-        # Re-apply patches even if already built (idempotent)
-        "$ROOT_DIR/scripts/fourslash/apply-harness-patches.sh" "$TS_DIR"
-        log_success "TypeScript harness already built"
-        return
     fi
 
     # Generate diagnostics (needed before compiling)

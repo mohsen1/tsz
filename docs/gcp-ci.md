@@ -2,18 +2,19 @@
 
 CI now runs through Google Cloud Build instead of GitHub Actions.
 
-The repository entrypoint is `cloudbuild.yaml`, which runs
-`scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. The configured
-suite pools use 528 of the 600 available private-pool CPUs in `us-central1`, so
-all six suite checks can run concurrently without falling back into queueing:
+The repository entrypoints are the `cloudbuild*.yaml` files, which restore
+shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
+save updated caches, then report the original suite status. The configured suite
+pools use 576 of the 600 available private-pool CPUs in `us-central1`, so all
+six suite checks can run concurrently without falling back into queueing:
 
 ```text
 conformance  n2d-highcpu-224
 emit         n2d-highcpu-96
 fourslash    n2d-highcpu-96
-unit         n2d-highcpu-48
-lint         n2d-highcpu-32
-wasm         n2d-highcpu-32
+unit         n2d-highcpu-64
+lint         n2d-highcpu-48
+wasm         n2d-highcpu-48
 ```
 
 The script
@@ -35,16 +36,27 @@ Cloud Build source archives do not preserve git submodule metadata, so
 used when a git checkout is unavailable. If the TypeScript submodule is bumped,
 update that file in the same change.
 
-The first Cloud Build step restores `TypeScript/` from a GCS archive keyed by
-that pinned commit:
+The first Cloud Build step restores cache archives from GCS:
 
 ```text
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/typescript/<sha>.tar.gz
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/cargo-home/<Cargo.lock hash>.tar.gz
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/npm/<scripts deps hash>.tar.gz
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/scripts-node-modules/<scripts deps hash>.tar.gz
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/typescript-harness/<sha>.tar.gz
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/dist-fast/<commit sha>.tar.gz
 ```
 
-On a miss, Cloud Build downloads the GitHub source archive for the pinned commit,
-writes `TypeScript/.tsz-cache-ref`, and uploads the tarball for later runs. The
-main CI step accepts that source-only tree and avoids a git submodule clone.
+On a TypeScript source miss, Cloud Build downloads the GitHub source archive for
+the pinned commit, writes `TypeScript/.tsz-cache-ref`, and uploads the tarball
+for later runs. The main CI step accepts that source-only tree and avoids a git
+submodule clone.
+
+The other caches cover Cargo registry/git state, npm download state,
+`scripts/node_modules`, the built fourslash harness under `TypeScript/built`,
+and dist-fast binaries for repeated jobs on the same commit. Cache saving runs
+after the suite command even when that command fails, then the final Cloud Build
+step exits with the original suite status.
 
 Create the private pool before running builds or creating triggers:
 
@@ -65,6 +77,12 @@ gcloud builds worker-pools create tsz-ci-n2d-48 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
   --worker-machine-type=n2d-highcpu-48 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-n2d-64 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-64 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-32 \
@@ -101,8 +119,8 @@ Create one pull request trigger per suite in the GCP project:
 ```bash
 pool_for_suite() {
   case "$1" in
-    lint|wasm) printf '%s\n' cloudbuild.n2d-32.yaml ;;
-    unit) printf '%s\n' cloudbuild.n2d-48.yaml ;;
+    lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
+    unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
     emit|fourslash) printf '%s\n' cloudbuild.n2d-96.yaml ;;
     conformance) printf '%s\n' cloudbuild.yaml ;;
     *) printf '%s\n' cloudbuild.yaml ;;

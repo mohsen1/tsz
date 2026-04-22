@@ -42,7 +42,7 @@ steps:
 
 options:
   pool:
-    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-224
+    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-64
   logging: CLOUD_LOGGING_ONLY
   automapSubstitutions: true
 
