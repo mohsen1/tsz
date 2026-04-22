@@ -110,6 +110,7 @@ pub trait TypeDatabase {
     fn bound_parameter(&self, index: u32) -> TypeId;
     fn recursive(&self, depth: u32) -> TypeId;
     fn type_param(&self, info: TypeParamInfo) -> TypeId;
+    fn unresolved_type_name(&self, name: Atom) -> TypeId;
     fn type_query(&self, symbol: SymbolRef) -> TypeId;
     fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId;
     fn application(&self, base: TypeId, args: Vec<TypeId>) -> TypeId;
@@ -445,6 +446,10 @@ impl TypeDatabase for TypeInterner {
 
     fn type_param(&self, info: TypeParamInfo) -> TypeId {
         Self::type_param(self, info)
+    }
+
+    fn unresolved_type_name(&self, name: Atom) -> TypeId {
+        Self::unresolved_type_name(self, name)
     }
 
     fn type_query(&self, symbol: SymbolRef) -> TypeId {

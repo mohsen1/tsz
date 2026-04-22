@@ -870,6 +870,14 @@ pub enum TypeData {
 
     /// Error type for recovery
     Error,
+
+    /// Error-like unresolved type name with diagnostic display provenance.
+    ///
+    /// TypeScript keeps the source spelling of unresolved annotation types in
+    /// downstream messages (for example `fs.Stats`) even though the semantic
+    /// type is an error. This leaf preserves that display surface without
+    /// collapsing every occurrence into the global `TypeId::ERROR` sentinel.
+    UnresolvedTypeName(Atom),
 }
 
 /// Generic type application (Base<Args>)

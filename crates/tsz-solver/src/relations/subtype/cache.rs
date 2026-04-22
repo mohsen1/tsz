@@ -227,7 +227,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Error types are assignable to/from everything (like `any` in tsc).
         // This prevents cascading diagnostics when type resolution fails.
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        if crate::visitor::is_error_type(self.interner, source)
+            || crate::visitor::is_error_type(self.interner, target)
+        {
             return SubtypeResult::True;
         }
 

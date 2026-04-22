@@ -718,6 +718,7 @@ impl<'a> TypeFormatter<'a> {
                 self.format_callable(shape.as_ref()).into()
             }
             TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
+            TypeData::UnresolvedTypeName(name) => Cow::Owned(self.atom(*name).to_string()),
             TypeData::Lazy(def_id) => self.format_def_id_with_type_params(*def_id, "Lazy").into(),
             TypeData::Recursive(idx) => format!("Recursive({idx})").into(),
             TypeData::BoundParameter(idx) => format!("BoundParameter({idx})").into(),

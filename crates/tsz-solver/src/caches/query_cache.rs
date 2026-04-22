@@ -20,6 +20,7 @@ use crate::types::{
     TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
     Variance, Visibility,
 };
+use crate::visitor::is_error_type;
 use dashmap::DashMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
@@ -907,6 +908,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.type_param(info)
     }
 
+    fn unresolved_type_name(&self, name: Atom) -> TypeId {
+        self.interner.unresolved_type_name(name)
+    }
+
     fn type_query(&self, symbol: SymbolRef) -> TypeId {
         self.interner.type_query(symbol)
     }
@@ -1106,6 +1111,7 @@ impl QueryDatabase for QueryCache<'_> {
             | TypeData::Function(_)
             | TypeData::Callable(_)
             | TypeData::TypeParameter(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Infer(_)
             | TypeData::Enum(_, _)
             | TypeData::BoundParameter(_)
@@ -1207,6 +1213,8 @@ impl QueryDatabase for QueryCache<'_> {
             || source == TypeId::NEVER
             || source == TypeId::ERROR
             || target == TypeId::ERROR
+            || is_error_type(self.as_type_database(), source)
+            || is_error_type(self.as_type_database(), target)
         {
             return true;
         }
@@ -1289,6 +1297,8 @@ impl QueryDatabase for QueryCache<'_> {
             || source == TypeId::NEVER
             || source == TypeId::ERROR
             || target == TypeId::ERROR
+            || is_error_type(self.as_type_database(), source)
+            || is_error_type(self.as_type_database(), target)
         {
             return true;
         }
