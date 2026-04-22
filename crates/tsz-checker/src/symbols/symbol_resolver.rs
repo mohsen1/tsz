@@ -851,6 +851,90 @@ impl<'a> CheckerState<'a> {
         };
 
         let resolve_alias_type_position_result = |sym_id: SymbolId| {
+            let classify_target_resolution = |target_sym_id: SymbolId| {
+                let mut effective_target_id = target_sym_id;
+                let target_symbol_has_declared_type_meaning = |sym_id: SymbolId| {
+                    let Some(symbol) = self
+                        .get_cross_file_symbol(sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                    else {
+                        return false;
+                    };
+
+                    if (symbol.flags & symbol_flags::ALIAS) == 0
+                        && (symbol.flags & symbol_flags::TYPE) != 0
+                    {
+                        return true;
+                    }
+
+                    symbol.declarations.iter().copied().any(|decl_idx| {
+                        let arena = self
+                            .ctx
+                            .resolve_symbol_file_index(sym_id)
+                            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                            .and_then(|binder| binder.get_arena_for_declaration(sym_id, decl_idx))
+                            .or_else(|| self.ctx.binder.get_arena_for_declaration(sym_id, decl_idx))
+                            .map_or(self.ctx.arena, |arena| arena.as_ref());
+
+                        arena.get(decl_idx).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                                || node.kind == syntax_kind_ext::CLASS_DECLARATION
+                                || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                || node.kind == syntax_kind_ext::ENUM_DECLARATION
+                        })
+                    })
+                };
+                let mut target_flags = self
+                    .get_cross_file_symbol(effective_target_id)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(effective_target_id, &lib_binders)
+                    })
+                    .map_or(0, |s| s.flags);
+
+                // Synthetic default-export symbols often exist as bare aliases
+                // with no direct TYPE/VALUE flags. Follow the alias before
+                // deciding whether the import is usable in type position.
+                if (target_flags & symbol_flags::ALIAS) != 0 {
+                    if target_symbol_has_declared_type_meaning(effective_target_id) {
+                        return TypeSymbolResolution::Type(effective_target_id);
+                    }
+                    let mut visited_target_aliases = AliasCycleTracker::new();
+                    if let Some(alias_target_id) =
+                        self.resolve_alias_symbol(effective_target_id, &mut visited_target_aliases)
+                        && alias_target_id != effective_target_id
+                    {
+                        effective_target_id = alias_target_id;
+                        target_flags = self
+                            .get_cross_file_symbol(effective_target_id)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .get_symbol_with_libs(effective_target_id, &lib_binders)
+                            })
+                            .map_or(0, |s| s.flags);
+                    }
+                }
+
+                let target_is_namespace_module = (target_flags
+                    & (symbol_flags::MODULE
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE))
+                    != 0;
+                let target_has_type =
+                    (target_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
+                let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
+                let target_is_value_only =
+                    target_has_value && !target_has_type && !target_is_namespace_module;
+
+                if target_is_value_only {
+                    TypeSymbolResolution::ValueOnly(effective_target_id)
+                } else {
+                    TypeSymbolResolution::Type(effective_target_id)
+                }
+            };
+
             if let Some(alias_symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                 && let Some(module_name) = alias_symbol.import_module.as_ref()
                 && alias_symbol.import_name.is_some()
@@ -868,39 +952,43 @@ impl<'a> CheckerState<'a> {
                     expected_name,
                     Some(source_file_idx),
                 ) {
+                    let export_surface_meanings = (expected_name != "*")
+                        .then(|| {
+                            self.ctx
+                                .resolve_import_target_from_file(source_file_idx, module_name)
+                        })
+                        .flatten()
+                        .map(|target_file_idx| {
+                            let declarations = self.export_surface_declarations_in_file(
+                                target_file_idx,
+                                expected_name,
+                            );
+                            let has_type_position_meaning =
+                                declarations.iter().any(|(_, flags, _)| {
+                                    (*flags
+                                        & (symbol_flags::TYPE
+                                            | symbol_flags::NAMESPACE_MODULE
+                                            | symbol_flags::VALUE_MODULE))
+                                        != 0
+                                });
+                            let has_runtime_value = declarations
+                                .iter()
+                                .any(|(_, flags, _)| (*flags & symbol_flags::VALUE) != 0);
+                            (has_type_position_meaning, has_runtime_value)
+                        });
+                    if let Some((has_type_position_meaning, has_runtime_value)) =
+                        export_surface_meanings
+                        && !has_type_position_meaning
+                        && has_runtime_value
+                    {
+                        return Some(TypeSymbolResolution::ValueOnly(target_sym_id));
+                    }
                     // Use get_cross_file_symbol first, then fall back to
                     // get_symbol_with_libs. When the target comes from a
                     // different binder (ambient module, cross-file export),
                     // SymbolId values can collide with the current binder's
                     // symbols, causing incorrect flag lookups.
-                    let target_flags = self
-                        .get_cross_file_symbol(target_sym_id)
-                        .or_else(|| {
-                            self.ctx
-                                .binder
-                                .get_symbol_with_libs(target_sym_id, &lib_binders)
-                        })
-                        .map_or(0, |s| s.flags);
-                    let target_is_namespace_module = (target_flags
-                        & (symbol_flags::MODULE
-                            | symbol_flags::NAMESPACE_MODULE
-                            | symbol_flags::VALUE_MODULE))
-                        != 0;
-                    // Use the already-resolved target_flags for value-only
-                    // classification. The internal symbol_is_value_only /
-                    // alias_resolves_to_value_only helpers use lookup_symbol_with_name
-                    // which searches the current binder — that can return a
-                    // WRONG symbol when SymbolIds collide across binders.
-                    let target_has_type =
-                        (target_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
-                    let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
-                    let target_is_value_only =
-                        target_has_value && !target_has_type && !target_is_namespace_module;
-                    return Some(if target_is_value_only {
-                        TypeSymbolResolution::ValueOnly(target_sym_id)
-                    } else {
-                        TypeSymbolResolution::Type(target_sym_id)
-                    });
+                    return Some(classify_target_resolution(target_sym_id));
                 }
             }
             let mut visited_aliases = AliasCycleTracker::new();
@@ -920,31 +1008,7 @@ impl<'a> CheckerState<'a> {
                             module_name,
                         );
                     }
-                    // Use get_cross_file_symbol to avoid SymbolId collision
-                    // across binders (same fix as the first branch above).
-                    let target_flags = self
-                        .get_cross_file_symbol(target_sym_id)
-                        .or_else(|| {
-                            self.ctx
-                                .binder
-                                .get_symbol_with_libs(target_sym_id, &lib_binders)
-                        })
-                        .map_or(0, |s| s.flags);
-                    let target_is_namespace_module = (target_flags
-                        & (symbol_flags::MODULE
-                            | symbol_flags::NAMESPACE_MODULE
-                            | symbol_flags::VALUE_MODULE))
-                        != 0;
-                    let target_has_type =
-                        (target_flags & (symbol_flags::TYPE | symbol_flags::TYPE_ALIAS)) != 0;
-                    let target_has_value = (target_flags & symbol_flags::VALUE) != 0;
-                    let target_is_value_only =
-                        target_has_value && !target_has_type && !target_is_namespace_module;
-                    if target_is_value_only {
-                        TypeSymbolResolution::ValueOnly(target_sym_id)
-                    } else {
-                        TypeSymbolResolution::Type(target_sym_id)
-                    }
+                    classify_target_resolution(target_sym_id)
                 })
         };
 
