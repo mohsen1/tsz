@@ -15,10 +15,10 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<TypeId> {
         let symbol = self.get_symbol_globally(sym_id)?;
-        let has_interface = symbol.flags & symbol_flags::INTERFACE != 0;
-        let has_variable = symbol.flags
-            & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
-            != 0;
+        let has_interface = symbol.has_any_flags(symbol_flags::INTERFACE);
+        let has_variable = symbol.has_any_flags(
+            symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE,
+        );
         if !has_interface || !has_variable || symbol.value_declaration.is_none() {
             return None;
         }
@@ -128,7 +128,7 @@ impl<'a> CheckerState<'a> {
             return Some(self.imported_namespace_display_module_name(module_name));
         }
 
-        if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             let mut visited = AliasCycleTracker::new();
             if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
                 && target_sym_id != sym_id
@@ -886,12 +886,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-            if (member_symbol.flags & value_flags_except_module) != 0 {
+            if member_symbol.has_any_flags(value_flags_except_module) {
                 return true;
             }
             // Namespace-only members: check if instantiated
-            if (member_symbol.flags & symbol_flags::VALUE_MODULE) != 0
-                && (member_symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0
+            if member_symbol.has_any_flags(symbol_flags::VALUE_MODULE)
+                && member_symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE)
             {
                 for &decl_idx in &member_symbol.declarations {
                     if self.is_namespace_declaration_instantiated(decl_idx) {
@@ -1082,7 +1082,7 @@ impl<'a> CheckerState<'a> {
                 let ident_text = &ident.escaped_text;
                 if let Some(local_sym_id) = self.ctx.binder.file_locals.get(ident_text)
                     && let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
-                    && symbol.flags & symbol_flags::ALIAS != 0
+                    && symbol.has_any_flags(symbol_flags::ALIAS)
                     && let Some(ref import_module) = symbol.import_module
                 {
                     let last_segment = import_module.rsplit('/').next().unwrap_or(import_module);
@@ -1254,9 +1254,9 @@ impl<'a> CheckerState<'a> {
 
         // Only apply this fix for merged class+namespace symbols where the
         // member has both a value and a type meaning.
-        let is_merged = base_symbol.flags & symbol_flags::CLASS != 0
-            && base_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                != 0;
+        let is_merged = base_symbol.has_any_flags(symbol_flags::CLASS)
+            && base_symbol
+                .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE);
         if !is_merged {
             return None;
         }
@@ -1271,8 +1271,8 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(member_sym_id, &lib_binders)?;
-        if member_symbol.flags & symbol_flags::TYPE != 0
-            && member_symbol.flags & symbol_flags::VALUE == 0
+        if member_symbol.has_any_flags(symbol_flags::TYPE)
+            && !member_symbol.has_any_flags(symbol_flags::VALUE)
         {
             // The export is type-only; look for a sibling value member.
             // Check the class's own members for a static property with the same name.
@@ -1284,7 +1284,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(static_sym_id, &lib_binders)?;
-            if static_sym.flags & symbol_flags::PROPERTY != 0 {
+            if static_sym.has_any_flags(symbol_flags::PROPERTY) {
                 return Some(self.get_type_of_symbol(static_sym_id));
             }
             return None;
@@ -1292,7 +1292,7 @@ impl<'a> CheckerState<'a> {
 
         // If the export itself is a value (e.g., the binder merged static prop
         // into exports), return its type.
-        if member_symbol.flags & symbol_flags::VALUE != 0 {
+        if member_symbol.has_any_flags(symbol_flags::VALUE) {
             return Some(self.get_type_of_symbol(member_sym_id));
         }
 
@@ -1450,7 +1450,7 @@ impl<'a> CheckerState<'a> {
         if !symbol.is_type_only {
             return false;
         }
-        if symbol.flags & symbol_flags::ALIAS != 0 && symbol.flags & symbol_flags::VALUE != 0 {
+        if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.has_any_flags(symbol_flags::VALUE) {
             return false;
         }
         true
@@ -1567,8 +1567,8 @@ impl<'a> CheckerState<'a> {
             target_binder.resolve_import_with_reexports_type_only(file_name, export_name)
         {
             if let Some(sym) = target_binder.symbols.get(sym_id)
-                && sym.flags & symbol_flags::ALIAS != 0
-                && sym.flags & symbol_flags::VALUE != 0
+                && sym.has_any_flags(symbol_flags::ALIAS)
+                && sym.has_any_flags(symbol_flags::VALUE)
             {
                 return false;
             }
