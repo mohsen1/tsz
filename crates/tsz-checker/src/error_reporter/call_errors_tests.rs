@@ -223,6 +223,32 @@ export function css<S extends { [K in keyof S]: string }>(styles: S): string {
 }
 
 #[test]
+fn ts2345_callback_target_display_preserves_unresolved_qualified_type_name() {
+    let source = r#"
+declare function readdir(
+    accept: (stat: fs.Stats, name: string) => boolean,
+): void;
+readdir(() => {});
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text
+            .contains("parameter of type '(stat: fs.Stats, name: string) => boolean'"),
+        "Expected unresolved qualified annotation to keep its source name, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("stat: error"),
+        "Unresolved qualified annotation should not display as `error`, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_object_literal_contextual_typing_ignores_object_prototype_members() {
     let source = r#"
 interface I {
