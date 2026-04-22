@@ -793,6 +793,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &mut placeholder_visited,
                     ));
                 }
+
+                // A naked inference placeholder still carries its declared
+                // constraint. Validate nullish arguments against that
+                // constraint before inference fallback can turn an invalid
+                // `null`/`undefined` candidate into the constraint type itself.
+                if contextual_arg_type.is_nullish()
+                    && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type)
+                    && let Some(check_type_id) = tp.constraint
+                {
+                    let inst_check_type = instantiate_call_type(
+                        self.interner,
+                        check_type_id,
+                        &substitution,
+                        actual_this_type,
+                    );
+                    placeholder_visited.clear();
+                    if !self.type_contains_placeholder(
+                        inst_check_type,
+                        &var_map,
+                        &mut placeholder_visited,
+                    ) && !self
+                        .checker
+                        .is_assignable_to(contextual_arg_type, inst_check_type)
+                        && !self.is_function_union_compat(contextual_arg_type, inst_check_type)
+                    {
+                        return CallResult::ArgumentTypeMismatch {
+                            index: i,
+                            expected: inst_check_type,
+                            actual: contextual_arg_type,
+                            fallback_return: TypeId::ERROR,
+                        };
+                    }
+                }
             }
 
             // When the target is a bare type parameter placeholder whose constraint
