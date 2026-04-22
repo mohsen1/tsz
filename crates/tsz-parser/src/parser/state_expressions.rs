@@ -1047,6 +1047,9 @@ impl ParserState {
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_js_file() && self.is_token(SyntaxKind::ColonToken) {
+                    self.error_comma_expected();
+                }
                 break;
             }
             // If the next token is `>`, the comma we just consumed was trailing.
@@ -2808,7 +2811,12 @@ impl ParserState {
                 if self.is_token(SyntaxKind::EndOfFileToken) {
                     // At EOF while expecting an expression: emit TS1109 to match tsc.
                     // Examples: `[#abc]=` or `var x =` at end of file.
-                    self.error_expression_expected();
+                    if (self.context_flags
+                        & crate::parser::state::CONTEXT_FLAG_TEMPLATE_SPAN_EXPRESSION)
+                        == 0
+                    {
+                        self.error_expression_expected();
+                    }
                     return NodeIndex::NONE;
                 }
                 if self.is_at_expression_end()

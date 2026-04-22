@@ -10,8 +10,8 @@ use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
-    FunctionShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,
-    TypeParamInfo, TypePredicate, Variance,
+    FunctionShape, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
+    TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
@@ -616,21 +616,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Constrain those by matching source properties against the
                             // instantiated template for each key.
                             if has_properties {
-                                let iter_param_name = mapped.type_param.name;
-                                for prop in &source_obj.properties {
-                                    let key_literal = self.interner.literal_string_atom(prop.name);
-                                    let mut subst = TypeSubstitution::new();
-                                    subst.insert(iter_param_name, key_literal);
-                                    let instantiated_template =
-                                        instantiate_type(self.interner, mapped.template, &subst);
-                                    self.constrain_types(
-                                        ctx,
-                                        var_map,
-                                        prop.type_id,
-                                        instantiated_template,
-                                        priority,
-                                    );
-                                }
+                                self.constrain_template_against_properties(
+                                    ctx,
+                                    var_map,
+                                    &source_obj.properties,
+                                    &mapped,
+                                    priority,
+                                );
                             }
                             return;
                         }
@@ -665,22 +657,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Use MappedType priority so candidates from different properties
                             // combine via union (matches tsc PriorityImpliesCombination for
                             // MappedTypeConstraint).
-                            let iter_param_name = mapped.type_param.name;
-                            let template_priority = crate::types::InferencePriority::MappedType;
-                            for prop in &source_obj.properties {
-                                let key_literal = self.interner.literal_string_atom(prop.name);
-                                let mut subst = TypeSubstitution::new();
-                                subst.insert(iter_param_name, key_literal);
-                                let instantiated_template =
-                                    instantiate_type(self.interner, mapped.template, &subst);
-                                self.constrain_types(
-                                    ctx,
-                                    var_map,
-                                    prop.type_id,
-                                    instantiated_template,
-                                    template_priority,
-                                );
-                            }
+                            self.constrain_template_against_properties(
+                                ctx,
+                                var_map,
+                                &source_obj.properties,
+                                &mapped,
+                                crate::types::InferencePriority::MappedType,
+                            );
                             return;
                         }
                     }
@@ -1195,21 +1178,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Constrain type predicates if both functions have them
                     // Example: source `(x: any) => x is number` vs target `(value: T) => value is S`
                     // Should infer S = number from the predicates
-                    if let (Some(s_pred), Some(t_pred)) =
-                        (&s_fn.type_predicate, &t_fn.type_predicate)
-                    {
-                        // Only constrain if both predicates have type annotations
-                        if let (Some(s_pred_type), Some(t_pred_type)) =
-                            (s_pred.type_id, t_pred.type_id)
-                        {
-                            // Type predicates are covariant: source_pred_type <: target_pred_type
-                            // Mark as type annotation source to prevent literal widening.
-                            let was = ctx.source_is_type_annotation;
-                            ctx.source_is_type_annotation = true;
-                            self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
-                            ctx.source_is_type_annotation = was;
-                        }
-                    }
+                    self.constrain_type_predicates(
+                        ctx,
+                        var_map,
+                        s_fn.type_predicate.as_ref(),
+                        t_fn.type_predicate.as_ref(),
+                        priority,
+                    );
                 } else {
                     // Generic source function - instantiate with fresh inference variables
                     // This allows inferring the source function's type parameters from the target
@@ -1367,24 +1342,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
 
                     // Constrain type predicates if both functions have them
-                    if let (Some(s_pred), Some(t_pred)) =
-                        (&instantiated_predicate, &t_fn.type_predicate)
-                        && let (Some(s_pred_type), Some(t_pred_type)) =
-                            (s_pred.type_id, t_pred.type_id)
-                    {
-                        // Type predicates are covariant: source_pred_type <: target_pred_type
-                        // Mark as type annotation source to prevent literal widening.
-                        let was = ctx.source_is_type_annotation;
-                        ctx.source_is_type_annotation = true;
-                        self.constrain_types(
-                            ctx,
-                            &combined_var_map,
-                            s_pred_type,
-                            t_pred_type,
-                            priority,
-                        );
-                        ctx.source_is_type_annotation = was;
-                    }
+                    self.constrain_type_predicates(
+                        ctx,
+                        &combined_var_map,
+                        instantiated_predicate.as_ref(),
+                        t_fn.type_predicate.as_ref(),
+                        priority,
+                    );
                 }
             }
             (Some(TypeData::Function(s_fn_id)), Some(TypeData::Callable(t_callable_id))) => {
@@ -1501,17 +1465,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
             }
             (
                 Some(TypeData::ObjectWithIndex(s_shape_id)),
@@ -1519,17 +1473,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.string_index) {
                     self.constrain_types(
                         ctx,
@@ -1615,17 +1559,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::ObjectWithIndex(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
                 self.constrain_properties_against_index_signatures(
                     ctx,
                     var_map,
@@ -1637,17 +1571,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
                 self.constrain_index_signatures_to_properties(
                     ctx,
                     var_map,
@@ -2090,6 +2014,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Constrain source properties against target properties for two object
+    /// shapes, propagating freshness from the source's `FRESH_LITERAL` flag.
+    ///
+    /// All four `Object`/`ObjectWithIndex` arms of the main walker compute
+    /// `source_is_fresh` from the same flag bit and feed it into
+    /// [`Self::constrain_properties`]; this helper keeps that shared preamble
+    /// in one place.
+    fn constrain_object_properties(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        s_shape: &ObjectShape,
+        t_shape: &ObjectShape,
+        priority: crate::types::InferencePriority,
+    ) {
+        let source_is_fresh = s_shape
+            .flags
+            .contains(crate::types::ObjectFlags::FRESH_LITERAL);
+        self.constrain_properties(
+            ctx,
+            var_map,
+            &s_shape.properties,
+            &t_shape.properties,
+            priority,
+            source_is_fresh,
+        );
+    }
+
     /// If the target's last parameter is a rest parameter typed as a direct
     /// inference variable, collect the source's trailing parameters past the
     /// target's fixed arity into a tuple and add it as a `NakedTypeVariable`
@@ -2130,6 +2082,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 source_tuple,
                 crate::types::InferencePriority::NakedTypeVariable,
             );
+        }
+    }
+
+    /// For each source property, instantiate the mapped type's template by
+    /// substituting the iteration variable with the property's key literal,
+    /// then constrain the property's value type against that instantiated
+    /// template. Used by both reverse-mapped inference (post-`keyof T`
+    /// reconstruction) and simple mapped-type inference.
+    fn constrain_template_against_properties(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        properties: &[PropertyInfo],
+        mapped: &MappedType,
+        priority: crate::types::InferencePriority,
+    ) {
+        let iter_param_name = mapped.type_param.name;
+        for prop in properties {
+            let key_literal = self.interner.literal_string_atom(prop.name);
+            let mut subst = TypeSubstitution::new();
+            subst.insert(iter_param_name, key_literal);
+            let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
+            self.constrain_types(ctx, var_map, prop.type_id, instantiated_template, priority);
         }
     }
 }

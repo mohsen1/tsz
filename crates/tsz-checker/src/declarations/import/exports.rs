@@ -184,8 +184,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check file_locals
-        if target_binder.file_locals.get(export_name).is_some() {
+        // Check direct exported file locals. In merged binders, `file_locals`
+        // can contain symbols declared by other files, so keep only locals that
+        // originate in the file being traced.
+        if let Some(sym_id) = target_binder.file_locals.get(export_name)
+            && let Some(symbol) = target_binder.symbols.get(sym_id)
+            && symbol.is_exported
+            && symbol.import_module.is_none()
+            && (symbol.decl_file_idx == file_idx as u32 || symbol.decl_file_idx == u32::MAX)
+        {
             return Some(file_idx);
         }
 
@@ -232,6 +239,26 @@ impl<'a> CheckerState<'a> {
                 }
                 names.insert(name.to_string());
             }
+        }
+
+        // Direct `export const` / `export type` declarations can be represented
+        // as exported file locals even when the module_exports table has no
+        // direct entry in lightweight checker contexts. They still participate
+        // in `export *` ambiguity checks, including type-only star exports.
+        for (name, &sym_id) in binder.file_locals.iter() {
+            if binder.lib_symbol_ids.contains(&sym_id) {
+                continue;
+            }
+            let Some(symbol) = binder.symbols.get(sym_id) else {
+                continue;
+            };
+            if !symbol.is_exported
+                || symbol.import_module.is_some()
+                || (symbol.decl_file_idx != file_idx as u32 && symbol.decl_file_idx != u32::MAX)
+            {
+                continue;
+            }
+            names.insert(name.to_string());
         }
 
         // Named re-exports (export { X } from './module')

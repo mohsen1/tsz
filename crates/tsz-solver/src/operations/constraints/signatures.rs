@@ -283,7 +283,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// predicate with a concrete type, infer with `source_is_type_annotation`
     /// set so that literal predicate types (e.g. `x is 'B'`) are not marked
     /// fresh and won't be widened during candidate collection.
-    fn constrain_type_predicates(
+    pub(super) fn constrain_type_predicates(
         &mut self,
         ctx: &mut InferenceContext,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,

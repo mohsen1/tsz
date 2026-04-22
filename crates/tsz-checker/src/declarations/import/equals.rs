@@ -443,6 +443,16 @@ impl<'a> CheckerState<'a> {
             }
             has_value = any_instantiated;
         }
+        if !has_value
+            && let Some(import_decl) = self.ctx.arena.get_import_decl(
+                self.ctx
+                    .arena
+                    .get(stmt_idx)
+                    .expect("stmt_idx is a valid node index from caller"),
+            )
+        {
+            has_value = self.import_equals_target_has_exported_value(import_decl.module_specifier);
+        }
         let import_has_value = has_value;
 
         // Check for TS2440: Import declaration conflicts with local declaration
@@ -1673,6 +1683,108 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Whether an import-equals RHS has value semantics through an exported namespace
+    /// member, even when a later type-space export with the same name occupies the
+    /// namespace export-table slot.
+    fn import_equals_target_has_exported_value(&self, module_ref: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(module_ref) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
+            return false;
+        }
+
+        let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+            return false;
+        };
+        let Some(right_name) = self
+            .ctx
+            .arena
+            .get(qn.right)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+
+        let mut visited = AliasCycleTracker::new();
+        let Some(left_sym_id) = self.resolve_qualified_symbol_inner(qn.left, &mut visited, 0)
+        else {
+            return false;
+        };
+        let left_sym_id = self
+            .resolve_alias_symbol(left_sym_id, &mut visited)
+            .unwrap_or(left_sym_id);
+
+        let lib_binders = self.get_lib_binders();
+        let Some(left_symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(left_sym_id, &lib_binders)
+        else {
+            return false;
+        };
+
+        if let Some(exports) = left_symbol.exports.as_ref()
+            && let Some(member_sym_id) = exports.get(right_name)
+            && self.symbol_has_import_equals_value_semantics(member_sym_id)
+        {
+            return true;
+        }
+
+        let namespace_decls = left_symbol.declarations.clone();
+        for &candidate_id in self.ctx.binder.symbols.find_all_by_name(right_name) {
+            let Some(candidate) = self.ctx.binder.symbols.get(candidate_id) else {
+                continue;
+            };
+            if !candidate.is_exported {
+                continue;
+            }
+            let declared_in_namespace = candidate.declarations.iter().any(|&decl_idx| {
+                namespace_decls
+                    .iter()
+                    .any(|&ns_decl_idx| self.node_has_ancestor(decl_idx, ns_decl_idx))
+            });
+            if declared_in_namespace && self.symbol_has_import_equals_value_semantics(candidate_id)
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn symbol_has_import_equals_value_semantics(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let mut visited = AliasCycleTracker::new();
+        let resolved_id = self
+            .resolve_alias_symbol(sym_id, &mut visited)
+            .unwrap_or(sym_id);
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self
+            .ctx
+            .binder
+            .get_symbol_with_libs(resolved_id, &lib_binders)
+        else {
+            return false;
+        };
+
+        let mut has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+        if has_value
+            && (symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
+            && (symbol.flags
+                & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
+                == 0
+        {
+            has_value = symbol.declarations.iter().any(|&decl_idx| {
+                self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                    decl_node.kind != syntax_kind_ext::MODULE_DECLARATION
+                        || self.is_namespace_declaration_instantiated(decl_idx)
+                })
+            });
+        }
+        has_value
     }
 
     fn declaration_is_enclosing_namespace_of_node(

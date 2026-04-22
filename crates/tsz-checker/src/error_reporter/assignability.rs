@@ -1052,6 +1052,18 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(super) fn format_top_level_assignability_message_types_at(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> (String, String) {
+        let (source_str, _) = self.format_top_level_assignability_message_types(source, target);
+        let target_str =
+            self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+        (source_str, target_str)
+    }
+
     pub(super) fn rewrite_source_display_for_non_literal_target_assignability(
         &mut self,
         source: TypeId,

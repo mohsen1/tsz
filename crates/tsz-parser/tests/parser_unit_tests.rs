@@ -2821,6 +2821,33 @@ fn template_with_substitution() {
     );
 }
 
+#[test]
+fn template_empty_span_at_eof_anchors_expression_before_missing_brace() {
+    let source = "f `123qdawdrqw${ 1 }${ 2 }${ ";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    let ts1109 = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .expect("expected TS1109 for empty template span expression");
+    assert_eq!(
+        ts1109.start,
+        source.len() as u32 - 1,
+        "TS1109 should anchor at trailing trivia before EOF: {diagnostics:?}"
+    );
+
+    let missing_brace = diagnostics
+        .iter()
+        .find(|diag| diag.code == diagnostic_codes::EXPECTED && diag.message == "'}' expected.")
+        .expect("expected TS1005 for the missing template span close brace");
+    assert_eq!(
+        missing_brace.start,
+        source.len() as u32,
+        "TS1005 should anchor at EOF: {diagnostics:?}"
+    );
+}
+
 // =============================================================================
 // 12. Using / Await Using Declarations
 // =============================================================================
