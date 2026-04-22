@@ -1,0 +1,54 @@
+steps:
+  - id: restore-cache
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      scripts/ci/gcp-cache.sh restore
+
+  - id: full-ci
+    name: rust:1.90-bookworm
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      mkdir -p .ci-status
+      set +e
+      scripts/ci/gcp-full-ci.sh "${_TSZ_CI_SUITE}"
+      rc="$?"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/full-ci.exit
+      exit 0
+
+  - id: save-cache
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    waitFor:
+      - full-ci
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      if ! scripts/ci/gcp-cache.sh save; then
+        echo "warning: cache save failed" >&2
+      fi
+
+  - id: finish-ci
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    waitFor:
+      - save-cache
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      rc="$(cat .ci-status/full-ci.exit 2>/dev/null || echo 1)"
+      exit "$rc"
+
+options:
+  pool:
+    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-224-pr
+  logging: CLOUD_LOGGING_ONLY
+  automapSubstitutions: true
+
+substitutions:
+  _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  _TSZ_CI_SUITE: all
+
+queueTtl: 300s
+timeout: 3600s
