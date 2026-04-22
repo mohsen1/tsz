@@ -647,7 +647,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(symbol) = symbol else {
             return;
         };
-        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return;
         }
 

@@ -188,30 +188,30 @@ impl<'a> CheckerState<'a> {
 
             if has_local && has_remote {
                 // Interfaces always merge with other interfaces across files in TypeScript.
-                let is_interface_merge = (symbol.flags & symbol_flags::INTERFACE) != 0
-                    && (symbol.flags
-                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                let is_interface_merge = symbol.has_any_flags(symbol_flags::INTERFACE)
+                    && !symbol.has_any_flags(
+                        symbol_flags::FUNCTION_SCOPED_VARIABLE
                             | symbol_flags::BLOCK_SCOPED_VARIABLE
                             | symbol_flags::TYPE_ALIAS
                             | symbol_flags::REGULAR_ENUM
-                            | symbol_flags::CONST_ENUM))
-                        == 0;
+                            | symbol_flags::CONST_ENUM,
+                    );
                 // var declarations merge across script files (non-modules).
                 let is_var_merge = !is_external_module
-                    && (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
-                    && (symbol.flags
-                        & (symbol_flags::BLOCK_SCOPED_VARIABLE
+                    && symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE)
+                    && !symbol.has_any_flags(
+                        symbol_flags::BLOCK_SCOPED_VARIABLE
                             | symbol_flags::CLASS
                             | symbol_flags::FUNCTION
                             | symbol_flags::REGULAR_ENUM
                             | symbol_flags::CONST_ENUM
-                            | symbol_flags::TYPE_ALIAS))
-                        == 0;
+                            | symbol_flags::TYPE_ALIAS,
+                    );
                 // Function declarations merge across files via module augmentation.
-                let is_function_merge = (symbol.flags & symbol_flags::FUNCTION) != 0
+                let is_function_merge = symbol.has_any_flags(symbol_flags::FUNCTION)
                     && !module_augmentation_declarations.is_empty();
                 // Import aliases referencing remote declarations are valid merges.
-                let is_alias_import_merge = (symbol.flags & symbol_flags::ALIAS) != 0
+                let is_alias_import_merge = symbol.has_any_flags(symbol_flags::ALIAS)
                     && symbol
                         .declarations
                         .iter()
@@ -1863,7 +1863,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbols
             .iter()
-            .filter(|symbol| (symbol.flags & symbol_flags::FUNCTION) != 0)
+            .filter(|symbol| symbol.has_any_flags(symbol_flags::FUNCTION))
             .flat_map(|symbol| {
                 symbol.declarations.iter().filter_map(|&decl_idx| {
                     let node = self.ctx.arena.get(decl_idx)?;

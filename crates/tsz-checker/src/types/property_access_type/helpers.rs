@@ -407,9 +407,9 @@ impl<'a> CheckerState<'a> {
                 .get_symbol(sym_id)
                 .or_else(|| self.get_cross_file_symbol(sym_id))?;
 
-            let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+            let is_namespace = symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE);
             let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-            let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+            let has_other_value = symbol.has_any_flags(value_flags_except_module);
             if !is_namespace || has_other_value {
                 return None;
             }
@@ -439,8 +439,8 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_symbol(ns_member_sym_id)
                 .or_else(|| self.get_cross_file_symbol(ns_member_sym_id))?;
-            if (ns_member_symbol.flags & symbol_flags::ENUM) == 0
-                || (ns_member_symbol.flags & symbol_flags::ENUM_MEMBER) != 0
+            if !ns_member_symbol.has_any_flags(symbol_flags::ENUM)
+                || ns_member_symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
             {
                 return None;
             }
@@ -450,7 +450,7 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_symbol(ns_member_symbol.parent)
                 .or_else(|| self.get_cross_file_symbol(ns_member_symbol.parent))?;
-            if (parent_symbol.flags & symbol_flags::NAMESPACE_MODULE) == 0 {
+            if !parent_symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE) {
                 return None;
             }
 
@@ -628,7 +628,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // If the symbol only has VALUE flags (no TYPE flags), we can trust is_exported
-        let has_type_flags = symbol.flags & symbol_flags::TYPE != 0;
+        let has_type_flags = symbol.has_any_flags(symbol_flags::TYPE);
         if !has_type_flags {
             return symbol.is_exported;
         }
@@ -638,11 +638,11 @@ impl<'a> CheckerState<'a> {
         // Enum members are considered exported if they're in the enum's exports table.
         // We only need special handling for namespace + interface/type-alias merges.
         let is_merged_with_type_only =
-            (symbol.flags & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)) != 0;
+            symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS);
         if !is_merged_with_type_only {
             // Enum members may not have is_exported set, but they're accessible
             // if they're in the enum's exports table (which they must be to get here)
-            if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+            if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
                 return true;
             }
             return symbol.is_exported;

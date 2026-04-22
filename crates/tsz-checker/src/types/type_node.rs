@@ -515,11 +515,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             if let Some(sym_id) = sym_id
                 && self.ctx.symbol_resolution_set.contains(&sym_id)
-                && self
-                    .ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                    symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+                })
             {
                 // A TypeReference with type arguments (e.g. `C1<T>`) creates a new
                 // instantiation boundary -- not circular even inside computation.
@@ -1149,10 +1147,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .resolve_identifier(self.ctx.arena, param_data.name)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        let has_type = (symbol.flags & tsz_binder::symbol_flags::TYPE) != 0
-                            || (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
-                            || (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0;
-                        let has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                        let has_type = symbol.has_any_flags(
+                            tsz_binder::symbol_flags::TYPE
+                                | tsz_binder::symbol_flags::TYPE_ALIAS
+                                | tsz_binder::symbol_flags::INTERFACE,
+                        );
+                        let has_value = symbol.has_any_flags(tsz_binder::symbol_flags::VALUE);
                         if has_type && !has_value {
                             // The identifier refers to a type-only symbol
                             // Emit TS2693: Type only used as value
@@ -1369,18 +1369,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if let Some(scoped_sym_id) = scoped_sym_id
                 && scoped_sym_id != sym_id
                 && let Some(scoped_symbol) = self.get_symbol_from_any_context(scoped_sym_id)
-                && (scoped_symbol.flags
-                    & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
-                    != 0
-                && (scoped_symbol.flags & symbol_flags::TYPE_ALIAS) != 0
-                && (symbol.flags & symbol_flags::TYPE_ALIAS) == 0
+                && scoped_symbol.has_any_flags(
+                    symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM,
+                )
+                && scoped_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
             {
                 return Some(scoped_sym_id.0);
             }
-            if (symbol.flags
-                & (symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
-                != 0
-            {
+            if symbol.has_any_flags(
+                symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM,
+            ) {
                 return Some(sym_id.0);
             }
         }
