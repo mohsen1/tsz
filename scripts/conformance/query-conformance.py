@@ -38,6 +38,9 @@ Usage:
   # List fingerprint-only tests touching a specific code
   python3 scripts/conformance/query-conformance.py --fingerprint-only --code TS2322
 
+  # Show same-code count drift visible in compact expected/actual code lists
+  python3 scripts/conformance/query-conformance.py --count-drift
+
   # Export test paths for a code to feed into conformance runner
   python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
 """
@@ -269,6 +272,26 @@ def count_codes(failure):
     return counts
 
 
+def code_counts(codes):
+    return Counter(codes)
+
+
+def is_fingerprint_only(failure):
+    expected = failure.get("e", [])
+    actual = failure.get("a", [])
+    return bool(expected) and bool(actual) and code_counts(expected) == code_counts(actual)
+
+
+def is_same_code_count_drift(failure):
+    expected = failure.get("e", [])
+    actual = failure.get("a", [])
+    if not expected or not actual:
+        return False
+    expected_counts = code_counts(expected)
+    actual_counts = code_counts(actual)
+    return expected_counts != actual_counts and set(expected_counts) == set(actual_counts)
+
+
 def match_campaign(path, failure, config):
     # Fingerprint-only campaigns match only FP-only tests containing their codes
     if config.get("match_mode") == "fingerprint_only":
@@ -280,6 +303,21 @@ def match_campaign(path, failure, config):
             return False, 0, [], area_of(path)
         score = len(matched_codes) * 3
         return True, score, matched_codes, area_of(path)
+
+    if config.get("match_mode") == "same_code_count_drift":
+        if not is_same_code_count_drift(failure):
+            return False, 0, [], area_of(path)
+        expected_counts = code_counts(failure.get("e", []))
+        actual_counts = code_counts(failure.get("a", []))
+        drift_codes = [
+            code
+            for code in config.get("codes", [])
+            if expected_counts.get(code, 0) != actual_counts.get(code, 0)
+        ]
+        if not drift_codes:
+            return False, 0, [], area_of(path)
+        score = len(drift_codes) * 3
+        return True, score, drift_codes, area_of(path)
 
     low = path.lower()
     area = area_of(path)
@@ -414,8 +452,10 @@ def show_dashboard(data):
     close_1 = sum(1 for f in failures.values() if len(f.get("m", [])) + len(f.get("x", [])) == 1)
     close_2 = sum(1 for f in failures.values() if len(f.get("m", [])) + len(f.get("x", [])) == 2)
     fp_only = sum(1 for f in failures.values() if is_fingerprint_only(f))
+    count_drift = sum(1 for f in failures.values() if is_same_code_count_drift(f))
     print(f"  KPI 4: Close-to-passing:")
     print(f"    Fingerprint-only (same codes, wrong tuple): {fp_only}")
+    print(f"    Same-code count drift (compact codes): {count_drift}")
     print(f"    Diff = 1: {close_1}")
     print(f"    Diff = 2: {close_2}")
     print(f"    Total diff <= 2: {close_1 + close_2}")
@@ -429,6 +469,7 @@ def show_dashboard(data):
         print(f"    All missing (expected errors, we emit 0): {cats.get('all_missing', '?')}")
         print(f"    Fingerprint-only (same codes, wrong tuple): {cats.get('fingerprint_only', '?')}")
         print(f"    Wrong codes (both have, codes differ):  {cats.get('wrong_code', '?')}")
+        print(f"    Same-code count drift (computed):       {count_drift}")
         print(f"    Close to passing (diff <= 2):           {cats.get('close_to_passing', '?')}")
     print()
 
@@ -474,11 +515,13 @@ def show_overview(data):
     print()
 
     cats = a["categories"]
+    count_drift = sum(1 for f in data["failures"].values() if is_same_code_count_drift(f))
     print("Failure categories:")
     print(f"  False positives (expected 0, we emit):  {cats['false_positive']}")
     print(f"  All missing (expected errors, we emit 0): {cats['all_missing']}")
     print(f"  Fingerprint-only (same codes, wrong tuple): {cats.get('fingerprint_only', 0)}")
     print(f"  Wrong codes (both have, codes differ):  {cats['wrong_code']}")
+    print(f"  Same-code count drift (compact codes):  {count_drift}")
     print(f"  Close to passing (diff <= 2):           {cats['close_to_passing']}")
     print()
 
@@ -608,10 +651,6 @@ def show_code(data, code, paths_only=False):
             print(f"      {basename}")
 
 
-def is_fingerprint_only(failure):
-    return bool(failure.get("e")) and failure.get("e") == failure.get("a", [])
-
-
 def show_fingerprint_only(data, code=None, paths_only=False, top=40):
     failures = data["failures"]
     matches = []
@@ -654,6 +693,61 @@ def show_fingerprint_only(data, code=None, paths_only=False, top=40):
         name = basename(path)
         codes = ",".join(failure.get("e", []))
         print(f"  {name}  codes=[{codes}]")
+    if len(matches) > top:
+        print(f"  ... and {len(matches) - top} more")
+
+
+def show_count_drift(data, code=None, paths_only=False, top=40):
+    failures = data["failures"]
+    matches = []
+    under_counts = Counter()
+    over_counts = Counter()
+
+    for path, failure in sorted(failures.items()):
+        if not is_same_code_count_drift(failure):
+            continue
+        expected_counts = code_counts(failure.get("e", []))
+        actual_counts = code_counts(failure.get("a", []))
+        drift_codes = []
+        for item_code in sorted(set(expected_counts) | set(actual_counts)):
+            diff = actual_counts.get(item_code, 0) - expected_counts.get(item_code, 0)
+            if diff < 0:
+                under_counts[item_code] += -diff
+                drift_codes.append(item_code)
+            elif diff > 0:
+                over_counts[item_code] += diff
+                drift_codes.append(item_code)
+        if code and code not in drift_codes:
+            continue
+        matches.append((path, failure, expected_counts, actual_counts, drift_codes))
+
+    if paths_only:
+        for path, *_ in matches:
+            print(path)
+        return
+
+    scope = f" for {code}" if code else ""
+    print(f"Same-code count drift failures{scope}: {len(matches)}")
+    print()
+    if under_counts or over_counts:
+        print("Top compact count deltas:")
+        for item_code in sorted(set(under_counts) | set(over_counts)):
+            print(
+                f"  {item_code:>8s}: "
+                f"under={under_counts.get(item_code, 0):>3d} "
+                f"over={over_counts.get(item_code, 0):>3d}"
+            )
+        print()
+
+    print("Representative tests:")
+    for path, failure, expected_counts, actual_counts, drift_codes in matches[:top]:
+        name = basename(path)
+        deltas = []
+        for item_code in drift_codes:
+            deltas.append(
+                f"{item_code} {expected_counts.get(item_code, 0)}->{actual_counts.get(item_code, 0)}"
+            )
+        print(f"  {name}  {', '.join(deltas)}")
     if len(matches) > top:
         print(f"  ... and {len(matches) - top} more")
 
@@ -774,6 +868,11 @@ def main():
         action="store_true",
         help="Show failures where expected and actual code lists already match",
     )
+    parser.add_argument(
+        "--count-drift",
+        action="store_true",
+        help="Show failures whose compact expected/actual lists contain the same codes with different counts",
+    )
     parser.add_argument("--paths-only", action="store_true", help="Output only test paths (for piping)")
     parser.add_argument("--top", type=int, default=20, help="Limit rows shown in detailed views")
     parser.add_argument(
@@ -809,6 +908,8 @@ def main():
         show_false_positives(data)
     elif args.fingerprint_only:
         show_fingerprint_only(data, code=args.code, paths_only=args.paths_only, top=args.top)
+    elif args.count_drift:
+        show_count_drift(data, code=args.code, paths_only=args.paths_only, top=args.top)
     elif args.code:
         show_code(data, args.code, args.paths_only)
     elif args.extra_code:
