@@ -5,7 +5,8 @@ use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::{NoopResolver, SubtypeChecker, TypeResolver};
 use crate::types::{IntrinsicKind, LiteralValue, PropertyInfo, TypeData, TypeId};
 use crate::visitor::{
-    TypeVisitor, intrinsic_kind, is_empty_object_type_through_type_constraints, lazy_def_id,
+    TypeVisitor, intrinsic_kind, is_empty_object_type_through_type_constraints, is_error_type,
+    lazy_def_id,
 };
 use crate::{AnyPropagationRules, AssignabilityChecker, TypeDatabase};
 use rustc_hash::FxHashMap;
@@ -912,7 +913,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Check if a type or any of its composite members has a string or numeric index signature.
     /// Returns `(has_string_index, has_number_index)`.
     fn check_index_signatures(&mut self, type_id: TypeId) -> (bool, bool) {
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+        if type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || is_error_type(self.interner, type_id)
+        {
             return (true, true);
         }
 
@@ -941,7 +945,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             _ => type_id,
         };
 
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+        if type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || is_error_type(self.interner, type_id)
+        {
             return (true, true);
         }
 
@@ -1325,7 +1332,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Error types are assignable to/from everything (like `any`).
         // In tsc, errorType silences further errors to prevent cascading diagnostics.
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        if is_error_type(self.interner, source) || is_error_type(self.interner, target) {
             return Some(true);
         }
 
@@ -1389,7 +1396,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         // Error types are assignable to/from everything (like `any` in tsc)
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        if is_error_type(self.interner, source) || is_error_type(self.interner, target) {
             return true;
         }
         if source == TypeId::UNKNOWN {
@@ -1453,7 +1460,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Error types are assignable to/from everything (like `any` in tsc)
         // No failure to explain — suppress cascading diagnostics
-        if source == TypeId::ERROR || target == TypeId::ERROR {
+        if is_error_type(self.interner, source) || is_error_type(self.interner, target) {
             return None;
         }
 
@@ -2089,7 +2096,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         // Error types are assignable to everything (like `any` in tsc)
-        if source == TypeId::ERROR {
+        if is_error_type(self.interner, source) {
             return true;
         }
         if !self.strict_null_checks && source.is_nullish() {

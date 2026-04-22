@@ -8,7 +8,7 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{
     CallSignature, FunctionShape, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo,
-    TupleElement, TypeData, TypeId,
+    TupleElement, TypeData, TypeId, TypePredicate,
 };
 use crate::utils;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -164,30 +164,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // If target has a rest param typed as an inference variable, collect
         // remaining source params into a tuple and infer against the variable.
-        if let Some(t_last) = t_params.last()
-            && t_last.rest
-            && var_map.contains_key(&t_last.type_id)
-        {
-            let target_fixed_count = t_params.len().saturating_sub(1);
-            if s_params.len() > target_fixed_count {
-                let tuple_elements: Vec<TupleElement> = s_params[target_fixed_count..]
-                    .iter()
-                    .map(|p| TupleElement {
-                        type_id: p.type_id,
-                        name: p.name,
-                        optional: p.optional,
-                        rest: p.rest,
-                    })
-                    .collect();
-                let source_tuple = self.interner.tuple(tuple_elements);
-                if let Some(&var) = var_map.get(&t_last.type_id) {
-                    ctx.add_candidate(
-                        var,
-                        source_tuple,
-                        crate::types::InferencePriority::NakedTypeVariable,
-                    );
-                }
-            }
+        let target_rest_is_typevar = t_params
+            .last()
+            .is_some_and(|t| t.rest && var_map.contains_key(&t.type_id));
+        if target_rest_is_typevar {
+            self.infer_rest_param_tuple_candidate(ctx, var_map, &s_params, &t_params);
         } else if let Some(s_last) = s_params.last()
             && s_last.rest
         {
@@ -227,26 +208,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target_has_predicate = target.type_predicate.is_some(),
             "constrain_function_to_call_signature: checking type predicates"
         );
-        if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate) {
-            trace!(
-                source_pred_asserts = s_pred.asserts,
-                source_pred_type = ?s_pred.type_id,
-                target_pred_asserts = t_pred.asserts,
-                target_pred_type = ?t_pred.type_id,
-                "constrain_function_to_call_signature: both have predicates"
-            );
-            if let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id) {
-                trace!(
-                    s_pred_type = ?s_pred_type,
-                    t_pred_type = ?t_pred_type,
-                    "constrain_function_to_call_signature: adding constraint"
-                );
-                let was = ctx.source_is_type_annotation;
-                ctx.source_is_type_annotation = true;
-                self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
-                ctx.source_is_type_annotation = was;
-            }
-        }
+        self.constrain_type_predicates(
+            ctx,
+            var_map,
+            source.type_predicate.as_ref(),
+            target.type_predicate.as_ref(),
+            priority,
+        );
     }
 
     pub(super) fn constrain_call_signature_to_function(
@@ -269,14 +237,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             priority,
         );
         // Constrain type predicates if both have them
-        if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate)
-            && let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id)
-        {
-            let was = ctx.source_is_type_annotation;
-            ctx.source_is_type_annotation = true;
-            self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
-            ctx.source_is_type_annotation = was;
-        }
+        self.constrain_type_predicates(
+            ctx,
+            var_map,
+            source.type_predicate.as_ref(),
+            target.type_predicate.as_ref(),
+            priority,
+        );
     }
 
     pub(super) fn constrain_call_signature_to_call_signature(
@@ -301,14 +268,39 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Constrain type predicates if both have them.
         // Mark as type annotation source so literal types from predicates
         // (e.g., `x is 'B'`) are NOT marked as fresh and won't be widened.
-        if let (Some(s_pred), Some(t_pred)) = (&source.type_predicate, &target.type_predicate)
-            && let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id)
-        {
-            let was = ctx.source_is_type_annotation;
-            ctx.source_is_type_annotation = true;
-            self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
-            ctx.source_is_type_annotation = was;
-        }
+        self.constrain_type_predicates(
+            ctx,
+            var_map,
+            source.type_predicate.as_ref(),
+            target.type_predicate.as_ref(),
+            priority,
+        );
+    }
+
+    /// Constrain the target type parameters inside a pair of type predicates.
+    ///
+    /// Matches tsc: when both source and target signatures carry a type
+    /// predicate with a concrete type, infer with `source_is_type_annotation`
+    /// set so that literal predicate types (e.g. `x is 'B'`) are not marked
+    /// fresh and won't be widened during candidate collection.
+    fn constrain_type_predicates(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_pred: Option<&TypePredicate>,
+        target_pred: Option<&TypePredicate>,
+        priority: crate::types::InferencePriority,
+    ) {
+        let (Some(s_pred), Some(t_pred)) = (source_pred, target_pred) else {
+            return;
+        };
+        let (Some(s_pred_type), Some(t_pred_type)) = (s_pred.type_id, t_pred.type_id) else {
+            return;
+        };
+        let was = ctx.source_is_type_annotation;
+        ctx.source_is_type_annotation = true;
+        self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
+        ctx.source_is_type_annotation = was;
     }
 
     pub(super) fn function_type_from_signature(

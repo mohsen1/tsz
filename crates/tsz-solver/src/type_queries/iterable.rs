@@ -98,6 +98,7 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
         | TypeData::StringIntrinsic { .. }
         | TypeData::ModuleNamespace(_)
         | TypeData::Enum(_, _)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => FullIterableTypeKind::NotIterable,
     }
 }

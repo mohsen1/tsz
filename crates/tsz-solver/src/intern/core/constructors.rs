@@ -1434,6 +1434,12 @@ impl TypeInterner {
         self.intern(TypeData::TypeParameter(info))
     }
 
+    /// Intern an unresolved type name that should behave like an error type
+    /// while preserving its source spelling for diagnostics.
+    pub fn unresolved_type_name(&self, name: Atom) -> TypeId {
+        self.intern(TypeData::UnresolvedTypeName(name))
+    }
+
     /// Intern a type query (`typeof value`) marker.
     pub fn type_query(&self, symbol: SymbolRef) -> TypeId {
         self.intern(TypeData::TypeQuery(symbol))
