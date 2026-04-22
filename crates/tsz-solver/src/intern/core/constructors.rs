@@ -537,18 +537,15 @@ impl TypeInterner {
                     TypeData::Literal(LiteralValue::Number(na)),
                     TypeData::Literal(LiteralValue::Number(nb)),
                 ) => {
-                    let a_small = na.0.abs() < 10.0;
-                    let b_small = nb.0.abs() < 10.0;
-                    match (a_small, b_small) {
-                        (true, true) => {
-                            let cmp = na.0.partial_cmp(&nb.0).unwrap_or(Ordering::Equal);
-                            if cmp != Ordering::Equal {
-                                return cmp;
-                            }
-                        }
+                    // TypeScript orders union members by type id, not numeric value.
+                    // Its checker creates the `0` literal eagerly (`zeroType`), while
+                    // other number literals keep first-use order.
+                    let a_zero = na.0 == 0.0;
+                    let b_zero = nb.0 == 0.0;
+                    match (a_zero, b_zero) {
                         (true, false) => return Ordering::Less,
                         (false, true) => return Ordering::Greater,
-                        (false, false) => {}
+                        _ => {}
                     }
                 }
                 (TypeData::Lazy(d1), TypeData::Lazy(d2))
@@ -727,27 +724,19 @@ impl TypeInterner {
                         }
                     }
                 }
-                // Small number literals (0-9): sort numerically to match tsc's
-                // lib.d.ts pre-allocation order for common small numbers.
-                // Small numbers sort BEFORE large numbers for transitivity.
+                // Number literals follow tsc's type-id ordering. The checker creates
+                // the `0` literal eagerly (`zeroType`); other number literals keep
+                // first-use order through the allocation-order fallback below.
                 (
                     TypeData::Literal(LiteralValue::Number(na)),
                     TypeData::Literal(LiteralValue::Number(nb)),
                 ) => {
-                    let a_small = na.0.abs() < 10.0;
-                    let b_small = nb.0.abs() < 10.0;
-                    match (a_small, b_small) {
-                        (true, true) => {
-                            let cmp = na.0.partial_cmp(&nb.0).unwrap_or(Ordering::Equal);
-                            if cmp != Ordering::Equal {
-                                return cmp;
-                            }
-                        }
+                    let a_zero = na.0 == 0.0;
+                    let b_zero = nb.0 == 0.0;
+                    match (a_zero, b_zero) {
                         (true, false) => return Ordering::Less,
                         (false, true) => return Ordering::Greater,
-                        (false, false) => {
-                            // Both large: fall through to allocation order
-                        }
+                        _ => {}
                     }
                 }
                 // Lazy type references and Enum types: sort by DefId (source declaration order)

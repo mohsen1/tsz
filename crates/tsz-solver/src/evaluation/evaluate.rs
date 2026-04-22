@@ -1581,6 +1581,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Intersection(list_id) => self.visit_intersection(*list_id),
             TypeData::Union(list_id) => self.visit_union(*list_id),
+            TypeData::Array(elem) => self.visit_array(*elem, type_id),
             TypeData::Tuple(tuple_list_id) => self.visit_tuple(*tuple_list_id, type_id),
             TypeData::NoInfer(inner) => {
                 // NoInfer<T> evaluates to T (strip wrapper, evaluate inner)
@@ -1835,6 +1836,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a union type: A | B | C
     fn visit_union(&mut self, list_id: TypeListId) -> TypeId {
         self.evaluate_union(list_id)
+    }
+
+    /// Visit an array type: T[].
+    ///
+    /// Keep the same conservative policy as tuple element evaluation: only
+    /// evaluate element types that are solver meta-types. This lets aliases in
+    /// array element position simplify before printing without
+    /// recursively expanding already-concrete element types.
+    fn visit_array(&mut self, elem: TypeId, original_type_id: TypeId) -> TypeId {
+        if !Self::is_evaluable_meta_type(self.interner, elem) {
+            return original_type_id;
+        }
+
+        let evaluated = self.evaluate(elem);
+        if evaluated == elem {
+            original_type_id
+        } else {
+            self.interner.array(evaluated)
+        }
     }
 }
 

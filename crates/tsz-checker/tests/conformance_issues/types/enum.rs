@@ -120,7 +120,7 @@ function foo<T>(arr: T[], depth: number) {
 }
 "#;
 
-    let diagnostics = compile_and_get_diagnostics_with_options(
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         source,
         CheckerOptions {
             emit_declarations: true,

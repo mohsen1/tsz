@@ -272,6 +272,32 @@ fn format_number_literals() {
 }
 
 #[test]
+fn number_literal_union_uses_tsc_allocation_order() {
+    let db = TypeInterner::new();
+    let one = db.literal_number(1.0);
+    let minus_one = db.literal_number(-1.0);
+    let two = db.literal_number(2.0);
+    let zero = db.literal_number(0.0);
+
+    let union = db.union(vec![minus_one, zero, one, two]);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(union), "0 | 1 | -1 | 2");
+}
+
+#[test]
+fn number_literal_union_is_not_numeric_sorted() {
+    let db = TypeInterner::new();
+    let two = db.literal_number(2.0);
+    let one = db.literal_number(1.0);
+
+    let union = db.union(vec![one, two]);
+
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(union), "2 | 1");
+}
+
+#[test]
 fn format_boolean_literals() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

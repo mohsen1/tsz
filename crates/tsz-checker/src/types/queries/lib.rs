@@ -99,6 +99,13 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
+                let lowering = if self.ctx.all_binders.is_some()
+                    || self.ctx.global_file_locals_index.is_some()
+                {
+                    lowering.prefer_name_def_id_resolution()
+                } else {
+                    lowering
+                };
 
                 if !symbol.declarations.is_empty() {
                     // Use lower_merged_interface_declarations for proper multi-arena support
