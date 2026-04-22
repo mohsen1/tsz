@@ -636,13 +636,13 @@ impl<'a> CheckerState<'a> {
             child_idx
         };
 
-        if self.report_jsx_single_child_constructor_instance_mismatch(
-            diag_node,
-            actual_child_type,
-            children_type,
-        ) {
-            return;
-        }
+        let child_is_jsx_element_like = self.ctx.arena.get(child_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                || node.kind == syntax_kind_ext::JSX_ELEMENT
+        });
+
+        // Use the common assignability reporter for child mismatches so TS2740/TS2741
+        // rendering stays consistent with the rest of the checker.
 
         let source_text = self.format_type_for_assignability_message(actual_child_type);
         let children_prop_name = self.get_jsx_children_prop_name();
@@ -659,12 +659,44 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        self.check_assignable_or_report_at_without_source_elaboration(
-            actual_child_type,
-            children_type,
-            diag_node,
-            diag_node,
-        );
+        let diagnostics_before = self.ctx.diagnostics.len();
+        let assignable = self
+            .check_assignable_or_report_at_exact_anchor_without_source_elaboration(
+                actual_child_type,
+                children_type,
+                diag_node,
+                diag_node,
+            );
+        if !assignable
+            && child_is_jsx_element_like
+            && self.format_type(actual_child_type) == "Element"
+        {
+            self.rewrite_recent_jsx_element_source_display(diagnostics_before);
+        }
+    }
+
+    fn rewrite_recent_jsx_element_source_display(&mut self, diagnostics_start: usize) {
+        use crate::diagnostics::diagnostic_codes;
+
+        for diagnostic in self.ctx.diagnostics.iter_mut().skip(diagnostics_start) {
+            if diagnostic.code
+                != diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                && diagnostic.code
+                    != diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+                && diagnostic.code
+                    != diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            {
+                continue;
+            }
+
+            if diagnostic.message_text.starts_with("Type 'Element'") {
+                diagnostic.message_text = diagnostic.message_text.replacen(
+                    "Type 'Element'",
+                    "Type 'ReactElement<any>'",
+                    1,
+                );
+            }
+        }
     }
 
     fn report_jsx_multiple_children_individual_assignability(
