@@ -63,13 +63,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // 3. Get the declaration node
-        // Prefer value_declaration, fall back to first declaration
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first_decl) = symbol.declarations.first() {
-            first_decl
-        } else {
+        // 3. Get the declaration node (prefer value_declaration, fall back to first).
+        let Some(decl_idx) = symbol.primary_declaration() else {
             return false;
         };
 
@@ -149,11 +144,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // 3. Get the declaration node
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first_decl) = symbol.declarations.first() {
-            first_decl
-        } else {
+        let Some(decl_idx) = symbol.primary_declaration() else {
             return false;
         };
 
@@ -243,11 +234,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // 3. Get the declaration node
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first_decl) = symbol.declarations.first() {
-            first_decl
-        } else {
+        let Some(decl_idx) = symbol.primary_declaration() else {
             return false;
         };
 

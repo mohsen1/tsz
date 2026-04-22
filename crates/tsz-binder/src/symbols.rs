@@ -222,6 +222,16 @@ impl Symbol {
             self.first_declaration_span = span;
         }
     }
+
+    /// Primary declaration node for this symbol: prefer `value_declaration` when
+    /// set, otherwise fall back to the first entry in `declarations`. Returns
+    /// `None` when neither is available.
+    #[must_use]
+    pub fn primary_declaration(&self) -> Option<NodeIndex> {
+        self.value_declaration
+            .into_option()
+            .or_else(|| self.declarations.first().copied())
+    }
 }
 
 // =============================================================================
