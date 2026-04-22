@@ -310,7 +310,16 @@ pub struct BinderState {
     /// Symbol IDs that originated from lib files.
     /// Used by `get_symbol()` to check `lib_binders` first for these IDs,
     /// avoiding collision with local symbols at the same index.
-    pub lib_symbol_ids: FxHashSet<SymbolId>,
+    ///
+    /// Stored as `Arc` so per-file binders constructed by the CLI driver
+    /// can share the merged lib symbol set without deep-cloning the
+    /// underlying `FxHashSet` for every file. On large projects this set
+    /// holds thousands of symbol IDs, and the driver builds 12K+ per-file
+    /// binders (cross-file lookup + per-file checking) — N deep clones
+    /// add up. Mutations during binding go through `Arc::make_mut`,
+    /// which is essentially free while refcount=1 (always the case
+    /// during a single binder's construction).
+    pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
 
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`).
     /// This allows Phase 2 of `merge_bind_results` to find the Phase 1 global ID for each

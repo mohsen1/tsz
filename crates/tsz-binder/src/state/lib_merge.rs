@@ -373,7 +373,7 @@ impl BinderState {
                         self.file_locals.set(name.clone(), new_id);
                     }
                     // Track all lib-originating symbols for unused checking exclusion
-                    self.lib_symbol_ids.insert(new_id);
+                    Arc::make_mut(&mut self.lib_symbol_ids).insert(new_id);
                 }
             }
         }

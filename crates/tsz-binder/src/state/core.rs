@@ -203,7 +203,7 @@ impl BinderState {
             current_augmented_module: None,
             augmentation_target_modules: FxHashMap::default(),
             lib_binders: Vec::new(),
-            lib_symbol_ids: FxHashSet::default(),
+            lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
@@ -268,7 +268,7 @@ impl BinderState {
         self.in_module_augmentation = false;
         self.current_augmented_module = None;
         self.lib_binders.clear();
-        self.lib_symbol_ids.clear();
+        Arc::make_mut(&mut self.lib_symbol_ids).clear();
         self.module_exports.clear();
         self.reexports.clear();
         self.wildcard_reexports.clear();
@@ -420,7 +420,7 @@ impl BinderState {
             current_augmented_module: None,
             augmentation_target_modules: FxHashMap::default(),
             lib_binders: Vec::new(),
-            lib_symbol_ids: FxHashSet::default(),
+            lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
             reexports: FxHashMap::default(),
@@ -543,7 +543,7 @@ impl BinderState {
             current_augmented_module: None,
             augmentation_target_modules,
             lib_binders: Vec::new(),
-            lib_symbol_ids: FxHashSet::default(),
+            lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports,
             reexports,
