@@ -1,4 +1,5 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -17,7 +18,13 @@ impl<'a> CheckerState<'a> {
         file_name: String,
     ) -> Diagnostic {
         let mut source_str = if depth == 0 {
-            let display = self.format_assignment_source_type_for_diagnostic(source, target, idx);
+            let display = self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target,
+                    anchor_idx: idx,
+                },
+            );
             // tsc preserves literal union structure (e.g., `"c" | "d"`) in error
             // messages. If format_assignment_source_type_for_diagnostic widened the
             // union to a primitive (e.g., `string`) or used a type alias name
@@ -103,7 +110,10 @@ impl<'a> CheckerState<'a> {
         if depth == 0 && target_str == "Object" {
             let evaluated = self.evaluate_type_for_assignability(source);
             let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
-            source_str = self.format_type_diagnostic_widened(widened);
+            source_str = self.format_type_for_diagnostic_role(
+                widened,
+                DiagnosticTypeDisplayRole::WidenedDiagnostic,
+            );
         }
         if depth == 0
             && (target_str == "Callable" || target_str == "Applicable")
