@@ -5,15 +5,26 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-88}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
 export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
 export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
 export PATH="$HOME/.cargo/bin:$PATH"
 
+HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$HOST_CPUS}"
+
+cap_workers() {
+  local requested="$1"
+  if (( requested < HOST_CPUS )); then
+    printf '%s\n' "$requested"
+  else
+    printf '%s\n' "$HOST_CPUS"
+  fi
+}
+
 SHARD_COUNT="${TSZ_CI_SHARDS:-4}"
-SHARD_WORKERS="${TSZ_CI_SHARD_WORKERS:-20}"
-CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-80}"
+SHARD_WORKERS="${TSZ_CI_SHARD_WORKERS:-$(cap_workers 20)}"
+CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(cap_workers 80)}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
 LOG_DIR="${TSZ_CI_LOG_DIR:-.ci-logs}"
