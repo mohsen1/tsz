@@ -3,6 +3,7 @@
 //! and cross-file interface declaration merging.
 
 use crate::state::CheckerState;
+use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -74,19 +75,8 @@ impl<'a> CheckerState<'a> {
             return TypeId::UNKNOWN;
         };
 
-        match node.kind {
-            k if k == tsz_scanner::SyntaxKind::StringKeyword as u16 => return TypeId::STRING,
-            k if k == tsz_scanner::SyntaxKind::NumberKeyword as u16 => return TypeId::NUMBER,
-            k if k == tsz_scanner::SyntaxKind::BooleanKeyword as u16 => return TypeId::BOOLEAN,
-            k if k == tsz_scanner::SyntaxKind::VoidKeyword as u16 => return TypeId::VOID,
-            k if k == tsz_scanner::SyntaxKind::UndefinedKeyword as u16 => {
-                return TypeId::UNDEFINED;
-            }
-            k if k == tsz_scanner::SyntaxKind::NullKeyword as u16 => return TypeId::NULL,
-            k if k == tsz_scanner::SyntaxKind::NeverKeyword as u16 => return TypeId::NEVER,
-            k if k == tsz_scanner::SyntaxKind::UnknownKeyword as u16 => return TypeId::UNKNOWN,
-            k if k == tsz_scanner::SyntaxKind::AnyKeyword as u16 => return TypeId::ANY,
-            _ => {}
+        if let Some(builtin) = keyword_syntax_to_type_id(node.kind) {
+            return builtin;
         }
 
         let name = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
