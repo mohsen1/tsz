@@ -89,6 +89,16 @@ impl NodeArena {
         self.get(index).map(|n| (n.pos, n.end))
     }
 
+    /// Get the syntax kind (raw `u16`) of a node by index. Returns `None` if
+    /// the index is `NodeIndex::NONE` or out of bounds. Inherent mirror of
+    /// [`NodeAccess::kind`] — lets callers skip the trait import when they
+    /// only need the kind.
+    #[inline]
+    #[must_use]
+    pub fn kind_at(&self, index: NodeIndex) -> Option<u16> {
+        self.get(index).map(|n| n.kind)
+    }
+
     /// Get extended info for a node
     #[inline]
     #[must_use]

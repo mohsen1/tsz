@@ -365,7 +365,7 @@ impl<'a> CheckerState<'a> {
 
         // Overload candidates need signature-specific contextual typing.
         let force_bivariant_callbacks = matches!(
-            self.ctx.arena.get(unwrapped_callee).map(|n| n.kind),
+            self.ctx.arena.kind_at(unwrapped_callee),
             Some(
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION

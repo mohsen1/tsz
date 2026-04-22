@@ -152,6 +152,11 @@ fn test_node_access_trait() {
     assert!(!arena.exists(NodeIndex::NONE));
 
     assert_eq!(arena.kind(ident_idx), Some(SyntaxKind::Identifier as u16));
+    assert_eq!(
+        arena.kind_at(ident_idx),
+        Some(SyntaxKind::Identifier as u16)
+    );
+    assert_eq!(arena.kind_at(NodeIndex::NONE), None);
     assert_eq!(arena.pos_end(ident_idx), Some((10, 20)));
     assert_eq!(arena.get_identifier_text(ident_idx), Some("testVar"));
 

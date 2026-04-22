@@ -882,7 +882,7 @@ impl ParserState {
 
             // Check if 'await' is used as parameter name in a context where it's reserved
             // (static block or async context). This should emit TS1005 at the arrow position.
-            let name_kind = self.arena.get(name).map(|n| n.kind);
+            let name_kind = self.arena.kind_at(name);
             let is_await_param = name_kind == Some(SyntaxKind::AwaitKeyword as u16);
             let is_await_reserved =
                 is_await_param && (self.in_static_block_context() || self.in_async_context());

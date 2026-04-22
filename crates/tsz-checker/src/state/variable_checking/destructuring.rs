@@ -1990,7 +1990,7 @@ impl<'a> CheckerState<'a> {
                 // For elements with default initializers, use the default's type
                 // instead of `any` so the contextual type carries useful info
                 // (e.g., `{ f = (x: string) => x.length }` → f: (x: string) => number).
-                let name_kind = self.ctx.arena.get(name_idx).map(|n| n.kind);
+                let name_kind = self.ctx.arena.kind_at(name_idx);
                 let prop_type = if matches!(
                     name_kind,
                     Some(
