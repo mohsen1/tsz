@@ -74,18 +74,6 @@ pub(crate) fn is_assignable_strict_null(
     .is_related()
 }
 
-pub(crate) const fn is_compound_assignment_operator(operator_token: u16) -> bool {
-    tsz_solver::is_compound_assignment_operator(operator_token)
-}
-
-pub(crate) const fn is_assignment_operator(operator_token: u16) -> bool {
-    tsz_solver::is_assignment_operator(operator_token)
-}
-
-pub(crate) const fn map_compound_assignment_to_binary(operator_token: u16) -> Option<&'static str> {
-    tsz_solver::map_compound_assignment_to_binary(operator_token)
-}
-
 pub(crate) fn fallback_compound_assignment_result(
     db: &dyn TypeDatabase,
     operator_token: u16,

@@ -4,12 +4,14 @@
 //! has been extracted to `condition_narrowing.rs`.
 
 use super::{FlowAnalyzer, PropertyKey};
+use crate::query_boundaries::common::{
+    is_assignment_operator as boundary_is_assignment_operator, is_compound_assignment_operator,
+    map_compound_assignment_to_binary,
+};
 use crate::query_boundaries::flow_analysis::{
     array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
     get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
-    is_assignment_operator as boundary_is_assignment_operator, is_compound_assignment_operator,
-    map_compound_assignment_to_binary, tuple_elements_for_type, union_members_for_type,
-    widen_literal_to_primitive,
+    tuple_elements_for_type, union_members_for_type, widen_literal_to_primitive,
 };
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
