@@ -61,6 +61,34 @@ impl NodeArena {
         }
     }
 
+    /// Get the source start position of a node by index. Returns `None` if
+    /// the index is `NodeIndex::NONE` or out of bounds. Inherent helper for
+    /// the common `arena.get(idx).map(|n| n.pos)` pattern.
+    #[inline]
+    #[must_use]
+    pub fn pos_at(&self, index: NodeIndex) -> Option<u32> {
+        self.get(index).map(|n| n.pos)
+    }
+
+    /// Get the source end position of a node by index. Returns `None` if
+    /// the index is `NodeIndex::NONE` or out of bounds. Inherent helper for
+    /// the common `arena.get(idx).map(|n| n.end)` pattern.
+    #[inline]
+    #[must_use]
+    pub fn end_at(&self, index: NodeIndex) -> Option<u32> {
+        self.get(index).map(|n| n.end)
+    }
+
+    /// Get the `(pos, end)` source range of a node by index. Returns `None`
+    /// if the index is `NodeIndex::NONE` or out of bounds. Inherent helper
+    /// for the common `arena.get(idx).map(|n| (n.pos, n.end))` pattern used
+    /// by emitter source-range plumbing and diagnostics.
+    #[inline]
+    #[must_use]
+    pub fn pos_end_at(&self, index: NodeIndex) -> Option<(u32, u32)> {
+        self.get(index).map(|n| (n.pos, n.end))
+    }
+
     /// Get extended info for a node
     #[inline]
     #[must_use]

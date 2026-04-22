@@ -155,6 +155,13 @@ fn test_node_access_trait() {
     assert_eq!(arena.pos_end(ident_idx), Some((10, 20)));
     assert_eq!(arena.get_identifier_text(ident_idx), Some("testVar"));
 
+    assert_eq!(arena.pos_at(ident_idx), Some(10));
+    assert_eq!(arena.end_at(ident_idx), Some(20));
+    assert_eq!(arena.pos_end_at(ident_idx), Some((10, 20)));
+    assert_eq!(arena.pos_at(NodeIndex::NONE), None);
+    assert_eq!(arena.end_at(NodeIndex::NONE), None);
+    assert_eq!(arena.pos_end_at(NodeIndex::NONE), None);
+
     // Test NodeInfo
     let info = arena.node_info(ident_idx).expect("node info should exist");
     assert_eq!(info.kind, SyntaxKind::Identifier as u16);
