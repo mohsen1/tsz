@@ -444,7 +444,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(symbol) = binder
                     .get_symbol(sym_id)
                     .or_else(|| self.ctx.binder.get_symbol(sym_id))
-                    && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                    && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE)
                 {
                     return true;
                 }
@@ -465,7 +465,7 @@ impl<'a> CheckerState<'a> {
                             .get_symbol(sym_id)
                             .or_else(|| self.ctx.binder.get_symbol(sym_id))
                     })
-                    .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0)
+                    .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::VALUE))
             })
         })
     }
@@ -764,10 +764,10 @@ impl<'a> CheckerState<'a> {
                         self.ctx.binder.is_external_module()
                             && symbol.decl_file_idx != self.ctx.current_file_idx as u32
                             && (source_is_external_module || symbol.is_exported)
-                            && (symbol.flags
-                                & (tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
-                                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE))
-                                != 0
+                            && symbol.has_any_flags(
+                                tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
+                                    | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE,
+                            )
                     });
 
                 if treat_as_unresolved {
