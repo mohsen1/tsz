@@ -1009,6 +1009,21 @@ impl<'a> CheckerContext<'a> {
         binder.cross_file_node_symbols.get(&arena_ptr)
     }
 
+    /// Test whether `module_name` is declared as an ambient module anywhere
+    /// in the project. Prefers the project-wide `global_declared_modules`
+    /// index built from the skeleton; falls back to the per-binder
+    /// `declared_modules` set for tests / standalone callers.
+    pub fn declared_modules_contains(
+        &self,
+        binder: &tsz_binder::BinderState,
+        module_name: &str,
+    ) -> bool {
+        if let Some(ref dm) = self.global_declared_modules {
+            return dm.exact.contains(module_name);
+        }
+        binder.declared_modules.contains(module_name)
+    }
+
     /// Resolve an import specifier to its target file index.
     /// Uses the `resolved_module_paths` map populated by the driver.
     /// Returns None if the import cannot be resolved (e.g., external module).
