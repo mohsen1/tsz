@@ -819,43 +819,54 @@ pub(super) fn collect_diagnostics(
     // The driver's resolution pass detects untyped JS modules (TS7016) but the
     // checker's module-not-found path skips them because the module DID resolve.
     // For CJS require() calls (not import declarations), we emit TS7016 directly.
+    //
+    // Pure read-only per-file work (arena + pre-computed maps), so Rayon can
+    // spread the scan across cores. On large repos this turns an N-file
+    // sequential post-pass into an N-way parallel pass.
     let per_file_ts7016_diagnostics: Vec<Vec<Diagnostic>> = {
-        let mut result: Vec<Vec<Diagnostic>> = Vec::with_capacity(program.files.len());
-        for (file_idx, file) in program.files.iter().enumerate() {
-            let mut diags = Vec::new();
-            for (specifier, spec_node, import_kind, _) in &cached_module_specifiers[file_idx] {
-                if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
-                    continue;
-                }
-                if let Some(error) = resolved_module_errors.get(&(file_idx, specifier.clone())) {
-                    if error.code != 7016 {
+        use rayon::prelude::*;
+        let _span = tracing::info_span!("per_file_ts7016_diagnostics", files = program.files.len())
+            .entered();
+        program
+            .files
+            .par_iter()
+            .enumerate()
+            .map(|(file_idx, file)| {
+                let mut diags = Vec::new();
+                for (specifier, spec_node, import_kind, _) in &cached_module_specifiers[file_idx] {
+                    if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
                         continue;
                     }
-                    // Find the string literal argument of the require() call for the span.
-                    let (start, length) = if let Some(node) = file.arena.get(*spec_node)
-                        && let Some(call) = file.arena.get_call_expr(node)
-                        && let Some(args) = call.arguments.as_ref()
-                        && let Some(&arg_idx) = args.nodes.first()
-                        && let Some(arg_node) = file.arena.get(arg_idx)
+                    if let Some(error) = resolved_module_errors.get(&(file_idx, specifier.clone()))
                     {
-                        (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
-                    } else if let Some(node) = file.arena.get(*spec_node) {
-                        (node.pos, node.end.saturating_sub(node.pos))
-                    } else {
-                        continue;
-                    };
-                    diags.push(Diagnostic::error(
-                        &file.file_name,
-                        start,
-                        length,
-                        &error.message,
-                        error.code,
-                    ));
+                        if error.code != 7016 {
+                            continue;
+                        }
+                        // Find the string literal argument of the require() call for the span.
+                        let (start, length) = if let Some(node) = file.arena.get(*spec_node)
+                            && let Some(call) = file.arena.get_call_expr(node)
+                            && let Some(args) = call.arguments.as_ref()
+                            && let Some(&arg_idx) = args.nodes.first()
+                            && let Some(arg_node) = file.arena.get(arg_idx)
+                        {
+                            (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
+                        } else if let Some(node) = file.arena.get(*spec_node) {
+                            (node.pos, node.end.saturating_sub(node.pos))
+                        } else {
+                            continue;
+                        };
+                        diags.push(Diagnostic::error(
+                            &file.file_name,
+                            start,
+                            length,
+                            &error.message,
+                            error.code,
+                        ));
+                    }
                 }
-            }
-            result.push(diags);
-        }
-        result
+                diags
+            })
+            .collect()
     };
     let per_file_ts7016_diagnostics = Arc::new(per_file_ts7016_diagnostics);
 
