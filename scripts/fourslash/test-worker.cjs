@@ -4431,7 +4431,17 @@ async function main() {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
             if (isTemporarilyAllowedParityFailure(testName, errMsg)) {
-                process.send({ type: "result", workerId, testFile, testName, passed: true, elapsed });
+                process.send({
+                    type: "result",
+                    workerId,
+                    testFile,
+                    testName,
+                    passed: false,
+                    xfailed: true,
+                    error: errMsg,
+                    elapsed,
+                    timedOut: false,
+                });
             } else {
                 const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
                 const bridgeLikelyUnhealthy =

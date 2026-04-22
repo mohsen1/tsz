@@ -189,6 +189,7 @@ async function runSequential(opts, testsToRun) {
     const testType = 1; // FourSlashTestType.Server — tsz-server talks over stdio
     let passed = 0;
     let failed = 0;
+    let xfailed = 0;
     let timedOut = 0;
     const errors = [];
     const testResults = [];
@@ -216,8 +217,8 @@ async function runSequential(opts, testsToRun) {
             testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
             if (opts.verbose) {
                 console.log(`\x1b[32mPASS\x1b[0m (${elapsed}ms)`);
-            } else if ((passed + failed) % 50 === 0) {
-                process.stdout.write(`\r  Progress: ${passed + failed}/${testsToRun.length} (${passed} passed, ${failed} failed)`);
+            } else if ((passed + failed + xfailed) % 50 === 0) {
+                process.stdout.write(`\r  Progress: ${passed + failed + xfailed}/${testsToRun.length} (${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
             }
         } catch (err) {
             const elapsed = Date.now() - startTime;
@@ -227,8 +228,8 @@ async function runSequential(opts, testsToRun) {
                 testResults.push({ file: testFile, status: "pass", timedOut: false, error: null, elapsed });
                 if (opts.verbose) {
                     console.log(`\x1b[36mBASELINE\x1b[0m (${elapsed}ms)`);
-                } else if ((passed + failed) % 50 === 0) {
-                    process.stdout.write(`\r  Progress: ${passed + failed}/${testsToRun.length} (${passed} passed, ${failed} failed)`);
+                } else if ((passed + failed + xfailed) % 50 === 0) {
+                    process.stdout.write(`\r  Progress: ${passed + failed + xfailed}/${testsToRun.length} (${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""})`);
                 }
                 continue;
             }
@@ -248,7 +249,7 @@ async function runSequential(opts, testsToRun) {
     }
 
     bridge.shutdown();
-    return { passed, failed, timedOut, errors, testResults };
+    return { passed, failed, xfailed, timedOut, errors, testResults };
 }
 
 function setupGlobals(tsDir) {
@@ -1621,6 +1622,7 @@ async function runParallel(opts, testsToRun) {
 
     let passed = 0;
     let failed = 0;
+    let xfailed = 0;
     let timedOut = 0;
     let completed = 0;
     let bridgeRestarts = 0;
@@ -1641,8 +1643,8 @@ async function runParallel(opts, testsToRun) {
 
         function printProgress() {
             const total = testsToRun.length;
-            const done = passed + failed;
-            const msg = `\r  Progress: ${done}/${total} (${passed} passed, ${failed} failed${timedOut > 0 ? `, ${timedOut} timeout` : ""}) [${activeWorkers} workers]`;
+            const done = passed + failed + xfailed;
+            const msg = `\r  Progress: ${done}/${total} (${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""}${timedOut > 0 ? `, ${timedOut} timeout` : ""}) [${activeWorkers} workers]`;
             const padded = msg + " ".repeat(Math.max(0, lastProgressLen - msg.length));
             process.stdout.write(padded);
             lastProgressLen = msg.length;
@@ -1653,7 +1655,7 @@ async function runParallel(opts, testsToRun) {
             if (activeWorkers === 0) {
                 if (!opts.verbose) printProgress();
                 clearInterval(watchdog);
-                resolve({ passed, failed, timedOut, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
+                resolve({ passed, failed, xfailed, timedOut, errors, testResults, bridgeRestarts, memoryWarnings, workerStats });
             }
         }
 
@@ -1683,6 +1685,9 @@ async function runParallel(opts, testsToRun) {
                     if (msg.passed) {
                         passed++;
                         testResults.push({ file: msg.testFile, status: "pass", timedOut: false, error: null, elapsed: msg.elapsed });
+                    } else if (msg.xfailed) {
+                        xfailed++;
+                        testResults.push({ file: msg.testFile, status: "xfail", timedOut: false, error: msg.error || null, elapsed: msg.elapsed });
                     } else {
                         if (isBaselineOnlyFailure(msg.error)) {
                             passed++;
@@ -1710,12 +1715,14 @@ async function runParallel(opts, testsToRun) {
                     if (opts.verbose) {
                         const status = msg.passed
                             ? `\x1b[32mPASS\x1b[0m`
+                            : msg.xfailed
+                            ? `\x1b[36mXFAIL\x1b[0m`
                             : msg.timedOut
                             ? `\x1b[33mTIMEOUT\x1b[0m`
                             : `\x1b[31mFAIL\x1b[0m`;
                         const elapsed = msg.elapsed ? ` (${msg.elapsed}ms)` : "";
                         console.log(`  [W${msg.workerId}] ${msg.testName} ${status}${elapsed}`);
-                        if (!msg.passed) {
+                        if (!msg.passed && !msg.xfailed) {
                             if (process.env.FOURSLASH_FULL_ERROR) {
                                 console.log(msg.error);
                             } else {
@@ -1865,14 +1872,14 @@ async function main() {
         results = await runParallel(opts, testsToRun);
     }
 
-    const { passed, failed, timedOut, errors } = results;
+    const { passed, failed, xfailed = 0, timedOut, errors } = results;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
     // Print summary
     console.log("");
     console.log("─".repeat(70));
     console.log("");
-    console.log(`Results: ${passed} passed, ${failed} failed out of ${testsToRun.length} (${elapsed}s)`);
+    console.log(`Results: ${passed} passed, ${failed} failed${xfailed > 0 ? `, ${xfailed} xfailed` : ""} out of ${testsToRun.length} (${elapsed}s)`);
 
     if (totalAvailable > testsToRun.length) {
         console.log(`  (${totalAvailable - testsToRun.length} tests skipped, ${totalAvailable} total available)`);
@@ -1968,6 +1975,7 @@ async function main() {
                 total,
                 passed,
                 failed,
+                xfailed,
                 timedOut,
                 passRate: total > 0 ? Math.round(passed / total * 1000) / 10 : 0,
             },
