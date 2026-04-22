@@ -1089,6 +1089,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Match tsc's elaborateElementwise gate: when the target property
+            // still resolves to a direct indexed-access type on a generic path,
+            // keep the primary TS2322 on the outer object instead of collapsing
+            // it to a property-level leaf.
+            if crate::query_boundaries::common::is_index_access_type(
+                self.ctx.types,
+                target_prop_type,
+            ) || crate::query_boundaries::common::is_index_access_type(
+                self.ctx.types,
+                target_prop_type_for_diagnostic,
+            ) {
+                continue;
+            }
+
             // Get the type of the property value in the object literal.
             // Use the cached (contextually-typed) type for the assignability check.
             // This preserves literal types that were narrowed by contextual typing

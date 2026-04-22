@@ -134,6 +134,55 @@ impl<'a> TypeFormatter<'a> {
         }
     }
 
+    fn distributed_conditional_application_display(
+        &self,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        let def_store = self.def_store?;
+        let def_id = match self.interner.lookup(base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => def_store.find_def_for_type(base)?,
+        };
+        let def = def_store.get(def_id)?;
+        if def.kind != crate::def::DefKind::TypeAlias {
+            return None;
+        }
+        let body = def.body?;
+        let TypeData::Conditional(cond_id) = self.interner.lookup(body)? else {
+            return None;
+        };
+        let cond = self.interner.conditional_type(cond_id);
+        if !cond.is_distributive {
+            return None;
+        }
+        let TypeData::TypeParameter(check_tp) = self.interner.lookup(cond.check_type)? else {
+            return None;
+        };
+        let check_index = def
+            .type_params
+            .iter()
+            .position(|param| param.name == check_tp.name)?;
+        let check_arg = *args.get(check_index)?;
+        let TypeData::Union(member_list_id) = self.interner.lookup(check_arg)? else {
+            return None;
+        };
+        let members = self.interner.type_list(member_list_id);
+        if members.len() < 2 {
+            return None;
+        }
+
+        let distributed: Vec<TypeId> = members
+            .iter()
+            .map(|&member| {
+                let mut branch_args = args.to_vec();
+                branch_args[check_index] = member;
+                self.interner.application(base, branch_args)
+            })
+            .collect();
+        Some(self.interner.union(distributed))
+    }
+
     /// Create a formatter with access to symbol names.
     pub fn with_symbols(
         interner: &'a dyn TypeDatabase,
@@ -750,6 +799,12 @@ impl<'a> TypeFormatter<'a> {
                 // already signals the underlying failure.
                 if app.base == TypeId::ERROR || matches!(base_key, Some(TypeData::Error)) {
                     return Cow::Borrowed("error");
+                }
+
+                if let Some(distributed) =
+                    self.distributed_conditional_application_display(app.base, &app.args)
+                {
+                    return self.format(distributed);
                 }
 
                 // Special handling for Application(Lazy(def_id), args)

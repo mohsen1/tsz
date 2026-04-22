@@ -3549,6 +3549,83 @@ const r1: number = x;
 }
 
 #[test]
+fn test_ts2322_keeps_outer_object_error_for_direct_index_access_target() {
+    let source = r#"
+interface TextChannel {
+    id: string;
+    type: 'text';
+    phoneNumber: string;
+}
+
+interface EmailChannel {
+    id: string;
+    type: 'email';
+    addres: string;
+}
+
+type Channel = TextChannel | EmailChannel;
+
+export type ChannelType = Channel extends { type: infer R } ? R : never;
+
+type Omit<T, K extends keyof T> = Pick<
+    T,
+    ({ [P in keyof T]: P } & { [P in K]: never } & { [x: string]: never })[keyof T]
+>;
+
+type ChannelOfType<T extends ChannelType, A = Channel> = A extends { type: T }
+    ? A
+    : never;
+
+export type NewChannel<T extends Channel> = Pick<T, 'type'> &
+    Partial<Omit<T, 'type' | 'id'>> & { localChannelId: string };
+
+export function makeNewChannel<T extends ChannelType>(type: T): NewChannel<ChannelOfType<T>> {
+    const localChannelId = `blahblahblah`;
+    return { type, localChannelId };
+}
+
+const newTextChannel = makeNewChannel('text');
+newTextChannel.phoneNumber = '613-555-1234';
+
+const newTextChannel2 : NewChannel<TextChannel> = makeNewChannel('text');
+newTextChannel2.phoneNumber = '613-555-1234';
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: false,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one outer TS2322 for the return object. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|(_, message)| {
+            message.contains(
+                "Type '{ type: T; localChannelId: string; }' is not assignable to type 'NewChannel<ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>>'"
+            )
+        }),
+        "Expected TS2322 to stay on the outer object literal. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|(_, message)| !message.contains("never[\"type\"]")),
+        "Did not expect property-level never[\"type\"] elaboration. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_false_positive_const_type_param_multi() {
     // When a function has multiple type params and the first is `const`,
     // the solver's full inference path (used for >1 type params) must not
