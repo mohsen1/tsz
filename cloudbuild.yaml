@@ -37,7 +37,7 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      scripts/ci/gcp-full-ci.sh
+      scripts/ci/gcp-full-ci.sh "${_TSZ_CI_SUITE}"
 
 options:
   pool:
@@ -47,5 +47,6 @@ options:
 
 substitutions:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  _TSZ_CI_SUITE: all
 
 timeout: 3600s
