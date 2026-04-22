@@ -81,7 +81,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        if symbol.flags & symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return false;
         }
 
@@ -140,8 +140,8 @@ impl<'a> CheckerState<'a> {
         // spelling suggestions (TS2551 "Did you mean?") work on namespace accesses.
         if let Some(sym_id) = self.resolve_namespace_symbol_for_type(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && (symbol.flags & tsz_binder::symbol_flags::MODULE) != 0
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM) == 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::MODULE)
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
             && let Some(exports) = symbol.exports.as_ref()
         {
             return exports.iter().map(|(name, _)| name.clone()).collect();
@@ -446,7 +446,7 @@ impl<'a> CheckerState<'a> {
         // Search file-level symbols (the binder's file_locals).
         for (symbol_name, sym_id) in self.ctx.binder.file_locals.iter() {
             if let Some(sym) = self.ctx.binder.get_symbol(*sym_id)
-                && sym.flags & tsz_binder::symbol_flags::TYPE == 0
+                && !sym.has_any_flags(tsz_binder::symbol_flags::TYPE)
             {
                 continue;
             }
