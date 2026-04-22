@@ -884,6 +884,13 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
+                let lowering = if self.ctx.all_binders.is_some()
+                    || self.ctx.global_file_locals_index.is_some()
+                {
+                    lowering.prefer_name_def_id_resolution()
+                } else {
+                    lowering
+                };
 
                 // Try to lower as interface first (handles declaration merging)
                 if !symbol.declarations.is_empty() {
@@ -1144,9 +1151,19 @@ impl<'a> CheckerState<'a> {
                 // fully-merged type (post-heritage, post-augmentation).  The initial
                 // register_lib_def_resolved call registered the pre-merge body;
                 // this overwrites it with the final merged result.
-                let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                self.ctx
-                    .register_def_auto_params_in_envs(def_id, ty, type_params);
+                //
+                // Do not overwrite a generic alias body with `Lazy(def_id)` itself.
+                // For alias paths, `lib_type_id` can be the public lazy wrapper
+                // (`Lazy(def_id)`) while the real structural body was already
+                // registered by `register_lib_def_resolved`. Re-registering with the
+                // wrapper creates a self-lazy cycle (`DefId -> Lazy(DefId)`), which
+                // blocks application instantiation (e.g. `FlatArray<T, D>`).
+                if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty) != Some(def_id)
+                {
+                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, ty, type_params);
+                }
             }
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId

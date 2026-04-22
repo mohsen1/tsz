@@ -408,11 +408,29 @@ impl tsz_solver::TypeResolver for CheckerDeclarationCycleHost<'_, '_> {
     ) -> Option<TypeId> {
         self.state.ctx.resolve_lazy(def_id, interner)
     }
+
+    fn get_lazy_type_params(
+        &self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        self.state.ctx.get_lazy_type_params(def_id)
+    }
+
+    fn def_to_symbol_id(&self, def_id: tsz_solver::DefId) -> Option<tsz_binder::SymbolId> {
+        self.state.ctx.def_to_symbol_id(def_id)
+    }
 }
 
 impl tsz_solver::type_queries::DeclarationTypeCycleHost for CheckerDeclarationCycleHost<'_, '_> {
     fn evaluate_application_for_serialization(&mut self, type_id: TypeId) -> TypeId {
         self.state.evaluate_application_type(type_id)
+    }
+
+    fn is_application_alias_serialization_exempt(&self, base_def_id: tsz_solver::DefId) -> bool {
+        self.state
+            .ctx
+            .def_to_symbol_id(base_def_id)
+            .is_some_and(|sym_id| self.state.ctx.symbol_is_from_actual_lib(sym_id))
     }
 }
 
