@@ -1791,10 +1791,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 let code =
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION_OR_OPTION;
                 let mut related_keys = vec![opt];
-                if compiler_opts.contains_key("declaration") {
+                if option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "declaration") {
                     related_keys.push("declaration");
                 }
-                if compiler_opts.contains_key("composite") {
+                if option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "composite") {
                     related_keys.push("composite");
                 }
                 for key in related_keys {
@@ -2455,6 +2455,14 @@ fn option_is_effectively_enabled(
         return false;
     }
     option_is_truthy(compiler_opts.get(key))
+}
+
+fn option_key_present_or_invalidated(
+    compiler_opts: &serde_json::Map<String, serde_json::Value>,
+    invalidated_options: &[String],
+    key: &str,
+) -> bool {
+    compiler_opts.contains_key(key) || invalidated_options.iter().any(|k| k == key)
 }
 
 /// Check if a string is a valid TypeScript identifier or qualified name.
