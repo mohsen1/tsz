@@ -1340,23 +1340,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 // Track all TS5024 keys so we can suppress TS5101 for the same key.
                 ts5024_keys.push(key.clone());
                 // tsc emits TS5024 and does NOT apply the value (convertJsonOption
-                // returns undefined for type mismatches). However, our conformance
-                // runner relies on the coercion to match expected diagnostics for
-                // tests with `// @strict: true,false` etc. Fixing this properly
-                // requires addressing 36+ other conformance gaps first.
-                // TODO: Remove this workaround once non-strict-mode conformance improves.
-                let is_coercible_bool_string = expected_type == "boolean"
-                    && key != "isolatedModules"
-                    && key != "allowImportingTsExtensions"
-                    && key != "allowArbitraryExtensions"
-                    && value.is_string()
-                    && matches!(
-                        value.as_str().unwrap_or("").trim().to_lowercase().as_str(),
-                        "true" | "false"
-                    );
-                if !is_coercible_bool_string {
-                    bad_keys.push(key.clone());
-                }
+                // returns undefined for type mismatches), so remove invalidly-typed
+                // values from the config object before deserialization.
+                bad_keys.push(key.clone());
             }
         }
         // Remove invalid values so serde defaults them to None
@@ -5626,12 +5612,9 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5024_coercible_boolean_string_still_applied() {
+    fn test_ts5024_boolean_string_is_not_applied() {
         // When alwaysStrict is a string "true" (not boolean true), tsc emits TS5024
-        // and does NOT apply the value (convertJsonOption returns undefined). However,
-        // our conformance runner relies on coercion because many tests use
-        // `// @strict: true,false` and our non-strict conformance has gaps. We coerce
-        // as a workaround until those gaps are fixed.
+        // and does NOT apply the value (convertJsonOption returns undefined).
         let source = r#"{
   "compilerOptions": {
     "strict": false,
@@ -5645,11 +5628,11 @@ mod tests {
             has_ts5024,
             "Should emit TS5024 for string 'true' on boolean option"
         );
-        // Workaround: value is still applied (coerced) despite TS5024
+        // Invalidly-typed values should not be applied.
         let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
         assert!(
-            resolved.checker.always_strict,
-            "alwaysStrict should be true — workaround coercion until non-strict conformance improves"
+            !resolved.checker.always_strict,
+            "alwaysStrict should remain false when provided as a string-typed boolean"
         );
     }
 
