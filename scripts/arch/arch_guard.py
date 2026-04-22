@@ -446,6 +446,8 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/error_reporter/properties.rs",
             "crates/tsz-checker/src/error_reporter/core/diagnostic_source.rs",
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
+            # Pre-existing: checker context module aggregates project-wide state.
+            "crates/tsz-checker/src/context/mod.rs",
         },
     ),
 ]

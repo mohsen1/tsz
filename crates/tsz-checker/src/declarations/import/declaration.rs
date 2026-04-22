@@ -2083,6 +2083,12 @@ impl<'a> CheckerState<'a> {
                             if self.is_inside_module_augmentation(decl_idx) {
                                 return false;
                             }
+                            // `declare global { ... }` injects declarations into the
+                            // global scope, not the module scope the import lives in.
+                            // Those declarations must not collide with module imports.
+                            if self.is_inside_global_augmentation(decl_idx) {
+                                return false;
+                            }
                             // Scope check: the declaration must be in the same
                             // logical scope as the import.  We compare scopes by
                             // checking if they are the same ScopeId OR if they
@@ -2123,6 +2129,11 @@ impl<'a> CheckerState<'a> {
                                 return false;
                             }
 
+                            // `export as namespace X` only binds a global
+                            // namespace alias, never a local module binding.
+                            if self.decl_is_namespace_export_declaration(decl_idx) {
+                                return false;
+                            }
                             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
                                 if matches!(
                                     decl_node.kind,
@@ -2137,6 +2148,7 @@ impl<'a> CheckerState<'a> {
                                         // conflict with imports.
                                         | syntax_kind_ext::EXPORT_SPECIFIER
                                         | syntax_kind_ext::EXPORT_DECLARATION
+                                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                                 ) {
                                     return false;
                                 }
@@ -2230,6 +2242,23 @@ impl<'a> CheckerState<'a> {
                                             {
                                                 return false;
                                             }
+                                            // `declare global { ... }` places declarations in
+                                            // the global scope; they can't conflict with an
+                                            // import living in the enclosing module scope.
+                                            if self.is_inside_global_augmentation(decl_idx) {
+                                                return false;
+                                            }
+                                            // `export as namespace X` declares a global
+                                            // namespace alias for the module. It does not
+                                            // introduce a local binding, so it must not
+                                            // collide with a module-scope import. The binder
+                                            // may point at the identifier inside the
+                                            // declaration, so check both the node itself and
+                                            // its immediate parent.
+                                            if self.decl_is_namespace_export_declaration(decl_idx)
+                                            {
+                                                return false;
+                                            }
                                             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
                                                 if matches!(
                                                     decl_node.kind,
@@ -2241,6 +2270,7 @@ impl<'a> CheckerState<'a> {
                                                         | syntax_kind_ext::NAMED_IMPORTS
                                                         | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                                                         | syntax_kind_ext::IMPORT_DECLARATION
+                                                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                                                 ) {
                                                     return false;
                                                 }
