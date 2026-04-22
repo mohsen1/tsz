@@ -198,28 +198,6 @@ pub fn clear_thread_local_cache() {
     });
 }
 
-/// Returns `true` when `type_id` resolves to the empty object shape `{}`
-/// (no own properties and, for indexed shapes, no index signatures).
-///
-/// Used by `store_display_alias` to skip aliasing the universal `{}` shape,
-/// which many generic reductions intern to and which users frequently write
-/// explicitly. See the comment in `store_display_alias` for details.
-fn is_empty_object_type_id(interner: &TypeInterner, type_id: TypeId) -> bool {
-    match interner.lookup(type_id) {
-        Some(TypeData::Object(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            shape.properties.is_empty()
-        }
-        Some(TypeData::ObjectWithIndex(shape_id)) => {
-            let shape = interner.object_shape(shape_id);
-            shape.properties.is_empty()
-                && shape.string_index.is_none()
-                && shape.number_index.is_none()
-        }
-        _ => false,
-    }
-}
-
 pub(super) const SHARD_BITS: u32 = 6;
 pub(super) const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
 pub(super) const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;
@@ -1233,17 +1211,6 @@ impl TypeInterner {
         // shared sentinels and aliasing them would make ALL occurrences display
         // as whatever alias happened to be stored last.
         if evaluated.is_intrinsic() {
-            return;
-        }
-        // Never alias the empty object type `{}`. Like intrinsics, `{}` is a
-        // universally-shared interning target: many generic reductions evaluate
-        // to it (e.g., `T50<unknown>` where `T50<T> = { [P in keyof T]: number }`
-        // reduces to `{}` because `keyof unknown = never`). Aliasing would make
-        // every user-written `{}` annotation display as whatever application
-        // happened to reduce to `{}` first. Named empty types
-        // (e.g. `interface Empty {}`) reach the formatter through `DefId`
-        // resolution before display_alias, so their names are preserved.
-        if is_empty_object_type_id(self, evaluated) {
             return;
         }
         // Guard against self-referential cycles: if the Application's args

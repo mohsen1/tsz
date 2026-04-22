@@ -1693,15 +1693,11 @@ fn concrete_display_alias_can_name_preexisting_structural_type() {
     );
 }
 
-/// The empty object shape `{}` is a universally-shared interning target:
-/// many generic reductions (e.g., `T50<unknown>` where
-/// `T50<T> = { [P in keyof T]: number }`) evaluate to `{}` because
-/// `keyof unknown = never`. Aliasing `{}` to the application's nominal form
-/// causes user-written `{}` annotations to misprint as the helper alias in
-/// unrelated diagnostics. Guard: `store_display_alias` must reject
-/// empty-object evaluatees, matching the treatment of intrinsic sentinels.
+/// The empty object shape `{}` is a universally-shared interning target, but
+/// some named generic interfaces/classes have empty bodies and still need a
+/// display alias so their type arguments survive diagnostic rendering.
 #[test]
-fn display_alias_is_not_stored_for_empty_object_type() {
+fn display_alias_can_be_stored_for_empty_object_type() {
     let db = TypeInterner::new();
     let evaluated = db.object(vec![]);
     let app = db.application(db.lazy(crate::def::DefId(1)), vec![TypeId::UNKNOWN]);
@@ -1710,10 +1706,9 @@ fn display_alias_is_not_stored_for_empty_object_type() {
 
     assert_eq!(
         db.get_display_alias(evaluated),
-        None,
-        "Empty object `{{}}` must not carry a display_alias — many generic \
-         reductions evaluate to `{{}}`, so aliasing would repaint every \
-         user-written `{{}}` annotation."
+        Some(app),
+        "Empty object applications may need a display_alias for named generic \
+         interfaces/classes whose structural body is empty."
     );
 }
 
@@ -1721,24 +1716,79 @@ fn display_alias_is_not_stored_for_empty_object_type() {
 /// mapped-type application (`T50<unknown>`) reduces to `{}` and is stored as
 /// a `display_alias`, later diagnostics that reference `{}` (e.g.,
 /// `let v6: {} = x` where `x: unknown`) would print the target type as
-/// `T50<unknown>` instead of `{}`. The fix skips alias storage for `{}` so
-/// the formatter falls through to the structural form.
+/// `T50<unknown>` instead of `{}`. The formatter must skip empty-object display
+/// aliases only when the application base is a type alias.
 #[test]
 fn empty_object_formats_as_braces_after_mapped_reduction() {
     let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
     // Simulate the result of evaluating `T50<unknown>`: an application over a
-    // (fake) type alias with `unknown` as the sole argument reduces to `{}`.
+    // type alias with `unknown` as the sole argument reduces to `{}`.
     let evaluated = db.object(vec![]);
-    let app = db.application(db.lazy(crate::def::DefId(1)), vec![TypeId::UNKNOWN]);
+    let name = db.intern_string("T50");
+    let def_id = def_store.register(crate::def::DefinitionInfo::type_alias(
+        name,
+        vec![],
+        evaluated,
+    ));
+    let app = db.application(db.lazy(def_id), vec![TypeId::UNKNOWN]);
 
     db.store_display_alias(evaluated, app);
 
-    let mut fmt = TypeFormatter::new(&db);
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(evaluated);
     assert_eq!(
         result, "{}",
         "Empty object must format as `{{}}` even when a generic application \
          has reduced to the same interned shape."
+    );
+}
+
+#[test]
+fn empty_object_interface_application_preserves_type_args() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let evaluated = db.object(vec![]);
+    let name = db.intern_string("AsyncGenerator");
+    let info = crate::def::DefinitionInfo::interface(
+        name,
+        vec![
+            TypeParamInfo {
+                name: db.intern_string("T"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("TReturn"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: db.intern_string("TNext"),
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        vec![],
+    );
+    let def_id = def_store.register(info);
+    def_store.register_type_to_def(evaluated, def_id);
+    let app = db.application(
+        db.lazy(def_id),
+        vec![TypeId::NUMBER, TypeId::VOID, TypeId::UNKNOWN],
+    );
+
+    db.store_display_alias(evaluated, app);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(evaluated),
+        "AsyncGenerator<number, void, unknown>",
+        "Named generic interfaces with empty structural bodies must keep their \
+         application display."
     );
 }
 

@@ -221,6 +221,25 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    fn display_alias_application_base_is_type_alias(&self, alias_origin: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            _ => def_store.find_def_for_type(app.base),
+        };
+
+        def_id
+            .and_then(|def_id| def_store.get(def_id))
+            .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
+    }
+
     /// Skip type alias names for aliases whose body is a generic Application.
     /// Used in assignability messages where tsc shows the Application form.
     pub const fn with_skip_application_alias_names(mut self) -> Self {
@@ -616,14 +635,15 @@ impl<'a> TypeFormatter<'a> {
                 )
                 && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
 
-            // For empty `{}`, never follow the alias — the empty object is
-            // a universally-shared shape and many generic reductions (e.g.,
-            // `T50<unknown>` → `{}`) point to it. Following the alias would
-            // repaint user-written `{}` annotations with the originating
-            // application form; tsc renders `{}` structurally in that case.
+            // For empty `{}`, do not follow applications of type aliases: the
+            // empty object is a universally-shared shape and mapped/conditional
+            // reductions can point many unrelated annotations at the same TypeId.
+            // Named generic interfaces/classes with empty bodies still need their
+            // application display (e.g. `AsyncGenerator<number, void, unknown>`).
             if (!is_simple_type || use_keyof_alias || use_application_alias)
                 && !skip_intersection_alias
-                && !is_empty_object
+                && !(is_empty_object
+                    && self.display_alias_application_base_is_type_alias(alias_origin))
                 && self.display_alias_visiting.insert(alias_origin)
             {
                 let result = self.format(alias_origin);
