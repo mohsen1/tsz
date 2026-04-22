@@ -41,7 +41,7 @@ steps:
 
 options:
   pool:
-    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-c3-88
+    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-224
   logging: CLOUD_LOGGING_ONLY
   automapSubstitutions: true
 

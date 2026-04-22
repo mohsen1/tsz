@@ -53,8 +53,8 @@ default_conformance_workers() {
   workers=$((HOST_CPUS - 8))
   if (( workers < 1 )); then
     workers="$HOST_CPUS"
-  elif (( workers > 160 )); then
-    workers=160
+  elif (( workers > 216 )); then
+    workers=216
   fi
   cap_workers "$workers"
 }

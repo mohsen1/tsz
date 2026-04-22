@@ -3,14 +3,13 @@
 CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoint is `cloudbuild.yaml`, which runs
-`scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. Heavy suites
-use `cloudbuild.yaml` on the `tsz-ci-c3-88` pool, while lighter suites use
-`cloudbuild.e2.yaml` on the light-suite private pool so they do not occupy heavy
-pool capacity. The current pools are sized for 176-vCPU machines. The script
+`scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. Both checked-in
+build configs currently target the `tsz-ci-n2d-224` pool so all suite checks can
+run concurrently without consuming the small C3 quota. The script
 keeps the old CI gates: Rust formatting, metadata guardrails,
 clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
-regression checks. Conformance defaults to up to 160 workers on the current
-176-vCPU pools. Emit and fourslash default to 4 shards and compute workers per
+regression checks. Conformance defaults to up to 216 workers on the current
+224-vCPU pool. Emit and fourslash default to 4 shards and compute workers per
 shard from the detected CPU count, leaving a small reserve for system overhead.
 
 Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
@@ -48,16 +47,10 @@ cache mode.
 Create the private pool before running builds or creating triggers:
 
 ```bash
-gcloud builds worker-pools create tsz-ci-c3-88 \
+gcloud builds worker-pools create tsz-ci-n2d-224 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=c3-highcpu-176 \
-  --worker-disk-size=200GB
-
-gcloud builds worker-pools create tsz-ci-e2-32 \
-  --project=thirdface-ai-oauth \
-  --region=us-central1 \
-  --worker-machine-type=c3-standard-176 \
+  --worker-machine-type=n2d-highcpu-224 \
   --worker-disk-size=200GB
 ```
 
