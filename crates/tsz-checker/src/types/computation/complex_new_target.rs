@@ -158,14 +158,9 @@ impl<'a> CheckerState<'a> {
         let Some(export_symbol) = target_binder.get_symbol(export_sym_id) else {
             return false;
         };
-        let decl_idx = if export_symbol.value_declaration.is_some() {
-            export_symbol.value_declaration
-        } else {
-            *export_symbol
-                .declarations
-                .first()
-                .unwrap_or(&NodeIndex::NONE)
-        };
+        let decl_idx = export_symbol
+            .primary_declaration()
+            .unwrap_or(NodeIndex::NONE);
         target_arena
             .get(decl_idx)
             .filter(|decl| decl.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION)
@@ -323,14 +318,9 @@ impl<'a> CheckerState<'a> {
                 let target_arena = target_file_idx
                     .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
                     .unwrap_or(self.ctx.arena);
-                let resolved_decl_idx = if resolved_symbol.value_declaration.is_some() {
-                    resolved_symbol.value_declaration
-                } else {
-                    *resolved_symbol
-                        .declarations
-                        .first()
-                        .unwrap_or(&NodeIndex::NONE)
-                };
+                let resolved_decl_idx = resolved_symbol
+                    .primary_declaration()
+                    .unwrap_or(NodeIndex::NONE);
                 target_arena
                     .get(resolved_decl_idx)
                     .filter(|decl| {
