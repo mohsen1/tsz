@@ -738,6 +738,12 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     fn set_no_unchecked_indexed_access(&self, _enabled: bool) {}
 
+    fn exact_optional_property_types(&self) -> bool {
+        false
+    }
+
+    fn set_exact_optional_property_types(&self, _enabled: bool) {}
+
     fn contextual_property_type(&self, expected: TypeId, prop_name: &str) -> Option<TypeId> {
         let ctx = crate::ContextualTypeContext::with_expected(self.as_type_database(), expected);
         ctx.get_property_type(prop_name)
@@ -1091,7 +1097,9 @@ impl QueryDatabase for TypeInterner {
     ) -> crate::operations::property::PropertyAccessResult {
         // TypeInterner doesn't have TypeResolver capability, so it can't resolve Lazy types
         // Use PropertyAccessEvaluator with QueryDatabase (self implements both TypeDatabase and TypeResolver)
-        let evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
+        evaluator
+            .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
         evaluator.resolve_property_access(object_type, prop_name)
     }
 
@@ -1103,6 +1111,8 @@ impl QueryDatabase for TypeInterner {
     ) -> crate::operations::property::PropertyAccessResult {
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator
+            .set_exact_optional_property_types(TypeInterner::exact_optional_property_types(self));
         evaluator.resolve_property_access(object_type, prop_name)
     }
 
@@ -1135,6 +1145,14 @@ impl QueryDatabase for TypeInterner {
 
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         TypeInterner::set_no_unchecked_indexed_access(self, enabled);
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        TypeInterner::exact_optional_property_types(self)
+    }
+
+    fn set_exact_optional_property_types(&self, enabled: bool) {
+        TypeInterner::set_exact_optional_property_types(self, enabled);
     }
 
     fn get_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {
