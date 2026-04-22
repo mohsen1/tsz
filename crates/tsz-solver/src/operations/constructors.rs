@@ -140,8 +140,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let actual_count = arg_types.len();
         // Track single count-compatible overload that fails on types (see resolve_callable_call).
         let mut type_mismatch_count: usize = 0;
-        let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None;
+        let mut first_type_mismatch: Option<(usize, TypeId, TypeId, TypeId)> = None;
         let mut all_mismatches_identical = true;
+        let mut all_mismatch_fallbacks_identical = true;
         let mut has_non_count_non_type_failure = false;
         // Also track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
         // when all failures are identical this-type mismatches)
@@ -169,14 +170,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     index,
                     expected,
                     actual,
-                    ..
+                    fallback_return,
                 } => {
                     all_arg_count_mismatches = false;
                     type_mismatch_count += 1;
                     if type_mismatch_count == 1 {
-                        first_type_mismatch = Some((index, expected, actual));
-                    } else if first_type_mismatch != Some((index, expected, actual)) {
-                        all_mismatches_identical = false;
+                        first_type_mismatch = Some((index, expected, actual, fallback_return));
+                    } else if let Some((
+                        first_index,
+                        first_expected,
+                        first_actual,
+                        first_fallback,
+                    )) = first_type_mismatch
+                    {
+                        if (first_index, first_expected, first_actual) != (index, expected, actual)
+                        {
+                            all_mismatches_identical = false;
+                        }
+                        if first_fallback != fallback_return {
+                            all_mismatch_fallbacks_identical = false;
+                        }
                     }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
@@ -248,13 +261,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if !has_non_count_non_type_failure
             && type_mismatch_count > 0
             && all_mismatches_identical
-            && let Some((index, expected, actual)) = first_type_mismatch
+            && let Some((index, expected, actual, fallback_return)) = first_type_mismatch
         {
             return CallResult::ArgumentTypeMismatch {
                 index,
                 expected,
                 actual,
-                fallback_return: TypeId::ERROR,
+                fallback_return: if all_mismatch_fallbacks_identical {
+                    fallback_return
+                } else {
+                    TypeId::ERROR
+                },
             };
         }
 

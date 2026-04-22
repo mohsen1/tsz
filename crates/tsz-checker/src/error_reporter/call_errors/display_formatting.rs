@@ -1084,6 +1084,12 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if self.call_target_preserves_literal_argument_surface(param_type, arg_idx)
+            && let Some(display) = self.literal_call_argument_display(arg_idx)
+        {
+            return display;
+        }
+
         let mut display_type = if param_type == TypeId::NEVER {
             if let Some(display) = self.zero_argument_call_list_display(arg_idx) {
                 return display;
@@ -1114,6 +1120,19 @@ impl<'a> CheckerState<'a> {
         self.rewrite_source_display_for_non_literal_target_assignability(
             arg_type, param_type, display,
         )
+    }
+
+    fn call_target_preserves_literal_argument_surface(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        if self.enclosing_call_parameter_is_optional_non_rest(arg_idx) {
+            return false;
+        }
+        let evaluated = self.evaluate_type_for_assignability(param_type);
+        query_common::union_members(self.ctx.types, param_type).is_some()
+            || query_common::union_members(self.ctx.types, evaluated).is_some()
     }
 
     fn contextual_function_argument_display(
@@ -1467,11 +1486,13 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        // Use format_assignability_type_for_message to strip `| undefined` from
-        // optional parameter types when the argument is non-nullable.  tsc shows
-        // the declared parameter type without `| undefined` in TS2345 messages
-        // when the user actually provided an argument.
-        self.format_assignability_type_for_message(param_type, arg_type)
+        if self.enclosing_call_parameter_is_optional_non_rest(arg_idx) {
+            // tsc elides the synthetic optional `| undefined` surface once a
+            // regular argument definitely fills an optional non-rest slot.
+            return self.format_assignability_type_for_message(param_type, arg_type);
+        }
+
+        self.format_assignability_type_for_message_preserving_nullish(param_type, arg_type)
     }
 
     /// When the argument is a non-tuple spread (e.g. `...mixed` where
@@ -1510,28 +1531,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let (callee_type, arg_pos) = self.enclosing_call_arg_position(arg_idx)?;
-
-        let param_is_optional_non_rest = |params: &[tsz_solver::ParamInfo]| {
-            params
-                .get(arg_pos)
-                .map(|p| p.optional && !p.rest)
-                .unwrap_or(false)
-        };
-
-        let mut optional = false;
-        if let Some(shape) = query_common::function_shape_for_type(self.ctx.types, callee_type) {
-            optional = param_is_optional_non_rest(&shape.params);
-        }
-        if !optional
-            && let Some(signatures) =
-                query_common::call_signatures_for_type(self.ctx.types, callee_type)
-        {
-            optional = signatures
-                .iter()
-                .any(|sig| param_is_optional_non_rest(&sig.params));
-        }
-        if !optional {
+        if !self.enclosing_call_parameter_is_optional_non_rest(arg_idx) {
             return None;
         }
         // The solver typically widens optional-param types to include `undefined`
@@ -1551,6 +1551,33 @@ impl<'a> CheckerState<'a> {
         };
 
         Some(self.format_type_for_assignability_message(widened))
+    }
+
+    fn enclosing_call_parameter_is_optional_non_rest(&mut self, arg_idx: NodeIndex) -> bool {
+        let Some((callee_type, arg_pos)) = self.enclosing_call_arg_position(arg_idx) else {
+            return false;
+        };
+
+        let param_is_optional_non_rest = |params: &[tsz_solver::ParamInfo]| {
+            params
+                .get(arg_pos)
+                .map(|p| p.optional && !p.rest)
+                .unwrap_or(false)
+        };
+
+        if let Some(shape) = query_common::function_shape_for_type(self.ctx.types, callee_type)
+            && param_is_optional_non_rest(&shape.params)
+        {
+            return true;
+        }
+
+        query_common::call_signatures_for_type(self.ctx.types, callee_type).is_some_and(
+            |signatures| {
+                signatures
+                    .iter()
+                    .any(|sig| param_is_optional_non_rest(&sig.params))
+            },
+        )
     }
 
     fn enclosing_call_arg_position(&mut self, arg_idx: NodeIndex) -> Option<(TypeId, usize)> {

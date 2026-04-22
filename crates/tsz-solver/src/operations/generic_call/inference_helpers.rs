@@ -32,6 +32,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Direct arguments should stay narrow when there are heterogeneous candidates.
         // Otherwise TypeScript-style checks can get masked by a broad union result.
         if all_mergeable {
+            // Preserve tsc's nullable-envelope inference for direct rest parameters.
+            // `foo<T>(...s: T[])` called as `foo(false, undefined, null, "x")`
+            // infers `T = boolean | null | undefined`; the later string should
+            // fail against that type rather than forcing T back to the first
+            // boolean candidate and reporting the earlier `undefined` mismatch.
+            if self.should_preserve_nullable_direct_inference_result(lower_bounds, inferred) {
+                return crate::operations::widening::widen_literal_type(self.interner, inferred);
+            }
             // Guard: if lower bounds contain literals with different primitive bases
             // (e.g., "" and 3 → string vs number), fall back to the first candidate.
             // tsc keeps the first candidate in those cases so later argument checks
@@ -59,6 +67,56 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .copied()
             .find(|ty| !matches!(*ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
             .unwrap_or(lower_bounds[0])
+    }
+
+    fn should_preserve_nullable_direct_inference_result(
+        &self,
+        lower_bounds: &[TypeId],
+        inferred: TypeId,
+    ) -> bool {
+        if !lower_bounds
+            .iter()
+            .copied()
+            .any(|bound| self.type_includes_nullish_member(bound))
+        {
+            return false;
+        }
+
+        let Some(TypeData::Union(members)) = self.interner.lookup(inferred) else {
+            return false;
+        };
+
+        let mut has_nullish = false;
+        let mut non_nullish_count = 0;
+
+        for &member in self.interner.type_list(members).iter() {
+            if member.is_nullish() {
+                has_nullish = true;
+            } else {
+                non_nullish_count += 1;
+                if non_nullish_count > 1 {
+                    return false;
+                }
+            }
+        }
+
+        has_nullish && non_nullish_count == 1
+    }
+
+    fn type_includes_nullish_member(&self, ty: TypeId) -> bool {
+        if ty.is_nullish() {
+            return true;
+        }
+
+        match self.interner.lookup(ty) {
+            Some(TypeData::Union(members)) => self
+                .interner
+                .type_list(members)
+                .iter()
+                .copied()
+                .any(TypeId::is_nullish),
+            _ => false,
+        }
     }
 
     fn preferred_specific_tuple_inference_candidate(
