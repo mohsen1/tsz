@@ -193,7 +193,8 @@ impl<'a> CheckerState<'a> {
         // If the type alias declaration exists in the current arena, handle it locally.
         {
             let sym_found = self.get_cross_file_symbol(sym_id);
-            let has_type_alias = sym_found.is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
+            let has_type_alias =
+                sym_found.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
             if has_type_alias {
                 let symbol = sym_found.expect("has_type_alias guard ensures sym_found is Some");
                 tracing::debug!(
@@ -243,7 +244,7 @@ impl<'a> CheckerState<'a> {
         {
             let sym_found = self.get_cross_file_symbol(sym_id);
             if let Some(symbol) = sym_found
-                && (symbol.flags & symbol_flags::CLASS) != 0
+                && symbol.has_any_flags(symbol_flags::CLASS)
             {
                 let has_class_in_current_arena = symbol.declarations.iter().any(|&d| {
                     self.ctx
@@ -263,10 +264,10 @@ impl<'a> CheckerState<'a> {
         {
             let sym_found = self.get_cross_file_symbol(sym_id);
             if let Some(symbol) = sym_found
-                && (symbol.flags & symbol_flags::FUNCTION) != 0
-                && (symbol.flags
-                    & (symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::ALIAS))
-                    == 0
+                && symbol.has_any_flags(symbol_flags::FUNCTION)
+                && !symbol.has_any_flags(
+                    symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::ALIAS,
+                )
             {
                 let has_function_in_current_arena = symbol.declarations.iter().any(|&d| {
                     self.ctx
@@ -285,7 +286,7 @@ impl<'a> CheckerState<'a> {
 
         if !is_known_cross_file
             && let Some(symbol) = self.get_cross_file_symbol(sym_id)
-            && (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+            && symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
         {
             return None;
         }
@@ -308,7 +309,7 @@ impl<'a> CheckerState<'a> {
         let mut interface_has_local_decl = false;
         if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = self.get_cross_file_symbol(sym_id)
-            && (symbol.flags & symbol_flags::INTERFACE) != 0
+            && symbol.has_any_flags(symbol_flags::INTERFACE)
         {
             let has_local_interface = symbol.declarations.iter().any(|&d| {
                 self.ctx
@@ -333,7 +334,7 @@ impl<'a> CheckerState<'a> {
         let mut function_has_local_decl = false;
         if delegate_arena.is_some_and(|arena| !std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = self.get_cross_file_symbol(sym_id)
-            && (symbol.flags & symbol_flags::FUNCTION) != 0
+            && symbol.has_any_flags(symbol_flags::FUNCTION)
         {
             let has_local_function_decl = symbol.declarations.iter().any(|&d| {
                 self.ctx
@@ -362,7 +363,7 @@ impl<'a> CheckerState<'a> {
             // have a declaration in the current arena (we want the local
             // compute_type_of_symbol path to see every overload, including
             // the lib-arena ones, via declaration_arenas lookup).
-            if symbol.flags & symbol_flags::INTERFACE == 0 && !function_has_local_decl {
+            if !symbol.has_any_flags(symbol_flags::INTERFACE) && !function_has_local_decl {
                 let mut decl_candidates = symbol.declarations.clone();
                 if symbol.value_declaration.is_some() {
                     decl_candidates.push(symbol.value_declaration);
@@ -1166,7 +1167,7 @@ impl<'a> CheckerState<'a> {
             }
             let sym = self.ctx.binder.file_locals.get(name)?;
             let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
-            if (symbol.flags & symbol_flags::TYPE) != 0 {
+            if symbol.has_any_flags(symbol_flags::TYPE) {
                 return Some(sym.0);
             }
             None
@@ -1181,7 +1182,7 @@ impl<'a> CheckerState<'a> {
             }
             let sym = self.ctx.binder.file_locals.get(name)?;
             let symbol = self.ctx.binder.get_symbol_with_libs(sym, &lib_binders)?;
-            if (symbol.flags & symbol_flags::TYPE) != 0 {
+            if symbol.has_any_flags(symbol_flags::TYPE) {
                 Some(self.ctx.get_or_create_def_id(sym))
             } else {
                 None
