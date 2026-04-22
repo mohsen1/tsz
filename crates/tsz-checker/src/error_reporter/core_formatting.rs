@@ -689,6 +689,80 @@ impl<'a> CheckerState<'a> {
         self.format_assignability_type_for_message_internal(ty, other, false)
     }
 
+    pub(in crate::error_reporter) fn finalize_pair_display_for_diagnostic(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_display: String,
+        target_display: String,
+    ) -> (String, String) {
+        if source == target || source_display != target_display {
+            return (source_display, target_display);
+        }
+
+        let Some(source_name) = Self::bare_nominal_display_name(&source_display) else {
+            return (source_display, target_display);
+        };
+        let Some(target_name) = Self::bare_nominal_display_name(&target_display) else {
+            return (source_display, target_display);
+        };
+        if source_name != target_name {
+            return (source_display, target_display);
+        }
+
+        let (pair_source, pair_target) = self.format_type_pair_diagnostic(source, target);
+        if pair_source == pair_target
+            || (pair_source == source_display && pair_target == target_display)
+        {
+            let source_candidate = self.format_assignability_type_for_message(source, target);
+            let target_candidate = self.format_assignability_type_for_message(target, source);
+            if source_candidate == target_candidate
+                || (source_candidate == source_display && target_candidate == target_display)
+            {
+                return (source_display, target_display);
+            }
+            return (source_candidate, target_candidate);
+        }
+
+        (pair_source, pair_target)
+    }
+
+    fn bare_nominal_display_name(display: &str) -> Option<&str> {
+        let mut text = display.trim();
+        if let Some(rest) = text.strip_prefix("typeof ") {
+            text = rest.trim();
+        }
+
+        if text.is_empty()
+            || text.starts_with('{')
+            || text.starts_with('[')
+            || text.starts_with('"')
+            || text.starts_with('\'')
+            || text.contains("=>")
+            || text.contains(" | ")
+            || text.contains(" & ")
+        {
+            return None;
+        }
+
+        let head = text.split_once('<').map(|(head, _)| head).unwrap_or(text);
+        let name = head.rsplit_once('.').map(|(_, name)| name).unwrap_or(head);
+        let mut chars = name.chars();
+        let first = chars.next()?;
+        if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+            return None;
+        }
+        if !chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()) {
+            return None;
+        }
+
+        match name {
+            "any" | "unknown" | "never" | "string" | "number" | "boolean" | "symbol" | "bigint"
+            | "void" | "undefined" | "null" | "object" => None,
+            _ => Some(name),
+        }
+    }
+
     fn format_assignability_type_for_message_internal(
         &mut self,
         ty: TypeId,
