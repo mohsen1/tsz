@@ -424,7 +424,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// type environment, avoiding `RefCell` borrow conflicts when the subtype
     /// checker is called from within a mutable borrow of the type environment.
     fn get_array_base_type(&self) -> Option<tsz_solver::TypeId> {
-        self.types.get_array_base_type()
+        tsz_solver::TypeResolver::get_array_base_type(&self.types)
     }
 
     /// Get the type parameters for the Array<T> interface.
@@ -432,7 +432,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn get_array_base_type_params(&self) -> &[tsz_solver::TypeParamInfo] {
         // We can't borrow type_env and return a reference from it (lifetime issue),
         // so we fall back to the interner which stores the same data.
-        self.types.get_array_base_type_params()
+        tsz_solver::TypeResolver::get_array_base_type_params(&self.types)
     }
 
     /// Get the base class type for a class/interface type.

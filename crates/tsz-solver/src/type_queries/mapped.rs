@@ -613,28 +613,93 @@ pub const fn compute_mapped_modifiers(
 /// its properties into a map of `(optional, readonly, declared_type)` tuples.
 /// This is used by `expand_mapped_type_to_properties` to compute modifiers and
 /// for `-?` to preserve the distinction between implicit and explicit undefined.
+pub fn collect_homomorphic_source_property_infos(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+) -> Vec<PropertyInfo> {
+    fn sort_by_display_or_declaration_order(
+        db: &dyn TypeDatabase,
+        source: TypeId,
+        props: &[PropertyInfo],
+    ) -> Vec<PropertyInfo> {
+        let mut ordered = props.to_vec();
+        if let Some(display_props) = db.get_display_properties(source) {
+            let order_map: FxHashMap<Atom, usize> = display_props
+                .iter()
+                .enumerate()
+                .map(|(idx, prop)| (prop.name, idx))
+                .collect();
+            ordered.sort_by_key(|prop| order_map.get(&prop.name).copied().unwrap_or(usize::MAX));
+        } else if ordered.iter().any(|prop| prop.declaration_order > 0) {
+            ordered.sort_by_key(|prop| prop.declaration_order);
+        }
+        ordered
+    }
+
+    fn collect_array_property_infos(
+        db: &dyn TypeDatabase,
+        element_type: TypeId,
+    ) -> Vec<PropertyInfo> {
+        let Some(array_base) = db
+            .get_array_display_base_type()
+            .or_else(|| db.get_array_base_type())
+        else {
+            return Vec::new();
+        };
+        let base_props = collect_homomorphic_source_property_infos(db, array_base);
+        let Some(array_param) = db.get_array_base_type_params().first() else {
+            return base_props;
+        };
+        let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
+        subst.insert(array_param.name, element_type);
+        base_props
+            .into_iter()
+            .map(|mut prop| {
+                prop.type_id = crate::evaluation::evaluate::evaluate_type(
+                    db,
+                    crate::instantiation::instantiate::instantiate_type(db, prop.type_id, &subst),
+                );
+                prop.write_type = crate::evaluation::evaluate::evaluate_type(
+                    db,
+                    crate::instantiation::instantiate::instantiate_type(
+                        db,
+                        prop.write_type,
+                        &subst,
+                    ),
+                );
+                prop
+            })
+            .collect()
+    }
+
+    if let Some(TypeData::Array(element_type)) = db.lookup(source) {
+        return collect_array_property_infos(db, element_type);
+    }
+
+    let evaluated = crate::evaluation::evaluate::evaluate_type(db, source);
+    match db.lookup(evaluated) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
+        }
+        Some(TypeData::Array(element_type)) => collect_array_property_infos(db, element_type),
+        _ => Vec::new(),
+    }
+}
+
 pub fn collect_homomorphic_source_properties(
     db: &dyn TypeDatabase,
     source: TypeId,
 ) -> FxHashMap<Atom, (bool, bool, TypeId)> {
-    let evaluated = crate::evaluation::evaluate::evaluate_type(db, source);
     let mut props = FxHashMap::default();
-    match db.lookup(evaluated) {
-        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-            let shape = db.object_shape(shape_id);
-            props.reserve(shape.properties.len());
-            for prop in &shape.properties {
-                props.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
-            }
-        }
-        Some(TypeData::Callable(shape_id)) => {
-            let shape = db.callable_shape(shape_id);
-            props.reserve(shape.properties.len());
-            for prop in &shape.properties {
-                props.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
-            }
-        }
-        _ => {}
+    let source_props = collect_homomorphic_source_property_infos(db, source);
+    props.reserve(source_props.len());
+    for prop in source_props {
+        props.insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
     }
     props
 }

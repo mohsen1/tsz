@@ -11,6 +11,16 @@ use std::borrow::Cow;
 use tsz_binder::SymbolId;
 
 impl<'a> TypeFormatter<'a> {
+    fn collapse_truncated_tail_part(part: &str) -> String {
+        let Some((prefix, ty)) = part.split_once(": ") else {
+            return part.to_string();
+        };
+        if ty.starts_with('{') {
+            return format!("{prefix}: {{ ...; }}");
+        }
+        part.to_string()
+    }
+
     /// Format object-like parts with tsc-style long-type truncation:
     /// keep a long prefix and the last member, inserting `... N more ...`.
     ///
@@ -36,11 +46,21 @@ impl<'a> TypeFormatter<'a> {
         const MAX_HEAD_CHARS: usize = 300;
 
         let total = parts.len();
-        let tail = parts[total - 1].clone();
+        let tail_index = parts
+            .iter()
+            .rposition(|part| part.starts_with("[Symbol.") || part.starts_with("readonly [Symbol."))
+            .filter(|&idx| idx > 0)
+            .unwrap_or(total - 1);
+        let tail = Self::collapse_truncated_tail_part(&parts[tail_index]);
+        let max_head_chars = if tail_index == total - 1 {
+            MAX_HEAD_CHARS
+        } else {
+            255
+        };
         let mut head_count = 0usize;
         let mut used_chars = 0usize;
 
-        for (idx, part) in parts.iter().enumerate().take(total - 1) {
+        for (idx, part) in parts.iter().enumerate().take(tail_index) {
             if head_count >= MAX_HEAD_PARTS {
                 break;
             }
@@ -58,7 +78,7 @@ impl<'a> TypeFormatter<'a> {
             let reserve_for_tail = 2 + tail.len();
 
             // Keep at least two head parts when available; after that, enforce budget.
-            if head_count >= 2 && next_used + reserve_for_marker + reserve_for_tail > MAX_HEAD_CHARS
+            if head_count >= 2 && next_used + reserve_for_marker + reserve_for_tail > max_head_chars
             {
                 break;
             }
@@ -1298,7 +1318,13 @@ impl<'a> TypeFormatter<'a> {
         }
 
         let mut parts = Vec::new();
-        for sig in &shape.call_signatures {
+        let mut call_signatures: Vec<_> = shape.call_signatures.iter().collect();
+        if call_signatures.iter().any(|sig| sig.params.is_empty())
+            && call_signatures.iter().any(|sig| !sig.params.is_empty())
+        {
+            call_signatures.sort_by_key(|sig| sig.params.len());
+        }
+        for sig in call_signatures {
             parts.push(self.format_call_signature(sig, false, false));
         }
         for sig in &shape.construct_signatures {

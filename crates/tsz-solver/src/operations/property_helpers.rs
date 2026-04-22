@@ -454,7 +454,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Try to find the property in the Object's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 // Get type params from the array base type (stored during test setup)
-                let type_params = self.db.get_array_base_type_params();
+                let type_params =
+                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
 
                 if type_params.is_empty() {
                     // No type params available, return the property type as-is
@@ -492,7 +493,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Try to find the property in the ObjectWithIndex's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 // Get type params
-                let type_params = self.db.get_array_base_type_params();
+                let type_params =
+                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
 
                 if type_params.is_empty() {
                     return PropertyAccessResult::simple(prop.type_id);
@@ -538,7 +540,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                 // Create substitution: map the Callable's type parameters to the application's arguments
                 // For Array, this means T -> element_type
-                let type_params = self.db.get_array_base_type_params();
+                let type_params =
+                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
 
                 if type_params.is_empty() {
                     // No type params available, return the property type as-is
@@ -1009,7 +1012,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let element_type = self.array_element_type(array_type);
 
         // Try to use the Array<T> interface from lib.d.ts
-        let array_base = self.db.get_array_base_type();
+        let array_base = crate::relations::subtype::TypeResolver::get_array_base_type(self.db);
 
         if let Some(array_base) = array_base {
             // Create TypeApplication: Array<element_type>

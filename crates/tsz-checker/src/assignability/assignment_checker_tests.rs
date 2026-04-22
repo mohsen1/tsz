@@ -52,6 +52,41 @@ arr_Int8Array = arr_Uint8Array;
     );
 }
 
+#[test]
+fn homomorphic_remap_missing_property_uses_specialized_source_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+
+interface Box<T> {
+    length: number;
+    find(value: T): T;
+    end(value: T): T;
+}
+
+declare let tgt2: Box<number>;
+declare let src2: { [K in keyof Box<number> as Exclude<K, "length">]: Box<number>[K] };
+
+tgt2 = src2;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing 'length'");
+    assert!(
+        diag.message_text
+            .contains("find: (value: number) => number")
+            && diag.message_text.contains("end: (value: number) => number"),
+        "TS2741 should use the specialized mapped source display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("value: T"),
+        "TS2741 should not leak unspecialized Array<T> members into the source display, got: {diag:?}"
+    );
+}
+
 fn strict_diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(
         source,
