@@ -22,6 +22,13 @@ pub const fn is_compound_assignment_operator(operator_token: u16) -> bool {
     )
 }
 
+/// Check if a token is any assignment operator: simple `=` or one of the
+/// compound forms (`+=`, `-=`, `**=`, `&&=`, `??=`, etc.).
+pub const fn is_assignment_operator(operator_token: u16) -> bool {
+    operator_token == SyntaxKind::EqualsToken as u16
+        || is_compound_assignment_operator(operator_token)
+}
+
 pub const fn map_compound_assignment_to_binary(operator_token: u16) -> Option<&'static str> {
     match operator_token {
         k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),
