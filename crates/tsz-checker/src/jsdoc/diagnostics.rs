@@ -1828,13 +1828,14 @@ impl<'a> CheckerState<'a> {
                 if let Some((module_specifier, _segments)) =
                     Self::parse_jsdoc_typeof_import_query(expr)
                 {
-                    let has_ambient_module =
-                        self.ctx.binder.declared_modules.contains(&module_specifier)
-                            || self
-                                .ctx
-                                .binder
-                                .shorthand_ambient_modules
-                                .contains(&module_specifier);
+                    let has_ambient_module = self
+                        .ctx
+                        .declared_modules_contains(self.ctx.binder, &module_specifier)
+                        || self
+                            .ctx
+                            .binder
+                            .shorthand_ambient_modules
+                            .contains(&module_specifier);
                     let rooted_specifier = module_specifier.starts_with('/');
                     let resolves = self
                         .ctx
