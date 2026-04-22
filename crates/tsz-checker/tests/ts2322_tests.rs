@@ -3096,6 +3096,11 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
         !ts2322.is_empty(),
         "Expected TS2322 for indexed access on intersection with unconstrained type parameter. Actual diagnostics: {diagnostics:?}"
     );
+    assert!(
+        ts2322.iter().any(|(_, msg)| msg
+            .contains("Type 'T' is not assignable to type '(S & State<T>)[\"a\"] | undefined'.")),
+        "Expected top-level TS2322 to preserve the contextual indexed-access target surface, got: {diagnostics:?}"
+    );
 }
 
 /// Regression test: arrays should NOT be assignable to interfaces that extend

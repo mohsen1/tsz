@@ -144,7 +144,7 @@ impl<'a> CheckerState<'a> {
                 target_visibility,
             } => {
                 let (source_str, target_str) =
-                    self.format_top_level_assignability_message_types(source, target);
+                    self.format_top_level_assignability_message_types_at(source, target, idx);
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
                 let base = self.property_visibility_assignability_message(
                     &source_str,
@@ -204,7 +204,7 @@ impl<'a> CheckerState<'a> {
             ),
             SubtypeFailureReason::TooManyParameters { .. } => {
                 let (source_str, target_str) =
-                    self.format_top_level_assignability_message_types(source, target);
+                    self.format_top_level_assignability_message_types_at(source, target, idx);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     &[&source_str, &target_str],
@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
             } => {
                 if depth == 0 {
                     let (source_str, target_str) =
-                        self.format_top_level_assignability_message_types(source, target);
+                        self.format_top_level_assignability_message_types_at(source, target, idx);
                     let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
@@ -249,7 +249,7 @@ impl<'a> CheckerState<'a> {
             } => {
                 if depth == 0 {
                     let (source_str, target_str) =
-                        self.format_top_level_assignability_message_types(source, target);
+                        self.format_top_level_assignability_message_types_at(source, target, idx);
                     let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
@@ -277,7 +277,7 @@ impl<'a> CheckerState<'a> {
             } => {
                 if depth == 0 {
                     let (source_str, target_str) =
-                        self.format_top_level_assignability_message_types(source, target);
+                        self.format_top_level_assignability_message_types_at(source, target, idx);
                     let base = format_message(
                         diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         &[&source_str, &target_str],
@@ -1619,7 +1619,7 @@ impl<'a> CheckerState<'a> {
 
         if depth == 0 {
             let (source_str, target_str) =
-                self.format_top_level_assignability_message_types(source, target);
+                self.format_top_level_assignability_message_types_at(source, target, idx);
             if let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
                 nested_reason
             {
@@ -1709,7 +1709,7 @@ impl<'a> CheckerState<'a> {
         _reason: &tsz_solver::SubtypeFailureReason,
         source: TypeId,
         target: TypeId,
-        _idx: NodeIndex,
+        idx: NodeIndex,
         depth: u32,
         start: u32,
         length: u32,
@@ -1718,7 +1718,7 @@ impl<'a> CheckerState<'a> {
     ) -> Diagnostic {
         if depth == 0 {
             let (source_str, target_str) =
-                self.format_top_level_assignability_message_types(source, target);
+                self.format_top_level_assignability_message_types_at(source, target, idx);
             let base = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_str, &target_str],
@@ -1770,7 +1770,7 @@ impl<'a> CheckerState<'a> {
         reason: &tsz_solver::SubtypeFailureReason,
         source: TypeId,
         target: TypeId,
-        _idx: NodeIndex,
+        idx: NodeIndex,
         _depth: u32,
         start: u32,
         length: u32,
@@ -1805,7 +1805,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let (source_str, target_str) =
-            self.format_top_level_assignability_message_types(source, target);
+            self.format_top_level_assignability_message_types_at(source, target, idx);
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],
@@ -1847,7 +1847,7 @@ impl<'a> CheckerState<'a> {
     ) -> Diagnostic {
         if depth == 0 {
             let (source_str, target_str) =
-                self.format_top_level_assignability_message_types(source, target);
+                self.format_top_level_assignability_message_types_at(source, target, idx);
             let base = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_str, &target_str],

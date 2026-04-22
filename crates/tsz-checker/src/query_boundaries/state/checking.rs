@@ -94,6 +94,14 @@ pub(crate) fn get_finite_mapped_property_type(
     tsz_solver::type_queries::get_finite_mapped_property_type(db, mapped_id, property_name)
 }
 
+pub(crate) fn get_finite_mapped_property_display_type(
+    db: &dyn TypeDatabase,
+    mapped_id: tsz_solver::MappedTypeId,
+    property_name: &str,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_finite_mapped_property_display_type(db, mapped_id, property_name)
+}
+
 pub(crate) fn is_identity_name_mapping(
     db: &dyn TypeDatabase,
     mapped: &tsz_solver::MappedType,

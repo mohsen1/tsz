@@ -45,7 +45,8 @@ impl<'a> CheckerState<'a> {
             self.format_nested_assignment_source_type_for_diagnostic(source, target, idx)
         };
         let mut target_str = if depth == 0 {
-            self.format_assignment_target_type_for_diagnostic(target, source, idx)
+            self.format_top_level_assignability_message_types_at(source, target, idx)
+                .1
         } else if self.should_strip_nullish_for_property_display(target)
             && let Some(stripped) = self.strip_nullish_for_assignability_display(target, source)
         {

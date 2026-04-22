@@ -228,6 +228,73 @@ pub fn get_finite_mapped_property_type(
     }
 }
 
+/// Resolve the display-oriented property type for a property on a mapped type
+/// when its key constraint is a finite literal set.
+///
+/// Unlike [`get_finite_mapped_property_type`], this preserves the raw
+/// instantiated mapped template instead of evaluating it to a concrete property
+/// type. This keeps diagnostic surfaces like `(S & State<T>)["a"] | undefined`
+/// intact for `Pick<S & State<T>, "a">`.
+pub fn get_finite_mapped_property_display_type(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    property_name: &str,
+) -> Option<TypeId> {
+    let mapped = db.mapped_type(mapped_id);
+    let source_keys = super::data::collect_exact_literal_property_keys(db, mapped.constraint)?;
+    let target_atom = db.intern_string(property_name);
+    let mut matches = Vec::new();
+
+    for source_key in source_keys {
+        let key_literal = property_key_atom_to_type(db, source_key);
+        let remapped = remap_mapped_property_key(db, &mapped, key_literal);
+        let remapped_keys = super::data::collect_exact_literal_property_keys(db, remapped)?;
+        if !remapped_keys.contains(&target_atom) {
+            continue;
+        }
+
+        let mut display_type = super::data::instantiate_mapped_template_for_property(
+            db,
+            mapped.template,
+            mapped.type_param.name,
+            key_literal,
+        );
+        let has_optional_property = crate::type_queries::get_index_access_types(db, display_type)
+            .and_then(|(object_type, index_type)| {
+                let prop_atom = crate::visitor::literal_string(db, index_type)?;
+                let object_members = crate::type_queries::get_intersection_members(db, object_type)
+                    .unwrap_or_else(|| vec![object_type]);
+                Some(object_members.into_iter().any(|member| {
+                    crate::type_queries::find_property_in_object(db, member, prop_atom)
+                        .is_some_and(|prop| prop.optional)
+                        || crate::type_queries::type_includes_undefined(
+                            db,
+                            crate::evaluation::evaluate::evaluate_type(
+                                db,
+                                db.index_access(member, index_type),
+                            ),
+                        )
+                }))
+            })
+            .unwrap_or(false);
+        if has_optional_property && !crate::type_queries::type_includes_undefined(db, display_type)
+        {
+            display_type = db.union2(display_type, TypeId::UNDEFINED);
+        }
+        matches.push(add_mapped_property_optional_undefined(
+            db,
+            &mapped,
+            display_type,
+        ));
+    }
+
+    match matches.len() {
+        0 => None,
+        1 => Some(matches[0]),
+        _ => Some(db.union_preserve_members(matches)),
+    }
+}
+
 fn property_key_atom_to_type(db: &dyn TypeDatabase, key: Atom) -> TypeId {
     let key_str = db.resolve_atom(key);
     if let Some(symbol_ref) = key_str.strip_prefix("__unique_")
@@ -878,5 +945,64 @@ mod tests {
             evaluate_identity_mapped_passthrough(&interner, mapped_id, TypeId::NUMBER),
             None
         );
+    }
+
+    #[test]
+    fn finite_mapped_property_display_type_preserves_raw_index_access_surface() {
+        use crate::types::MappedType;
+
+        let interner = TypeInterner::new();
+
+        let s_name = interner.intern_string("S");
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let a_name = interner.intern_string("a");
+
+        let s_param = interner.type_param(TypeParamInfo {
+            name: s_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let t_param = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+        let key_param = interner.type_param(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        });
+
+        let state = interner.object(vec![crate::types::PropertyInfo::opt(a_name, t_param)]);
+        let source = interner.intersection(vec![s_param, state]);
+        let mapped = MappedType {
+            type_param: TypeParamInfo {
+                name: k_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            constraint: interner.literal_string("a"),
+            name_type: None,
+            template: interner.index_access(source, key_param),
+            readonly_modifier: None,
+            optional_modifier: None,
+        };
+        let mapped_type = interner.mapped(mapped);
+        let mapped_id =
+            crate::mapped_type_id(&interner, mapped_type).expect("mapped type should have id");
+
+        let actual = get_finite_mapped_property_display_type(&interner, mapped_id, "a")
+            .expect("display type should resolve");
+        let expected = interner.union2(
+            interner.index_access(source, interner.literal_string("a")),
+            TypeId::UNDEFINED,
+        );
+
+        assert_eq!(actual, expected);
     }
 }

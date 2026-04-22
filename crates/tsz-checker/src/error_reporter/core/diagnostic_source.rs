@@ -1,6 +1,7 @@
 //! Diagnostic source/target expression analysis and formatting.
 
 mod compound_assignment_context;
+mod object_literal_targets;
 
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
@@ -1367,6 +1368,12 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if let Some(contextual_target) =
+            self.object_literal_property_contextual_target_for_diagnostic(anchor_idx, target)
+        {
+            return self.format_object_literal_property_diag_target(contextual_target);
+        }
+
         // When the target is a nullable union (e.g., `T | null | undefined`)
         // and the source is non-nullable, strip null/undefined from the
         // top-level display to match tsc's behavior.

@@ -111,6 +111,16 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing object literal data - propagate error
         };
 
+        if let Some(ctx_ty) = contextual_type {
+            // Keep the last real contextual object target we saw for this literal.
+            // The same node can be recomputed later under TypingRequest::NONE during
+            // diagnostic elaboration, and clearing the side table there loses the
+            // richer surface we want to report.
+            self.ctx
+                .object_literal_contextual_targets
+                .insert(idx, ctx_ty);
+        }
+
         tracing::trace!(
             idx = idx.0,
             contextual_type = ?contextual_type.map(|t| t.0),
@@ -446,6 +456,14 @@ impl<'a> CheckerState<'a> {
                         ),
                         contextual_receiver_this_type,
                     );
+                    if let Some(diag_target) = jsdoc_declared_type
+                        .or(property_context_type)
+                        .or(resolved_prop_ctx)
+                    {
+                        self.ctx
+                            .object_literal_property_diag_targets
+                            .insert(elem_idx, diag_target);
+                    }
                     let property_request = base_request.contextual_opt(
                         self.contextual_type_option_for_call_argument_at(
                             resolved_prop_ctx,
@@ -954,6 +972,11 @@ impl<'a> CheckerState<'a> {
 
                     // Set contextual type for shorthand property value
                     let had_object_context = contextual_type.is_some();
+                    if let Some(diag_target) = jsdoc_declared_type.or(property_context_type) {
+                        self.ctx
+                            .object_literal_property_diag_targets
+                            .insert(elem_idx, diag_target);
+                    }
                     let shorthand_request =
                         base_request.contextual_opt(self.contextual_type_option_for_expression(
                             jsdoc_declared_type.or(property_context_type),
