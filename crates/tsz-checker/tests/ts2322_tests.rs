@@ -1318,6 +1318,165 @@ y = "AbC";
     );
 }
 
+#[test]
+fn test_ts2322_string_mapping_alias_displays_resolved_literal_target() {
+    let source = r#"
+type A = "aA";
+type B = Uppercase<A>;
+type ATemplate = `aA${string}`;
+type BTemplate = Uppercase<ATemplate>;
+
+declare let lit: B;
+declare let tpl: BTemplate;
+
+lit = tpl;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let message = diagnostics
+        .iter()
+        .find_map(|d| {
+            (d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text.contains("Type '`AA${Uppercase<string>}`'"))
+            .then_some(d.message_text.as_str())
+        })
+        .expect("expected TS2322 for assigning uppercase template to uppercase literal");
+
+    assert!(
+        message.contains(r#"is not assignable to type '"AA"'."#),
+        "expected evaluated uppercase literal target display, got: {message}"
+    );
+    assert!(
+        !message.contains("Uppercase<A>"),
+        "did not expect intrinsic alias repaint for literal target, got: {message}"
+    );
+}
+
+#[test]
+fn test_ts2322_string_mapping_alias_displays_resolved_template_target() {
+    let source = r#"
+type Source = `aA${string}`;
+type Target = Uppercase<Source>;
+
+declare let sourceValue: Source;
+declare let targetValue: Target;
+
+targetValue = sourceValue;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let message = diagnostics
+        .iter()
+        .find_map(|d| {
+            (d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text.contains("Type '`aA${string}`'"))
+            .then_some(d.message_text.as_str())
+        })
+        .expect("expected TS2322 for assigning unmapped template to mapped template target");
+
+    assert!(
+        message.contains("is not assignable to type '`AA${Uppercase<string>}`'."),
+        "expected evaluated uppercase template target display, got: {message}"
+    );
+    assert!(
+        !message.contains("Uppercase<Source>"),
+        "did not expect intrinsic alias repaint for template target, got: {message}"
+    );
+}
+
+#[test]
+fn test_ts2322_string_intrinsic_target_does_not_gain_nested_alias_display() {
+    let source = r#"
+declare let upper: Uppercase<string>;
+declare let lowerUpper: Lowercase<Uppercase<string>>;
+
+upper = lowerUpper;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let message = diagnostics
+        .iter()
+        .find_map(|d| {
+            (d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text.contains("Lowercase<Uppercase<string>>"))
+            .then_some(d.message_text.as_str())
+        })
+        .expect("expected TS2322 for lowerUpper assigned to upper");
+
+    assert!(
+        message.contains("is not assignable to type 'Uppercase<string>'."),
+        "expected resolved intrinsic target display, got: {message}"
+    );
+    assert!(
+        !message.contains("Uppercase<Uppercase<string>>"),
+        "did not expect nested intrinsic repaint in target display, got: {message}"
+    );
+}
+
+#[test]
+fn test_ts2322_parameter_string_intrinsic_target_does_not_gain_nested_alias_display() {
+    let source = r#"
+function f(
+    upper: Uppercase<string>,
+    upperUpper: Uppercase<Uppercase<string>>,
+    lowerUpper: Lowercase<Uppercase<string>>,
+) {
+    upper = lowerUpper;
+}
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let message = diagnostics
+        .iter()
+        .find_map(|d| {
+            (d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text.contains("Lowercase<Uppercase<string>>"))
+            .then_some(d.message_text.as_str())
+        })
+        .expect("expected TS2322 for lowerUpper assigned to upper parameter");
+
+    assert!(
+        message.contains("is not assignable to type 'Uppercase<string>'."),
+        "expected resolved intrinsic parameter target display, got: {message}"
+    );
+    assert!(
+        !message.contains("Uppercase<Uppercase<string>>"),
+        "did not expect nested intrinsic repaint for parameter target, got: {message}"
+    );
+}
+
+#[test]
+fn test_ts2322_parameter_nested_same_kind_string_intrinsic_simplifies_target_display() {
+    let source = r#"
+function f(
+    upper: Uppercase<string>,
+    upperUpper: Uppercase<Uppercase<string>>,
+    lowerUpper: Lowercase<Uppercase<string>>,
+) {
+    upperUpper = lowerUpper;
+}
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let message = diagnostics
+        .iter()
+        .find_map(|d| {
+            (d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && d.message_text.contains("Lowercase<Uppercase<string>>"))
+            .then_some(d.message_text.as_str())
+        })
+        .expect("expected TS2322 for lowerUpper assigned to upperUpper parameter");
+
+    assert!(
+        message.contains("is not assignable to type 'Uppercase<string>'."),
+        "expected simplified same-kind intrinsic target display, got: {message}"
+    );
+    assert!(
+        !message.contains("Uppercase<Uppercase<string>>"),
+        "did not expect nested same-kind intrinsic target display, got: {message}"
+    );
+}
+
 // =============================================================================
 // User-Defined Generic Type Application Tests (TS2322 False Positives)
 // These test the root cause of 11,000+ extra TS2322 errors

@@ -586,6 +586,8 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Tuple(_)
                 | TypeData::Union(_)
                 | TypeData::Function(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::StringIntrinsic { .. }
                 | TypeData::Enum(_, _)
         );
         if let Some(alias_origin) = self.interner.get_display_alias(type_id) {

@@ -971,6 +971,13 @@ impl<'a> CheckerState<'a> {
                 if display.contains('<') || display.contains('{') || display.contains('|') {
                     return None; // Already expanded
                 }
+                if display.starts_with('"')
+                    || display.starts_with('`')
+                    || display == "true"
+                    || display == "false"
+                {
+                    return None; // Keep concrete literal displays instead of repainting alias provenance.
+                }
                 // Only for types that have a display_alias (were produced by Application eval)
                 state.ctx.types.get_display_alias(ty)?;
                 let mut formatter = state

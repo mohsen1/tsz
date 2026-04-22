@@ -1,6 +1,8 @@
 //! Lazy type resolution and type environment population.
 
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries, lazy_def_id};
+use crate::query_boundaries::common::{
+    collect_lazy_def_ids, collect_type_queries, contains_lazy_or_recursive, lazy_def_id,
+};
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -232,7 +234,17 @@ impl<'a> CheckerState<'a> {
         // CheckerContext resolver which can resolve Lazy(DefId) on the fly via
         // get_type_of_symbol.
         let needs_resolver_pass = query::index_access_types(self.ctx.types, result).is_some()
-            || query::mapped_type_id(self.ctx.types, result).is_some();
+            || query::mapped_type_id(self.ctx.types, result).is_some()
+            || (contains_lazy_or_recursive(self.ctx.types, result)
+                && (crate::query_boundaries::common::string_intrinsic_components(
+                    self.ctx.types,
+                    result,
+                )
+                .is_some()
+                    || crate::query_boundaries::common::is_template_literal_type(
+                        self.ctx.types,
+                        result,
+                    )));
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 let cache = self.ctx.env_eval_cache.borrow();
