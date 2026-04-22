@@ -84,8 +84,10 @@ jobs:
           sudo dpkg -i hyperfine_1.18.0_amd64.deb
 
       - name: Run benchmarks
-        run: ./scripts/bench/bench-vs-tsgo.sh --quick --json
-        timeout-minutes: 15
+        # Run the full benchmark suite (no --quick) so the website renders
+        # all categories instead of the ~16-entry quick subset.
+        run: ./scripts/bench/bench-vs-tsgo.sh --json
+        timeout-minutes: 75
 
       - name: Upload benchmark data
         uses: actions/upload-artifact@v4
