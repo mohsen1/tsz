@@ -860,6 +860,31 @@ fn test_export_type_star_as_namespace_emits_ts1362_in_value_context() {
 }
 
 #[test]
+fn test_export_type_star_collides_with_value_star_reexport() {
+    let files = [
+        ("a.ts", "export type A = number;\n"),
+        ("b.ts", "export type * from './a';\n"),
+        ("e.ts", "export const A = 1;\n"),
+        ("f.ts", "export * from './e';\nexport type * from './a';\n"),
+    ];
+    let options = CheckerOptions {
+        module: tsz_common::common::ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        no_lib: true,
+        ..CheckerOptions::default()
+    };
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(&files, "f.ts", options);
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| { *code == 2308 && msg.contains("\"./e\"") && msg.contains("'A'") }),
+        "Expected TS2308 for type-only star export colliding with value star export. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_export_equals_typeof_import_namespace_import_exposes_referenced_named_exports() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[

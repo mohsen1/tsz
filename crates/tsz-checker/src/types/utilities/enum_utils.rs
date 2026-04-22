@@ -307,16 +307,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 k if k == SyntaxKind::NumericLiteral as u16 => {
-                    // Get the numeric literal value
-                    if let Some(lit) = self.ctx.arena.get_literal(init_node) {
-                        // lit.value is Option<f64>, use it if available
-                        if let Some(value) = lit.value {
-                            return factory.literal_number(value);
-                        }
-                        // Fallback: parse from text
-                        if let Ok(value) = lit.text.parse::<f64>() {
-                            return factory.literal_number(value);
-                        }
+                    if let Some(lit) = self.ctx.arena.get_literal(init_node)
+                        && let Some(value) = lit
+                            .value
+                            .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
+                    {
+                        return factory.literal_number(value);
                     }
                 }
                 _ => {
@@ -371,7 +367,8 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.ctx.arena.get_literal(node)?;
-                lit.value.or_else(|| lit.text.parse::<f64>().ok())
+                lit.value
+                    .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
             }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 let unary = self.ctx.arena.get_unary_expr(node)?;
