@@ -4871,8 +4871,8 @@ function foo() {
             .count();
 
         assert_eq!(
-            ts2344_count, 3,
-            "Expected three TS2344 diagnostics from lib.dom.d.ts after merging Node.kind, got: {diagnostics:?}"
+            ts2344_count, 0,
+            "Expected no cascading TS2344 diagnostics from lib.dom.d.ts after merging Node.kind, got: {diagnostics:?}"
         );
         assert_eq!(
             ts2430_count, 1,
