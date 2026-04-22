@@ -611,7 +611,11 @@ impl<'a> TypeLowering<'a> {
         if let Some(def_id) = self.resolve_def_id(node_idx) {
             return self.interner.lazy(def_id);
         }
-        // If def_id resolution failed, this is an error - don't create bogus Lazy types
+        if let Some(name) = self.type_name_text(node_idx) {
+            return self
+                .interner
+                .unresolved_type_name(self.interner.intern_string(&name));
+        }
         TypeId::ERROR
     }
 

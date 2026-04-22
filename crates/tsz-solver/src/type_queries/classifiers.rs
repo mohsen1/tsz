@@ -320,6 +320,7 @@ pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> I
         | TypeData::NoInfer(_)
         | TypeData::StringIntrinsic { .. }
         | TypeData::ModuleNamespace(_)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error
         | TypeData::Enum(_, _) => InterfaceMergeKind::Other,
     }

@@ -302,7 +302,9 @@ pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     ) {
         return false;
     }
-    contains_type_matching(db, type_id, |key| matches!(key, TypeData::Error))
+    contains_type_matching(db, type_id, |key| {
+        matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_))
+    })
 }
 
 /// Check if a type contains the `never` intrinsic.

@@ -622,6 +622,7 @@ pub fn classify_constructor_type(db: &dyn TypeDatabase, type_id: TypeId) -> Cons
         | TypeData::ThisType
         | TypeData::StringIntrinsic { .. }
         | TypeData::ModuleNamespace(_)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => ConstructorTypeKind::NotConstructor,
     }
 }
@@ -804,6 +805,7 @@ pub fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> Signat
         | TypeData::StringIntrinsic { .. }
         | TypeData::ModuleNamespace(_)
         | TypeData::Enum(_, _)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => SignatureTypeKind::NoSignatures,
     }
 }
@@ -896,6 +898,7 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         | TypeData::StringIntrinsic { .. }
         | TypeData::ModuleNamespace(_)
         | TypeData::Enum(_, _)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => EvaluationNeeded::Resolved(type_id),
     }
 }

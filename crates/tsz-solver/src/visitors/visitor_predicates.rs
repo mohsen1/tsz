@@ -464,7 +464,7 @@ fn contains_error_type_recursive(
     let Some(key) = types.lookup(type_id) else {
         return false;
     };
-    if matches!(key, TypeData::Error) {
+    if matches!(key, TypeData::Error | TypeData::UnresolvedTypeName(_)) {
         memo.insert(type_id, true);
         return true;
     }
@@ -786,7 +786,8 @@ where
             | TypeData::Recursive(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => false,
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_) => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
@@ -928,7 +929,8 @@ impl<'a> FreeTypeParamChecker<'a> {
             | TypeData::Recursive(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => false,
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_) => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
@@ -1076,7 +1078,8 @@ impl<'a> FreeInferChecker<'a> {
             // definitions like `type Foo = X extends Bar<infer V> ? V : never`)
             // are definitional, not live inference variables.
             | TypeData::TypeParameter(_)
-            | TypeData::Infer(_) => false,
+            | TypeData::Infer(_)
+            | TypeData::UnresolvedTypeName(_) => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
@@ -1213,7 +1216,8 @@ impl<'a> ShallowContainsTypeChecker<'a> {
             // the whole point of the "shallow" variant. We only check if the
             // type parameter itself matches, not what its constraint contains.
             | TypeData::TypeParameter(_)
-            | TypeData::Infer(_) => false,
+            | TypeData::Infer(_)
+            | TypeData::UnresolvedTypeName(_) => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
