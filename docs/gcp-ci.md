@@ -4,19 +4,25 @@ CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
-save updated caches, then report the original suite status. Main and PR
-conformance use the existing C3 highcpu pool to avoid waiting on the largest
-N2D machine shape. The other suites stay
-smaller so one full PR run fits under the current private-pool CPU quota:
+save updated caches, then report the original suite status. Main and PR builds
+use separate worker pools so a PR build storm cannot sit ahead of main builds
+in the same pool queue. Main conformance uses the largest C3 pool; PR
+conformance uses a smaller C3 pool so both can run under the current C3 CPU
+quota:
 
 ```text
 main conformance  tsz-ci-c3-88       c3-highcpu-176
-PR conformance    tsz-ci-c3-88       c3-highcpu-176
+PR conformance    tsz-ci-pr-c3-88    c3-highcpu-88
 emit              tsz-ci-n2d-96      n2d-highcpu-96
 fourslash         tsz-ci-n2d-96      n2d-highcpu-96
 unit              tsz-ci-n2d-64      n2d-highcpu-64
 lint              tsz-ci-n2d-48      n2d-highcpu-48
 wasm              tsz-ci-n2d-48      n2d-highcpu-48
+PR emit           tsz-ci-pr-n2d-96   n2d-highcpu-96
+PR fourslash      tsz-ci-pr-n2d-96   n2d-highcpu-96
+PR unit           tsz-ci-pr-n2d-64   n2d-highcpu-64
+PR lint           tsz-ci-pr-n2d-48   n2d-highcpu-48
+PR wasm           tsz-ci-pr-n2d-48   n2d-highcpu-48
 ```
 
 The script
@@ -95,7 +101,19 @@ gcloud builds worker-pools create tsz-ci-c3-88 \
   --worker-machine-type=c3-highcpu-176 \
   --worker-disk-size=200GB
 
+gcloud builds worker-pools create tsz-ci-pr-c3-88 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=c3-highcpu-88 \
+  --worker-disk-size=200GB
+
 gcloud builds worker-pools create tsz-ci-n2d-96 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-96 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-pr-n2d-96 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
   --worker-machine-type=n2d-highcpu-96 \
@@ -107,7 +125,19 @@ gcloud builds worker-pools create tsz-ci-n2d-48 \
   --worker-machine-type=n2d-highcpu-48 \
   --worker-disk-size=200GB
 
+gcloud builds worker-pools create tsz-ci-pr-n2d-48 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-48 \
+  --worker-disk-size=200GB
+
 gcloud builds worker-pools create tsz-ci-n2d-64 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-64 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-pr-n2d-64 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
   --worker-machine-type=n2d-highcpu-64 \
@@ -149,8 +179,19 @@ pr_config_for_suite() {
   esac
 }
 
+pr_pool_for_suite() {
+  case "$1" in
+    lint|wasm) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
+    unit) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-64 ;;
+    emit|fourslash) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-96 ;;
+    conformance) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-c3-88 ;;
+    *) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
+  esac
+}
+
 for suite in lint unit wasm conformance emit fourslash; do
   config="$(pr_config_for_suite "$suite")"
+  pool="$(pr_pool_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
     --region=us-central1 \
@@ -161,7 +202,7 @@ for suite in lint unit wasm conformance emit fourslash; do
     --build-config="$config" \
     --include-logs-with-status \
     --no-require-approval \
-    --substitutions="_TSZ_CI_SUITE=${suite}" \
+    --substitutions="_TSZ_CI_SUITE=${suite},_TSZ_CI_POOL=${pool}" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 ```
