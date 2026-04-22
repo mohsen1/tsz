@@ -1996,6 +1996,134 @@ fn test_property_access_array_entries_returns_tuple_array() {
 }
 
 #[test]
+fn test_property_access_array_indexof_preserves_nullable_element_type() {
+    let interner = TypeInterner::new();
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let index_of = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("searchElement")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("fromIndex")),
+                type_id: TypeId::NUMBER,
+                optional: true,
+                rest: false,
+            },
+        ],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let array_interface = interner.object(vec![PropertyInfo::method(
+        interner.intern_string("indexOf"),
+        index_of,
+    )]);
+    interner.set_array_base_type(array_interface, vec![t_param]);
+
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let element = interner.union(vec![TypeId::BOOLEAN, TypeId::UNDEFINED, TypeId::NULL]);
+    let array = interner.array(element);
+
+    let result = evaluator.resolve_property_access(array, "indexOf");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
+            Some(TypeData::Function(func_id)) => {
+                let func = interner.function_shape(func_id);
+                assert_eq!(
+                    func.params[0].type_id, element,
+                    "indexOf should use the full nullable element type"
+                );
+            }
+            other => panic!("Expected function, got {other:?}"),
+        },
+        _ => panic!("Expected success, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_property_access_callable_array_indexof_preserves_nullable_element_type() {
+    let interner = TypeInterner::new();
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let index_of = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("searchElement")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("fromIndex")),
+                type_id: TypeId::NUMBER,
+                optional: true,
+                rest: false,
+            },
+        ],
+        return_type: TypeId::NUMBER,
+        type_params: vec![],
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+
+    let array_callable = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: Vec::new(),
+        construct_signatures: Vec::new(),
+        properties: vec![PropertyInfo::method(
+            interner.intern_string("indexOf"),
+            index_of,
+        )],
+        string_index: None,
+        number_index: None,
+    });
+    interner.set_array_base_type(array_callable, vec![t_param]);
+
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+    let element = interner.union(vec![TypeId::BOOLEAN, TypeId::UNDEFINED, TypeId::NULL]);
+    let array = interner.array(element);
+
+    let result = evaluator.resolve_property_access(array, "indexOf");
+    match result {
+        PropertyAccessResult::Success { type_id, .. } => match interner.lookup(type_id) {
+            Some(TypeData::Function(func_id)) => {
+                let func = interner.function_shape(func_id);
+                assert_eq!(
+                    func.params[0].type_id, element,
+                    "callable-backed Array#indexOf should keep the full nullable element type"
+                );
+            }
+            other => panic!("Expected function, got {other:?}"),
+        },
+        _ => panic!("Expected success, got {result:?}"),
+    }
+}
+
+#[test]
 fn test_property_access_array_reduce_callable() {
     let interner = TypeInterner::new();
     let (_env, _) = make_array_test_env(&interner);
@@ -7451,6 +7579,167 @@ fn test_rest_param_spreading_heterogeneous_args() {
         &[TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN],
     );
     assert_ne!(result, TypeId::ERROR, "Expected union result, not ERROR");
+}
+
+#[test]
+fn test_rest_param_nullable_prefix_reports_later_incompatible_argument() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let array_t = interner.array(t_type);
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: array_t,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let bad_string = interner.literal_string("x");
+    let expected = interner.union(vec![TypeId::BOOLEAN, TypeId::UNDEFINED, TypeId::NULL]);
+
+    let result = evaluator.resolve_call(
+        func,
+        &[
+            TypeId::BOOLEAN_FALSE,
+            TypeId::UNDEFINED,
+            TypeId::NULL,
+            bad_string,
+        ],
+    );
+
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected: actual_expected,
+            actual,
+            ..
+        } => {
+            assert_eq!(index, 3, "expected the later incompatible rest arg to fail");
+            assert_eq!(
+                actual_expected, expected,
+                "expected nullable boolean inference for the rest element type"
+            );
+            assert_eq!(actual, bad_string);
+        }
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
+    }
+}
+
+#[test]
+fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let array_t = interner.array(t_type);
+
+    let array_ctor = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: Vec::new(),
+        construct_signatures: vec![
+            CallSignature {
+                type_params: Vec::new(),
+                params: vec![ParamInfo {
+                    name: Some(interner.intern_string("arrayLength")),
+                    type_id: TypeId::NUMBER,
+                    optional: true,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: interner.array(TypeId::ANY),
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![t_param],
+                params: vec![ParamInfo {
+                    name: Some(interner.intern_string("arrayLength")),
+                    type_id: TypeId::NUMBER,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: array_t,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![t_param],
+                params: vec![ParamInfo {
+                    name: Some(interner.intern_string("items")),
+                    type_id: array_t,
+                    optional: false,
+                    rest: true,
+                }],
+                this_type: None,
+                return_type: array_t,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        properties: Vec::new(),
+        ..Default::default()
+    });
+
+    let bad_string = interner.literal_string("x");
+    let expected_elem = interner.union(vec![TypeId::BOOLEAN, TypeId::UNDEFINED, TypeId::NULL]);
+    let expected_array = interner.array(expected_elem);
+
+    let result = evaluator.resolve_new(
+        array_ctor,
+        &[
+            TypeId::BOOLEAN_FALSE,
+            TypeId::UNDEFINED,
+            TypeId::NULL,
+            bad_string,
+        ],
+    );
+
+    match result {
+        CallResult::ArgumentTypeMismatch {
+            index,
+            expected,
+            actual,
+            fallback_return,
+        } => {
+            assert_eq!(
+                index, 3,
+                "expected the rest overload to fail on the string item"
+            );
+            assert_eq!(expected, expected_elem);
+            assert_eq!(actual, bad_string);
+            assert_eq!(
+                fallback_return, expected_array,
+                "expected recovery to keep the nullable element type"
+            );
+        }
+        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
+    }
 }
 
 /// Test rest parameter with leading fixed parameters

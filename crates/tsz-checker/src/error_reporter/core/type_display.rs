@@ -1754,6 +1754,9 @@ impl<'a> CheckerState<'a> {
                 let operand = self.literal_expression_display(unary.operand)?;
                 match unary.operator {
                     k if k == tsz_scanner::SyntaxKind::MinusToken as u16 => {
+                        if operand.parse::<f64>().is_ok_and(|value| value == 0.0) {
+                            return Some("0".to_string());
+                        }
                         Some(format!("-{operand}"))
                     }
                     k if k == tsz_scanner::SyntaxKind::PlusToken as u16 => Some(operand),

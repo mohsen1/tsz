@@ -294,6 +294,106 @@ _.all([true, 1, null, 'yes'], _.identity);
 }
 
 #[test]
+fn ts2345_call_parameter_display_preserves_semantic_nullable_union() {
+    let source = r#"
+declare function takes(value: boolean | null | undefined): void;
+takes(0);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type '0'"),
+        "TS2345 should preserve direct literal call-argument display, got: {diag:?}"
+    );
+    assert!(
+        diag.message_text
+            .contains("parameter of type 'boolean | null | undefined'"),
+        "TS2345 should preserve semantic nullable unions in parameter display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("parameter of type 'boolean'."),
+        "TS2345 should not strip nullable union members from non-optional parameters, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_call_argument_display_normalizes_negative_zero_literal() {
+    let source = r#"
+declare function takes(value: boolean | null | undefined): void;
+takes(-0);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type '0'"),
+        "TS2345 should normalize -0 to 0 in literal call-argument display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Argument of type '-0'"),
+        "TS2345 should not preserve -0 text once the literal type normalizes to 0, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_call_argument_display_widens_literal_for_non_union_target() {
+    let source = r#"
+declare function takes(value: string): void;
+takes(2);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type 'number'"),
+        "TS2345 should widen direct numeric literals for non-union parameter targets, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Argument of type '2'"),
+        "TS2345 should not preserve literal numeric text for non-union parameter targets, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_call_argument_display_widens_literal_for_optional_parameter_target() {
+    let source = r#"
+interface Item {
+    name: string;
+}
+declare function takes(value?: Item): void;
+takes("abc");
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type 'string'"),
+        "TS2345 should widen direct literals for optional parameter targets, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Argument of type '\"abc\"'"),
+        "TS2345 should not preserve literal text when the union comes only from optionality, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2322_optional_function_property_target_display_omits_synthetic_undefined() {
     let source = r#"
 interface Stuff {
