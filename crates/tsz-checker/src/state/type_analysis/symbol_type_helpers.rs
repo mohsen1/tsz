@@ -307,13 +307,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the enum declaration to check if it's numeric
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            match symbol.declarations.first() {
-                Some(&idx) => idx,
-                None => return,
-            }
+        let Some(decl_idx) = symbol.primary_declaration() else {
+            return;
         };
 
         let Some(node) = self.ctx.arena.get(decl_idx) else {

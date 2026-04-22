@@ -865,13 +865,7 @@ impl<'a> CheckerState<'a> {
                                     .ctx
                                     .binder
                                     .get_symbol(sym_id)
-                                    .and_then(|sym| {
-                                        if sym.value_declaration.is_some() {
-                                            Some(sym.value_declaration)
-                                        } else {
-                                            sym.declarations.first().copied()
-                                        }
-                                    })
+                                    .and_then(|sym| sym.primary_declaration())
                                     .and_then(|decl_idx| {
                                         self.jsdoc_type_annotation_for_node(decl_idx)
                                     });

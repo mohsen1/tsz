@@ -1174,13 +1174,7 @@ impl<'a> CheckerState<'a> {
             // In JS files, `import x = require(...)` is TS-only syntax (TS8002).
             // tsc skips semantic analysis for such statements — skip circular check.
             if is_js_file {
-                let decl_idx = if sym.value_declaration.is_some() {
-                    sym.value_declaration
-                } else if let Some(&first) = sym.declarations.first() {
-                    first
-                } else {
-                    NodeIndex::NONE
-                };
+                let decl_idx = sym.primary_declaration().unwrap_or(NodeIndex::NONE);
                 if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                     && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 {
@@ -1437,11 +1431,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let decl_idx = if sym.value_declaration.is_some() {
-                    sym.value_declaration
-                } else if let Some(first) = sym.declarations.first() {
-                    *first
-                } else {
+                let Some(decl_idx) = sym.primary_declaration() else {
                     continue;
                 };
 

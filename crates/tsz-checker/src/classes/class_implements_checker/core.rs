@@ -368,11 +368,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        if symbol.value_declaration.is_some() {
-                            base_class_idx = Some(symbol.value_declaration);
-                        } else if let Some(&decl_idx) = symbol.declarations.first() {
-                            base_class_idx = Some(decl_idx);
-                        }
+                        base_class_idx = symbol.primary_declaration();
                     }
                 }
             }

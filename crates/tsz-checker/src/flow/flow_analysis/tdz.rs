@@ -334,17 +334,13 @@ impl<'a> CheckerState<'a> {
             });
             if let Some(&class_d) = class_decl {
                 class_d
-            } else if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else if let Some(&first_decl) = symbol.declarations.first() {
-                first_decl
+            } else if let Some(d) = symbol.primary_declaration() {
+                d
             } else {
                 return false;
             }
-        } else if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first_decl) = symbol.declarations.first() {
-            first_decl
+        } else if let Some(d) = symbol.primary_declaration() {
+            d
         } else {
             return false;
         };

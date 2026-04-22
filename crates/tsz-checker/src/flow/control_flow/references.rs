@@ -697,11 +697,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
         visited.push(sym_id);
 
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl_idx = symbol.primary_declaration()?;
         let decl_node = self.arena.get(decl_idx)?;
         if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
             // For non-`import =` aliases (ImportSpecifier, ImportClause,

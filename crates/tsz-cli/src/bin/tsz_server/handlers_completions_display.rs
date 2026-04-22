@@ -435,11 +435,7 @@ impl Server {
 
         let symbol_id = binder.file_locals.get(name)?;
         let sym = binder.symbols.get(symbol_id)?;
-        let decl = if sym.value_declaration.is_some() {
-            sym.value_declaration
-        } else {
-            *sym.declarations.first()?
-        };
+        let decl = sym.primary_declaration()?;
         let node = arena.get(decl)?;
         if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return None;
@@ -485,11 +481,7 @@ impl Server {
     ) {
         let decl_text = binder.file_locals.get(name).and_then(|sid| {
             let sym = binder.symbols.get(sid)?;
-            let decl = if sym.value_declaration.is_some() {
-                sym.value_declaration
-            } else {
-                *sym.declarations.first()?
-            };
+            let decl = sym.primary_declaration()?;
             let node = arena.get(decl)?;
             let start = node.pos as usize;
             let end = node.end.min(source_text.len() as u32) as usize;
@@ -577,11 +569,7 @@ impl Server {
     ) -> bool {
         let decl_text = binder.file_locals.get(name).and_then(|sid| {
             let sym = binder.symbols.get(sid)?;
-            let decl = if sym.value_declaration.is_some() {
-                sym.value_declaration
-            } else {
-                *sym.declarations.first()?
-            };
+            let decl = sym.primary_declaration()?;
             let node = arena.get(decl)?;
             let start = node.pos as usize;
             let end = node.end.min(source_text.len() as u32) as usize;
@@ -657,11 +645,7 @@ impl Server {
 
         let symbol_id = binder.file_locals.get(name)?;
         let sym = binder.symbols.get(symbol_id)?;
-        let decl = if sym.value_declaration.is_some() {
-            sym.value_declaration
-        } else {
-            *sym.declarations.first()?
-        };
+        let decl = sym.primary_declaration()?;
         let node = arena.get(decl)?;
         if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return None;
@@ -836,11 +820,7 @@ impl Server {
         let Some(sym) = binder.symbols.get(symbol_id) else {
             return false;
         };
-        let decl = if sym.value_declaration.is_some() {
-            sym.value_declaration
-        } else if let Some(&first) = sym.declarations.first() {
-            first
-        } else {
+        let Some(decl) = sym.primary_declaration() else {
             return false;
         };
 

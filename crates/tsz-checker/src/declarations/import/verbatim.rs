@@ -403,12 +403,7 @@ impl<'a> CheckerState<'a> {
                             && let Some(default_sym) = target_binder.get_symbol(default_sym_id)
                             && (default_sym.flags & symbol_flags::ALIAS) != 0
                             && default_sym.import_module.is_none()
-                            && let Some(target_decl_idx) =
-                                if default_sym.value_declaration.is_some() {
-                                    Some(default_sym.value_declaration)
-                                } else {
-                                    default_sym.declarations.first().copied()
-                                }
+                            && let Some(target_decl_idx) = default_sym.primary_declaration()
                             && let Some(target_decl_node) = target_arena.get(target_decl_idx)
                             && let Some(target_ident) =
                                 target_arena.get_identifier(target_decl_node)

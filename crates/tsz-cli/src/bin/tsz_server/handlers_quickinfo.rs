@@ -287,30 +287,23 @@ impl Server {
         if let Some(receiver_expr_idx) = receiver_expr_idx
             && let Some(receiver_sym) = binder.resolve_identifier(arena, receiver_expr_idx)
             && let Some(receiver_symbol) = binder.symbols.get(receiver_sym)
+            && let Some(receiver_decl_idx) = receiver_symbol.primary_declaration()
+            && let Some(receiver_decl_node) = arena.get(receiver_decl_idx)
+            && let Some(param) = arena.get_parameter(receiver_decl_node)
+            && param.type_annotation.is_some()
         {
-            let receiver_decl = if receiver_symbol.value_declaration.is_some() {
-                Some(receiver_symbol.value_declaration)
-            } else {
-                receiver_symbol.declarations.first().copied()
-            };
-            if let Some(receiver_decl_idx) = receiver_decl
-                && let Some(receiver_decl_node) = arena.get(receiver_decl_idx)
-                && let Some(param) = arena.get_parameter(receiver_decl_node)
-                && param.type_annotation.is_some()
-            {
-                container_type_name = arena
-                    .get_identifier_text(param.type_annotation)
-                    .map(std::string::ToString::to_string);
+            container_type_name = arena
+                .get_identifier_text(param.type_annotation)
+                .map(std::string::ToString::to_string);
 
-                if container_type_name.is_none()
-                    && let Some(type_node) = arena.get(param.type_annotation)
-                {
-                    let text = source_text
-                        .get(type_node.pos as usize..type_node.end as usize)
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty());
-                    container_type_name = text.map(std::string::ToString::to_string);
-                }
+            if container_type_name.is_none()
+                && let Some(type_node) = arena.get(param.type_annotation)
+            {
+                let text = source_text
+                    .get(type_node.pos as usize..type_node.end as usize)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                container_type_name = text.map(std::string::ToString::to_string);
             }
         }
 

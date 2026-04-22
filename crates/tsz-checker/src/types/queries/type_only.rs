@@ -832,11 +832,7 @@ impl<'a> CheckerState<'a> {
         {
             let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
             if let Some(target_file_name) = target_arena.source_files.first().map(|f| &f.file_name)
-                && let Some(decl_idx) = if target_sym.value_declaration.is_some() {
-                    Some(target_sym.value_declaration)
-                } else {
-                    target_sym.declarations.first().copied()
-                }
+                && let Some(decl_idx) = target_sym.primary_declaration()
                 && let Some(target_decl_node) = target_arena.get(decl_idx)
                 && let Some(target_ident) = target_arena.get_identifier(target_decl_node)
             {
@@ -1576,11 +1572,7 @@ impl<'a> CheckerState<'a> {
                 if export_name == "default"
                     && sym.flags & symbol_flags::ALIAS != 0
                     && sym.import_module.is_none()
-                    && let Some(target_decl_idx) = if sym.value_declaration.is_some() {
-                        Some(sym.value_declaration)
-                    } else {
-                        sym.declarations.first().copied()
-                    }
+                    && let Some(target_decl_idx) = sym.primary_declaration()
                     && let Some(target_decl_node) = target_arena.get(target_decl_idx)
                     && let Some(target_ident) = target_arena.get_identifier(target_decl_node)
                 {

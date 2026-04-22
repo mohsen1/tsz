@@ -1619,11 +1619,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the declaration position
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first_decl) = symbol.declarations.first() {
-            first_decl
-        } else {
+        let Some(decl_idx) = symbol.primary_declaration() else {
             return;
         };
 

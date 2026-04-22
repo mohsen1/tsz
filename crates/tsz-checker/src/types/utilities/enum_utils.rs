@@ -771,11 +771,7 @@ impl<'a> CheckerState<'a> {
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
         }
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl_idx = symbol.primary_declaration()?;
         let class = self.ctx.arena.get_class_at(decl_idx)?;
 
         // First, check if this class has an explicit constructor
