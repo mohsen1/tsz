@@ -97,8 +97,13 @@ impl<'a> CheckerState<'a> {
             arg_str = self.rewrite_source_display_for_non_literal_target_assignability(
                 arg_type, param_type, arg_str,
             );
-            let param_str =
-                self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
+            let param_str = self.format_type_for_diagnostic_role(
+                param_type,
+                DiagnosticTypeDisplayRole::CallParameter {
+                    argument: arg_type,
+                    argument_idx: idx,
+                },
+            );
 
             // Check if the source is callable/constructable and calling would fix
             // the type mismatch — if so, emit TS2560 instead of TS2559.
