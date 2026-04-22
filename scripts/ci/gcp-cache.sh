@@ -31,10 +31,14 @@ cargo_lock_hash() {
 }
 
 cargo_target_hash() {
-  local files=(Cargo.lock Cargo.toml)
-  while IFS= read -r path; do
+  local files=(Cargo.lock Cargo.toml .cargo/config.toml)
+  while IFS= read -r -d '' path; do
     files+=("$path")
-  done < <(find crates -name Cargo.toml -type f | sort)
+  done < <(
+    find crates -type f \
+      \( -name '*.rs' -o -name Cargo.toml -o -name build.rs \) \
+      -print0 | sort -z
+  )
 
   {
     printf '%s\n' "${TSZ_CI_RUST_CACHE_VERSION:-rust-1.90-bookworm}"
@@ -98,6 +102,16 @@ restore_archive() {
     echo "warning: failed to extract cache ${label}" >&2
     return 0
   fi
+}
+
+normalize_rust_source_mtimes() {
+  local stamp="${TSZ_CI_CARGO_SOURCE_MTIME:-200001010000.00}"
+  {
+    printf '%s\0' Cargo.lock Cargo.toml .cargo/config.toml
+    find crates -type f \
+      \( -name '*.rs' -o -name Cargo.toml -o -name build.rs \) \
+      -print0
+  } | xargs -0 touch -t "$stamp"
 }
 
 save_archive() {
@@ -187,11 +201,22 @@ restore_caches() {
     "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
     ".ci-cache/cargo-home"
 
-  restore_archive \
-    "cargo-target-${cargo_target_hash}" \
-    "$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")" \
-    "." \
-    .target
+  local cargo_target_uri
+  cargo_target_uri="$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")"
+  if gsutil -q stat "$cargo_target_uri"; then
+    restore_archive \
+      "cargo-target-${cargo_target_hash}" \
+      "$cargo_target_uri" \
+      "." \
+      .target
+    if [[ -d .target ]]; then
+      normalize_rust_source_mtimes
+      mkdir -p .ci-cache
+      touch .ci-cache/cargo-target-cache-hit
+    fi
+  else
+    echo "Cache miss: cargo-target-${cargo_target_hash}"
+  fi
 
   restore_archive \
     "npm-${node_hash}" \
