@@ -6,6 +6,7 @@ use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
@@ -157,15 +158,19 @@ impl<'a> CheckerState<'a> {
             )
         } else {
             (
-                self.format_assignment_source_type_for_diagnostic(
+                self.format_type_for_diagnostic_role(
                     source_for_display,
-                    target_for_display,
-                    anchor_idx,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target: target_for_display,
+                        anchor_idx,
+                    },
                 ),
-                self.format_assignment_target_type_for_diagnostic(
+                self.format_type_for_diagnostic_role(
                     target_for_display,
-                    source_for_display,
-                    anchor_idx,
+                    DiagnosticTypeDisplayRole::AssignmentTarget {
+                        source: source_for_display,
+                        anchor_idx,
+                    },
                 ),
             )
         };
