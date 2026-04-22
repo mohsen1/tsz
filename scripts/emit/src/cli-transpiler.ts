@@ -11,6 +11,7 @@ import * as os from 'os';
 import { execFile as execFileCb, execSync, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import { targetToCliArg, moduleToCliArg } from './ts-enums.js';
 
 const execFile = promisify(execFileCb);
 
@@ -78,48 +79,6 @@ function normalizeLeadingTripleSlashSpacing(text: string): string {
   // Keep leading triple-slash directives adjacent to the following statement.
   // Some JS-input baselines expect no blank line after the directive block.
   return text.replace(/^((?:(?:["']use strict["'];\n)?(?:\/\/\/[^\n]*\n)+))\n+/m, '$1');
-}
-
-// Convert target number to CLI arg
-function targetToCliArg(target: number): string {
-  const targets: Record<number, string> = {
-    0: 'es3',
-    1: 'es5',
-    2: 'es2015',
-    3: 'es2016',
-    4: 'es2017',
-    5: 'es2018',
-    6: 'es2019',
-    7: 'es2020',
-    8: 'es2021',
-    9: 'es2022',
-    10: 'es2023',
-    11: 'es2024',
-    12: 'es2025',
-    99: 'esnext',
-  };
-  return targets[target] || 'esnext';
-}
-
-// Convert module number to CLI arg
-function moduleToCliArg(module: number): string {
-  const modules: Record<number, string> = {
-    0: 'none',
-    1: 'commonjs',
-    2: 'amd',
-    3: 'umd',
-    4: 'system',
-    5: 'es2015',
-    6: 'es2020',
-    7: 'es2022',
-    99: 'esnext',
-    100: 'node16',
-    101: 'node18',
-    102: 'node20',
-    199: 'nodenext',
-    200: 'preserve',
-  };
-  return modules[module] || 'none';
 }
 
 /**
