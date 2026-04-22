@@ -248,11 +248,11 @@ impl<'a> CheckerState<'a> {
         // args is already defined above before the ANY/ERROR check
 
         // Validate explicit type arguments against constraints (TS2344)
-        let mut type_arg_count_mismatch = false;
+        let mut type_arg_validation = crate::generic_checker::CallTypeArgumentValidation::default();
         if let Some(ref type_args_list) = call.type_arguments
             && !type_args_list.nodes.is_empty()
         {
-            type_arg_count_mismatch =
+            type_arg_validation =
                 self.validate_call_type_arguments(callee_type, type_args_list, idx);
 
             // `super<T>(...)` is always invalid (TS2754). Don't proceed with
@@ -280,7 +280,7 @@ impl<'a> CheckerState<'a> {
         // tsc skips argument checking in this case. Without this guard, the checker
         // would run generic inference on an uninstantiated signature and emit spurious
         // TS2345 errors for arguments that are actually valid.
-        if type_arg_count_mismatch {
+        if type_arg_validation.count_mismatch {
             // Still evaluate argument expressions for side-effect errors
             // (definite assignment, etc.) but don't type-check them against
             // the function signature.
