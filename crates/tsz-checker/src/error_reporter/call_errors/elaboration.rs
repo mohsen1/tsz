@@ -1089,18 +1089,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Match tsc's elaborateElementwise gate: when the target property
-            // still resolves to a direct indexed-access type on a generic path,
-            // keep the primary TS2322 on the outer object instead of collapsing
-            // it to a property-level leaf.
-            if crate::query_boundaries::common::is_index_access_type(
-                self.ctx.types,
-                target_prop_type,
-            ) || crate::query_boundaries::common::is_index_access_type(
-                self.ctx.types,
-                target_prop_type_for_diagnostic,
-            ) {
-                continue;
+            let is_iat =
+                |t| crate::query_boundaries::common::is_index_access_type(self.ctx.types, t);
+            if is_iat(target_prop_type) || is_iat(target_prop_type_for_diagnostic) {
+                continue; // tsc elaborateElementwise: keep TS2322 on outer object for generic indexed-access props
             }
 
             // Get the type of the property value in the object literal.
