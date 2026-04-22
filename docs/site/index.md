@@ -32,13 +32,13 @@ Currently targeting **TypeScript `{{ metrics.ts_version }}`**
 <div class="progress-row">
   <span class="progress-label">JS Emit</span>
   <div class="progress-bar"><div class="progress-fill emit-js" style="width: {{ metrics.emit_js_bar_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.emit_js_rate_label }} - {{ metrics.emit_js_passed }}/{{ metrics.emit_js_total }}</span>
+  <span class="progress-stat">{{ metrics.emit_js_rate_label }} - {{ metrics.emit_js_passed }}/{{ metrics.emit_js_total }}{{ metrics.emit_js_extra }}</span>
 </div>
 
 <div class="progress-row">
   <span class="progress-label">Declaration Emit</span>
   <div class="progress-bar"><div class="progress-fill emit-dts" style="width: {{ metrics.emit_dts_bar_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.emit_dts_rate_label }} - {{ metrics.emit_dts_passed }}/{{ metrics.emit_dts_total }}</span>
+  <span class="progress-stat">{{ metrics.emit_dts_rate_label }} - {{ metrics.emit_dts_passed }}/{{ metrics.emit_dts_total }}{{ metrics.emit_dts_extra }}</span>
 </div>
 
 <div class="progress-row">
