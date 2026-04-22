@@ -25,29 +25,32 @@ Currently targeting **TypeScript `{{ metrics.ts_version }}`**
 
 <div class="progress-row">
   <span class="progress-label">Conformance</span>
-  <div class="progress-bar"><div class="progress-fill conformance" style="width: {{ metrics.conformance_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.conformance_rate }}% - {{ metrics.conformance_passed }}/{{ metrics.conformance_total }}</span>
+  <div class="progress-bar"><div class="progress-fill conformance" style="width: {{ metrics.conformance_bar_rate }}%"></div></div>
+  <span class="progress-stat">{{ metrics.conformance_rate_label }} - {{ metrics.conformance_passed }}/{{ metrics.conformance_total }}</span>
 </div>
 
 <div class="progress-row">
   <span class="progress-label">JS Emit</span>
-  <div class="progress-bar"><div class="progress-fill emit-js" style="width: {{ metrics.emit_js_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.emit_js_rate }}% - {{ metrics.emit_js_passed }}/{{ metrics.emit_js_total }}</span>
+  <div class="progress-bar"><div class="progress-fill emit-js" style="width: {{ metrics.emit_js_bar_rate }}%"></div></div>
+  <span class="progress-stat">{{ metrics.emit_js_rate_label }} - {{ metrics.emit_js_passed }}/{{ metrics.emit_js_total }}</span>
 </div>
 
 <div class="progress-row">
   <span class="progress-label">Declaration Emit</span>
-  <div class="progress-bar"><div class="progress-fill emit-dts" style="width: {{ metrics.emit_dts_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.emit_dts_rate }}% - {{ metrics.emit_dts_passed }}/{{ metrics.emit_dts_total }}</span>
+  <div class="progress-bar"><div class="progress-fill emit-dts" style="width: {{ metrics.emit_dts_bar_rate }}%"></div></div>
+  <span class="progress-stat">{{ metrics.emit_dts_rate_label }} - {{ metrics.emit_dts_passed }}/{{ metrics.emit_dts_total }}</span>
 </div>
 
 <div class="progress-row">
   <span class="progress-label">Language Service</span>
-  <div class="progress-bar"><div class="progress-fill fourslash" style="width: {{ metrics.fourslash_rate }}%"></div></div>
-  <span class="progress-stat">{{ metrics.fourslash_rate }}% - {{ metrics.fourslash_passed }}/{{ metrics.fourslash_total }}</span>
+  <div class="progress-bar"><div class="progress-fill fourslash" style="width: {{ metrics.fourslash_bar_rate }}%"></div></div>
+  <span class="progress-stat">{{ metrics.fourslash_rate_label }} - {{ metrics.fourslash_passed }}/{{ metrics.fourslash_total }}</span>
 </div>
 
+{% if metrics.metrics_notice %}
+<p class="metrics-note">{{ metrics.metrics_notice }}</p>
+{% endif %}
+<p class="metrics-meta">{{ metrics.metrics_source_summary }}</p>
 <p class="loc-stat">{{ metrics.total_loc }} lines of Rust across {{ metrics.num_crates }} crates</p>
 
 Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match `tsc` in error code, file, line, column, and message.
-
