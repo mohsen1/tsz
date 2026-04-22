@@ -649,15 +649,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(sym_id) = self.resolve_identifier_symbol(right_idx)
                     && let Some(symbol) = self.get_symbol_from_any_binder(sym_id)
                 {
-                    let decl_idx = if symbol.value_declaration.is_some() {
-                        symbol.value_declaration
-                    } else {
-                        symbol
-                            .declarations
-                            .first()
-                            .copied()
-                            .unwrap_or(NodeIndex::NONE)
-                    };
+                    let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
                     if decl_idx.is_some()
                         && let Some(decl_node) = self.ctx.arena.get(decl_idx)
                         && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)

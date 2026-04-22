@@ -412,15 +412,7 @@ impl<'a> Completions<'a> {
                             item.is_snippet = true;
                         }
 
-                        let decl_node = if symbol.value_declaration.is_some() {
-                            symbol.value_declaration
-                        } else {
-                            symbol
-                                .declarations
-                                .first()
-                                .copied()
-                                .unwrap_or(NodeIndex::NONE)
-                        };
+                        let decl_node = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
                         if decl_node.is_some() {
                             let doc = jsdoc_for_node(self.arena, root, decl_node, self.source_text);
                             if !doc.is_empty() {

@@ -1304,17 +1304,7 @@ impl<'a> CheckerState<'a> {
                             })
                             .unwrap_or(false)
                     })
-                    .unwrap_or_else(|| {
-                        if symbol.value_declaration.is_some() {
-                            symbol.value_declaration
-                        } else {
-                            symbol
-                                .declarations
-                                .first()
-                                .copied()
-                                .unwrap_or(NodeIndex::NONE)
-                        }
-                    });
+                    .unwrap_or_else(|| symbol.primary_declaration().unwrap_or(NodeIndex::NONE));
 
                 if decl_idx.is_some() {
                     // Try user arena first (fast path for user-defined type aliases)

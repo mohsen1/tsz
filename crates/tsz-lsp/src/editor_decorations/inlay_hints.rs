@@ -220,15 +220,7 @@ impl<'a> InlayHintsProvider<'a> {
         };
 
         // Get the function declaration to extract parameter names
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE)
-        };
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
 
         if decl_idx.is_none() {
             return;

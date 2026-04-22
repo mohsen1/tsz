@@ -546,15 +546,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE)
-        };
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         if decl_idx.is_none() {
             return false;
         }
@@ -639,15 +631,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let mut decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE)
-        };
+        let mut decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         // When the primary declaration doesn't resolve to a class in the current
         // arena (e.g., class+interface merged symbol where value_declaration was
         // not propagated through program-level symbol merging), search all

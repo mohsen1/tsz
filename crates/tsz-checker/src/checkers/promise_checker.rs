@@ -491,15 +491,7 @@ impl<'a> CheckerState<'a> {
         visited_aliases.push(sym_id);
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE)
-        };
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         if decl_idx.is_none() {
             return None;
         }
@@ -598,15 +590,7 @@ impl<'a> CheckerState<'a> {
                 .map(|symbol| (symbol, decl_file_idx))
         })?;
         let arena = self.ctx.get_arena_for_file(decl_file_idx);
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE)
-        };
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         if decl_idx.is_none() {
             return None;
         }

@@ -874,15 +874,7 @@ impl<'a> CheckerState<'a> {
         if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
             return Some(instance_type);
         }
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .first()
-                .copied()
-                .unwrap_or(NodeIndex::NONE)
-        };
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         self.ctx.class_instance_type_cache.get(&decl_idx).copied()
     }
 
