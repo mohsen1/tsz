@@ -1844,6 +1844,32 @@ Installer.prototype.loadArgMetadata = function(next) {
 }
 
 #[test]
+fn test_js_prototype_method_reports_implicit_any_for_own_params() {
+    let source = r#"
+function Installer() {
+    this.args = 0;
+}
+Installer.prototype.loadArgMetadata = function(next) {
+    (args) => {
+        this.args = "hi";
+    };
+}
+"#;
+    let diagnostics = check_js(source);
+    let ts7006_next: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| {
+            *code == 7006 && msg.contains("Parameter 'next' implicitly has an 'any' type.")
+        })
+        .collect();
+    assert_eq!(
+        ts7006_next.len(),
+        1,
+        "Expected bare JS prototype method parameter to report TS7006, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_prototype_method_arrow_adds_instance_properties() {
     let source = r#"
 function Installer() {
