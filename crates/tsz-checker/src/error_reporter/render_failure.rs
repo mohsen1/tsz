@@ -1111,7 +1111,13 @@ impl<'a> CheckerState<'a> {
                 self.missing_required_properties_from_index_signature_source(source, target)
             && all_missing.len() > 1
         {
-            let src_str = self.format_assignment_source_type_for_diagnostic(source, target, idx);
+            let src_str = self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target,
+                    anchor_idx: idx,
+                },
+            );
             let tgt_str = self.format_assignability_type_for_message(target, source);
             let prop_list: Vec<String> = all_missing
                 .iter()
@@ -1146,10 +1152,22 @@ impl<'a> CheckerState<'a> {
             let src = if source_type == TypeId::OBJECT {
                 "{}".to_string()
             } else {
-                self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
             };
             let widened_target = self.widen_fresh_object_literal_properties_for_display(target);
-            (src, self.format_type_diagnostic_flattened(widened_target))
+            (
+                src,
+                self.format_type_for_diagnostic_role(
+                    widened_target,
+                    DiagnosticTypeDisplayRole::FlattenedDiagnostic,
+                ),
+            )
         } else if source_type == TypeId::OBJECT {
             ("{}".to_string(), tgt_str)
         } else {
@@ -1273,7 +1291,13 @@ impl<'a> CheckerState<'a> {
                     );
             if is_src_fn && !tgt_has_call && !src_has_construct {
                 let src_str = if depth == 0 {
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
                 } else {
                     self.format_type_diagnostic(source_type)
                 };
@@ -1491,8 +1515,13 @@ impl<'a> CheckerState<'a> {
                 if source_type == TypeId::OBJECT {
                     "{}".to_string()
                 } else {
-                    let source_display =
-                        self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                    let source_display = self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    );
                     self.rewrite_source_display_for_non_literal_target_assignability(
                         source,
                         target,
@@ -1547,7 +1576,13 @@ impl<'a> CheckerState<'a> {
                 && prop_info.visibility != tsz_solver::Visibility::Public
             {
                 let src_str = if depth == 0 {
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
                 } else {
                     self.format_type_diagnostic(source_type)
                 };
@@ -1573,7 +1608,13 @@ impl<'a> CheckerState<'a> {
                 if source_type == TypeId::OBJECT {
                     "{}".to_string()
                 } else {
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx)
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
                 }
             } else if source_type == TypeId::OBJECT {
                 "{}".to_string()
@@ -1613,7 +1654,13 @@ impl<'a> CheckerState<'a> {
             source_type
         };
         let src_str = if depth == 0 {
-            self.format_assignment_source_type_for_diagnostic(source, target, idx)
+            self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target,
+                    anchor_idx: idx,
+                },
+            )
         } else {
             self.format_type_diagnostic(self.widen_type_for_display(display_source))
         };
