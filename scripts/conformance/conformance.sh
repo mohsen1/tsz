@@ -523,17 +523,18 @@ import sys
 
 def parse_result_file(path):
     \"\"\"Parse a result file into {test_path: status} dict.
-    Handles both old format (PASS/FAIL path) and new format
-    (FAIL path | expected:[...] actual:[...]).\"\"\"
+    Handles PASS/FAIL/XFAIL path rows and detailed failure rows
+    (FAIL path | expected:[...] actual:[...]). XFAIL counts as FAIL
+    for regression math so known debt is never treated as a raw pass.\"\"\"
     results = {}
     with open(path) as f:
         for line in f:
             line = line.strip()
             parts = line.split(' ', 1)
-            if len(parts) == 2 and parts[0] in ('PASS', 'FAIL'):
+            if len(parts) == 2 and parts[0] in ('PASS', 'FAIL', 'XFAIL'):
                 # Strip ' | expected:... actual:...' suffix if present
                 test_path = parts[1].split(' | ')[0]
-                results[test_path] = parts[0]
+                results[test_path] = 'FAIL' if parts[0] == 'XFAIL' else parts[0]
     return results
 
 baseline = parse_result_file(sys.argv[1])
@@ -703,7 +704,7 @@ has_final_results = bool(m)
 recorded = sum(
     1
     for line in text.splitlines()
-    if line.startswith(('PASS ', 'FAIL ', 'CRASH ', 'TIMEOUT '))
+    if line.startswith(('PASS ', 'FAIL ', 'XFAIL ', 'CRASH ', 'TIMEOUT '))
 )
 json.dump(
     {

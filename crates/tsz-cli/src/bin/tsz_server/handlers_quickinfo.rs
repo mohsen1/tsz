@@ -1095,33 +1095,7 @@ impl Server {
             let bytes = source_text.as_bytes();
             if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
                 let len = bytes.len() as u32;
-                let mut parameter_probe_offset = base_offset;
-                let marker_bounds = text::marker_comment_bounds_around(&source_text, base_offset);
-
-                // Fourslash quickinfo markers are commonly comment-based (`/*1*/`).
-                // Probe the identifier immediately after the marker so we don't keep
-                // a weaker hover result (e.g. contextual parameter type falling back to `any`).
-                if let Some((_, marker_end)) = marker_bounds {
-                    let mut probe = marker_end;
-                    while probe < len && bytes[probe as usize].is_ascii_whitespace() {
-                        probe += 1;
-                    }
-                    if probe < len {
-                        parameter_probe_offset = probe;
-                        let probe_pos = line_map.offset_to_position(probe, &source_text);
-                        if let Some(marker_hover) =
-                            provider.get_hover(root, probe_pos, &mut type_cache)
-                        {
-                            let should_replace = info.as_ref().is_none_or(|existing| {
-                                existing.display_string.contains(": any")
-                                    && !marker_hover.display_string.contains(": any")
-                            });
-                            if should_replace {
-                                info = Some(marker_hover);
-                            }
-                        }
-                    }
-                }
+                let parameter_probe_offset = base_offset;
 
                 let mut ctor_probe = base_offset;
                 while ctor_probe < len && bytes[ctor_probe as usize].is_ascii_whitespace() {
@@ -1285,9 +1259,9 @@ impl Server {
                 }
 
                 if info.is_none() {
-                    // tsserver/fourslash markers may place cursor on punctuation directly
-                    // adjacent to the symbol token (e.g. `x./**/m`). Probe nearby offsets
-                    // to recover the expected symbol hover without broad behavior changes.
+                    // Some callers place the cursor on punctuation directly adjacent
+                    // to the symbol token. Probe nearby offsets to recover the symbol
+                    // hover without broad behavior changes.
                     let mut probes = [base_offset; 3];
                     let mut probe_count = 0usize;
                     if base_offset < len {

@@ -4,6 +4,7 @@
 Collapses multi-line runner output into one line per test:
   PASS path
   FAIL path | expected:[TS2322,TS2345] actual:[TS2322]
+  XFAIL path | expected:[TS2322,TS2345] actual:[TS2322]
 
 Output is sorted by test path for stable diffing.
 """
@@ -25,9 +26,10 @@ def extract(input_path):
             i += 1
             continue
 
-        m = re.match(r"^FAIL\s+(.+?)(?:\s+\(ERROR: .+\))?$", line)
+        m = re.match(r"^(FAIL|XFAIL)\s+(.+?)(?:\s+\(.+\))?$", line)
         if m:
-            path = m.group(1)
+            status = m.group(1)
+            path = m.group(2)
             exp, act = [], []
             j = i + 1
             while j < len(lines) and lines[j].startswith("  "):
@@ -40,10 +42,10 @@ def extract(input_path):
                 j += 1
             if exp or act:
                 results.append(
-                    f'FAIL {path} | expected:[{",".join(exp)}] actual:[{",".join(act)}]'
+                    f'{status} {path} | expected:[{",".join(exp)}] actual:[{",".join(act)}]'
                 )
             else:
-                results.append(f"FAIL {path}")
+                results.append(f"{status} {path}")
             i = j
             continue
 

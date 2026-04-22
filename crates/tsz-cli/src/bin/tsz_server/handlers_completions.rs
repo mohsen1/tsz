@@ -14,110 +14,6 @@ use tsz::lsp::position::{LineMap, Position};
 use tsz_solver::TypeInterner;
 
 impl Server {
-    fn completion_probe_positions(
-        position: Position,
-        line_map: &LineMap,
-        source_text: &str,
-    ) -> Vec<Position> {
-        let mut probes = vec![position];
-        let Some(base_offset) = line_map.position_to_offset(position, source_text) else {
-            return probes;
-        };
-        let len = source_text.len() as u32;
-        let bytes = source_text.as_bytes();
-
-        if base_offset < len
-            && bytes[base_offset as usize] == b'.'
-            && base_offset + 2 < len
-            && bytes[(base_offset + 1) as usize] == b'/'
-            && bytes[(base_offset + 2) as usize] == b'*'
-        {
-            for candidate in [base_offset + 1, base_offset + 2, base_offset + 3] {
-                if candidate < len {
-                    let probe = line_map.offset_to_position(candidate, source_text);
-                    if !probes.contains(&probe) {
-                        probes.push(probe);
-                    }
-                }
-            }
-        }
-
-        let Some(marker_start) = Self::fourslash_marker_comment_start(source_text, base_offset)
-        else {
-            return probes;
-        };
-        let marker_end = source_text[marker_start as usize..]
-            .find("*/")
-            .map(|rel_end| marker_start + rel_end as u32 + 2);
-        let line_start = source_text[..marker_start as usize]
-            .rfind('\n')
-            .map_or(0, |idx| idx + 1);
-        if source_text[line_start..marker_start as usize].contains("//") {
-            return vec![position];
-        }
-        probes.clear();
-        probes.push(position);
-        for candidate in [
-            marker_start.saturating_sub(1),
-            marker_start.saturating_sub(2),
-            marker_start.saturating_sub(3),
-        ] {
-            if candidate < len {
-                let probe = line_map.offset_to_position(candidate, source_text);
-                if !probes.contains(&probe) {
-                    probes.push(probe);
-                }
-            }
-        }
-        if let Some(marker_end) = marker_end {
-            for candidate in [marker_end, marker_end.saturating_add(1)] {
-                if candidate < len {
-                    let probe = line_map.offset_to_position(candidate, source_text);
-                    if !probes.contains(&probe) {
-                        probes.push(probe);
-                    }
-                }
-            }
-        }
-        if probes.is_empty() {
-            probes.push(position);
-        }
-        probes
-    }
-
-    fn fourslash_marker_comment_start(source_text: &str, base_offset: u32) -> Option<u32> {
-        let bytes = source_text.as_bytes();
-        let len = bytes.len() as u32;
-        if len < 4 {
-            return None;
-        }
-        let offset = base_offset.min(len.saturating_sub(1));
-        let search_start = offset.saturating_sub(8);
-        let search_end = (offset + 1).min(len.saturating_sub(2));
-        for start in search_start..=search_end {
-            if bytes[start as usize] != b'/' || bytes[(start + 1) as usize] != b'*' {
-                continue;
-            }
-            let mut end = start + 2;
-            while end + 1 < len && end - start <= 8 {
-                if bytes[end as usize] == b'*' && bytes[(end + 1) as usize] == b'/' {
-                    let digits = &bytes[(start + 2) as usize..end as usize];
-                    let is_fourslash_marker =
-                        digits.is_empty() || digits.iter().all(u8::is_ascii_digit);
-                    if is_fourslash_marker {
-                        let comment_end = end + 1;
-                        if offset >= start && offset <= comment_end {
-                            return Some(start);
-                        }
-                    }
-                    break;
-                }
-                end += 1;
-            }
-        }
-        None
-    }
-
     fn is_class_member_snippet_context(
         source_text: &str,
         line_map: &LineMap,
@@ -126,13 +22,7 @@ impl Server {
         let Some(offset) = line_map.position_to_offset(position, source_text) else {
             return false;
         };
-        let end =
-            if let Some(marker_start) = Self::fourslash_marker_comment_start(source_text, offset) {
-                marker_start.saturating_sub(1) as usize
-            } else {
-                offset as usize
-            }
-            .min(source_text.len());
+        let end = (offset as usize).min(source_text.len());
         let text = &source_text[..end];
         let Some(class_pos) = text.rfind("class ") else {
             return false;
@@ -158,134 +48,12 @@ impl Server {
         depth == 1
     }
 
-    fn completion_result_with_probes(
+    fn completion_result_at_position(
         provider: &Completions<'_>,
         root: tsz::parser::base::NodeIndex,
         position: Position,
-        line_map: &LineMap,
-        source_text: &str,
     ) -> (Position, Option<tsz::lsp::completions::CompletionResult>) {
-        let probe_positions = Self::completion_probe_positions(position, line_map, source_text);
-        let has_multiple_probes = probe_positions.len() > 1;
-        let mut selected_position = position;
-        let mut selected_result = None;
-        let mut selected_score = (false, 0usize, false);
-        for probe_position in probe_positions {
-            let candidate = provider.get_completion_result(root, probe_position);
-            let probe_preceded_by_dot =
-                Self::probe_position_preceded_by_dot(source_text, line_map, probe_position);
-            let probe_inside_string =
-                Self::probe_position_inside_string_literal(source_text, line_map, probe_position);
-            let score = candidate
-                .as_ref()
-                .map(|result| {
-                    (
-                        result.is_member_completion,
-                        result.entries.len(),
-                        result.is_new_identifier_location,
-                    )
-                })
-                .unwrap_or((false, 0usize, false));
-            if selected_result.is_none() {
-                selected_position = probe_position;
-                selected_result = candidate;
-                selected_score = score;
-                continue;
-            }
-
-            let selected_is_member = selected_score.0;
-            let candidate_is_member = score.0;
-            let should_replace = if candidate_is_member && !selected_is_member {
-                score.1 > 0
-                    || (selected_score.1 == 0 && probe_preceded_by_dot && !probe_inside_string)
-            } else if candidate_is_member && selected_is_member {
-                score.1 > selected_score.1
-            } else if has_multiple_probes && !candidate_is_member && !selected_is_member {
-                score.1 > 0
-                    && (selected_score.1 == 0
-                        || (score.2 == selected_score.2 && score.1 < selected_score.1))
-            } else {
-                false
-            };
-            if should_replace {
-                selected_position = probe_position;
-                selected_result = candidate;
-                selected_score = score;
-            }
-        }
-        (selected_position, selected_result)
-    }
-
-    fn project_completion_position(
-        position: Position,
-        line_map: &LineMap,
-        source_text: &str,
-    ) -> Position {
-        let probes = Self::completion_probe_positions(position, line_map, source_text);
-        for probe in probes {
-            let Some(offset) = line_map.position_to_offset(probe, source_text) else {
-                continue;
-            };
-            if Self::fourslash_marker_comment_start(source_text, offset).is_none() {
-                return probe;
-            }
-        }
-        position
-    }
-
-    fn probe_position_preceded_by_dot(
-        source_text: &str,
-        line_map: &LineMap,
-        position: Position,
-    ) -> bool {
-        let Some(offset) = line_map.position_to_offset(position, source_text) else {
-            return false;
-        };
-        let mut idx = offset as usize;
-        let bytes = source_text.as_bytes();
-        while idx > 0 && bytes[idx - 1].is_ascii_whitespace() {
-            idx -= 1;
-        }
-        idx > 0 && bytes[idx - 1] == b'.'
-    }
-
-    fn probe_position_inside_string_literal(
-        source_text: &str,
-        line_map: &LineMap,
-        position: Position,
-    ) -> bool {
-        let Some(offset) = line_map.position_to_offset(position, source_text) else {
-            return false;
-        };
-        let end = (offset as usize).min(source_text.len());
-        let line_start = source_text[..end].rfind('\n').map_or(0, |idx| idx + 1);
-        let bytes = source_text.as_bytes();
-        let mut idx = line_start;
-        let mut in_single = false;
-        let mut in_double = false;
-        let mut in_backtick = false;
-        let mut escaped = false;
-        while idx < end {
-            let b = bytes[idx];
-            if escaped {
-                escaped = false;
-                idx += 1;
-                continue;
-            }
-            if b == b'\\' && (in_single || in_double || in_backtick) {
-                escaped = true;
-                idx += 1;
-                continue;
-            }
-            match b {
-                b'\'' if !in_double && !in_backtick => in_single = !in_single,
-                b'"' if !in_single && !in_backtick => in_double = !in_double,
-                b'`' if !in_single && !in_double => in_backtick = !in_backtick,
-                _ => {}
-            }
-            idx += 1;
-        }
-        in_single || in_double || in_backtick
+        (position, provider.get_completion_result(root, position))
     }
 
     fn is_bare_identifier_expression_prefix(
@@ -351,7 +119,7 @@ impl Server {
             return false;
         };
         let end = (offset as usize).min(source_text.len());
-        let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..end]).trim_end();
+        let prefix = source_text[..end].trim_end();
         let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
         let line = &prefix[line_start..];
         if line.is_empty() {
@@ -598,7 +366,7 @@ impl Server {
         completion_offset: u32,
     ) -> bool {
         let prefix_end = (completion_offset as usize).min(source_text.len());
-        let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..prefix_end]);
+        let prefix = &source_text[..prefix_end];
         let trimmed = prefix.trim_end();
         let Some(before_dot) = trimmed.strip_suffix('.') else {
             return false;
@@ -898,7 +666,7 @@ impl Server {
         completion_offset: u32,
     ) -> Option<(String, String)> {
         let prefix_end = (completion_offset as usize).min(source_text.len());
-        let prefix = Self::strip_trailing_fourslash_marker_text(&source_text[..prefix_end]);
+        let prefix = &source_text[..prefix_end];
         let trimmed = prefix.trim_end();
         let dot_idx = trimmed.rfind('.')?;
         let before_dot = trimmed[..dot_idx].trim_end();
@@ -2709,31 +2477,9 @@ impl Server {
         source_text[line_start..i].contains("//")
     }
 
-    fn strip_trailing_fourslash_marker_text(text: &str) -> &str {
-        let trimmed = text.trim_end();
-        if let Some(start) = trimmed.rfind("/*") {
-            let after = &trimmed[start + 2..];
-            if !after.contains("*/") {
-                return trimmed[..start].trim_end();
-            }
-        }
-        if !trimmed.ends_with("*/") {
-            return trimmed;
-        }
-        let Some(start) = trimmed.rfind("/*") else {
-            return trimmed;
-        };
-        let marker = &trimmed[start + 2..trimmed.len() - 2];
-        if marker.is_empty() || marker.bytes().all(|b| b.is_ascii_digit()) {
-            trimmed[..start].trim_end()
-        } else {
-            trimmed
-        }
-    }
-
     fn is_import_meta_member_context(source_text: &str, offset: u32) -> bool {
         let end = (offset as usize).min(source_text.len());
-        let trimmed = Self::strip_trailing_fourslash_marker_text(&source_text[..end]).trim_end();
+        let trimmed = source_text[..end].trim_end();
         trimmed.ends_with("import.meta.") || trimmed.ends_with("import.meta")
     }
 
@@ -2831,7 +2577,7 @@ impl Server {
     ) -> FxHashSet<String> {
         let mut out = FxHashSet::default();
         let end = (offset as usize).min(source_text.len());
-        let trimmed = Self::strip_trailing_fourslash_marker_text(&source_text[..end]).trim_end();
+        let trimmed = source_text[..end].trim_end();
         if !trimmed.ends_with('}') {
             return out;
         }
@@ -2928,19 +2674,13 @@ impl Server {
                 &source_text,
                 file.clone(),
             );
-            let (completion_position, completion_result) = Self::completion_result_with_probes(
-                &provider,
-                root,
-                position,
-                &line_map,
-                &source_text,
-            );
+            let (completion_position, completion_result) =
+                Self::completion_result_at_position(&provider, root, position);
             let provider_items = completion_result
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_completion_position =
-                Self::project_completion_position(completion_position, &line_map, &source_text);
+            let project_completion_position = completion_position;
             let project_items = self.project_completion_items(
                 &file,
                 project_completion_position,
@@ -3163,19 +2903,13 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let (completion_position, completion_result) = Self::completion_result_with_probes(
-                &provider,
-                root,
-                position,
-                &line_map,
-                &source_text,
-            );
+            let (completion_position, completion_result) =
+                Self::completion_result_at_position(&provider, root, position);
             let provider_items = completion_result
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_completion_position =
-                Self::project_completion_position(completion_position, &line_map, &source_text);
+            let project_completion_position = completion_position;
             let mut project_items =
                 self.project_completion_items(file, project_completion_position, Some(preferences));
             let is_member_completion = completion_result
@@ -3779,62 +3513,16 @@ mod tests {
     }
 
     #[test]
-    fn probe_position_preceded_by_dot_ignores_whitespace() {
-        let source_text = "const value = obj.   prop;";
-        let line_map = LineMap::build(source_text);
-        let probe_offset = source_text.find("prop").expect("probe token exists") as u32;
-        let probe_position = line_map.offset_to_position(probe_offset, source_text);
-
-        assert!(Server::probe_position_preceded_by_dot(
-            source_text,
-            &line_map,
-            probe_position
-        ));
-
-        let non_member_text = "const value = obj + prop;";
-        let non_member_map = LineMap::build(non_member_text);
-        let non_member_offset = non_member_text.find("prop").expect("probe token exists") as u32;
-        let non_member_position =
-            non_member_map.offset_to_position(non_member_offset, non_member_text);
-        assert!(!Server::probe_position_preceded_by_dot(
-            non_member_text,
-            &non_member_map,
-            non_member_position
-        ));
-    }
-
-    #[test]
-    fn probe_position_inside_string_literal_only_matches_inside_quotes() {
-        let source_text = "const a = \"ab\";\nconst b = 1;";
-        let line_map = LineMap::build(source_text);
-        let inside_offset = source_text.find("ab").expect("string token exists") as u32 + 1;
-        let inside_position = line_map.offset_to_position(inside_offset, source_text);
-        assert!(Server::probe_position_inside_string_literal(
-            source_text,
-            &line_map,
-            inside_position
-        ));
-
-        let outside_offset = source_text.find("const b").expect("outside token exists") as u32 + 2;
-        let outside_position = line_map.offset_to_position(outside_offset, source_text);
-        assert!(!Server::probe_position_inside_string_literal(
-            source_text,
-            &line_map,
-            outside_position
-        ));
-    }
-
-    #[test]
     fn merged_class_member_context_detects_uppercase_receiver_before_dot() {
-        let source_text = "Foo./**/";
-        let offset = source_text.find('/').expect("marker start exists") as u32;
+        let source_text = "Foo.";
+        let offset = source_text.len() as u32;
         assert!(Server::looks_like_merged_class_member_completion_context(
             source_text,
             offset
         ));
 
-        let lower_source = "foo./**/";
-        let lower_offset = lower_source.find('/').expect("marker start exists") as u32;
+        let lower_source = "foo.";
+        let lower_offset = lower_source.len() as u32;
         assert!(!Server::looks_like_merged_class_member_completion_context(
             lower_source,
             lower_offset
@@ -3858,25 +3546,6 @@ mod tests {
         assert!(labels.contains("bind"));
         assert!(labels.contains("arguments"));
         assert!(labels.contains("caller"));
-    }
-
-    #[test]
-    fn project_completion_position_prefers_non_marker_probe() {
-        let source_text = "fooFrom/**/";
-        let marker_offset = source_text.find('/').expect("marker start exists") as u32;
-        let line_map = LineMap::build(source_text);
-        let marker_position = line_map.offset_to_position(marker_offset, source_text);
-
-        let project_position =
-            Server::project_completion_position(marker_position, &line_map, source_text);
-        let project_offset = line_map
-            .position_to_offset(project_position, source_text)
-            .expect("project completion probe should map to offset");
-
-        assert!(
-            project_offset < marker_offset,
-            "expected project completion probe to move before marker comment, got marker={marker_offset}, project={project_offset}"
-        );
     }
 
     #[test]
