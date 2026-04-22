@@ -535,11 +535,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         let sym_id = self.reference_symbol(reference)?;
         let symbol = self.binder.get_symbol(sym_id)?;
-        let decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol.declarations.first().copied()?
-        };
+        let decl = symbol.primary_declaration()?;
         self.fallback_declaration_type(decl)
     }
 

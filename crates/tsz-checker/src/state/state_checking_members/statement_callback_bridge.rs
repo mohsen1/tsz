@@ -358,11 +358,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                                 let exports = jsx_symbol.exports.as_ref()?;
                                 let lma_sym_id = exports.get("LibraryManagedAttributes")?;
                                 let lma_symbol = self.ctx.binder.symbols.get(lma_sym_id)?;
-                                if lma_symbol.value_declaration.is_some() {
-                                    Some(lma_symbol.value_declaration)
-                                } else {
-                                    lma_symbol.declarations.first().copied()
-                                }
+                                lma_symbol.primary_declaration()
                             })
                         {
                             let lma_error_node = self

@@ -454,11 +454,7 @@ impl<'a> Completions<'a> {
 
     fn symbol_type_annotation_node(&self, sym_id: tsz_binder::SymbolId) -> Option<NodeIndex> {
         let symbol = self.binder.symbols.get(sym_id)?;
-        let decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl = symbol.primary_declaration()?;
         let node = self.arena.get(decl)?;
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             let var_decl = self.arena.get_variable_declaration(node)?;

@@ -132,11 +132,7 @@ impl<'a> CheckerState<'a> {
                 let base_name = &ident.escaped_text;
                 let sym_id = self.ctx.binder.file_locals.get(base_name)?;
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                let base_idx = if symbol.value_declaration.is_some() {
-                    symbol.value_declaration
-                } else {
-                    *symbol.declarations.first()?
-                };
+                let base_idx = symbol.primary_declaration()?;
 
                 return self.find_member_in_class_chain_impl(
                     base_idx,

@@ -215,13 +215,7 @@ impl<'a> CheckerState<'a> {
                             || n.kind == syntax_kind_ext::CLASS_EXPRESSION
                     })
                 })
-                .or_else(|| {
-                    if symbol.value_declaration.is_some() {
-                        Some(symbol.value_declaration)
-                    } else {
-                        symbol.declarations.first().copied()
-                    }
-                });
+                .or_else(|| symbol.primary_declaration());
             let Some(decl_idx) = decl_idx else {
                 continue;
             };

@@ -73,11 +73,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl_idx = symbol.primary_declaration()?;
         let decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind != tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
             return None;

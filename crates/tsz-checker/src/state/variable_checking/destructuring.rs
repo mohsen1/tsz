@@ -1736,11 +1736,7 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
     ) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl_idx = symbol.primary_declaration()?;
         let decl_node = self.ctx.arena.get(decl_idx)?;
         let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
         if var_decl.initializer.is_none() {

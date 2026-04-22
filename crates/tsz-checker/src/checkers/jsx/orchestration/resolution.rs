@@ -1085,11 +1085,7 @@ impl<'a> CheckerState<'a> {
                     symbol.import_module.clone(),
                     symbol.import_name.clone(),
                     symbol.escaped_name.clone(),
-                    if symbol.value_declaration.is_some() {
-                        symbol.value_declaration
-                    } else {
-                        *symbol.declarations.first()?
-                    },
+                    symbol.primary_declaration()?,
                 )
             } else {
                 let lib_binders = self.get_lib_binders();
@@ -1101,11 +1097,7 @@ impl<'a> CheckerState<'a> {
                     symbol.import_module.clone(),
                     symbol.import_name.clone(),
                     symbol.escaped_name.clone(),
-                    if symbol.value_declaration.is_some() {
-                        symbol.value_declaration
-                    } else {
-                        *symbol.declarations.first()?
-                    },
+                    symbol.primary_declaration()?,
                 )
             };
 

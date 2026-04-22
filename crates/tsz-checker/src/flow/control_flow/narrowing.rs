@@ -1596,11 +1596,7 @@ impl<'a> FlowAnalyzer<'a> {
         if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
             return None;
         }
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl_idx = symbol.primary_declaration()?;
         let decl_node = self.arena.get(decl_idx)?;
         // `value_declaration` for destructuring bindings may point to the identifier node
         // (the name/alias) rather than the BINDING_ELEMENT itself, because the binder calls

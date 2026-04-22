@@ -813,12 +813,7 @@ impl<'a> CheckerState<'a> {
                                 // (e.g. `p.x` where `p: Point` inside class
                                 // Point) can find properties.
                                 let from_node_cache = if cached.is_none() {
-                                    let decl = if symbol.value_declaration.is_some() {
-                                        Some(symbol.value_declaration)
-                                    } else {
-                                        symbol.declarations.first().copied()
-                                    };
-                                    decl.and_then(|idx| {
+                                    symbol.primary_declaration().and_then(|idx| {
                                         self.ctx.class_instance_type_cache.get(&idx).copied()
                                     })
                                 } else {
@@ -1272,12 +1267,9 @@ impl<'a> CheckerState<'a> {
                     .get(&sym_id)
                     .copied()
                     .or_else(|| {
-                        let decl = if symbol.value_declaration.is_some() {
-                            Some(symbol.value_declaration)
-                        } else {
-                            symbol.declarations.first().copied()
-                        };
-                        decl.and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                        symbol
+                            .primary_declaration()
+                            .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
                     })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
             } else {
@@ -1495,12 +1487,9 @@ impl<'a> CheckerState<'a> {
                     .get(&sym_id)
                     .copied()
                     .or_else(|| {
-                        let decl = if symbol.value_declaration.is_some() {
-                            Some(symbol.value_declaration)
-                        } else {
-                            symbol.declarations.first().copied()
-                        };
-                        decl.and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
+                        symbol
+                            .primary_declaration()
+                            .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
                     })
                     .unwrap_or_else(|| {
                         // Try building the instance type directly from the class symbol.
