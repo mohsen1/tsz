@@ -1029,10 +1029,8 @@ impl<'a> CheckerState<'a> {
                             // is from the name conflict (TS2440), not a real cycle.
                             let has_import_partner = self
                                 .ctx
-                                .binder
-                                .alias_partners
-                                .get(&sym_id)
-                                .and_then(|&pid| self.ctx.binder.get_symbol(pid))
+                                .alias_partner_for(self.ctx.binder, sym_id)
+                                .and_then(|pid| self.ctx.binder.get_symbol(pid))
                                 .is_some_and(|p| p.flags & tsz_binder::symbol_flags::ALIAS != 0);
                             // Suppress TS2456 when the type alias has type
                             // parameters and the body is a bare self-reference.

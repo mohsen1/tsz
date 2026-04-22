@@ -888,13 +888,45 @@ pub(super) fn collect_diagnostics(
     // This avoids re-scanning all binders for declared/ambient module names in
     // each checker's `set_all_binders` call — the skeleton captured this data
     // during the parallel parse/bind phase.
+    //
+    // When no skeleton exists (small projects, sequential mode, tests), fall
+    // back to the merged program-wide `declared_modules` set. This is the
+    // same merged data the (now-empty) per-binder `declared_modules` used to
+    // hold; consumers route through `ctx.declared_modules_contains` which
+    // prefers `global_declared_modules`. Without this fallback, ambient
+    // module suppression in `import_declaration` regresses (TS2307 false
+    // positives on declared modules) for non-skeleton paths.
     let skeleton_declared_modules: Option<Arc<tsz::checker::context::GlobalDeclaredModules>> =
-        program.skeleton_index.as_ref().map(|skel| {
+        if let Some(skel) = program.skeleton_index.as_ref() {
             let (exact, patterns) = skel.build_declared_module_sets();
-            Arc::new(tsz::checker::context::GlobalDeclaredModules::from_skeleton(
-                exact, patterns,
+            Some(Arc::new(
+                tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
             ))
-        });
+        } else if !program.declared_modules.is_empty()
+            || !program.shorthand_ambient_modules.is_empty()
+        {
+            let mut exact: FxHashSet<String> = FxHashSet::default();
+            let mut patterns: Vec<String> = Vec::new();
+            for name in program
+                .declared_modules
+                .iter()
+                .chain(program.shorthand_ambient_modules.iter())
+            {
+                let normalized = name.trim_matches('"').trim_matches('\'');
+                if normalized.contains('*') {
+                    patterns.push(normalized.to_string());
+                } else {
+                    exact.insert(normalized.to_string());
+                }
+            }
+            patterns.sort();
+            patterns.dedup();
+            Some(Arc::new(
+                tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
+            ))
+        } else {
+            None
+        };
 
     // Pre-compute expando index from skeleton when available.
     // This avoids re-scanning all binders for expando property assignments.

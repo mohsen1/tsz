@@ -56,10 +56,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // the member through the ALIAS symbol's import chain
                     let alias_id = self
                         .ctx
-                        .binder
-                        .alias_partners
-                        .get(&current_sym)
-                        .copied()
+                        .alias_partner_for(self.ctx.binder, current_sym)
                         .or_else(|| {
                             let resolved = self.ctx.binder.resolve_import_symbol(current_sym)?;
                             self.ctx.alias_partner_for(self.ctx.binder, resolved)

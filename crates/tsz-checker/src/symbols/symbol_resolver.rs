@@ -1077,12 +1077,9 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
                 && symbol.flags & symbol_flags::ALIAS != 0
             {
-                if let Some((&type_alias_id, _)) = self
+                if let Some(type_alias_id) = self
                     .ctx
-                    .binder
-                    .alias_partners
-                    .iter()
-                    .find(|&(_, &alias_id)| alias_id == local_sym_id)
+                    .alias_partner_reverse(self.ctx.binder, local_sym_id)
                 {
                     return TypeSymbolResolution::Type(type_alias_id);
                 }

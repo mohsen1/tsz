@@ -102,19 +102,38 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     pub(crate) fn matches_ambient_module_pattern(&self, module_name: &str) -> bool {
         let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
 
-        for patterns in [
-            &self.ctx.binder.declared_modules,
-            &self.ctx.binder.shorthand_ambient_modules,
-        ] {
-            for pattern in patterns {
+        // Prefer the project-wide pattern list built once on `ProjectEnv`. The
+        // per-binder `declared_modules` / `shorthand_ambient_modules` sets are
+        // intentionally empty after the per-binder map empty-out; their
+        // contents now live in `global_declared_modules.patterns`. The local
+        // sets are still scanned as a fallback for tests/standalone callers
+        // without a `ProjectEnv`.
+        if let Some(ref dm) = self.ctx.global_declared_modules {
+            for pattern in &dm.patterns {
                 let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
-                if pattern.contains('*')
-                    && let Ok(glob) = globset::GlobBuilder::new(pattern)
-                        .literal_separator(false)
-                        .build()
+                if let Ok(glob) = globset::GlobBuilder::new(pattern)
+                    .literal_separator(false)
+                    .build()
                     && glob.compile_matcher().is_match(module_name)
                 {
                     return true;
+                }
+            }
+        } else {
+            for patterns in [
+                &self.ctx.binder.declared_modules,
+                &self.ctx.binder.shorthand_ambient_modules,
+            ] {
+                for pattern in patterns {
+                    let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+                    if pattern.contains('*')
+                        && let Ok(glob) = globset::GlobBuilder::new(pattern)
+                            .literal_separator(false)
+                            .build()
+                        && glob.compile_matcher().is_match(module_name)
+                    {
+                        return true;
+                    }
                 }
             }
         }
