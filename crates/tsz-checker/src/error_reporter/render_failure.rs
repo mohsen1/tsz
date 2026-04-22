@@ -524,8 +524,13 @@ impl<'a> CheckerState<'a> {
                 source_param,
                 target_param,
             } => {
-                let source_str =
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                let source_str = self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                );
                 let target_str = self.format_assignability_type_for_message(target, source);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -605,8 +610,13 @@ impl<'a> CheckerState<'a> {
             }
 
             _ => {
-                let source_str =
-                    self.format_assignment_source_type_for_diagnostic(source, target, idx);
+                let source_str = self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                );
                 let target_str = self.format_assignability_type_for_message(target, source);
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
