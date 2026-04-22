@@ -221,7 +221,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         // Only check symbols with MODULE flags
-        if (symbol.flags & symbol_flags::MODULE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::MODULE) {
             return false;
         }
         // Check if ALL declarations are module declarations with string literal names
@@ -261,7 +261,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, lib_binders) else {
             return false;
         };
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
 
@@ -386,7 +386,7 @@ impl<'a> CheckerState<'a> {
                             return false;
                         }
                         return is_from_lib(sym_id)
-                            && (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
+                            && symbol.has_any_flags(symbol_flags::EXPORT_VALUE);
                     }
                 }
                 true
@@ -428,7 +428,7 @@ impl<'a> CheckerState<'a> {
                 || symbol.is_umd_export
                 || symbol.decl_file_idx == u32::MAX
                 || symbol.decl_file_idx == self.ctx.current_file_idx as u32
-                || (symbol.flags & symbol_flags::VALUE) != 0
+                || symbol.has_any_flags(symbol_flags::VALUE)
             {
                 return true;
             }
@@ -553,7 +553,7 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .is_some_and(|sf| sf.is_declaration_file);
                     let is_private_external_module_type = identifier_is_type_position
-                        && (symbol.flags & symbol_flags::VALUE) == 0
+                        && !symbol.has_any_flags(symbol_flags::VALUE)
                         && is_cross_module_private;
                     // For value position, downstream diagnostic paths (e.g. the
                     // class initializer TS2663 detector) rely on resolving
@@ -561,7 +561,7 @@ impl<'a> CheckerState<'a> {
                     // more specific diagnostic. Only reject truly private
                     // (non-exported) cross-module values.
                     let is_private_external_module_value = !identifier_is_type_position
-                        && (symbol.flags & symbol_flags::VALUE) != 0
+                        && symbol.has_any_flags(symbol_flags::VALUE)
                         && !symbol.is_exported
                         && is_cross_module_private;
                     if is_private_external_module_type || is_private_external_module_value {
@@ -581,7 +581,7 @@ impl<'a> CheckerState<'a> {
                             return false;
                         }
                         return is_from_lib(sym_id)
-                            && (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
+                            && symbol.has_any_flags(symbol_flags::EXPORT_VALUE);
                     }
                     true
                 })
@@ -861,8 +861,8 @@ impl<'a> CheckerState<'a> {
                         return false;
                     };
 
-                    if (symbol.flags & symbol_flags::ALIAS) == 0
-                        && (symbol.flags & symbol_flags::TYPE) != 0
+                    if !symbol.has_any_flags(symbol_flags::ALIAS)
+                        && symbol.has_any_flags(symbol_flags::TYPE)
                     {
                         return true;
                     }
@@ -1016,7 +1016,7 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
                 return false;
             };
-            if (symbol.flags & symbol_flags::ALIAS) == 0 {
+            if !symbol.has_any_flags(symbol_flags::ALIAS) {
                 return false;
             }
 
@@ -1037,7 +1037,7 @@ impl<'a> CheckerState<'a> {
                 || symbol.is_umd_export
                 || symbol.decl_file_idx == u32::MAX
                 || symbol.decl_file_idx == self.ctx.current_file_idx as u32
-                || (symbol.flags & symbol_flags::VALUE) != 0
+                || symbol.has_any_flags(symbol_flags::VALUE)
             {
                 return false;
             }
@@ -1075,7 +1075,7 @@ impl<'a> CheckerState<'a> {
             && !is_private_external_module_type_symbol(local_sym_id)
         {
             if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
-                && symbol.flags & symbol_flags::ALIAS != 0
+                && symbol.has_any_flags(symbol_flags::ALIAS)
             {
                 if let Some(type_alias_id) = self
                     .ctx
@@ -1165,7 +1165,7 @@ impl<'a> CheckerState<'a> {
         });
         if let Some(sym_id) = resolved {
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                && symbol.flags & symbol_flags::ALIAS != 0
+                && symbol.has_any_flags(symbol_flags::ALIAS)
             {
                 if should_preserve_alias_symbol_in_type_position(sym_id) {
                     return TypeSymbolResolution::Type(sym_id);
@@ -1205,7 +1205,7 @@ impl<'a> CheckerState<'a> {
             .get_node_symbol(idx)
             .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
             && let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-            && (symbol.flags & symbol_flags::ALIAS) != 0
+            && symbol.has_any_flags(symbol_flags::ALIAS)
             && symbol.declarations.iter().copied().any(|decl_idx| {
                 self.ctx
                     .arena
@@ -1404,7 +1404,7 @@ impl<'a> CheckerState<'a> {
             {
                 let lib_binders = self.get_lib_binders();
                 if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-                    if (symbol.flags & symbol_flags::ALIAS) != 0 {
+                    if symbol.has_any_flags(symbol_flags::ALIAS) {
                         let mut visited_aliases = AliasCycleTracker::new();
                         if let Some(target_sym_id) =
                             self.resolve_alias_symbol(sym_id, &mut visited_aliases)
@@ -1414,13 +1414,13 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .get_symbol_with_libs(target_sym_id, &lib_binders)
                                 .is_some_and(|target_symbol| {
-                                    (target_symbol.flags & symbol_flags::TYPE) != 0
+                                    target_symbol.has_any_flags(symbol_flags::TYPE)
                                 })
                         {
                             return Some(target_sym_id.0);
                         }
                     }
-                    if (symbol.flags & symbol_flags::TYPE) != 0 {
+                    if symbol.has_any_flags(symbol_flags::TYPE) {
                         return Some(sym_id.0);
                     }
                 }
@@ -1440,7 +1440,7 @@ impl<'a> CheckerState<'a> {
         let mut symbol = self
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))?;
-        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+        if symbol.has_any_flags(symbol_flags::ALIAS) {
             let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                 && target_sym_id != sym_id
@@ -1451,7 +1451,7 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))?;
             }
         }
-        ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id.0)
+        symbol.has_any_flags(symbol_flags::TYPE).then_some(sym_id.0)
     }
 
     /// Resolve a value symbol for type lowering.
