@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(export_equals_sym, &lib_binders)
-            && (sym.flags & symbol_flags::ALIAS) != 0
+            && sym.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited = AliasCycleTracker::new();
             let Some(resolved_sym) = self.resolve_alias_symbol(export_equals_sym, &mut visited)
@@ -353,17 +353,17 @@ impl<'a> CheckerState<'a> {
         };
 
         // tsc checks: !(symbol.flags & (SymbolFlags.Module | SymbolFlags.Variable))
-        let is_module_or_variable = (target.flags
-            & (symbol_flags::MODULE
+        let is_module_or_variable = target.has_any_flags(
+            symbol_flags::MODULE
                 | symbol_flags::FUNCTION_SCOPED_VARIABLE
-                | symbol_flags::BLOCK_SCOPED_VARIABLE))
-            != 0;
+                | symbol_flags::BLOCK_SCOPED_VARIABLE,
+        );
 
         // Namespace imports (`import * as X from "mod"`) resolve back to their
         // alias symbol rather than the module symbol.  They represent the entire
         // module namespace, so treat them as module-like for TS2497 purposes.
         if !is_module_or_variable
-            && (target.flags & symbol_flags::ALIAS) != 0
+            && target.has_any_flags(symbol_flags::ALIAS)
             && target.import_module.is_some()
             && target.import_name.as_deref() == Some("*")
         {
@@ -496,7 +496,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(export_equals_sym, &lib_binders)
-            && (export_sym.flags & symbol_flags::ALIAS) != 0
+            && export_sym.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
@@ -517,7 +517,7 @@ impl<'a> CheckerState<'a> {
 
         // For `export = alias` where `alias` comes from `import alias = Namespace`,
         // resolve the namespace target explicitly so named imports can see members.
-        if (target_symbol.flags & symbol_flags::ALIAS) != 0 {
+        if target_symbol.has_any_flags(symbol_flags::ALIAS) {
             let mut decl_candidates = target_symbol.declarations.clone();
             if target_symbol.value_declaration.is_some()
                 && !decl_candidates.contains(&target_symbol.value_declaration)

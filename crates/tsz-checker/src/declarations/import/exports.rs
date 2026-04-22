@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
         {
             // If this is an alias, follow it to the source module
             if let Some(sym) = target_binder.symbols.get(sym_id)
-                && (sym.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                && sym.has_any_flags(tsz_binder::symbol_flags::ALIAS)
                 && let Some(ref import_module) = sym.import_module
             {
                 let import_name = sym.import_name.as_deref().unwrap_or(export_name);
