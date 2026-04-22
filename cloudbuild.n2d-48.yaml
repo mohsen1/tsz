@@ -62,12 +62,13 @@ steps:
 
 options:
   pool:
-    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-48
+    name: ${_TSZ_CI_POOL}
   logging: CLOUD_LOGGING_ONLY
   automapSubstitutions: true
 
 substitutions:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  _TSZ_CI_POOL: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-48
   _TSZ_CI_SUITE: all
 
 queueTtl: 7200s
