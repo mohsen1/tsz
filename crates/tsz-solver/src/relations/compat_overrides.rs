@@ -655,13 +655,6 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // assuming related. Without this, `IPromise2<W, U>` vs `Promise2<any, W>` at
         // a cycle point would be assumed related (because same DefId pair), even though
         // the type arguments [W, U] vs [any, W] are NOT identical.
-        let saved_any_mode = self.subtype.any_propagation;
-        let saved_identity_cycle = self.subtype.identity_cycle_check;
-        let saved_method_bivariance = self.subtype.disable_method_bivariance;
-        let saved_strict_fn = self.subtype.strict_function_types;
-        self.subtype.any_propagation =
-            crate::relations::subtype::core::AnyPropagationMode::TopLevelOnly;
-        self.subtype.identity_cycle_check = true;
         // TS2403 identity checking mirrors tsc's `isTypeIdenticalTo` which uses
         // the `identity` relation — strictly bidirectional structural equality.
         // Unlike the subtype relation, identity does NOT have bivariance at all:
@@ -670,14 +663,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Without this, recursive method types can appear identical through a
         // bivariant path that hits a cycle (CycleDetected = True) even when the
         // forward structural check correctly rejects the types.
-        self.subtype.disable_method_bivariance = true;
-        self.subtype.strict_function_types = true;
-        let fwd = self.subtype.is_subtype_of(a, b);
-        let bwd = self.subtype.is_subtype_of(b, a);
-        self.subtype.any_propagation = saved_any_mode;
-        self.subtype.identity_cycle_check = saved_identity_cycle;
-        self.subtype.disable_method_bivariance = saved_method_bivariance;
-        self.subtype.strict_function_types = saved_strict_fn;
+        let (fwd, bwd) = self
+            .subtype
+            .with_identity_check_mode(|sub| (sub.is_subtype_of(a, b), sub.is_subtype_of(b, a)));
         tracing::trace!(
             a = a.0,
             b = b.0,
@@ -767,21 +755,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
-        let saved_any_mode = self.subtype.any_propagation;
-        let saved_identity_cycle = self.subtype.identity_cycle_check;
-        let saved_method_bivariance = self.subtype.disable_method_bivariance;
-        let saved_strict_fn = self.subtype.strict_function_types;
-        self.subtype.any_propagation =
-            crate::relations::subtype::core::AnyPropagationMode::TopLevelOnly;
-        self.subtype.identity_cycle_check = true;
-        self.subtype.disable_method_bivariance = true;
-        self.subtype.strict_function_types = true;
-        let fwd = self.subtype.is_subtype_of(a, b);
-        let bwd = self.subtype.is_subtype_of(b, a);
-        self.subtype.any_propagation = saved_any_mode;
-        self.subtype.identity_cycle_check = saved_identity_cycle;
-        self.subtype.disable_method_bivariance = saved_method_bivariance;
-        self.subtype.strict_function_types = saved_strict_fn;
+        let (fwd, bwd) = self
+            .subtype
+            .with_identity_check_mode(|sub| (sub.is_subtype_of(a, b), sub.is_subtype_of(b, a)));
         fwd && bwd
     }
 
