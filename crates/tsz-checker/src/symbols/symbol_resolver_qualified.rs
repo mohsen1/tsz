@@ -85,7 +85,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
-                        .is_some_and(|symbol| (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                        .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_PARAMETER))
                     {
                         return TypeSymbolResolution::Type(sym_id);
                     }
@@ -207,7 +207,7 @@ impl<'a> CheckerState<'a> {
                 });
 
             if let Some(module_specifier) = module_specifier.as_deref()
-                && !((left_symbol.flags & symbol_flags::ALIAS) != 0
+                && !(left_symbol.has_any_flags(symbol_flags::ALIAS)
                     && self
                         .ctx
                         .module_resolves_to_non_module_entity(module_specifier))
@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(left_sym, &lib_binders)
-            .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+            .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_PARAMETER))
         {
             // The left side is a type parameter — try to find a namespace/module
             // import with the same name in file_locals (bypasses scope chain).
@@ -316,7 +316,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(resolved_file, &lib_binders)
-                        .is_none_or(|s| (s.flags & symbol_flags::TYPE_PARAMETER) == 0)
+                        .is_none_or(|s| !s.has_any_flags(symbol_flags::TYPE_PARAMETER))
                     {
                         left_sym = resolved_file;
                     }
@@ -384,7 +384,7 @@ impl<'a> CheckerState<'a> {
             });
 
         if let Some(module_specifier) = module_specifier.as_deref() {
-            if (left_symbol.flags & symbol_flags::ALIAS) != 0
+            if left_symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
                     .module_resolves_to_non_module_entity(module_specifier)
@@ -587,7 +587,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol(member_id)
-                .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER));
             if is_enum_member {
                 return;
             }
@@ -637,8 +637,8 @@ impl<'a> CheckerState<'a> {
                 let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
                     continue;
                 };
-                if parent_sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                    == 0
+                if !parent_sym
+                    .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
                 {
                     continue;
                 }
@@ -731,7 +731,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .binder
                             .get_symbol(member_id)
-                            .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                            .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER));
                         if !is_enum_member {
                             return Some(member_id);
                         }
@@ -750,7 +750,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .binder
                             .get_symbol(member_id)
-                            .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                            .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER));
                         if !is_enum_member {
                             return Some(member_id);
                         }
@@ -815,7 +815,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol(member_id)
-                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER));
                     if !is_enum_member && member_is_usable_in_type_position(member_id) {
                         return Some(member_id);
                     }
@@ -831,7 +831,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol(member_id)
-                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER));
                     if !is_enum_member && member_is_usable_in_type_position(member_id) {
                         return Some(member_id);
                     }
@@ -925,7 +925,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(ref module_specifier) = left_symbol.import_module {
-                if (left_symbol.flags & symbol_flags::ALIAS) != 0
+                if left_symbol.has_any_flags(symbol_flags::ALIAS)
                     && self
                         .ctx
                         .module_resolves_to_non_module_entity(module_specifier)
@@ -957,8 +957,8 @@ impl<'a> CheckerState<'a> {
             // Cross-file namespace merging fallback: if the member wasn't found in
             // the resolved symbol's exports, check other files' namespace declarations
             // with the same name. This handles `namespace A` declared across files.
-            if left_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                != 0
+            if left_symbol
+                .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
                 && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
                     left_symbol.escaped_name.as_str(),
                     right_name,
@@ -1008,7 +1008,7 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = left_symbol.import_module {
-            if (left_symbol.flags & symbol_flags::ALIAS) != 0
+            if left_symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
                     .module_resolves_to_non_module_entity(module_specifier)
@@ -1038,7 +1038,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Cross-file namespace merging fallback for qualified names in type position.
-        if left_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
+        if left_symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
             && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
                 left_symbol.escaped_name.as_str(),
                 right_name,
@@ -1060,7 +1060,7 @@ impl<'a> CheckerState<'a> {
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<SymbolId> {
         let symbol = self.ctx.binder.get_symbol(alias_sym)?;
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return None;
         }
 
@@ -1121,8 +1121,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            if target_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                != 0
+            if target_symbol
+                .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
                 && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
                     target_symbol.escaped_name.as_str(),
                     member_name,
