@@ -27,8 +27,7 @@ fn remap_mapped_property_key(
 
     use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 
-    let mut subst = TypeSubstitution::new();
-    subst.insert(mapped.type_param.name, source_key);
+    let subst = TypeSubstitution::single(mapped.type_param.name, source_key);
     crate::evaluation::evaluate::evaluate_type(db, instantiate_type(db, name_type, &subst))
 }
 

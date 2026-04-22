@@ -1365,8 +1365,7 @@ impl<'a> CheckerState<'a> {
 
                 // Create a substitution mapping the mapped type's key param to this literal key
                 let key_literal = self.ctx.types.literal_string(&name);
-                let mut subst = common::TypeSubstitution::new();
-                subst.insert(type_param_name, key_literal);
+                let subst = common::TypeSubstitution::single(type_param_name, key_literal);
 
                 // Instantiate the template with this key
                 let instantiated_template =

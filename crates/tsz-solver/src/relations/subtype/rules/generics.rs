@@ -1434,8 +1434,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return None;
             }
 
-            let mut subst = TypeSubstitution::new();
-            subst.insert(param.name, constraint);
+            let subst = TypeSubstitution::single(param.name, constraint);
             // Use keyof(constraint) directly to prevent eager evaluation
             // which would break array/tuple preservation in evaluate_mapped.
             let inst_constraint = self.interner.keyof(constraint);
@@ -1615,8 +1614,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.interner.literal_string_atom(key_name)
             };
 
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, key_literal);
+            let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
 
             let remapped_names: Vec<tsz_common::interner::Atom> = if let Some(name_type) =
                 mapped.name_type

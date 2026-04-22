@@ -81,8 +81,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Handle name remapping if present (e.g., `as` clause in mapped types)
         if let Some(name_type) = mapped.name_type {
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, key_literal);
+            let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
             let remapped = instantiate_type(self.interner(), name_type, &subst);
             let remapped = self
                 .db
@@ -116,8 +115,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             self.db
                 .evaluate_type_with_options(index_access, self.no_unchecked_indexed_access)
         } else {
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, key_literal);
+            let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
             let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
             self.db
                 .evaluate_type_with_options(instantiated, self.no_unchecked_indexed_access)
@@ -181,8 +179,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Get the element type mapping: instantiate template with `number` as the key
         let number_type = TypeId::NUMBER;
-        let mut subst = TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, number_type);
+        let subst = TypeSubstitution::single(mapped.type_param.name, number_type);
         let mapped_element = instantiate_type(self.interner(), mapped.template, &subst);
         let mapped_element = self
             .db

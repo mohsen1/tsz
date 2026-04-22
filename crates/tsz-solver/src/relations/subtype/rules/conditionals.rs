@@ -184,8 +184,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             if !is_non_deterministic {
                 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-                let mut sub = TypeSubstitution::new();
-                sub.insert(param_info.name, constraint);
+                let sub = TypeSubstitution::single(param_info.name, constraint);
                 let cond_type_id = self.interner.conditional(*cond);
                 let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
                 if instantiated != cond_type_id {
@@ -411,8 +410,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // with a type that satisfies the extends clause.
                     // Substitute source for check_type in the true branch.
                     use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-                    let mut sub = TypeSubstitution::new();
-                    sub.insert(param_info.name, source);
+                    let sub = TypeSubstitution::single(param_info.name, source);
                     let instantiated_true = instantiate_type(self.interner, target.true_type, &sub);
                     let evaluated = self.evaluate_type(instantiated_true);
                     if self.check_subtype(source, evaluated).is_true() {

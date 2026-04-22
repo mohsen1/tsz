@@ -39,6 +39,14 @@ impl TypeSubstitution {
         }
     }
 
+    /// Create a substitution containing a single `name -> type_id` binding.
+    /// Equivalent to `let mut s = TypeSubstitution::new(); s.insert(name, type_id);`.
+    pub fn single(name: Atom, type_id: TypeId) -> Self {
+        let mut map = FxHashMap::default();
+        map.insert(name, type_id);
+        Self { map }
+    }
+
     /// Clear the substitution for reuse, preserving allocated capacity.
     #[inline]
     pub fn clear(&mut self) {
@@ -941,8 +949,7 @@ impl<'a> TypeInstantiator<'a> {
                             let new_template = self.instantiate(mapped.template);
                             self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
-                            let mut subst = TypeSubstitution::new();
-                            subst.insert(mapped.type_param.name, TypeId::NUMBER);
+                            let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
                             let mapped_element = crate::evaluation::evaluate::evaluate_type(
                                 self.interner,
                                 instantiate_type(self.interner, new_template, &subst),
@@ -1013,8 +1020,7 @@ impl<'a> TypeInstantiator<'a> {
                         let mut new_elements = Vec::with_capacity(elements.len());
                         for (i, elem) in elements.iter().enumerate() {
                             let key_type = self.interner.literal_string(&i.to_string());
-                            let mut subst = TypeSubstitution::new();
-                            subst.insert(mapped.type_param.name, key_type);
+                            let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
                             let mapped_type = crate::evaluation::evaluate::evaluate_type(
                                 self.interner,
                                 instantiate_type(self.interner, new_template, &subst),
@@ -1055,8 +1061,7 @@ impl<'a> TypeInstantiator<'a> {
                         let new_template = self.instantiate(mapped.template);
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
-                        let mut subst = TypeSubstitution::new();
-                        subst.insert(mapped.type_param.name, TypeId::NUMBER);
+                        let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
                         let mapped_element = crate::evaluation::evaluate::evaluate_type(
                             self.interner,
                             crate::instantiation::instantiate::instantiate_type(
