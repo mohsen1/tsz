@@ -1838,6 +1838,47 @@ var x = exports.alpha;
 }
 
 #[test]
+fn test_chained_undefined_export_assignment_reports_outer_implicit_any() {
+    let diagnostics = check_commonjs_single_file(
+        "self.js",
+        r#"
+exports.first = exports.second = exports.third = undefined;
+exports.direct = undefined;
+"#,
+    );
+
+    let ts7005: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7005)
+        .collect();
+    assert_eq!(
+        ts7005.len(),
+        2,
+        "Expected TS7005 only for non-terminal chained export assignments, got: {diagnostics:#?}"
+    );
+
+    let messages: Vec<_> = ts7005.iter().map(|(_, message)| message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Variable 'first' implicitly has an 'any' type.")),
+        "Expected TS7005 for `exports.first`, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Variable 'second' implicitly has an 'any' type.")),
+        "Expected TS7005 for `exports.second`, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("'third'") && !message.contains("'direct'")),
+        "Terminal/direct undefined export assignments should not report TS7005, got: {messages:#?}"
+    );
+}
+
+#[test]
 #[ignore = "regressed after remote changes: expected 2 TS2322 for same-file CommonJS reassignments, now emits 0"]
 fn test_current_file_exports_reads_use_prior_assignment_types() {
     let diagnostics = check_commonjs_single_file(
