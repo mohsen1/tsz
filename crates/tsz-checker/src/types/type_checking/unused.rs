@@ -57,13 +57,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .binder
                     .get_symbol(sym_id)
-                    .map(|s| {
-                        if s.value_declaration.is_some() {
-                            s.value_declaration
-                        } else {
-                            s.declarations.first().copied().unwrap_or(NodeIndex::NONE)
-                        }
-                    })
+                    .and_then(|s| s.primary_declaration())
                     .unwrap_or(NodeIndex::NONE);
                 let key = (name.clone(), decl_idx);
                 if !seen_decls.insert(key) {
