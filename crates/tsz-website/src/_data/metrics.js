@@ -47,32 +47,52 @@ function suiteSourceLabel(source) {
   }
 }
 
+function formatEmitExtra(skipped, timeouts = 0) {
+  const parts = [];
+  if (Number.isFinite(skipped) && skipped > 0) {
+    parts.push(`${fmt(skipped)} skipped`);
+  }
+  if (Number.isFinite(timeouts) && timeouts > 0) {
+    parts.push(`${fmt(timeouts)} timed out`);
+  }
+  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
+}
+
+function parseEmitExtraFromReadmeLine(line) {
+  const m = line.match(/\([^)]*tests;\s*([^)]*)\)/);
+  if (!m || !m[1]) return "";
+  const extra = m[1].trim();
+  return extra ? ` (${extra})` : "";
+}
+
 function setSuiteUnavailable(metrics, key) {
   metrics[`${key}_rate`] = "N/A";
   metrics[`${key}_rate_label`] = "N/A";
   metrics[`${key}_bar_rate`] = "0";
   metrics[`${key}_passed`] = "N/A";
   metrics[`${key}_total`] = "N/A";
+  metrics[`${key}_extra`] = "";
   metrics[`${key}_source`] = "missing";
   metrics[`${key}_source_label`] = suiteSourceLabel("missing");
 }
 
-function setSuiteMetrics(metrics, key, rate, passed, total, source) {
+function setSuiteMetrics(metrics, key, rate, passed, total, source, extra = "") {
   const normalizedRate = Number(rate).toFixed(1);
   metrics[`${key}_rate`] = normalizedRate;
   metrics[`${key}_rate_label`] = `${normalizedRate}%`;
   metrics[`${key}_bar_rate`] = normalizedRate;
   metrics[`${key}_passed`] = fmt(passed);
   metrics[`${key}_total`] = fmt(total);
+  metrics[`${key}_extra`] = extra;
   metrics[`${key}_source`] = source;
   metrics[`${key}_source_label`] = suiteSourceLabel(source);
 }
 
-function setSuiteIfValid(metrics, key, rate, passed, total, source) {
+function setSuiteIfValid(metrics, key, rate, passed, total, source, extra = "") {
   if (rate === null || passed === null || total === null || total <= 0) {
     return false;
   }
-  setSuiteMetrics(metrics, key, rate, passed, total, source);
+  setSuiteMetrics(metrics, key, rate, passed, total, source, extra);
   return true;
 }
 
@@ -118,6 +138,7 @@ function extractMetrics() {
         toInt(emit.js_passed),
         toInt(emit.js_total),
         "ci",
+        formatEmitExtra(toInt(emit.js_skipped), toInt(emit.js_timeouts)),
       )
     : false;
   const hasCiEmitDts = emit
@@ -128,6 +149,7 @@ function extractMetrics() {
         toInt(emit.dts_passed),
         toInt(emit.dts_total),
         "ci",
+        formatEmitExtra(toInt(emit.dts_skipped)),
       )
     : false;
   const hasCiFourslash = fourslash
@@ -176,6 +198,7 @@ function extractMetrics() {
               toInt(m[2]),
               toInt(m[3]),
               "readme",
+              parseEmitExtraFromReadmeLine(line),
             );
           } else if (!hasCiEmitDts && line.includes("Declaration")) {
             setSuiteIfValid(
@@ -185,6 +208,7 @@ function extractMetrics() {
               toInt(m[2]),
               toInt(m[3]),
               "readme",
+              parseEmitExtraFromReadmeLine(line),
             );
           }
         }

@@ -414,21 +414,29 @@ run_emit_shards() {
     (
       set +e
       offset=$((shard * EMIT_CHUNK))
+      detail_json="$METRICS_DIR/emit-detail-${shard}.json"
       ./scripts/emit/run.sh --skip-build --max="$EMIT_CHUNK" --offset="$offset" --concurrency="$SHARD_WORKERS" \
+        --json-out="$detail_json" \
         >"$LOG_DIR/emit/shard-${shard}.log" 2>&1
       rc="$?"
-      js_line="$(grep -a 'Pass Rate:' "$LOG_DIR/emit/shard-${shard}.log" | sed -n '1p' || true)"
-      dts_line="$(grep -a 'Pass Rate:' "$LOG_DIR/emit/shard-${shard}.log" | sed -n '2p' || true)"
-      js_counts="$(echo "$js_line" | grep -oE '\([0-9]+/[0-9]+\)' | tr -d '()' || true)"
-      dts_counts="$(echo "$dts_line" | grep -oE '\([0-9]+/[0-9]+\)' | tr -d '()' || true)"
-      js_p="$(num_or_zero "$(echo "$js_counts" | cut -d/ -f1)")"
-      js_t="$(num_or_zero "$(echo "$js_counts" | cut -d/ -f2)")"
-      dts_p="$(num_or_zero "$(echo "$dts_counts" | cut -d/ -f1)")"
-      dts_t="$(num_or_zero "$(echo "$dts_counts" | cut -d/ -f2)")"
-      printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"dts_passed":%s,"dts_total":%s}\n' \
-        "$shard" "$rc" "$js_p" "$js_t" "$dts_p" "$dts_t" \
+      js_p="$(jq -r '.summary.jsPass // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_t="$(jq -r '.summary.jsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_s="$(jq -r '.summary.jsSkip // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_to="$(jq -r '.summary.jsTimeout // 0' "$detail_json" 2>/dev/null || echo 0)"
+      dts_p="$(jq -r '.summary.dtsPass // 0' "$detail_json" 2>/dev/null || echo 0)"
+      dts_t="$(jq -r '.summary.dtsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
+      dts_s="$(jq -r '.summary.dtsSkip // 0' "$detail_json" 2>/dev/null || echo 0)"
+      js_p="$(num_or_zero "$js_p")"
+      js_t="$(num_or_zero "$js_t")"
+      js_s="$(num_or_zero "$js_s")"
+      js_to="$(num_or_zero "$js_to")"
+      dts_p="$(num_or_zero "$dts_p")"
+      dts_t="$(num_or_zero "$dts_t")"
+      dts_s="$(num_or_zero "$dts_s")"
+      printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"js_skipped":%s,"js_timeouts":%s,"dts_passed":%s,"dts_total":%s,"dts_skipped":%s}\n' \
+        "$shard" "$rc" "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" \
         > "$METRICS_DIR/emit-shard-${shard}.json"
-      echo "EMIT_SHARD shard=${shard} rc=${rc} js=${js_p}/${js_t} dts=${dts_p}/${dts_t}"
+      echo "EMIT_SHARD shard=${shard} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t} skip=${dts_s}"
       exit 0
     ) &
   done
@@ -437,23 +445,42 @@ run_emit_shards() {
 
 aggregate_emit() {
   ci_section "Aggregate emit"
-  local js_passed=0 js_total=0 dts_passed=0 dts_total=0 shard_count=0
+  local js_passed=0 js_total=0 js_skipped=0 js_timeouts=0 dts_passed=0 dts_total=0 dts_skipped=0 shard_count=0
   for f in "$METRICS_DIR"/emit-shard-*.json; do
     [[ -f "$f" ]] || continue
     js_passed=$((js_passed + $(jq -r '.js_passed' "$f")))
     js_total=$((js_total + $(jq -r '.js_total' "$f")))
+    js_skipped=$((js_skipped + $(jq -r '.js_skipped // 0' "$f")))
+    js_timeouts=$((js_timeouts + $(jq -r '.js_timeouts // 0' "$f")))
     dts_passed=$((dts_passed + $(jq -r '.dts_passed' "$f")))
     dts_total=$((dts_total + $(jq -r '.dts_total' "$f")))
+    dts_skipped=$((dts_skipped + $(jq -r '.dts_skipped // 0' "$f")))
     shard_count=$((shard_count + 1))
   done
 
   echo "Emit shards: ${shard_count}/${SHARD_COUNT}"
-  echo "Emit aggregate: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} (skip=${dts_skipped})"
 
   if [[ "$shard_count" -lt "$SHARD_COUNT" || "$js_total" -eq 0 ]]; then
     echo "error: emit shard coverage is not trustworthy" >&2
     return 1
   fi
+
+  js_rate="$(awk -v p="$js_passed" -v t="$js_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  dts_rate="$(awk -v p="$dts_passed" -v t="$dts_total" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "emit" \
+    --arg js_pass_rate "$js_rate" \
+    --argjson js_passed "$js_passed" \
+    --argjson js_total "$js_total" \
+    --argjson js_skipped "$js_skipped" \
+    --argjson js_timeouts "$js_timeouts" \
+    --arg dts_pass_rate "$dts_rate" \
+    --argjson dts_passed "$dts_passed" \
+    --argjson dts_total "$dts_total" \
+    --argjson dts_skipped "$dts_skipped" \
+    '{suite:$suite, js_pass_rate:$js_pass_rate, js_passed:$js_passed, js_total:$js_total, js_skipped:$js_skipped, js_timeouts:$js_timeouts, dts_pass_rate:$dts_pass_rate, dts_passed:$dts_passed, dts_total:$dts_total, dts_skipped:$dts_skipped}' \
+    > "$METRICS_DIR/emit.json"
 
   base_js="$(jq -r '.summary.jsPass // 0' scripts/emit/emit-snapshot.json)"
   base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
