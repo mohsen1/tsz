@@ -227,6 +227,31 @@ fn object_literal_dotted_property_recovery() {
 }
 
 #[test]
+fn malformed_numeric_arrow_body_reports_comma_at_return_semicolon() {
+    let source = "foo((1)=>{return 0;});";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let return_semicolon = source.find("0;").expect("return expression") as u32 + 1;
+
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == return_semicolon
+                && diag.message == "',' expected."),
+        "expected tsc-compatible comma recovery at the malformed arrow body's semicolon, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .all(|diag| !(diag.code == diagnostic_codes::EXPECTED
+                && diag.start == return_semicolon
+                && diag.message == "':' expected.")),
+        "should not emit a second missing-colon diagnostic at the semicolon, got {diags:?}"
+    );
+}
+
+#[test]
 fn object_method_arrow_return_token_prefers_brace_expected_then_ts1434() {
     let source = r#"let o = {
     m(n: number) => string {
