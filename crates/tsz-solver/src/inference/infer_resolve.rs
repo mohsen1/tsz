@@ -150,8 +150,7 @@ impl<'a> InferenceContext<'a> {
         if !self_referential_bounds.is_empty() && result != TypeId::ANY {
             let names = self.type_param_names_for_root(root);
             if let Some(&param_name) = names.first() {
-                let mut sub = TypeSubstitution::new();
-                sub.insert(param_name, result);
+                let sub = TypeSubstitution::single(param_name, result);
                 for &bound in &self_referential_bounds {
                     let instantiated_bound = instantiate_type(self.interner, bound, &sub);
                     if !self.is_subtype(result, instantiated_bound) {
@@ -222,8 +221,7 @@ impl<'a> InferenceContext<'a> {
         if !self_referential_bounds.is_empty() && result != TypeId::ANY {
             let names = self.type_param_names_for_root(root);
             if let Some(&param_name) = names.first() {
-                let mut sub = TypeSubstitution::new();
-                sub.insert(param_name, result);
+                let sub = TypeSubstitution::single(param_name, result);
                 for &bound in &self_referential_bounds {
                     let instantiated_bound = instantiate_type(self.interner, bound, &sub);
                     if !is_subtype(result, instantiated_bound) {

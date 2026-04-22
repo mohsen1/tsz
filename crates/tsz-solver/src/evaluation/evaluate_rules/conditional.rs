@@ -199,8 +199,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 if check_type == TypeId::ANY {
-                    let mut subst = TypeSubstitution::new();
-                    subst.insert(info.name, check_type);
+                    let subst = TypeSubstitution::single(info.name, check_type);
                     let true_eval = self.evaluate(instantiate_type_with_infer(
                         self.interner(),
                         cond.true_type,
@@ -214,8 +213,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     return self.interner().union2(true_eval, false_eval);
                 }
 
-                let mut subst = TypeSubstitution::new();
-                subst.insert(info.name, check_type);
+                let mut subst = TypeSubstitution::single(info.name, check_type);
                 let mut inferred = check_type;
                 if let Some(constraint) = info.constraint {
                     let mut checker =
@@ -1002,8 +1000,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate(cond.false_type);
         };
 
-        let mut subst = TypeSubstitution::new();
-        subst.insert(info.name, inferred);
+        let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
@@ -1116,8 +1113,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate(cond.false_type);
         };
 
-        let mut subst = TypeSubstitution::new();
-        subst.insert(info.name, inferred);
+        let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
@@ -1298,8 +1294,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate(cond.false_type);
         };
 
-        let mut subst = TypeSubstitution::new();
-        subst.insert(info.name, inferred);
+        let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
@@ -1542,8 +1537,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate(cond.false_type);
         };
 
-        let mut subst = TypeSubstitution::new();
-        subst.insert(info.name, inferred);
+        let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());

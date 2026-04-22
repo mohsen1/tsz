@@ -47,8 +47,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             "remap_key_type_for_mapped: before substitution"
         );
 
-        let mut subst = TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, key_type);
+        let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
         let remapped = instantiate_type(self.interner(), name_type, &subst);
 
         tracing::trace!(
@@ -1260,9 +1259,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// We instantiate the template with `K = number` to get the mapped element type.
     fn evaluate_mapped_array(&mut self, mapped: &MappedType, _element_type: TypeId) -> TypeId {
-        // Create substitution: type_param.name -> number
-        let mut subst = TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, TypeId::NUMBER);
+        let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
 
         // Substitute into the template to get the mapped element type
         let mut mapped_element =
@@ -1296,9 +1293,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         _element_type: TypeId,
         is_readonly: bool,
     ) -> TypeId {
-        // Create substitution: type_param.name -> number
-        let mut subst = TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, TypeId::NUMBER);
+        let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
 
         // Substitute into the template to get the mapped element type
         let mut mapped_element =
@@ -1359,8 +1354,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     _ => {
                         // Fallback: try index substitution (may not work correctly)
                         let index_type = self.interner().literal_number(i as f64);
-                        let mut subst = TypeSubstitution::new();
-                        subst.insert(mapped.type_param.name, index_type);
+                        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
                         self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
                     }
                 };
@@ -1386,9 +1380,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Create a literal number type for this tuple position
             let index_type = self.interner().literal_number(i as f64);
 
-            // Create substitution: type_param.name -> literal number
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, index_type);
+            let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
 
             // Substitute into the template to get the mapped element type
             let mapped_type =

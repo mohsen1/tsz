@@ -184,8 +184,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         for prop in &source_obj.properties {
             // Substitute the iteration parameter K with the property name literal
             let key_literal = self.interner.literal_string_atom(prop.name);
-            let mut subst = TypeSubstitution::new();
-            subst.insert(iter_param_name, key_literal);
+            let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, template, &subst);
 
             // Reverse-infer through the template: find what T[K] should be.
@@ -341,8 +340,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let key_str = i.to_string();
             let key_atom = self.interner.intern_string(&key_str);
             let key_literal = self.interner.literal_string_atom(key_atom);
-            let mut subst = TypeSubstitution::new();
-            subst.insert(iter_param_name, key_literal);
+            let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, template, &subst);
 
             // Reverse-infer through the template: find what T[K] should be.
@@ -735,8 +733,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 for prop in &source_props {
                     // Instantiate the mapped template with the concrete key
                     let key_literal = self.interner.literal_string_atom(prop.name);
-                    let mut subst = TypeSubstitution::new();
-                    subst.insert(mapped.type_param.name, key_literal);
+                    let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                     let instantiated_template =
                         instantiate_type(self.interner, mapped.template, &subst);
 

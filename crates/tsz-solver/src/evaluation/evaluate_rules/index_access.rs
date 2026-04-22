@@ -103,8 +103,7 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             is_const: mapped.type_param.is_const,
         });
 
-        let mut subst = TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, constrained_key);
+        let subst = TypeSubstitution::single(mapped.type_param.name, constrained_key);
 
         let mut value_type = self.evaluator.evaluate(instantiate_type(
             self.evaluator.interner(),
@@ -861,8 +860,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
             }
 
-            let mut subst = TypeSubstitution::new();
-            subst.insert(mapped.type_param.name, self.index_type);
+            let subst = TypeSubstitution::single(mapped.type_param.name, self.index_type);
 
             let value_type = self.evaluator.evaluate(instantiate_type(
                 self.evaluator.interner(),
@@ -1450,8 +1448,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Substitute K into the mapped template
-        let mut subst = TypeSubstitution::new();
-        subst.insert(mapped.type_param.name, index_type);
+        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
 
         let value_type = self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 

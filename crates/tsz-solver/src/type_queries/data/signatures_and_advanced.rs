@@ -597,8 +597,7 @@ pub fn instantiate_mapped_template_for_property(
     }
 
     // Normal path: substitute the key parameter name with the key literal
-    let mut subst = TypeSubstitution::new();
-    subst.insert(key_param_name, key_literal);
+    let subst = TypeSubstitution::single(key_param_name, key_literal);
     instantiate_type(db, template, &subst)
 }
 
