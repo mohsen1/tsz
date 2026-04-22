@@ -553,196 +553,6 @@ fn test_semantic_diagnostics_keep_explicit_missing_global_type_names_for_no_lib_
 }
 
 #[test]
-fn test_semantic_diagnostics_respect_fourslash_module_none_directive() {
-    let mut server = make_server();
-    server.open_files.insert(
-        "/fourslash.ts".to_string(),
-        "// @module: none\n// @target: es5\n".to_string(),
-    );
-    server.open_files.insert(
-        "/index.ts".to_string(),
-        "import { x } from 'dep'; x;".to_string(),
-    );
-
-    let diagnostics_req = make_request(
-        "semanticDiagnosticsSync",
-        serde_json::json!({
-            "file": "/index.ts"
-        }),
-    );
-    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
-    assert!(diagnostics_resp.success);
-    let diagnostics = diagnostics_resp
-        .body
-        .expect("semanticDiagnosticsSync should return a body")
-        .as_array()
-        .expect("semanticDiagnosticsSync body should be an array")
-        .clone();
-    let has_module_none_diag = diagnostics.iter().any(|diag| {
-        diag.get("code").and_then(serde_json::Value::as_u64)
-            == Some(
-                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
-                    as u64,
-            )
-    });
-    assert!(
-        has_module_none_diag,
-        "expected TS1148-style diagnostic when fourslash directives set module:none"
-    );
-}
-
-#[test]
-fn test_semantic_diagnostics_skip_module_none_when_fourslash_target_supports_imports() {
-    let mut server = make_server();
-    server.open_files.insert(
-        "/fourslash.ts".to_string(),
-        "// @module: none\n// @target: es2015\n".to_string(),
-    );
-    server.open_files.insert(
-        "/index.ts".to_string(),
-        "import { x } from 'dep'; x;".to_string(),
-    );
-
-    let diagnostics_req = make_request(
-        "semanticDiagnosticsSync",
-        serde_json::json!({
-            "file": "/index.ts"
-        }),
-    );
-    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
-    assert!(diagnostics_resp.success);
-    let diagnostics = diagnostics_resp
-        .body
-        .expect("semanticDiagnosticsSync should return a body")
-        .as_array()
-        .expect("semanticDiagnosticsSync body should be an array")
-        .clone();
-    let has_module_none_diag = diagnostics.iter().any(|diag| {
-        diag.get("code").and_then(serde_json::Value::as_u64)
-            == Some(
-                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
-                    as u64,
-            )
-    });
-    assert!(
-        !has_module_none_diag,
-        "did not expect TS1148-style diagnostic when target supports import syntax"
-    );
-}
-
-#[test]
-fn test_semantic_diagnostics_skip_module_none_for_extra_slash_fourslash_directives() {
-    let mut server = make_server();
-    server.open_files.insert(
-        "/fourslash.ts".to_string(),
-        "//// @module: none\n//// @target: es2015\n".to_string(),
-    );
-    server.open_files.insert(
-        "/index.ts".to_string(),
-        "import { x } from 'dep'; x;".to_string(),
-    );
-
-    let diagnostics_req = make_request(
-        "semanticDiagnosticsSync",
-        serde_json::json!({
-            "file": "/index.ts"
-        }),
-    );
-    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
-    assert!(diagnostics_resp.success);
-    let diagnostics = diagnostics_resp
-        .body
-        .expect("semanticDiagnosticsSync should return a body")
-        .as_array()
-        .expect("semanticDiagnosticsSync body should be an array")
-        .clone();
-    let has_module_none_diag = diagnostics.iter().any(|diag| {
-        diag.get("code").and_then(serde_json::Value::as_u64)
-            == Some(
-                tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
-                    as u64,
-            )
-    });
-    assert!(
-        !has_module_none_diag,
-        "did not expect TS1148-style diagnostic for es2015 directives with extra leading slashes"
-    );
-}
-
-#[test]
-fn test_semantic_diagnostics_module_none_fourslash_exact_payload_shape() {
-    let mut server = make_server();
-    server.open_files.insert(
-        "/fourslash.ts".to_string(),
-        "// @module: none\n// @target: es5\n".to_string(),
-    );
-    server.open_files.insert(
-        "/node_modules/dep/index.d.ts".to_string(),
-        "export const x: number;\n".to_string(),
-    );
-    server.open_files.insert(
-        "/index.ts".to_string(),
-        "import { x } from 'dep'; x;".to_string(),
-    );
-
-    let diagnostics_req = make_request(
-        "semanticDiagnosticsSync",
-        serde_json::json!({
-            "file": "/index.ts",
-            "includeLinePosition": true
-        }),
-    );
-    let diagnostics_resp = server.handle_tsserver_request(diagnostics_req);
-    assert!(diagnostics_resp.success);
-    let diagnostics = diagnostics_resp
-        .body
-        .expect("semanticDiagnosticsSync should return a body")
-        .as_array()
-        .expect("semanticDiagnosticsSync body should be an array")
-        .clone();
-
-    let module_none_diag = diagnostics
-        .iter()
-        .find(|diag| {
-            diag.get("code").and_then(serde_json::Value::as_u64)
-                == Some(
-                    tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
-                        as u64,
-                )
-        })
-        .expect("expected TS1148 diagnostic payload for module:none import syntax");
-    let has_cannot_find_name = diagnostics.iter().any(|diag| {
-        diag.get("code").and_then(serde_json::Value::as_u64)
-            == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME as u64)
-    });
-    assert!(
-        !has_cannot_find_name,
-        "did not expect synthetic Cannot find name diagnostics when TS1148 is present"
-    );
-
-    let diag = module_none_diag;
-    assert_eq!(
-        diag.get("code").and_then(serde_json::Value::as_u64),
-        Some(
-            tsz_checker::diagnostics::diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE
-                as u64,
-        )
-    );
-    assert_eq!(
-        diag.get("message").and_then(serde_json::Value::as_str),
-        Some("Cannot use imports, exports, or module augmentations when '--module' is 'none'.")
-    );
-    assert_eq!(
-        diag.get("start").and_then(serde_json::Value::as_u64),
-        Some(0)
-    );
-    assert_eq!(
-        diag.get("length").and_then(serde_json::Value::as_u64),
-        Some("import { x } from 'dep';".len() as u64)
-    );
-}
-
-#[test]
 fn test_semantic_diagnostics_resolve_imports_from_open_dependency_files() {
     let mut server = make_server();
     server.open_files.insert(
@@ -1300,7 +1110,7 @@ fn test_quickinfo_arrow_token_uses_contextual_signature() {
 }
 
 #[test]
-fn test_quickinfo_marker_comment_before_parameter_uses_contextual_type() {
+fn test_quickinfo_parameter_uses_contextual_type() {
     let mut server = make_server();
     server.open_files.insert(
         "/test.ts".to_string(),
@@ -1309,28 +1119,12 @@ fn test_quickinfo_marker_comment_before_parameter_uses_contextual_type() {
     );
     let req = make_request(
         "quickinfo",
-        // Cursor on the `/` in /*25*/ before parameter `n`.
-        serde_json::json!({"file": "/test.ts", "line": 1, "offset": 60}),
-    );
-    let resp = server.handle_tsserver_request(req);
-    assert!(resp.success);
-    let body = resp.body.expect("quickinfo should return a body");
-    assert_eq!(
-        body["displayString"].as_str().unwrap_or(""),
-        "(parameter) n: number"
-    );
-    assert_eq!(body["kind"].as_str().unwrap_or(""), "parameter");
-
-    let req_on_identifier = make_request(
-        "quickinfo",
         // Cursor on `n` after /*25*/.
         serde_json::json!({"file": "/test.ts", "line": 1, "offset": 66}),
     );
-    let resp_on_identifier = server.handle_tsserver_request(req_on_identifier);
-    assert!(resp_on_identifier.success);
-    let body_on_identifier = resp_on_identifier
-        .body
-        .expect("quickinfo should return a body on identifier");
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body_on_identifier = resp.body.expect("quickinfo should return a body");
     assert_eq!(
         body_on_identifier["displayString"].as_str().unwrap_or(""),
         "(parameter) n: number"

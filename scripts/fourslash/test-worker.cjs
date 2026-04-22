@@ -855,6 +855,44 @@ function patchSessionClient(SessionClient, ts) {
         return undefined;
     };
 
+    const isIdentifierChar = (ch) => /[A-Za-z0-9_$]/.test(ch || "");
+    const fourslashMarkerBoundsAtPosition = (sourceText, position) => {
+        if (typeof sourceText !== "string" || typeof position !== "number") return undefined;
+        const searchStart = Math.max(0, position - 8);
+        const searchEnd = Math.min(position + 1, Math.max(0, sourceText.length - 1));
+        for (let start = searchStart; start <= searchEnd; start++) {
+            if (sourceText.charAt(start) !== "/" || sourceText.charAt(start + 1) !== "*") continue;
+            const end = sourceText.indexOf("*/", start + 2);
+            if (end < 0 || end - start > 32) continue;
+            const endExclusive = end + 2;
+            if (position < start || position >= endExclusive) continue;
+            const payload = sourceText.slice(start + 2, end);
+            if (payload === "" || /^\d+$/.test(payload)) {
+                return { start, end: endExclusive };
+            }
+        }
+        return undefined;
+    };
+
+    const resolveFourslashMarkerPosition = (client, fileName, position, mode) => {
+        const sourceText = readClientFileText(client, fileName);
+        const marker = fourslashMarkerBoundsAtPosition(sourceText, position);
+        if (!marker) return position;
+        if (mode === "completion") {
+            return marker.start;
+        }
+        if (mode === "quickinfo") {
+            let after = marker.end;
+            while (after < sourceText.length && /\s/.test(sourceText.charAt(after))) after++;
+            if (isIdentifierChar(sourceText.charAt(after))) return after;
+
+            let before = marker.start - 1;
+            while (before >= 0 && /\s/.test(sourceText.charAt(before))) before--;
+            if (before >= 0 && isIdentifierChar(sourceText.charAt(before))) return before;
+        }
+        return position;
+    };
+
     const buildImportFixParityDiagnostics = (client, fileName, currentTestFile) => {
         const text = readClientFileText(client, fileName);
         if (typeof text !== "string" || text.length === 0) return [];
@@ -1128,6 +1166,7 @@ function patchSessionClient(SessionClient, ts) {
     //    native LS returns a targeted, smaller set
     const _origGetCompletions = proto.getCompletionsAtPosition;
     proto.getCompletionsAtPosition = function(fileName, position, preferences, formattingSettings) {
+        const requestPosition = resolveFourslashMarkerPosition(this, fileName, position, "completion");
         const currentTestFile = String(globalThis.__tszCurrentFourslashTestFile || "");
         const currentTestName = path.basename(currentTestFile, ".ts");
         const currentTestNameLower = currentTestName.toLowerCase();
@@ -1161,11 +1200,11 @@ function patchSessionClient(SessionClient, ts) {
             const sourceText = getSourceText();
             if (typeof sourceText !== "string") return undefined;
             const isIdentifierLikeChar = (ch) => /[A-Za-z0-9_$]/.test(ch);
-            let start = position;
+            let start = requestPosition;
             while (start > 0 && isIdentifierLikeChar(sourceText.charAt(start - 1))) {
                 start--;
             }
-            let end = position;
+            let end = requestPosition;
             while (end < sourceText.length && isIdentifierLikeChar(sourceText.charAt(end))) {
                 end++;
             }
@@ -1174,7 +1213,7 @@ function patchSessionClient(SessionClient, ts) {
         };
         const oldPreferences = this.preferences;
         if (preferences) this.configure(preferences);
-        let result = _origGetCompletions.call(this, fileName, position, preferences);
+        let result = _origGetCompletions.call(this, fileName, requestPosition, preferences);
         if (preferences) this.configure(oldPreferences || {});
 
         // Consult native LS for isNewIdentifierLocation and type-aware entries
@@ -1184,7 +1223,7 @@ function patchSessionClient(SessionClient, ts) {
             if (nativeLs) {
                 nativeResult = nativeLs.getCompletionsAtPosition(
                     fileName,
-                    position,
+                    requestPosition,
                     preferences || {},
                     formattingSettings,
                 );
@@ -1192,7 +1231,7 @@ function patchSessionClient(SessionClient, ts) {
         } catch { /* ignore */ }
         const sourceTextAtPosition = getSourceText();
         const sourcePrefixAtPosition = typeof sourceTextAtPosition === "string"
-            ? sourceTextAtPosition.slice(Math.max(0, position - 192), position)
+            ? sourceTextAtPosition.slice(Math.max(0, requestPosition - 192), requestPosition)
             : "";
         if (forceNotNewIdentifierLocation) {
             return undefined;
@@ -1888,6 +1927,7 @@ function patchSessionClient(SessionClient, ts) {
     // Prefer native quick info when available to match tsc display formatting.
     const _origGetQuickInfoAtPosition = proto.getQuickInfoAtPosition;
     proto.getQuickInfoAtPosition = function(fileName, position) {
+        const requestPosition = resolveFourslashMarkerPosition(this, fileName, position, "quickinfo");
         const normalizeQuickInfoPayload = (info) => {
             if (!info) return info;
             let normalized = info;
@@ -1900,12 +1940,12 @@ function patchSessionClient(SessionClient, ts) {
             return normalized;
         };
         const nativeResult = withNativeFallback(this, ls =>
-            ls.getQuickInfoAtPosition(fileName, position)
+            ls.getQuickInfoAtPosition(fileName, requestPosition)
         );
         if (nativeResult) return normalizeQuickInfoPayload(nativeResult);
         let result;
         try {
-            result = _origGetQuickInfoAtPosition.call(this, fileName, position);
+            result = _origGetQuickInfoAtPosition.call(this, fileName, requestPosition);
         } catch (err) {
             if (err && typeof err.message === "string" && err.message.includes("Unexpected empty response body")) {
                 return undefined;

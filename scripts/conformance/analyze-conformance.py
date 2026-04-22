@@ -26,12 +26,12 @@ def main():
     with open(tmpfile) as f:
         for line in f:
             line = line.rstrip()
-            m = re.match(r"^FAIL (.+?)(?:\s+\(ERROR: .+\))?$", line)
+            m = re.match(r"^(FAIL|XFAIL) (.+?)(?:\s+\(.+\))?$", line)
             if m:
                 if current:
                     tests.append(current)
                 current = {
-                    "path": m.group(1),
+                    "path": m.group(2),
                     "expected": [],
                     "actual": [],
                     "options": "",
