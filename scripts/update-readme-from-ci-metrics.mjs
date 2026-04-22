@@ -103,14 +103,24 @@ if (emit) {
   const jsRate = toNumber(emit.js_pass_rate);
   const jsPassed = toInt(emit.js_passed);
   const jsTotal = toInt(emit.js_total);
+  const jsSkipped = toInt(emit.js_skipped) ?? 0;
+  const jsTimeouts = toInt(emit.js_timeouts) ?? 0;
   const dtsRate = toNumber(emit.dts_pass_rate);
   const dtsPassed = toInt(emit.dts_passed);
   const dtsTotal = toInt(emit.dts_total);
+  const dtsSkipped = toInt(emit.dts_skipped) ?? 0;
   if (validSuiteMetrics(jsRate, jsPassed, jsTotal) && validSuiteMetrics(dtsRate, dtsPassed, dtsTotal)) {
+    const jsExtras = [];
+    if (jsSkipped > 0) jsExtras.push(`${formatInt(jsSkipped)} skipped`);
+    if (jsTimeouts > 0) jsExtras.push(`${formatInt(jsTimeouts)} timed out`);
+    const dtsExtras = [];
+    if (dtsSkipped > 0) dtsExtras.push(`${formatInt(dtsSkipped)} skipped`);
+    const jsSuffix = jsExtras.length > 0 ? `; ${jsExtras.join(", ")}` : "";
+    const dtsSuffix = dtsExtras.length > 0 ? `; ${dtsExtras.join(", ")}` : "";
     const block = [
       "```",
-      `JavaScript:  [${progressBar(jsRate)}] ${formatRate(jsRate)}% (${formatInt(jsPassed)} / ${formatInt(jsTotal)} tests)`,
-      `Declaration: [${progressBar(dtsRate)}] ${formatRate(dtsRate)}% (${formatInt(dtsPassed)} / ${formatInt(dtsTotal)} tests)`,
+      `JavaScript:  [${progressBar(jsRate)}] ${formatRate(jsRate)}% (${formatInt(jsPassed)} / ${formatInt(jsTotal)} tests${jsSuffix})`,
+      `Declaration: [${progressBar(dtsRate)}] ${formatRate(dtsRate)}% (${formatInt(dtsPassed)} / ${formatInt(dtsTotal)} tests${dtsSuffix})`,
       "```",
     ].join("\n");
     const updated = replaceSection(readme, "<!-- EMIT_START -->", "<!-- EMIT_END -->", block);
