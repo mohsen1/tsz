@@ -7,6 +7,7 @@ use crate::diagnostics::{
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tracing::{Level, trace};
 use tsz_parser::parser::NodeIndex;
@@ -1207,8 +1208,10 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
     ) -> (String, String) {
         let (source_str, _) = self.format_top_level_assignability_message_types(source, target);
-        let target_str =
-            self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+        let target_str = self.format_type_for_diagnostic_role(
+            target,
+            DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+        );
         self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str)
     }
 

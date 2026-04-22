@@ -7,6 +7,7 @@ use crate::diagnostics::{
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
+use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -130,8 +131,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
-        let param_str = self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
+        let arg_str = self.format_type_for_diagnostic_role(
+            arg_type,
+            DiagnosticTypeDisplayRole::CallArgument {
+                parameter: param_type,
+                argument_idx: idx,
+            },
+        );
+        let param_str = self.format_type_for_diagnostic_role(
+            param_type,
+            DiagnosticTypeDisplayRole::CallParameter {
+                argument: arg_type,
+                argument_idx: idx,
+            },
+        );
         let (arg_str, param_str) =
             self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
