@@ -73,6 +73,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return inferred;
         }
 
+        if lower_bounds
+            .iter()
+            .any(|ty| matches!(*ty, TypeId::ANY | TypeId::ERROR))
+        {
+            return TypeId::ANY;
+        }
+
         // Fall back to the first lower-bound candidate so later argument checks
         // drive assignability failures on the mismatch site.
         lower_bounds
