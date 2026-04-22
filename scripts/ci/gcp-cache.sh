@@ -30,6 +30,18 @@ cargo_lock_hash() {
   hash_files Cargo.lock
 }
 
+cargo_target_hash() {
+  local files=(Cargo.lock Cargo.toml)
+  while IFS= read -r path; do
+    files+=("$path")
+  done < <(find crates -name Cargo.toml -type f | sort)
+
+  {
+    printf '%s\n' "${TSZ_CI_RUST_CACHE_VERSION:-rust-1.90-bookworm}"
+    sha256sum "${files[@]}"
+  } | sha256sum | awk '{print $1}'
+}
+
 typescript_ref() {
   tr -d '[:space:]' < scripts/ci/typescript-submodule-ref
 }
@@ -158,8 +170,9 @@ restore_typescript() {
 }
 
 restore_caches() {
-  local cargo_hash node_hash ts_ref ts_deps_hash commit
+  local cargo_hash cargo_target_hash node_hash ts_ref ts_deps_hash commit
   cargo_hash="$(cargo_lock_hash)"
+  cargo_target_hash="$(cargo_target_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
   commit="$(commit_key)"
@@ -173,6 +186,12 @@ restore_caches() {
     "cargo-home-${cargo_hash}" \
     "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
     ".ci-cache/cargo-home"
+
+  restore_archive \
+    "cargo-target-${cargo_target_hash}" \
+    "$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")" \
+    "." \
+    .target
 
   restore_archive \
     "npm-${node_hash}" \
@@ -217,8 +236,9 @@ restore_caches() {
 }
 
 save_caches() {
-  local cargo_hash node_hash ts_ref ts_deps_hash commit
+  local cargo_hash cargo_target_hash node_hash ts_ref ts_deps_hash commit
   cargo_hash="$(cargo_lock_hash)"
+  cargo_target_hash="$(cargo_target_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
   ts_deps_hash="$(typescript_deps_hash)"
@@ -229,6 +249,12 @@ save_caches() {
     "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
     ".ci-cache/cargo-home" \
     registry git
+
+  save_archive \
+    "cargo-target-${cargo_target_hash}" \
+    "$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")" \
+    "." \
+    .target
 
   save_archive \
     "npm-${node_hash}" \

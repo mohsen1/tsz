@@ -66,6 +66,7 @@ The first Cloud Build step restores cache archives from GCS:
 ```text
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/typescript/<sha>.tar.gz
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/cargo-home/<Cargo.lock hash>.tar.gz
+gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/cargo-target/<Rust+Cargo hash>.tar.gz
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/npm/<scripts deps hash>.tar.gz
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/scripts-node-modules/<scripts deps hash>.tar.gz
 gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/typescript-harness/<sha>.tar.gz
@@ -79,6 +80,7 @@ for later runs. The main CI step accepts that source-only tree and avoids a git
 submodule clone.
 
 The other caches cover Cargo registry/git state, npm download state,
+the Cargo target directory for cross-commit incremental Rust rebuilds,
 `scripts/node_modules`, the built fourslash harness under `TypeScript/built`,
 `TypeScript/node_modules`, and dist-fast binaries for repeated jobs on the same
 commit. Cache saving runs after the suite command even when that command fails,
