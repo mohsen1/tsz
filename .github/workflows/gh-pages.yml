@@ -25,8 +25,11 @@ permissions:
   id-token: write
 
 concurrency:
+  # Full benchmark suite is ~75 minutes — never cancel one in flight.
+  # Newer triggers wait for the running deploy to finish (GitHub auto-
+  # coalesces queued pending runs so we don't pile up duplicates).
   group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   check:
