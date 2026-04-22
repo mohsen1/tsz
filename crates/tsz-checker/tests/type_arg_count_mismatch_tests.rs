@@ -161,6 +161,55 @@ var r = add<number>(1, 2);
     );
 }
 
+#[test]
+fn non_generic_explicit_type_args_suppress_argument_mismatch_but_plain_calls_report() {
+    let source = r#"
+function foo<T, U>(f: (v: T) => U) {
+   var r1 = f<number>(1);
+   var r2 = f(1);
+   var r3 = f<any>(null);
+   var r4 = f(null);
+}
+"#;
+    let diagnostics = check_diagnostics(source);
+    let mut ts2558: Vec<_> = diagnostics.iter().filter(|d| d.code == 2558).collect();
+    let mut ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    ts2558.sort_by_key(|d| d.start);
+    ts2345.sort_by_key(|d| d.start);
+
+    let explicit_number = source.find("number").expect("number type argument") as u32;
+    let explicit_any = source.find("any").expect("any type argument") as u32;
+    let plain_number_arg = (source.find("f(1)").expect("plain number call") + 2) as u32;
+    let plain_null_arg = (source.find("f(null)").expect("plain null call") + 2) as u32;
+
+    assert_eq!(
+        ts2558.len(),
+        2,
+        "Expected two TS2558 diagnostics, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2558[0].start, explicit_number,
+        "TS2558 from f<number>(1) should anchor at the explicit type argument"
+    );
+    assert_eq!(
+        ts2558[1].start, explicit_any,
+        "TS2558 from f<any>(null) should anchor at the explicit type argument"
+    );
+    assert_eq!(
+        ts2345.len(),
+        2,
+        "Expected two TS2345 diagnostics, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2345[0].start, plain_number_arg,
+        "TS2345 should come from the plain f(1) call, not f<number>(1)"
+    );
+    assert_eq!(
+        ts2345[1].start, plain_null_arg,
+        "TS2345 should come from the plain f(null) call, not f<any>(null)"
+    );
+}
+
 /// When type arg count is wrong but argument count is also wrong,
 /// both TS2558 and TS2554 should be suppressed (only TS2558 for the
 /// type arg count). TSC does not emit argument count errors in this case.
