@@ -15,6 +15,105 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn maybe_report_commonjs_export_implicit_any_assignment(
+        &mut self,
+        target_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) {
+        if !self.is_js_file()
+            || !self.ctx.compiler_options.check_js
+            || !self.ctx.no_implicit_any()
+            || self.ctx.has_real_syntax_errors
+        {
+            return;
+        }
+
+        let Some(name_idx) = self.commonjs_export_property_name_node(target_idx) else {
+            return;
+        };
+
+        let direct_null = self.is_null_literal(right_idx);
+        let chained_nullish = self.is_assignment_expression(right_idx)
+            && self.assignment_chain_terminal_is_null_or_undefined(right_idx);
+        if !direct_null && !chained_nullish {
+            return;
+        }
+
+        let Some(name) = self
+            .ctx
+            .arena
+            .get_identifier_at(name_idx)
+            .map(|ident| ident.escaped_text.clone())
+        else {
+            return;
+        };
+
+        self.error_at_node_msg(
+            self.ctx.arena.skip_parenthesized(target_idx),
+            crate::diagnostics::diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+            &[&name, "any"],
+        );
+    }
+
+    fn commonjs_export_property_name_node(&self, target_idx: NodeIndex) -> Option<NodeIndex> {
+        let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
+        let target_node = self.ctx.arena.get(target_idx)?;
+        if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.ctx.arena.get_access_expr(target_node)?;
+        self.is_commonjs_module_exports_assignment(access.expression)
+            .then_some(access.name_or_argument)
+    }
+
+    fn is_assignment_expression(&self, idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(idx)
+            .filter(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+            .and_then(|node| self.ctx.arena.get_binary_expr(node))
+            .is_some_and(|binary| binary.operator_token == SyntaxKind::EqualsToken as u16)
+    }
+
+    fn assignment_chain_terminal_is_null_or_undefined(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..512 {
+            current = self.ctx.arena.skip_parenthesized_and_assertions(current);
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::EqualsToken as u16
+            {
+                current = binary.right;
+                continue;
+            }
+
+            return self.is_null_literal(current) || self.is_undefined_identifier(current);
+        }
+
+        false
+    }
+
+    fn is_null_literal(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        self.ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::NullKeyword as u16)
+    }
+
+    fn is_undefined_identifier(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        self.ctx
+            .arena
+            .get(idx)
+            .and_then(|node| self.ctx.arena.get_identifier(node))
+            .is_some_and(|ident| ident.escaped_text == "undefined")
+    }
+
     /// In JS files, `module.exports = X` and `exports = X` are declarations, not assignments.
     /// tsc does not check assignability for these — the type flows from the RHS.
     /// Without this suppression, tsz would emit false TS2322/TS2741 errors when the
