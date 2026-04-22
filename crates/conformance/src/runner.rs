@@ -247,8 +247,55 @@ fn compare_diagnostics(
             missing_fingerprints,
             extra_fingerprints,
             options,
+            known_failure: None,
         }
     }
+}
+
+const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
+    "known compiler debt previously hidden by production diagnostic suppression";
+
+const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[
+    "typeTagOnFunctionReferencesGeneric",
+    "umd-augmentation",
+    "arrayFrom",
+    "expandoFunctionSymbolPropertyJs",
+    "returnTypePredicateIsInstantiateInContextOfTarget",
+    "inferTypePredicates",
+    "recursiveConditionalTypes",
+    "moduleAugmentationDoesNamespaceEnumMergeOfReexport",
+    "mergeSymbolReexportedTypeAliasInstantiation",
+    "jsxNamespaceImplicitImportJSXNamespaceFromConfigPickedOverGlobalOne",
+    "jsxNamespaceImplicitImportJSXNamespaceFromPragmaPickedOverGlobalOne",
+    "recursivelyExpandingUnionNoStackoverflow",
+    "genericRecursiveImplicitConstructorErrors3",
+    "instantiationExpressionErrorNoCrash",
+    "styledComponentsInstantiaionLimitNotReached",
+    "intersectionsOfLargeUnions2",
+    "isolatedModulesReExportType",
+    "spellingSuggestionJSXAttribute",
+    "isolatedDeclarationErrorsObjects",
+    "mixinAccessModifiers",
+    "mixinAccessors1",
+    "namespacesWithTypeAliasOnlyExportsMerge",
+    "typeFromPropertyAssignment39",
+    "promiseTry",
+    "jsxRuntimePragma",
+    "defaultPropertyAssignedClassWithPrototype",
+];
+
+fn known_conformance_debt_reason(test_key: &str) -> Option<&'static str> {
+    PRODUCTION_SUPPRESSION_DEBT_PATTERNS
+        .iter()
+        .any(|pattern| test_key.contains(pattern))
+        .then_some(PRODUCTION_SUPPRESSION_DEBT_REASON)
+}
+
+fn mark_known_conformance_debt(test_key: &str, mut result: TestResult) -> TestResult {
+    if let TestResult::Fail { known_failure, .. } = &mut result {
+        *known_failure = known_conformance_debt_reason(test_key);
+    }
+    result
 }
 
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
@@ -466,12 +513,17 @@ impl Runner {
                                     missing_fingerprints,
                                     extra_fingerprints,
                                     options,
+                                    known_failure,
                                 } => {
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
+                                    if known_failure.is_some() {
+                                        stats.known_failures.fetch_add(1, Ordering::SeqCst);
+                                    }
 
                                     // Track fingerprint-only failures: error codes match
                                     // but fingerprints differ (position/message mismatch)
-                                    if missing.is_empty()
+                                    if known_failure.is_none()
+                                        && missing.is_empty()
                                         && extra.is_empty()
                                         && (!missing_fingerprints.is_empty()
                                             || !extra_fingerprints.is_empty())
@@ -500,7 +552,11 @@ impl Runner {
                                     };
 
                                     if should_print {
-                                        writeln!(buf, "FAIL {}", rel_path).ok();
+                                        if let Some(reason) = known_failure {
+                                            writeln!(buf, "XFAIL {} ({})", rel_path, reason).ok();
+                                        } else {
+                                            writeln!(buf, "FAIL {}", rel_path).ok();
+                                        }
 
                                         if print_test {
                                             let expected_str: Vec<String> = expected
@@ -659,6 +715,10 @@ impl Runner {
             stats.pass_rate()
         );
         println!("  Skipped: {}", stats.skipped.load(Ordering::SeqCst));
+        println!(
+            "  Known failures: {}",
+            stats.known_failures.load(Ordering::SeqCst)
+        );
         println!("  Crashed: {}", stats.crashed.load(Ordering::SeqCst));
         let timeout_count = stats.timeout.load(Ordering::SeqCst);
         if timeout_count > 0 {
@@ -707,6 +767,7 @@ impl Runner {
             skipped: AtomicUsize::new(stats.skipped.load(Ordering::SeqCst)),
             crashed: AtomicUsize::new(stats.crashed.load(Ordering::SeqCst)),
             timeout: AtomicUsize::new(stats.timeout.load(Ordering::SeqCst)),
+            known_failures: AtomicUsize::new(stats.known_failures.load(Ordering::SeqCst)),
             fingerprint_only: AtomicUsize::new(stats.fingerprint_only.load(Ordering::SeqCst)),
         })
     }
@@ -935,10 +996,7 @@ impl Runner {
                                 } else {
                                     Duration::ZERO
                                 };
-                                match pool
-                                    .compile(&prepared.project_dir, timeout_dur, Some(&key))
-                                    .await?
-                                {
+                                match pool.compile(&prepared.project_dir, timeout_dur).await? {
                                     BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                         &output,
                                         prepared.temp_dir.path(),
@@ -954,7 +1012,6 @@ impl Runner {
                                             prepared.temp_dir.path(),
                                             variant,
                                             timeout_secs.saturating_mul(2).max(60),
-                                            &key,
                                         )
                                         .await?
                                         {
@@ -981,7 +1038,6 @@ impl Runner {
                                     .current_dir(&prepared.project_dir)
                                     .stdout(std::process::Stdio::piped())
                                     .stderr(std::process::Stdio::piped())
-                                    .env("TSZ_CONFORMANCE_TEST", &key)
                                     .kill_on_drop(true)
                                     .spawn()?;
 
@@ -1175,11 +1231,14 @@ impl Runner {
                     );
 
                     let options_for_fail = compile_result.options.clone();
-                    let outcome = compare_diagnostics(
-                        &compile_result,
-                        &tsc_error_codes,
-                        &tsc_fps,
-                        options_for_fail,
+                    let outcome = mark_known_conformance_debt(
+                        &key,
+                        compare_diagnostics(
+                            &compile_result,
+                            &tsc_error_codes,
+                            &tsc_fps,
+                            options_for_fail,
+                        ),
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1241,10 +1300,7 @@ impl Runner {
                         } else {
                             Duration::ZERO
                         };
-                        match pool
-                            .compile(&prepared.project_dir, timeout_dur, Some(&key))
-                            .await?
-                        {
+                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
                             BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                 &output,
                                 prepared.temp_dir.path(),
@@ -1260,7 +1316,6 @@ impl Runner {
                                     prepared.temp_dir.path(),
                                     options,
                                     timeout_secs.saturating_mul(2).max(60),
-                                    &key,
                                 )
                                 .await?
                                 {
@@ -1279,7 +1334,6 @@ impl Runner {
                             .current_dir(&prepared.project_dir)
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
-                            .env("TSZ_CONFORMANCE_TEST", &key)
                             .kill_on_drop(true)
                             .spawn()?;
 
@@ -1335,11 +1389,14 @@ impl Runner {
 
                     // UTF-16 path historically drops the resolved options from the
                     // failure record — preserve that behavior by passing an empty map.
-                    let outcome = compare_diagnostics(
-                        &compile_result,
-                        &tsc_error_codes,
-                        &tsc_fps,
-                        HashMap::new(),
+                    let outcome = mark_known_conformance_debt(
+                        &key,
+                        compare_diagnostics(
+                            &compile_result,
+                            &tsc_error_codes,
+                            &tsc_fps,
+                            HashMap::new(),
+                        ),
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1376,10 +1433,7 @@ impl Runner {
                         } else {
                             Duration::ZERO
                         };
-                        match pool
-                            .compile(&prepared.project_dir, timeout_dur, Some(&key))
-                            .await?
-                        {
+                        match pool.compile(&prepared.project_dir, timeout_dur).await? {
                             BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                 &output,
                                 prepared.temp_dir.path(),
@@ -1395,7 +1449,6 @@ impl Runner {
                                     prepared.temp_dir.path(),
                                     options,
                                     timeout_secs.saturating_mul(2).max(60),
-                                    &key,
                                 )
                                 .await?
                                 {
@@ -1414,7 +1467,6 @@ impl Runner {
                             .current_dir(&prepared.project_dir)
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
-                            .env("TSZ_CONFORMANCE_TEST", &key)
                             .kill_on_drop(true)
                             .spawn()?;
 
@@ -1468,11 +1520,14 @@ impl Runner {
                     };
 
                     let options_for_fail = compile_result.options.clone();
-                    let outcome = compare_diagnostics(
-                        &compile_result,
-                        &tsc_error_codes,
-                        &tsc_fps,
-                        options_for_fail,
+                    let outcome = mark_known_conformance_debt(
+                        &key,
+                        compare_diagnostics(
+                            &compile_result,
+                            &tsc_error_codes,
+                            &tsc_fps,
+                            options_for_fail,
+                        ),
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1489,7 +1544,6 @@ impl Runner {
         temp_dir: &Path,
         options: HashMap<String, String>,
         timeout_secs: u64,
-        test_name: &str,
     ) -> anyhow::Result<Option<tsz_wrapper::CompilationResult>> {
         let child = tokio::process::Command::new(tsz_binary)
             .arg("--project")
@@ -1500,7 +1554,6 @@ impl Runner {
             .current_dir(project_dir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .env("TSZ_CONFORMANCE_TEST", test_name)
             .kill_on_drop(true)
             .spawn()?;
 

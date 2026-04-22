@@ -10,6 +10,21 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 CHECKS = [
     (
+        "Production code must not branch on conformance fixture identity",
+        ROOT / "crates",
+        re.compile(
+            r"\bTSZ_CONFORMANCE_TEST\b"
+            r"|\bconformance_test_name\b"
+            r"|\btest_path\.contains\s*\("
+            r"|False Positive Suppressions"
+        ),
+        {
+            "exclude_dirs": {"conformance", "tests"},
+            "exclude_test_files": True,
+            "ignore_comment_lines": True,
+        },
+    ),
+    (
         "Root boundary: no tsz_solver module re-export alias",
         ROOT / "src",
         re.compile(r"\bpub\s+use\s+tsz_solver\s+as\s+solver\s*;"),

@@ -41,50 +41,6 @@ pub(super) fn identifier_at(source_text: &str, offset: u32) -> Option<String> {
     (end > start).then(|| source_text[start as usize..end as usize].to_string())
 }
 
-/// Return marker comment bounds at `offset` when `source[offset..]` starts with `/*...*/`.
-/// The returned tuple is `(start, end_exclusive)`.
-pub(super) fn marker_comment_bounds_at(source_text: &str, offset: u32) -> Option<(u32, u32)> {
-    let bytes = source_text.as_bytes();
-    let len = bytes.len() as u32;
-    if offset + 1 >= len {
-        return None;
-    }
-    if bytes[offset as usize] != b'/' || bytes[(offset + 1) as usize] != b'*' {
-        return None;
-    }
-    let mut cursor = offset + 2;
-    while cursor + 1 < len {
-        if bytes[cursor as usize] == b'*' && bytes[(cursor + 1) as usize] == b'/' {
-            return Some((offset, cursor + 2));
-        }
-        cursor += 1;
-    }
-    None
-}
-
-/// Return marker comment bounds near `offset` when `offset` lands inside a
-/// fourslash marker comment.
-pub(super) fn marker_comment_bounds_around(source_text: &str, offset: u32) -> Option<(u32, u32)> {
-    let bytes = source_text.as_bytes();
-    let len = bytes.len() as u32;
-    if len < 4 {
-        return None;
-    }
-
-    let start_search = offset.saturating_sub(8);
-    let end_search = (offset + 1).min(len.saturating_sub(2));
-    for start in start_search..=end_search {
-        if let Some((marker_start, marker_end)) = marker_comment_bounds_at(source_text, start)
-            && marker_end.saturating_sub(marker_start) <= 32
-            && offset >= marker_start
-            && offset < marker_end
-        {
-            return Some((marker_start, marker_end));
-        }
-    }
-    None
-}
-
 /// Heuristic: detect whether `offset` is inside a type annotation context
 /// (`foo: Type`) by scanning backward to the nearest top-level `:` delimiter.
 pub(super) fn is_type_annotation_context(source_text: &str, offset: u32) -> bool {
@@ -971,20 +927,6 @@ mod tests {
         let display = "var fnNoParamsWrapped: (...a: any[]) => void";
         let normalized = normalize_quickinfo_display_string(display);
         assert_eq!(normalized, "var fnNoParamsWrapped: () => void");
-    }
-
-    #[test]
-    fn marker_comment_bounds_at_finds_simple_marker() {
-        let source = "x/*1*/y";
-        let (start, end) = marker_comment_bounds_at(source, 1).expect("marker should be found");
-        assert_eq!((start, end), (1, 6));
-    }
-
-    #[test]
-    fn marker_comment_bounds_around_handles_offset_inside_marker() {
-        let source = "x/*1*/y";
-        let (start, end) = marker_comment_bounds_around(source, 3).expect("marker should be found");
-        assert_eq!((start, end), (1, 6));
     }
 
     #[test]

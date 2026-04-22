@@ -301,16 +301,7 @@ fn run_batch_mode() -> Result<()> {
             continue;
         }
 
-        // Parse tab-separated project dir and optional test name
-        let parts: Vec<&str> = trimmed.split('\t').collect();
-        let project_dir = parts[0];
-        if parts.len() > 1 {
-            // SAFETY: Batch mode runs single-threaded; no concurrent env var access.
-            #[allow(unsafe_code)]
-            unsafe {
-                std::env::set_var("TSZ_CONFORMANCE_TEST", parts[1]);
-            }
-        }
+        let project_dir = trimmed;
 
         // Clear all thread-local state between compilations.
         // The type interner cache holds TypeId→TypeData mappings from the previous
