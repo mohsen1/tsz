@@ -319,7 +319,7 @@ impl<'a> CheckerState<'a> {
 
             // tsc points TS1255/TS1263/TS1264 at the `!` token itself, which is
             // immediately after the variable name node (name_node.end, length 1).
-            let excl_pos = self.ctx.arena.get(var_decl.name).map(|n| n.end);
+            let excl_pos = self.ctx.arena.end_at(var_decl.name);
 
             // TS1255: ! is not permitted in ambient context (declare let/var/const)
             if self.is_ambient_declaration(decl_idx) {

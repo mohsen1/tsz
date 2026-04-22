@@ -1674,7 +1674,7 @@ impl BinderState {
                     sym.value_declaration =
                         sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
                     sym.value_declaration_span = if sym.value_declaration.is_some() {
-                        arena.get(sym.value_declaration).map(|n| (n.pos, n.end))
+                        arena.pos_end_at(sym.value_declaration)
                     } else {
                         None
                     };

@@ -310,7 +310,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let params = self.extract_parameters(&accessor_data.parameters);
 
-        let body_source_range = self.arena.get(accessor_data.body).map(|n| (n.pos, n.end));
+        let body_source_range = self.arena.pos_end_at(accessor_data.body);
 
         let body = if accessor_data.body.is_none() {
             vec![]
@@ -364,7 +364,7 @@ impl<'a> ES5ClassTransformer<'a> {
             self.generate_destructuring_prologue(&accessor_data.parameters, &params);
 
         let body_source_range = if accessor_destructuring.is_empty() {
-            self.arena.get(accessor_data.body).map(|n| (n.pos, n.end))
+            self.arena.pos_end_at(accessor_data.body)
         } else {
             None // Force multi-line when destructuring prologue exists
         };
