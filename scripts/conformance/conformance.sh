@@ -38,6 +38,9 @@ Commands:
   generate    Generate TSC cache locally (if not checked in)
   run         Run conformance tests against TSC cache (auto-diffs vs baseline)
   analyze     Analyze snapshot offline: root-cause campaigns, quick wins, code families
+  render-corpus
+              Classify diagnostic render/fingerprint failures from the last snapshot
+              and optional --print-fingerprints runner output
   areas       Analyze pass/fail rates by test directory area
   diff        Show regressions/improvements vs last snapshot baseline
   all         Generate cache (if needed) and run tests (default)
@@ -82,6 +85,7 @@ Examples:
   ./scripts/conformance/conformance.sh analyze                    # Offline strategy overview
   ./scripts/conformance/conformance.sh analyze --campaigns        # Ranked root-cause campaigns
   ./scripts/conformance/conformance.sh analyze --campaign big3    # Deep dive one campaign
+  ./scripts/conformance/conformance.sh render-corpus              # Render failure buckets
   ./scripts/conformance/conformance.sh areas --depth 2            # Sub-area breakdown
 
 Note: Fingerprint comparison (code + location + message) is always enabled.
@@ -943,6 +947,9 @@ case "$COMMAND" in
         ;;
     analyze)
         analyze_tests "${REMAINING_ARGS[@]}"
+        ;;
+    render-corpus)
+        python3 "$REPO_ROOT/scripts/conformance/classify-render-corpus.py" "${REMAINING_ARGS[@]}"
         ;;
     areas)
         check_submodule_clean
