@@ -672,8 +672,23 @@ pub(super) fn collect_diagnostics(
         tsz::module_resolver::ImportKind,
         Option<tsz::module_resolver::ImportingModuleKind>,
     );
-    let mut cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>> =
-        Vec::with_capacity(program.files.len());
+
+    // AST traversal is pure read-only and embarrassingly parallel: each file
+    // independently scans its own arena. Doing this up-front in parallel lets
+    // the subsequent (sequential) module-resolution loop iterate over a
+    // pre-built `Vec<Vec<...>>` instead of interleaving the AST scan with
+    // the resolution-cache mutation. On large repos this turns N sequential
+    // AST passes into one N-way parallel pass.
+    let cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>> = {
+        use rayon::prelude::*;
+        let _span =
+            tracing::info_span!("collect_module_specifiers", files = program.files.len()).entered();
+        program
+            .files
+            .par_iter()
+            .map(|file| collect_module_specifiers(&file.arena, file.source_file))
+            .collect()
+    };
 
     // Duplicate package redirect map
     let package_redirects: FxHashMap<PathBuf, PathBuf> = {
@@ -683,7 +698,6 @@ pub(super) fn collect_diagnostics(
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
-            cached_module_specifiers.push(collect_module_specifiers(&file.arena, file.source_file));
             let file_path = Path::new(&file.file_name);
 
             for (specifier, specifier_node, import_kind, resolution_mode_override) in
