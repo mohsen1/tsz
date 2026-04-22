@@ -187,6 +187,35 @@ var iu: typeof undefined = i;
     );
 }
 
+#[test]
+fn test_ts2322_type_parameter_union_display_preserves_declaration_order() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+function diamondTop<Top>() {
+    function diamondMiddle<T, U>() {
+        let top!: Top;
+        let middle!: Top | T | U;
+        top = middle;
+    }
+}
+"#,
+    );
+
+    let message = diagnostics
+        .iter()
+        .find_map(|(code, message)| {
+            (*code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("is not assignable to type 'Top'."))
+            .then_some(message.as_str())
+        })
+        .expect("expected TS2322 diagnostic for top = middle assignment");
+
+    assert!(
+        message.contains("Type 'Top | T | U' is not assignable to type 'Top'."),
+        "expected declaration-order union display, got: {message}"
+    );
+}
+
 fn compile_with_options(
     source: &str,
     file_name: &str,
