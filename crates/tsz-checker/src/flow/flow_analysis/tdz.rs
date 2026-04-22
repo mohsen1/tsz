@@ -38,9 +38,9 @@ impl<'a> CheckerState<'a> {
         // 2. Check if it is a block-scoped variable (let, const, class, enum)
         // var and function are hoisted, so they don't have TDZ issues in this context.
         // Imports (ALIAS) are also hoisted or handled differently.
-        let is_block_scoped = (symbol.flags
-            & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM))
-            != 0;
+        let is_block_scoped = symbol.has_any_flags(
+            symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM,
+        );
 
         if !is_block_scoped {
             return false;
@@ -49,8 +49,8 @@ impl<'a> CheckerState<'a> {
         // const enums are compile-time only — no runtime binding, no TDZ.
         // Exception: with isolatedModules, const enums get runtime bindings
         // and are subject to TDZ just like regular enums.
-        if symbol.flags & symbol_flags::CONST_ENUM != 0
-            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+        if symbol.has_any_flags(symbol_flags::CONST_ENUM)
+            && !symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
             && !self.ctx.isolated_modules()
         {
             return false;
@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
         // the reference is a self-reference within the class's own static block and is NOT a TDZ
         // violation. For example, inside `static {}` of class C, referencing C itself is valid.
         // The class name is accessible within its own body.
-        if symbol.flags & symbol_flags::CLASS != 0 && usage_node.pos > decl_node.pos {
+        if symbol.has_any_flags(symbol_flags::CLASS) && usage_node.pos > decl_node.pos {
             return false;
         }
 
@@ -118,9 +118,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // 2. Check if it is a block-scoped variable (let, const, class, enum)
-        let is_block_scoped = (symbol.flags
-            & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM))
-            != 0;
+        let is_block_scoped = symbol.has_any_flags(
+            symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM,
+        );
 
         if !is_block_scoped {
             return false;
@@ -129,8 +129,8 @@ impl<'a> CheckerState<'a> {
         // const enums are compile-time only — no runtime binding, no TDZ.
         // Exception: with isolatedModules, const enums get runtime bindings
         // and are subject to TDZ just like regular enums.
-        if symbol.flags & symbol_flags::CONST_ENUM != 0
-            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+        if symbol.has_any_flags(symbol_flags::CONST_ENUM)
+            && !symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
             && !self.ctx.isolated_modules()
         {
             return false;
@@ -201,9 +201,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // 2. Check if it is a block-scoped variable (let, const, class, enum)
-        let is_block_scoped = (symbol.flags
-            & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM))
-            != 0;
+        let is_block_scoped = symbol.has_any_flags(
+            symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM,
+        );
 
         if !is_block_scoped {
             return false;
@@ -212,8 +212,8 @@ impl<'a> CheckerState<'a> {
         // const enums are compile-time only — no runtime binding, no TDZ.
         // Exception: with isolatedModules, const enums get runtime bindings
         // and are subject to TDZ just like regular enums.
-        if symbol.flags & symbol_flags::CONST_ENUM != 0
-            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+        if symbol.has_any_flags(symbol_flags::CONST_ENUM)
+            && !symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
             && !self.ctx.isolated_modules()
         {
             return false;
@@ -284,8 +284,8 @@ impl<'a> CheckerState<'a> {
         // const enums are compile-time only — no runtime binding, no TDZ.
         // Exception: with isolatedModules, const enums get runtime bindings
         // and are subject to TDZ just like regular enums.
-        if symbol.flags & symbol_flags::CONST_ENUM != 0
-            && symbol.flags & symbol_flags::REGULAR_ENUM == 0
+        if symbol.has_any_flags(symbol_flags::CONST_ENUM)
+            && !symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
             && !self.ctx.isolated_modules()
         {
             return false;
@@ -324,7 +324,7 @@ impl<'a> CheckerState<'a> {
         // For merged symbols (e.g., namespace A + class A), the value_declaration
         // may point to the namespace rather than the class. For CLASS symbols, we
         // must find the actual class declaration to get the correct TDZ position.
-        let mut decl_idx = if symbol.flags & symbol_flags::CLASS != 0 {
+        let mut decl_idx = if symbol.has_any_flags(symbol_flags::CLASS) {
             // Prefer the CLASS_DECLARATION among all declarations
             let class_decl = symbol.declarations.iter().find(|&&d| {
                 self.ctx
@@ -424,9 +424,9 @@ impl<'a> CheckerState<'a> {
         // symbol.  A mismatch means the node index is from a different file's
         // arena and should not be compared.
         if is_multi_file && !is_cross_file {
-            let is_class = symbol.flags & symbol_flags::CLASS != 0;
-            let is_enum = symbol.flags & symbol_flags::ENUM != 0;
-            let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
+            let is_class = symbol.has_any_flags(symbol_flags::CLASS);
+            let is_enum = symbol.has_any_flags(symbol_flags::ENUM);
+            let is_var = symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE);
             let kind_ok = (is_class
                 && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
                     || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION))
@@ -459,8 +459,8 @@ impl<'a> CheckerState<'a> {
         // Only flag if usage is before declaration in source order
         // EXCEPT for block-scoped variables, which are also in TDZ during their own initializer,
         // and class decorator arguments, which execute before the class binding is created.
-        let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
-        let is_class = symbol.flags & symbol_flags::CLASS != 0;
+        let is_var = symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE);
+        let is_class = symbol.has_any_flags(symbol_flags::CLASS);
         let mut could_be_in_initializer = false;
         let in_for_of_header_expression = !is_cross_file
             && is_var
