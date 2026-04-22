@@ -666,8 +666,11 @@ except Exception:
     run_snapshot_once() {
         rm -f "$tmpfile"
         tmpfile=$(mktemp)
+        local runner_status=0
 
-        # Runner exits non-zero when any tests fail, which is expected
+        # Runner exits non-zero when tests fail, so capture status explicitly
+        # and validate snapshot completeness ourselves.
+        set +e
         $RUNNER_BIN \
             --test-dir "$TEST_DIR" \
             --cache-file "$CACHE_FILE" \
@@ -675,7 +678,9 @@ except Exception:
             "${runner_compat_flags[@]}" \
             --workers $WORKERS \
             --print-test \
-            "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null || true
+            "${REMAINING_ARGS[@]}" > "$tmpfile" 2>/dev/null
+        runner_status=$?
+        set -e
 
         # Verify runner produced output
         if [ ! -s "$tmpfile" ]; then
@@ -690,6 +695,7 @@ import re, sys, json
 text = open(sys.argv[1]).read()
 m = re.search(r'FINAL RESULTS:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
 passed, total, rate = (int(m.group(1)), int(m.group(2)), float(m.group(3))) if m else (0, 0, 0.0)
+has_final_results = bool(m)
 recorded = sum(
     1
     for line in text.splitlines()
@@ -702,13 +708,15 @@ json.dump(
         'failed': total - passed,
         'rate': rate,
         'recorded': recorded,
+        'has_final_results': has_final_results,
+        'runner_status': int(sys.argv[2]),
     },
     sys.stdout,
 )
-" "$tmpfile" > "$summary_json"
+" "$tmpfile" "$runner_status" > "$summary_json"
     }
 
-    local total_tests passed failed pass_rate recorded_results
+    local total_tests passed failed pass_rate recorded_results has_final_results runner_status
     local attempt max_attempts=3
     for attempt in $(seq 1 "$max_attempts"); do
         run_snapshot_once || return 1
@@ -719,6 +727,13 @@ json.dump(
         failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
         pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
         recorded_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded', 0))" "$summary_json")
+        has_final_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('true' if d.get('has_final_results') else 'false')" "$summary_json")
+        runner_status=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('runner_status', 0))" "$summary_json")
+
+        if [ "$has_final_results" != "true" ]; then
+            echo -e "${YELLOW}ERROR: Snapshot run missing FINAL RESULTS summary (runner exit: $runner_status).${NC}"
+            return 1
+        fi
 
         if [ "$total_tests" -gt 0 ] && [ "$recorded_results" -lt "$total_tests" ]; then
             if [ "$attempt" -lt "$max_attempts" ]; then
