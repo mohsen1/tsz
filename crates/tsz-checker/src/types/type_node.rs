@@ -6,6 +6,7 @@
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
 
+use super::queries::lib_resolution::keyword_syntax_to_type_id;
 use super::type_node_helpers::{
     check_duplicate_parameters_in_type, check_parameter_initializers_in_type,
 };
@@ -94,27 +95,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Compute the type of a type node (internal, not cached).
     fn compute_type(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
 
-        match node.kind {
-            // Keyword types - use compile-time constant TypeIds
-            k if k == SyntaxKind::NumberKeyword as u16 => TypeId::NUMBER,
-            k if k == SyntaxKind::StringKeyword as u16 => TypeId::STRING,
-            k if k == SyntaxKind::BooleanKeyword as u16 => TypeId::BOOLEAN,
-            k if k == SyntaxKind::VoidKeyword as u16 => TypeId::VOID,
-            k if k == SyntaxKind::AnyKeyword as u16 => TypeId::ANY,
-            k if k == SyntaxKind::NeverKeyword as u16 => TypeId::NEVER,
-            k if k == SyntaxKind::UnknownKeyword as u16 => TypeId::UNKNOWN,
-            k if k == SyntaxKind::UndefinedKeyword as u16 => TypeId::UNDEFINED,
-            k if k == SyntaxKind::NullKeyword as u16 => TypeId::NULL,
-            k if k == SyntaxKind::ObjectKeyword as u16 => TypeId::OBJECT,
-            k if k == SyntaxKind::BigIntKeyword as u16 => TypeId::BIGINT,
-            k if k == SyntaxKind::SymbolKeyword as u16 => TypeId::SYMBOL,
+        if let Some(builtin) = keyword_syntax_to_type_id(node.kind) {
+            return builtin;
+        }
 
+        match node.kind {
             // Type reference (e.g., "MyType", "Array<T>")
             k if k == syntax_kind_ext::TYPE_REFERENCE => self.get_type_from_type_reference(idx),
 

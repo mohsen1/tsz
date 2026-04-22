@@ -1397,9 +1397,16 @@ impl<'a> CheckerState<'a> {
                 }
                 // Don't emit TS2693 in heritage clause context — the heritage
                 // checker will emit the appropriate error (e.g., TS2689).
+                // Also suppress in JS/checkJs when the access sits on an
+                // assignment LHS chain (e.g., `ns.Interface = function() {}`
+                // or `ns.Interface.prototype.fn = ...`). tsc treats these as
+                // prototype-property-assignment merges and does not emit TS2708.
                 if self
                     .find_enclosing_heritage_clause(access.name_or_argument)
                     .is_none()
+                    && !(self.is_js_file()
+                        && self.ctx.compiler_options.check_js
+                        && self.property_access_is_write_target_or_base(idx))
                 {
                     // Emit TS2708 for namespace member access (e.g., ns.Interface())
                     // This is "Cannot use namespace as a value"

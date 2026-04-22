@@ -838,7 +838,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .or_else(|| self.ctx.resolve_import_target(module_name))
                 .is_some()
-                || self.ctx.binder.module_exports.contains_key(module_name);
+                || self
+                    .ctx
+                    .module_exports_contains_module(self.ctx.binder, module_name);
             if !module_resolves {
                 return;
             }
@@ -872,7 +874,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
             .is_some()
-            || self.ctx.binder.module_exports.contains_key(module_name);
+            || self
+                .ctx
+                .module_exports_contains_module(self.ctx.binder, module_name);
         if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext
             && !is_type_only_import
             && module_resolves_dts
@@ -923,7 +927,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
             .is_some()
-            || self.ctx.binder.module_exports.contains_key(module_name);
+            || self
+                .ctx
+                .module_exports_contains_module(self.ctx.binder, module_name);
         if !self.ctx.compiler_options.allow_importing_ts_extensions
             && !self.ctx.compiler_options.rewrite_relative_import_extensions
             && !is_type_only_import
@@ -1419,7 +1425,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.binder.module_exports.contains_key(module_name)
+        if self
+            .ctx
+            .module_exports_contains_module(self.ctx.binder, module_name)
             && self.ctx.get_resolution_error(module_name).is_none()
         {
             tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
@@ -1898,7 +1906,10 @@ impl<'a> CheckerState<'a> {
                                     for &binder_idx in indices {
                                         if let Some(binder) = binders.get(binder_idx)
                                             && let Some(exports) =
-                                                binder.module_exports.get(module_name.as_str())
+                                                self.ctx.module_exports_for_module(
+                                                    binder,
+                                                    module_name.as_str(),
+                                                )
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
@@ -1920,8 +1931,9 @@ impl<'a> CheckerState<'a> {
                                     }
                                 } else {
                                     for binder in binders.iter() {
-                                        if let Some(exports) =
-                                            binder.module_exports.get(module_name.as_str())
+                                        if let Some(exports) = self
+                                            .ctx
+                                            .module_exports_for_module(binder, module_name.as_str())
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
@@ -2071,6 +2083,12 @@ impl<'a> CheckerState<'a> {
                             if self.is_inside_module_augmentation(decl_idx) {
                                 return false;
                             }
+                            // `declare global { ... }` injects declarations into the
+                            // global scope, not the module scope the import lives in.
+                            // Those declarations must not collide with module imports.
+                            if self.is_inside_global_augmentation(decl_idx) {
+                                return false;
+                            }
                             // Scope check: the declaration must be in the same
                             // logical scope as the import.  We compare scopes by
                             // checking if they are the same ScopeId OR if they
@@ -2111,6 +2129,11 @@ impl<'a> CheckerState<'a> {
                                 return false;
                             }
 
+                            // `export as namespace X` only binds a global
+                            // namespace alias, never a local module binding.
+                            if self.decl_is_namespace_export_declaration(decl_idx) {
+                                return false;
+                            }
                             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
                                 if matches!(
                                     decl_node.kind,
@@ -2125,6 +2148,7 @@ impl<'a> CheckerState<'a> {
                                         // conflict with imports.
                                         | syntax_kind_ext::EXPORT_SPECIFIER
                                         | syntax_kind_ext::EXPORT_DECLARATION
+                                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                                 ) {
                                     return false;
                                 }
@@ -2218,6 +2242,23 @@ impl<'a> CheckerState<'a> {
                                             {
                                                 return false;
                                             }
+                                            // `declare global { ... }` places declarations in
+                                            // the global scope; they can't conflict with an
+                                            // import living in the enclosing module scope.
+                                            if self.is_inside_global_augmentation(decl_idx) {
+                                                return false;
+                                            }
+                                            // `export as namespace X` declares a global
+                                            // namespace alias for the module. It does not
+                                            // introduce a local binding, so it must not
+                                            // collide with a module-scope import. The binder
+                                            // may point at the identifier inside the
+                                            // declaration, so check both the node itself and
+                                            // its immediate parent.
+                                            if self.decl_is_namespace_export_declaration(decl_idx)
+                                            {
+                                                return false;
+                                            }
                                             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
                                                 if matches!(
                                                     decl_node.kind,
@@ -2229,6 +2270,7 @@ impl<'a> CheckerState<'a> {
                                                         | syntax_kind_ext::NAMED_IMPORTS
                                                         | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                                                         | syntax_kind_ext::IMPORT_DECLARATION
+                                                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                                                 ) {
                                                     return false;
                                                 }

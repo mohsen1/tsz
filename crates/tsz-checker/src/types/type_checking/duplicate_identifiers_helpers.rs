@@ -431,7 +431,8 @@ impl<'a> CheckerState<'a> {
             })
             .or_else(|| {
                 export_keys.iter().find_map(|key| {
-                    self.module_exports_for_file(binder, key)
+                    self.ctx
+                        .module_exports_for_module(binder, key)
                         .and_then(|exports| self.resolve_export_from_table(binder, exports, name))
                 })
             })
@@ -481,7 +482,9 @@ impl<'a> CheckerState<'a> {
             else {
                 return Vec::new();
             };
-            if let Some(exports) = self.module_exports_for_file(owner_binder, &owner_file_name)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(owner_binder, &owner_file_name)
                 && let Some(resolved_sym_id) =
                     self.resolve_export_from_table(owner_binder, exports, name)
             {
@@ -610,7 +613,8 @@ impl<'a> CheckerState<'a> {
 
         if declarations.is_empty()
             && let Some(resolved_sym_id) = export_keys.iter().find_map(|key| {
-                self.module_exports_for_file(binder, key)
+                self.ctx
+                    .module_exports_for_module(binder, key)
                     .and_then(|exports| self.resolve_export_from_table(binder, exports, name))
             })
         {

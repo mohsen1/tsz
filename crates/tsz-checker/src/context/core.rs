@@ -416,6 +416,7 @@ impl<'a> CheckerContext<'a> {
         self.program_wildcard_reexports_type_only =
             parent.program_wildcard_reexports_type_only.clone();
         self.program_module_exports = parent.program_module_exports.clone();
+        self.program_cross_file_node_symbols = parent.program_cross_file_node_symbols.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
@@ -993,6 +994,36 @@ impl<'a> CheckerContext<'a> {
         self.module_exports_for_module(binder, module_key).is_some()
     }
 
+    /// Resolve a node → symbol lookup by arena pointer against the
+    /// cross-file node-symbol map. Prefers the shared project-wide map
+    /// installed by `ProjectEnv::apply_to`; falls back to the per-binder
+    /// copy for tests and standalone callers.
+    pub fn cross_file_node_symbols_for_arena<'b>(
+        &'b self,
+        binder: &'b tsz_binder::BinderState,
+        arena_ptr: usize,
+    ) -> Option<&'b Arc<FxHashMap<u32, SymbolId>>> {
+        if let Some(ref idx) = self.program_cross_file_node_symbols {
+            return idx.get(&arena_ptr);
+        }
+        binder.cross_file_node_symbols.get(&arena_ptr)
+    }
+
+    /// Test whether `module_name` is declared as an ambient module anywhere
+    /// in the project. Prefers the project-wide `global_declared_modules`
+    /// index built from the skeleton; falls back to the per-binder
+    /// `declared_modules` set for tests / standalone callers.
+    pub fn declared_modules_contains(
+        &self,
+        binder: &tsz_binder::BinderState,
+        module_name: &str,
+    ) -> bool {
+        if let Some(ref dm) = self.global_declared_modules {
+            return dm.exact.contains(module_name);
+        }
+        binder.declared_modules.contains(module_name)
+    }
+
     /// Resolve an import specifier to its target file index.
     /// Uses the `resolved_module_paths` map populated by the driver.
     /// Returns None if the import cannot be resolved (e.g., external module).
@@ -1207,7 +1238,7 @@ impl<'a> CheckerContext<'a> {
         import_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
         // Check current binder first
-        if let Some(exports) = self.binder.module_exports.get(module_specifier)
+        if let Some(exports) = self.module_exports_for_module(self.binder, module_specifier)
             && let Some(sym_id) = exports.get(import_name)
         {
             return Some(sym_id);
@@ -1234,7 +1265,7 @@ impl<'a> CheckerContext<'a> {
         import_name: &str,
     ) -> Option<(tsz_binder::SymbolId, usize)> {
         // Check current binder first
-        if let Some(exports) = self.binder.module_exports.get(module_specifier)
+        if let Some(exports) = self.module_exports_for_module(self.binder, module_specifier)
             && let Some(sym_id) = exports.get(import_name)
         {
             return Some((sym_id, self.current_file_idx));

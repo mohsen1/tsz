@@ -15,6 +15,28 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn effective_import_binding_name(
+        &self,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<(String, bool)> {
+        let module_specifier = symbol.import_module.as_deref()?;
+        let import_name = symbol.import_name.as_deref();
+        let is_namespace_binding = import_name.is_none() || import_name == Some("*");
+
+        if self.module_uses_module_exports_interop(
+            module_specifier,
+            Some(self.current_file_emit_resolution_mode()),
+        ) && (is_namespace_binding || import_name == Some("default"))
+        {
+            return Some(("module.exports".to_string(), false));
+        }
+
+        Some((
+            import_name.unwrap_or(&symbol.escaped_name).to_string(),
+            is_namespace_binding,
+        ))
+    }
+
     pub(crate) fn file_has_jsdoc_typedef_named(&self, file_idx: usize, export_name: &str) -> bool {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
@@ -126,7 +148,9 @@ impl<'a> CheckerState<'a> {
         ];
 
         for candidate in candidates {
-            if let Some(exports) = self.ctx.binder.module_exports.get(candidate)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, candidate)
                 && let Some(sym_id) = exports.get("export=")
             {
                 return Some((self.ctx.binder, sym_id));
@@ -148,7 +172,7 @@ impl<'a> CheckerState<'a> {
         } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
             for binder in all_binders.iter() {
                 for candidate in candidates {
-                    if let Some(exports) = binder.module_exports.get(candidate)
+                    if let Some(exports) = self.ctx.module_exports_for_module(binder, candidate)
                         && let Some(sym_id) = exports.get("export=")
                     {
                         return Some((binder, sym_id));
@@ -708,19 +732,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if let Some(module_specifier) = symbol.import_module.as_deref() {
-            // Namespace imports (import * as ns) and namespace re-exports
-            // (export * as ns from) create value bindings — the namespace object.
-            // They should not be treated as type-only even if the target module
-            // only has type-only exports. Individual members surface as TS2339.
-            let is_namespace_binding =
-                symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
-            let export_name = symbol
-                .import_name
-                .as_deref()
-                .unwrap_or(&symbol.escaped_name);
+            let Some((export_name, is_namespace_binding)) =
+                self.effective_import_binding_name(symbol)
+            else {
+                return false;
+            };
             // Check across all binders for transitive type-only export chains
             if !is_namespace_binding
-                && self.is_export_type_only_across_binders(module_specifier, export_name)
+                && self.is_export_type_only_across_binders(module_specifier, &export_name)
             {
                 return true;
             }

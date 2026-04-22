@@ -1409,6 +1409,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::UniqueSymbol(_)
             | TypeData::ThisType
             | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Error => false,
         }
     }
@@ -1565,6 +1566,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             | TypeData::UniqueSymbol(_)
             | TypeData::ThisType
             | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Error => false,
         }
     }

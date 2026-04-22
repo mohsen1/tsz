@@ -7,8 +7,9 @@ use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::flow_analysis::{
     array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
     get_array_element_type, get_lazy_def_id, is_assignable, is_assignable_with_env,
-    is_compound_assignment_operator, map_compound_assignment_to_binary, tuple_elements_for_type,
-    union_members_for_type, widen_literal_to_primitive,
+    is_assignment_operator as boundary_is_assignment_operator, is_compound_assignment_operator,
+    map_compound_assignment_to_binary, tuple_elements_for_type, union_members_for_type,
+    widen_literal_to_primitive,
 };
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -1662,25 +1663,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) const fn is_assignment_operator(&self, operator: u16) -> bool {
-        matches!(
-            operator,
-            k if k == SyntaxKind::EqualsToken as u16
-                || k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-        )
+        boundary_is_assignment_operator(operator)
     }
 
     pub(crate) fn narrow_assignment(&self, initial_type: TypeId, assigned_type: TypeId) -> TypeId {

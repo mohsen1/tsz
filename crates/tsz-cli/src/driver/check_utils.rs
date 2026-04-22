@@ -1580,7 +1580,12 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
-            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
+            // Per-binder cross_file_node_symbols left empty intentionally.
+            // The program-wide outer map is stored once on ProjectEnv and
+            // read via `ctx.cross_file_node_symbols_for_arena`. Cloning
+            // it into every per-file binder scales outer-map allocation
+            // with N² — several hundred MB on large-ts-repo.
+            cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
             flow_nodes: file.flow_nodes.clone(),
@@ -1683,7 +1688,9 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             // into every file binder makes all_binders setup scale with total declarations.
             symbol_arenas: Default::default(),
             declaration_arenas: Default::default(),
-            cross_file_node_symbols: program.cross_file_node_symbols.clone(),
+            // See `create_binder_from_bound_file_with_augmentations` for
+            // the rationale: the program-wide map lives on ProjectEnv.
+            cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
             flow_nodes: file.flow_nodes.clone(),

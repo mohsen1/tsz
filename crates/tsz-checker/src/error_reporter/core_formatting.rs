@@ -678,6 +678,23 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
         other: TypeId,
     ) -> String {
+        self.format_assignability_type_for_message_internal(ty, other, true)
+    }
+
+    pub(crate) fn format_assignability_type_for_message_preserving_nullish(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> String {
+        self.format_assignability_type_for_message_internal(ty, other, false)
+    }
+
+    fn format_assignability_type_for_message_internal(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+        strip_top_level_nullish: bool,
+    ) -> String {
         if self.target_preserves_literal_surface(other) {
             return self.format_type_diagnostic(ty);
         }
@@ -703,7 +720,9 @@ impl<'a> CheckerState<'a> {
         // strip null/undefined from the top-level union to match tsc's behavior.
         // tsc only shows the non-nullable part of the target since null/undefined
         // are not relevant to the structural mismatch.
-        if let Some(stripped) = self.strip_nullish_for_assignability_display(ty, other) {
+        if strip_top_level_nullish
+            && let Some(stripped) = self.strip_nullish_for_assignability_display(ty, other)
+        {
             return self.format_type_for_assignability_message(stripped);
         }
 

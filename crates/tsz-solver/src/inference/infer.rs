@@ -700,6 +700,7 @@ impl<'a> InferenceContext<'a> {
             | TypeData::UniqueSymbol(_)
             | TypeData::ThisType
             | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Error => {}
             TypeData::NoInfer(inner) => {
                 self.collect_type_params(inner, params, visited);
@@ -900,6 +901,7 @@ impl<'a> InferenceContext<'a> {
             | TypeData::UniqueSymbol(_)
             | TypeData::ThisType
             | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Error => false,
             TypeData::NoInfer(inner) => self.type_contains_param(inner, target, visited),
         }

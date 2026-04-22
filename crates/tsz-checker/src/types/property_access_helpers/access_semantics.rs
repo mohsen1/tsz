@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
         (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
     }
 
-    pub(in crate::types_domain::property_access_helpers) fn property_access_is_write_target_or_base(
+    pub(crate) fn property_access_is_write_target_or_base(
         &self,
         property_access_idx: NodeIndex,
     ) -> bool {

@@ -210,6 +210,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             | TypeData::UniqueSymbol(_)
             | TypeData::ThisType
             | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Error => false,
         }
     }
@@ -730,6 +731,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             | TypeData::UniqueSymbol(_)
             | TypeData::ThisType
             | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Error => true,
         }
     }

@@ -3,3 +3,6 @@
 
 mod helpers;
 mod resolve;
+
+#[cfg(test)]
+mod resolve_tests;

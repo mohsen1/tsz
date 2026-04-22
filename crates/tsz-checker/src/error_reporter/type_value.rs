@@ -353,6 +353,10 @@ impl<'a> CheckerState<'a> {
     fn get_type_only_import_export_kind(&self, idx: NodeIndex) -> Option<TypeOnlyKind> {
         use tsz_binder::symbol_flags;
 
+        if let Some(kind) = self.require_call_bound_identifier_type_only_kind(idx) {
+            return Some(kind);
+        }
+
         let sym_id = self.resolve_identifier_symbol(idx)?;
         let mut visited = AliasCycleTracker::new();
         let target = self.resolve_alias_symbol(sym_id, &mut visited);
@@ -423,19 +427,18 @@ impl<'a> CheckerState<'a> {
             // object itself is a value even if the module's exports are type-only.
             // Individual type-only members surface as TS2339 via property lookup.
             if let Some(module_specifier) = symbol.import_module.as_deref() {
-                let is_namespace_binding =
-                    symbol.import_name.is_none() || symbol.import_name.as_deref() == Some("*");
-                let export_name = symbol
-                    .import_name
-                    .as_deref()
-                    .unwrap_or(&symbol.escaped_name);
+                let Some((export_name, is_namespace_binding)) =
+                    self.effective_import_binding_name(symbol)
+                else {
+                    continue;
+                };
                 if !is_namespace_binding
-                    && self.is_export_type_only_across_binders(module_specifier, export_name)
+                    && self.is_export_type_only_across_binders(module_specifier, &export_name)
                 {
                     // Determine whether the type-only came from `import type` or `export type`
                     // in the target module. Resolve the export symbol and walk its declarations.
                     if let Some(kind) =
-                        self.classify_cross_file_type_only_kind(module_specifier, export_name)
+                        self.classify_cross_file_type_only_kind(module_specifier, &export_name)
                     {
                         return Some(kind);
                     }
@@ -526,6 +529,53 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    pub(crate) fn require_call_bound_identifier_type_only_kind(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<TypeOnlyKind> {
+        use crate::context::ResolutionModeOverride;
+
+        if !self.is_require_call_bound_identifier(idx) {
+            return None;
+        }
+
+        let sym_id = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+
+        for &decl_idx in &symbol.declarations {
+            if decl_idx.is_none() {
+                continue;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            let Some(module_specifier) = self.get_require_module_specifier(var_decl.initializer)
+            else {
+                continue;
+            };
+            let uses_module_exports = self.module_uses_module_exports_interop(
+                &module_specifier,
+                Some(ResolutionModeOverride::Require),
+            );
+            let kind = self.classify_cross_file_type_only_kind(&module_specifier, "module.exports");
+            if !uses_module_exports {
+                continue;
+            }
+            if let Some(kind) = kind {
+                return Some(kind);
+            }
+        }
+
+        None
+    }
+
     /// Determine whether a cross-file type-only export came from `import type`
     /// (TS1361) or `export type` (TS1362) by resolving the target module and
     /// walking the export symbol's declarations.
@@ -543,16 +593,16 @@ impl<'a> CheckerState<'a> {
             .ctx
             .module_exports_for_module(target_binder, &target_file_name)?;
         let sym_id = exports_table.get(export_name)?;
-        let sym = self.ctx.binder.get_symbol(sym_id)?;
+        let sym = target_binder
+            .get_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
 
         if !sym.is_type_only {
             return None;
         }
 
         // Walk the symbol's declarations to find the import/export that made it type-only
-        let decl_arena = self
-            .ctx
-            .binder
+        let decl_arena = target_binder
             .symbol_arenas
             .get(&sym_id)
             .map(|arc| &**arc)
