@@ -12,6 +12,15 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$HOST_CPUS}"
+export RUSTC_WRAPPER="${RUSTC_WRAPPER:-sccache}"
+export SCCACHE_GCS_BUCKET="${SCCACHE_GCS_BUCKET:-thirdface-ai-oauth_cloudbuild}"
+export SCCACHE_GCS_KEY_PREFIX="${SCCACHE_GCS_KEY_PREFIX:-tsz-ci-cache/sccache/rust-v1}"
+
+if [[ "${BRANCH_NAME:-}" == "main" && -z "${PULL_REQUEST_ID:-}" ]]; then
+  export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_WRITE}"
+else
+  export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_ONLY}"
+fi
 
 cap_workers() {
   local requested="$1"
@@ -23,8 +32,35 @@ cap_workers() {
 }
 
 SHARD_COUNT="${TSZ_CI_SHARDS:-4}"
-SHARD_WORKERS="${TSZ_CI_SHARD_WORKERS:-$(cap_workers 20)}"
-CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(cap_workers 80)}"
+
+default_shard_workers() {
+  local usable per
+  usable=$((HOST_CPUS - 8))
+  if (( usable < SHARD_COUNT )); then
+    usable="$HOST_CPUS"
+  fi
+  per=$((usable / SHARD_COUNT))
+  if (( per < 20 )); then
+    per=20
+  elif (( per > 64 )); then
+    per=64
+  fi
+  cap_workers "$per"
+}
+
+default_conformance_workers() {
+  local workers
+  workers=$((HOST_CPUS - 8))
+  if (( workers < 1 )); then
+    workers="$HOST_CPUS"
+  elif (( workers > 160 )); then
+    workers=160
+  fi
+  cap_workers "$workers"
+}
+
+SHARD_WORKERS="${TSZ_CI_SHARD_WORKERS:-$(default_shard_workers)}"
+CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers)}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
 LOG_DIR="${TSZ_CI_LOG_DIR:-.ci-logs}"
@@ -60,43 +96,95 @@ num_or_zero() {
   fi
 }
 
+suite_needs_group() {
+  local suite="$1" group="$2"
+  case "$suite" in
+    all|full)
+      return 0
+      ;;
+  esac
+
+  case "$group" in
+    lint)
+      [[ "$suite" == "lint" ]]
+      ;;
+    unit)
+      [[ "$suite" == "unit" ]]
+      ;;
+    wasm)
+      [[ "$suite" == "wasm" ]]
+      ;;
+    node)
+      [[ "$suite" == "emit" || "$suite" == "fourslash" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 ensure_host_tools() {
+  local suite="${1:-all}"
   ci_section "Install host tools"
 
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y --no-install-recommends \
-      binaryen \
-      build-essential \
-      ca-certificates \
-      curl \
-      git \
-      jq \
-      nodejs \
-      npm \
-      python3 \
+    local apt_packages=(
+      build-essential
+      ca-certificates
+      curl
+      git
+      jq
+      python3
       pkg-config
+      sccache
+    )
+    if suite_needs_group "$suite" wasm; then
+      apt_packages+=(binaryen)
+    fi
+    if suite_needs_group "$suite" node; then
+      apt_packages+=(nodejs npm)
+    fi
+
+    apt-get update -qq
+    apt-get install -y --no-install-recommends "${apt_packages[@]}"
   fi
 
   if command -v rustup >/dev/null 2>&1; then
-    rustup component add clippy rustfmt
-    rustup target add wasm32-unknown-unknown
+    if suite_needs_group "$suite" lint; then
+      rustup component add clippy rustfmt
+    fi
+    if suite_needs_group "$suite" wasm; then
+      rustup target add wasm32-unknown-unknown
+    fi
   fi
 
-  if ! command -v cargo-nextest >/dev/null 2>&1; then
+  if suite_needs_group "$suite" unit && ! command -v cargo-nextest >/dev/null 2>&1; then
     curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin
   fi
 
-  if ! command -v wasm-pack >/dev/null 2>&1; then
+  if suite_needs_group "$suite" wasm && ! command -v wasm-pack >/dev/null 2>&1; then
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+  fi
+
+  if command -v sccache >/dev/null 2>&1; then
+    sccache --start-server || true
+  else
+    unset RUSTC_WRAPPER
   fi
 
   rustc -V
   cargo -V
-  node -v
-  npm -v
+  if command -v node >/dev/null 2>&1; then
+    node -v
+  fi
+  if command -v npm >/dev/null 2>&1; then
+    npm -v
+  fi
   nproc
+  if command -v sccache >/dev/null 2>&1; then
+    sccache --show-stats || true
+  fi
 }
 
 ensure_source_git_context() {
@@ -175,22 +263,22 @@ nextest_allow_no_tests() {
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  nextest_allow_no_tests -p tsz-common
-  nextest_allow_no_tests -p tsz-scanner
-  cargo nextest run --profile ci -p tsz-parser
-  cargo nextest run --profile ci -p tsz-binder
-  cargo nextest run --profile ci -p tsz-solver
-  cargo nextest run --profile ci -p tsz-checker
-  nextest_allow_no_tests -p tsz-emitter
-  nextest_allow_no_tests -p tsz-lsp
-  cargo nextest run --profile ci -p tsz-core
+  cargo nextest run --profile ci --no-tests=pass \
+    -p tsz-common \
+    -p tsz-scanner \
+    -p tsz-parser \
+    -p tsz-binder \
+    -p tsz-solver \
+    -p tsz-checker \
+    -p tsz-emitter \
+    -p tsz-lsp \
+    -p tsz-core
 }
 
 build_test_binaries() {
   ci_section "Build dist-fast test binaries"
-  cargo build --profile dist-fast -p tsz-cli --bin tsz
+  cargo build --profile dist-fast -p tsz-cli --bin tsz --bin tsz-server
   cargo build --profile dist-fast -p tsz-conformance --bin tsz-conformance
-  cargo build --profile dist-fast -p tsz-cli --bin tsz-server
   mkdir -p .target/release
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh .target/dist-fast/tsz .target/dist-fast/tsz-conformance .target/dist-fast/tsz-server
@@ -412,7 +500,8 @@ aggregate_fourslash() {
 }
 
 run_common_setup() {
-  timed ensure_host_tools ensure_host_tools
+  local suite="${1:-all}"
+  timed ensure_host_tools ensure_host_tools "$suite"
   timed ensure_source_git_context ensure_source_git_context
   timed init_typescript_submodule init_typescript_submodule
 }
@@ -433,7 +522,7 @@ run_all_suites() {
 main() {
   local suite="${1:-${TSZ_CI_SUITE:-all}}"
 
-  run_common_setup
+  run_common_setup "$suite"
 
   case "$suite" in
     all|full)
@@ -471,5 +560,14 @@ main() {
       ;;
   esac
 }
+
+show_sccache_stats() {
+  if command -v sccache >/dev/null 2>&1; then
+    ci_section "sccache stats"
+    sccache --show-stats || true
+  fi
+}
+
+trap show_sccache_stats EXIT
 
 main "$@"
