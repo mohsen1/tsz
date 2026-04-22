@@ -1,7 +1,6 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
     /// Returns true when `anchor_idx` sits inside an arithmetic/bitwise
@@ -17,12 +16,7 @@ impl<'a> CheckerState<'a> {
     pub(super) fn in_arithmetic_compound_assignment_context(&self, anchor_idx: NodeIndex) -> bool {
         let is_arith_compound_op = |op: u16| -> bool {
             crate::query_boundaries::common::is_compound_assignment_operator(op)
-                && !matches!(
-                    op,
-                    k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                        || k == SyntaxKind::BarBarEqualsToken as u16
-                        || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-                )
+                && !crate::query_boundaries::common::is_logical_compound_assignment_operator(op)
         };
 
         let node_is_arith_compound_bin = |idx: NodeIndex| -> bool {
