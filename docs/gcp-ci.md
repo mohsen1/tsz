@@ -11,18 +11,18 @@ N2D-32 workers so the slowest gate is parallel and fits under the tighter
 effective N2D private-pool capacity path:
 
 ```text
-main conformance  tsz-ci-n2d-32      n2d-highcpu-32
-PR conformance    tsz-ci-n2d-32      n2d-highcpu-32
-emit              tsz-ci-n2d-96      n2d-highcpu-96
-fourslash         tsz-ci-n2d-96      n2d-highcpu-96
-unit              tsz-ci-n2d-64      n2d-highcpu-64
-lint              tsz-ci-n2d-48      n2d-highcpu-48
-wasm              tsz-ci-n2d-48      n2d-highcpu-48
-PR emit           tsz-ci-pr-n2d-96   n2d-highcpu-96
-PR fourslash      tsz-ci-pr-n2d-96   n2d-highcpu-96
-PR unit           tsz-ci-pr-n2d-64   n2d-highcpu-64
-PR lint           tsz-ci-pr-n2d-48   n2d-highcpu-48
-PR wasm           tsz-ci-pr-n2d-48   n2d-highcpu-48
+main conformance  tsz-ci-n2d-32       n2d-highcpu-32
+PR conformance    tsz-ci-n2d-32       n2d-highcpu-32
+emit              tsz-ci-main-c3-88   c3-highcpu-88
+fourslash         tsz-ci-main-c3-88   c3-highcpu-88
+unit              tsz-ci-n2d-64       n2d-highcpu-64
+lint              tsz-ci-n2d-48       n2d-highcpu-48
+wasm              tsz-ci-n2d-48       n2d-highcpu-48
+PR emit           tsz-ci-pr-c3-88     c3-highcpu-88
+PR fourslash      tsz-ci-pr-c3-88     c3-highcpu-88
+PR unit           tsz-ci-pr-n2d-64    n2d-highcpu-64
+PR lint           tsz-ci-pr-n2d-48    n2d-highcpu-48
+PR wasm           tsz-ci-pr-n2d-48    n2d-highcpu-48
 ```
 
 The script
@@ -110,6 +110,12 @@ gcloud builds worker-pools create tsz-ci-pr-c3-88 \
   --worker-machine-type=c3-highcpu-88 \
   --worker-disk-size=200GB
 
+gcloud builds worker-pools create tsz-ci-main-c3-88 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=c3-highcpu-88 \
+  --worker-disk-size=200GB
+
 gcloud builds worker-pools create tsz-ci-n2d-96 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
@@ -182,7 +188,7 @@ pr_config_for_suite() {
   case "$1" in
     lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
     unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
-    emit|fourslash) printf '%s\n' cloudbuild.n2d-96.yaml ;;
+    emit|fourslash) printf '%s\n' cloudbuild.yaml ;;
     conformance) printf '%s\n' cloudbuild.yaml ;;
     *) printf '%s\n' cloudbuild.yaml ;;
   esac
@@ -192,7 +198,7 @@ pr_pool_for_suite() {
   case "$1" in
     lint|wasm) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
     unit) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-64 ;;
-    emit|fourslash) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-96 ;;
+    emit|fourslash) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-c3-88 ;;
     conformance) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-32 ;;
     *) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
   esac
@@ -238,14 +244,25 @@ main_config_for_suite() {
   case "$1" in
     lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
     unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
-    emit|fourslash) printf '%s\n' cloudbuild.n2d-96.yaml ;;
+    emit|fourslash) printf '%s\n' cloudbuild.yaml ;;
     conformance) printf '%s\n' cloudbuild.yaml ;;
     *) printf '%s\n' cloudbuild.yaml ;;
   esac
 }
 
+main_pool_for_suite() {
+  case "$1" in
+    lint|wasm) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-48 ;;
+    unit) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-64 ;;
+    emit|fourslash) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-main-c3-88 ;;
+    conformance) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-32 ;;
+    *) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-48 ;;
+  esac
+}
+
 for suite in lint unit wasm emit fourslash; do
   config="$(main_config_for_suite "$suite")"
+  pool="$(main_pool_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
     --region=us-central1 \
@@ -255,7 +272,7 @@ for suite in lint unit wasm emit fourslash; do
     --build-config="$config" \
     --include-logs-with-status \
     --no-require-approval \
-    --substitutions="_TSZ_CI_SUITE=${suite}" \
+    --substitutions="_TSZ_CI_SUITE=${suite},_TSZ_CI_POOL=${pool}" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 
