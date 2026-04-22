@@ -284,7 +284,7 @@ pub trait TypeVisitor: Sized {
             }
             TypeData::ModuleNamespace(sym_ref) => self.visit_module_namespace(sym_ref.0),
             TypeData::NoInfer(inner) => self.visit_no_infer(*inner),
-            TypeData::Error => self.visit_error(),
+            TypeData::UnresolvedTypeName(_) | TypeData::Error => self.visit_error(),
         }
     }
 }
@@ -537,6 +537,7 @@ where
         | TypeData::UniqueSymbol(_)
         | TypeData::ThisType
         | TypeData::ModuleNamespace(_)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => {}
     }
 }
@@ -754,7 +755,7 @@ impl TypeKindVisitor {
                 TypeKind::Other
             }
             TypeData::ThisType => TypeKind::TypeParameter, // this is type-parameter-like
-            TypeData::Error => TypeKind::Error,
+            TypeData::Error | TypeData::UnresolvedTypeName(_) => TypeKind::Error,
         }
     }
 
@@ -940,7 +941,8 @@ impl<'a> RecursiveTypeCollector<'a> {
             | TypeData::Recursive(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => {
+            | TypeData::ModuleNamespace(_)
+            | TypeData::UnresolvedTypeName(_) => {
                 // Leaf types - nothing to traverse
             }
             TypeData::NoInfer(inner) => {
