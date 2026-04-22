@@ -456,25 +456,7 @@ impl<'a> FlowGraphBuilder<'a> {
     }
 
     pub(super) const fn is_assignment_operator_token(operator_token: u16) -> bool {
-        matches!(
-            operator_token,
-            x if x == SyntaxKind::EqualsToken as u16
-                || x == SyntaxKind::PlusEqualsToken as u16
-                || x == SyntaxKind::MinusEqualsToken as u16
-                || x == SyntaxKind::AsteriskEqualsToken as u16
-                || x == SyntaxKind::SlashEqualsToken as u16
-                || x == SyntaxKind::PercentEqualsToken as u16
-                || x == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || x == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || x == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || x == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || x == SyntaxKind::AmpersandEqualsToken as u16
-                || x == SyntaxKind::CaretEqualsToken as u16
-                || x == SyntaxKind::BarEqualsToken as u16
-                || x == SyntaxKind::BarBarEqualsToken as u16
-                || x == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || x == SyntaxKind::QuestionQuestionEqualsToken as u16
-        )
+        crate::query_boundaries::common::is_assignment_operator(operator_token)
     }
 
     // =============================================================================

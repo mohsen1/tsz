@@ -20,30 +20,9 @@ use tsz_solver::TypeId;
 
 /// Check if a numeric literal text represents zero in any notation.
 /// Handles decimal (0.0, .0, 0e0), hex (0x0), binary (0b0), octal (0o0),
-/// and numeric separators (`0_0`).
+/// and numeric separators (`0_0`) via the shared `tsz_common` parser.
 fn is_numeric_literal_zero(text: &str) -> bool {
-    // Strip numeric separators
-    let stripped: String;
-    let s = if text.contains('_') {
-        stripped = text.replace('_', "");
-        &stripped
-    } else {
-        text
-    };
-
-    // Check hex/binary/octal prefixes
-    if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        return !rest.is_empty() && rest.chars().all(|c| c == '0');
-    }
-    if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
-        return !rest.is_empty() && rest.chars().all(|c| c == '0');
-    }
-    if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
-        return !rest.is_empty() && rest.chars().all(|c| c == '0');
-    }
-
-    // Decimal: parse as f64
-    s.parse::<f64>().is_ok_and(|v| v == 0.0)
+    tsz_common::numeric::parse_numeric_literal_value(text).is_some_and(|v| v == 0.0)
 }
 
 /// Result of tsc's `getSyntacticTruthySemantics` — purely syntactic truthiness.

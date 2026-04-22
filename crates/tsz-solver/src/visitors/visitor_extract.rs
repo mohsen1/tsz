@@ -354,11 +354,12 @@ pub fn is_this_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check whether this is an explicit error type.
 ///
-/// Returns true for `TypeId::ERROR` (fast-path) or any `TypeData::Error`.
+/// Returns true for `TypeId::ERROR` (fast-path), `TypeData::Error`, or
+/// display-preserving unresolved type names.
 pub fn is_error_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     type_id == TypeId::ERROR
         || extract_type_data(types, type_id, |key| match key {
-            TypeData::Error => Some(true),
+            TypeData::Error | TypeData::UnresolvedTypeName(_) => Some(true),
             _ => None,
         })
         .unwrap_or(false)
@@ -550,6 +551,7 @@ fn collect_infer_bindings_inner(
         | TypeData::UniqueSymbol(_)
         | TypeData::ThisType
         | TypeData::ModuleNamespace(_)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error => {}
     }
 }

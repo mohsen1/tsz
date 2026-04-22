@@ -1198,7 +1198,16 @@ impl TypeInterner {
                         crate::type_queries::contains_generic_type_parameters_db(self, arg)
                     })
                 });
-        if application_is_alias && application_has_generic_args && evaluated.0 <= application.0 {
+        let evaluated_precedes_application = match (
+            self.lookup_alloc_order(evaluated),
+            self.lookup_alloc_order(application),
+        ) {
+            (Some(evaluated_order), Some(application_order)) => {
+                evaluated_order <= application_order
+            }
+            _ => evaluated.0 <= application.0,
+        };
+        if application_is_alias && application_has_generic_args && evaluated_precedes_application {
             let existing_is_application =
                 self.display_alias.get(&evaluated).is_some_and(|existing| {
                     matches!(self.lookup(*existing), Some(TypeData::Application(_)))

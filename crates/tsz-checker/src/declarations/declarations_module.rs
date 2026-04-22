@@ -1050,7 +1050,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         let arena = self.ctx.get_arena_for_file(file_idx as u32);
         let file_name = arena.source_files.first()?.file_name.clone();
 
-        if let Some(exports) = binder.module_exports.get(&file_name)
+        if let Some(exports) = self.ctx.module_exports_for_module(binder, &file_name)
             && let Some(sym_id) = exports.get(export_name)
         {
             return Some((sym_id, file_idx));

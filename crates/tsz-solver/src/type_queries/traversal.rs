@@ -140,6 +140,7 @@ pub fn classify_for_traversal(db: &dyn TypeDatabase, type_id: TypeId) -> TypeTra
         | TypeData::UniqueSymbol(_)
         | TypeData::ThisType
         | TypeData::ModuleNamespace(_)
+        | TypeData::UnresolvedTypeName(_)
         | TypeData::Error
         | TypeData::Enum(_, _) => TypeTraversalKind::Terminal,
     }

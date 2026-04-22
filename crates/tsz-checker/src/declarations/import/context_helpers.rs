@@ -175,4 +175,23 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// Returns `true` when `decl_idx` is (or is the name identifier of) an
+    /// `export as namespace X;` declaration. These attach a global namespace
+    /// alias to the containing module and do not introduce a local binding, so
+    /// the TS2440 import/local-declaration conflict must ignore them.
+    pub(crate) fn decl_is_namespace_export_declaration(&self, decl_idx: NodeIndex) -> bool {
+        if let Some(node) = self.ctx.arena.get(decl_idx)
+            && node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+        {
+            return true;
+        }
+        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && let Some(parent) = self.ctx.arena.get(ext.parent)
+            && parent.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+        {
+            return true;
+        }
+        false
+    }
 }

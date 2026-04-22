@@ -1308,7 +1308,9 @@ impl<'a> CheckerState<'a> {
         visited_modules.insert(key);
 
         // First, check if it's a direct export from this module (ambient modules)
-        if let Some(module_exports) = self.ctx.binder.module_exports.get(module_specifier)
+        if let Some(module_exports) = self
+            .ctx
+            .module_exports_for_module(self.ctx.binder, module_specifier)
             && let Some(sym_id) = self.resolve_member_from_module_exports(
                 self.ctx.binder,
                 module_exports,
