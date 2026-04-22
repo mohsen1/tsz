@@ -2,13 +2,15 @@
 
 CI now runs through Google Cloud Build instead of GitHub Actions.
 
-The repository entrypoints are the `cloudbuild*.yaml` files, which restore
-shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
-save updated caches, then report the original suite status. Main and PR builds
-use separate worker pools so a PR build storm cannot sit ahead of main builds
-in the same pool queue. Conformance is split into eight Cloud Build checks on
-N2D-32 workers so the slowest gate is parallel and fits under the tighter
-effective N2D private-pool capacity path:
+The repository entrypoint is `cloudbuild.yaml`, which restores shared caches
+with `scripts/ci/gcp-cache.sh`, runs `scripts/ci/gcp-full-ci.sh`, saves updated
+caches, then reports the original suite status. Triggers choose the suite and
+worker pool through substitutions, so the repo keeps one Cloud Build config
+while GCP owns the machine sizing. Main and PR builds use separate worker pools
+so a PR build storm cannot sit ahead of main builds in the same pool queue.
+Conformance is split into eight Cloud Build checks on N2D-32 workers so the
+slowest gate is parallel and fits under the tighter effective N2D private-pool
+capacity path:
 
 ```text
 main conformance  tsz-ci-n2d-32       n2d-highcpu-32
@@ -184,16 +186,6 @@ gcloud builds repositories create tsz \
 Create one pull request trigger per suite in the GCP project:
 
 ```bash
-pr_config_for_suite() {
-  case "$1" in
-    lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
-    unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
-    emit|fourslash) printf '%s\n' cloudbuild.yaml ;;
-    conformance) printf '%s\n' cloudbuild.yaml ;;
-    *) printf '%s\n' cloudbuild.yaml ;;
-  esac
-}
-
 pr_pool_for_suite() {
   case "$1" in
     lint|wasm) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-pr-n2d-48 ;;
@@ -205,7 +197,6 @@ pr_pool_for_suite() {
 }
 
 for suite in lint unit wasm emit fourslash; do
-  config="$(pr_config_for_suite "$suite")"
   pool="$(pr_pool_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
@@ -214,7 +205,7 @@ for suite in lint unit wasm emit fourslash; do
     --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
     --pull-request-pattern='^main$' \
     --comment-control=COMMENTS_DISABLED \
-    --build-config="$config" \
+    --build-config=cloudbuild.yaml \
     --include-logs-with-status \
     --no-require-approval \
     --substitutions="_TSZ_CI_SUITE=${suite},_TSZ_CI_POOL=${pool}" \
@@ -240,16 +231,6 @@ done
 Create one main branch trigger per suite:
 
 ```bash
-main_config_for_suite() {
-  case "$1" in
-    lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
-    unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
-    emit|fourslash) printf '%s\n' cloudbuild.yaml ;;
-    conformance) printf '%s\n' cloudbuild.yaml ;;
-    *) printf '%s\n' cloudbuild.yaml ;;
-  esac
-}
-
 main_pool_for_suite() {
   case "$1" in
     lint|wasm) printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-48 ;;
@@ -261,7 +242,6 @@ main_pool_for_suite() {
 }
 
 for suite in lint unit wasm emit fourslash; do
-  config="$(main_config_for_suite "$suite")"
   pool="$(main_pool_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
@@ -269,7 +249,7 @@ for suite in lint unit wasm emit fourslash; do
     --name="tsz-main-${suite}" \
     --repository=projects/thirdface-ai-oauth/locations/us-central1/connections/tsz-github/repositories/tsz \
     --branch-pattern='^main$' \
-    --build-config="$config" \
+    --build-config=cloudbuild.yaml \
     --include-logs-with-status \
     --no-require-approval \
     --substitutions="_TSZ_CI_SUITE=${suite},_TSZ_CI_POOL=${pool}" \
