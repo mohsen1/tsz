@@ -1214,6 +1214,11 @@ impl<'a> CheckerState<'a> {
         if self.call_target_preserves_literal_argument_surface(param_type, arg_idx)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
         {
+            if (display == "true" || display == "false")
+                && self.call_target_should_widen_boolean_literal_display(param_type)
+            {
+                return "boolean".to_string();
+            }
             return display;
         }
 

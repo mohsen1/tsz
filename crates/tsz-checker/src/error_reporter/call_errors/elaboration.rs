@@ -459,7 +459,17 @@ impl<'a> CheckerState<'a> {
                     source_type_override,
                 ),
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                self.try_elaborate_array_literal_elements(arg_idx, param_type)
+                if self.try_elaborate_array_literal_elements(arg_idx, param_type) {
+                    true
+                } else {
+                    let source_type = source_type_override
+                        .unwrap_or_else(|| self.elaboration_source_expression_type(arg_idx));
+                    self.try_elaborate_array_literal_mismatch_from_failure_reason(
+                        arg_idx,
+                        source_type,
+                        param_type,
+                    )
+                }
             }
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
@@ -661,19 +671,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn try_elaborate_function_block_returns(
-        &mut self,
-        block_idx: NodeIndex,
-        expected_return_type: TypeId,
-    ) -> bool {
-        self.try_elaborate_function_block_returns_with_param_type(
-            block_idx,
-            expected_return_type,
-            expected_return_type,
-            NodeIndex(0), // dummy
-        )
-    }
-
     fn try_elaborate_function_block_returns_with_param_type(
         &mut self,
         block_idx: NodeIndex,
@@ -698,19 +695,6 @@ impl<'a> CheckerState<'a> {
             );
         }
         elaborated
-    }
-
-    fn try_elaborate_return_statements_in_stmt(
-        &mut self,
-        stmt_idx: NodeIndex,
-        expected_return_type: TypeId,
-    ) -> bool {
-        self.try_elaborate_return_statements_in_stmt_with_param_type(
-            stmt_idx,
-            expected_return_type,
-            expected_return_type,
-            NodeIndex(0), // dummy
-        )
     }
 
     fn try_elaborate_return_statements_in_stmt_with_param_type(
@@ -1695,13 +1679,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if self
-            .generic_mapped_receiver_explicit_property_names(param_type)
-            .is_empty()
-            && self.generic_mapped_receiver_lacks_explicit_property(param_type, "0")
-        {
-            return false;
-        }
+        let effective_param_type = self.evaluate_type_with_env(param_type);
+        let effective_param_type = self.resolve_type_for_property_access(effective_param_type);
+        let effective_param_type = self.resolve_lazy_type(effective_param_type);
+        let effective_param_type = self.evaluate_application_type(effective_param_type);
 
         let arg_node = match self.ctx.arena.get(arg_idx) {
             Some(node) if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => node,
@@ -1712,19 +1693,17 @@ impl<'a> CheckerState<'a> {
             Some(arr) => arr.clone(),
             None => return false,
         };
-
-        if let Some(target_count) =
-            crate::query_boundaries::common::get_fixed_tuple_length(self.ctx.types, param_type)
-            && arr.elements.nodes.len() > target_count
-        {
+        if self.call_argument_targets_generic_parameter(arg_idx) {
             return false;
         }
 
         let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
-            param_type,
+            effective_param_type,
             self.ctx.compiler_options.no_implicit_any,
         );
+        let tuple_target_elements =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, effective_param_type);
 
         let mut elaborated = false;
 
@@ -1739,9 +1718,19 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the expected element type from the parameter array/tuple type
-            let target_element_type = if let Some(t) = ctx_helper.get_tuple_element_type(index) {
+            let target_element_type = if let Some(elements) = tuple_target_elements.as_deref() {
+                let Some(t) = self.elaboration_tuple_element_type_at(elements, index) else {
+                    continue;
+                };
+                t
+            } else if let Some(t) = ctx_helper.get_tuple_element_type(index) {
                 t
             } else if let Some(t) = ctx_helper.get_array_element_type() {
+                t
+            } else if let Some(t) = crate::query_boundaries::common::array_element_type(
+                self.ctx.types,
+                effective_param_type,
+            ) {
                 t
             } else {
                 continue;
