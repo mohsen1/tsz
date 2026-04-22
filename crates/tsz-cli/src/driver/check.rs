@@ -801,6 +801,32 @@ pub(super) fn collect_diagnostics(
     let resolved_module_errors = Arc::new(resolved_module_errors);
     let resolved_module_request_errors = Arc::new(resolved_module_request_errors);
 
+    // Pre-bucket resolved-module specifiers by file_idx so each per-file
+    // checker can look up its own set in O(1) instead of scanning the
+    // entire cross-file `resolved_module_specifiers` map. The previous
+    // pattern was `iter().filter(|(idx, _)| *idx == file_idx)` per file —
+    // O(N_total_specifiers) per file → O(N_files × N_total_specifiers)
+    // overall. On a 6086-file fixture with avg 20 imports per file
+    // (~120 K total entries) that ballooned into ~700 M hashset
+    // iterations across all checkers; the per-file checker scaled with
+    // the size of the WHOLE program rather than its own import count.
+    let resolved_modules_per_file: Arc<Vec<rustc_hash::FxHashSet<String>>> = Arc::new({
+        let _span = tracing::info_span!(
+            "bucket_resolved_modules_per_file",
+            files = program.files.len()
+        )
+        .entered();
+        let mut by_file: Vec<rustc_hash::FxHashSet<String>> = (0..program.files.len())
+            .map(|_| FxHashSet::default())
+            .collect();
+        for (file_idx, specifier) in resolved_module_specifiers.iter() {
+            if let Some(set) = by_file.get_mut(*file_idx) {
+                set.insert(specifier.clone());
+            }
+        }
+        by_file
+    });
+
     // Pre-compute per-file TS7016 diagnostics for CJS require() calls.
     // The driver's resolution pass detects untyped JS modules (TS7016) but the
     // checker's module-not-found path skips them because the module DID resolve.
@@ -1156,7 +1182,7 @@ pub(super) fn collect_diagnostics(
                             program,
                             compiler_options: &compiler_options,
                             project_env: &project_env,
-                            resolved_module_specifiers: &resolved_module_specifiers,
+                            resolved_modules_per_file: &resolved_modules_per_file,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
                             shared_query_cache: shared_query_cache.as_ref(),
                             no_check,
@@ -1181,7 +1207,7 @@ pub(super) fn collect_diagnostics(
                             program,
                             compiler_options: &compiler_options,
                             project_env: &project_env,
-                            resolved_module_specifiers: &resolved_module_specifiers,
+                            resolved_modules_per_file: &resolved_modules_per_file,
                             shared_lib_cache: Arc::clone(&shared_lib_cache),
                             shared_query_cache: shared_query_cache.as_ref(),
                             no_check,
@@ -1208,7 +1234,7 @@ pub(super) fn collect_diagnostics(
                     program,
                     compiler_options: &compiler_options,
                     project_env: &project_env,
-                    resolved_module_specifiers: &resolved_module_specifiers,
+                    resolved_modules_per_file: &resolved_modules_per_file,
                     shared_lib_cache: Arc::clone(&shared_lib_cache),
                     shared_query_cache: shared_query_cache.as_ref(),
                     no_check,
@@ -1364,17 +1390,12 @@ pub(super) fn collect_diagnostics(
             checker.ctx.set_current_file_idx(file_idx);
             checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
 
-            // Build resolved_modules directly from the precomputed resolution facts.
-            // The sequential path used to re-resolve specifiers and only keep ones
-            // whose targets were part of `program_paths`, which incorrectly dropped
-            // imports satisfied by type packages loaded through `types`/`typeRoots`.
-            // The checker only needs to know whether the specifier resolved, not
-            // whether its target is a source file in the current program.
-            let resolved_modules: rustc_hash::FxHashSet<String> = resolved_module_specifiers
-                .iter()
-                .filter(|(idx, _)| *idx == file_idx)
-                .map(|(_, specifier)| specifier.clone())
-                .collect();
+            // Use the per-file pre-bucketed map; see the parallel path for the
+            // O(N²) → O(1) rationale.
+            let resolved_modules: rustc_hash::FxHashSet<String> = resolved_modules_per_file
+                .get(file_idx)
+                .cloned()
+                .unwrap_or_default();
             checker.ctx.resolved_modules = Some(resolved_modules);
             // TSC suppresses many semantic diagnostics across the whole program when any
             // file has a real syntax parse error; mirror that behavior using the program-level
@@ -1882,7 +1903,12 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// `is_external_module_by_file`, `file_is_esm_map`, `typescript_dom_replacement_globals`,
     /// and `has_deprecation_diagnostics` fields.
     project_env: &'a tsz::checker::context::ProjectEnv,
-    resolved_module_specifiers: &'a Arc<FxHashSet<(usize, String)>>,
+    /// Per-file pre-bucketed resolved module specifiers (indexed by `file_idx`).
+    /// Replaces a previous per-file scan over the program-wide
+    /// `resolved_module_specifiers` set, which made each per-file checker
+    /// scale with the size of the WHOLE program rather than its own
+    /// import count.
+    resolved_modules_per_file: &'a Arc<Vec<rustc_hash::FxHashSet<String>>>,
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
     /// Shared cross-file query cache for multi-file projects.
     /// Eliminates redundant type evaluations and relation checks across files.
@@ -1931,7 +1957,7 @@ pub(super) fn check_file_for_parallel<'a>(
         program,
         compiler_options,
         project_env,
-        resolved_module_specifiers,
+        resolved_modules_per_file,
         shared_lib_cache,
         shared_query_cache,
         no_check,
@@ -1961,14 +1987,13 @@ pub(super) fn check_file_for_parallel<'a>(
         QueryCache::new(&program.type_interner)
     };
 
-    // Build resolved_modules directly from the pre-computed resolved_module_specifiers
-    // set (populated in build_resolved_module_maps). This avoids a redundant
-    // collect_module_specifiers AST traversal — the third call per file.
-    let resolved_modules: FxHashSet<String> = resolved_module_specifiers
-        .iter()
-        .filter(|(idx, _)| *idx == file_idx)
-        .map(|(_, spec)| spec.clone())
-        .collect();
+    // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
+    // re-filtering the program-wide cross-file set per file. The bucketed
+    // version is built once in `collect_diagnostics` and shared via `Arc`.
+    let resolved_modules: FxHashSet<String> = resolved_modules_per_file
+        .get(file_idx)
+        .cloned()
+        .unwrap_or_default();
 
     // apply_to (below) installs the project-wide shared DefinitionStore and
     // warms the per-file caches from it. Use the deferred constructor so we
