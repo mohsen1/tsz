@@ -4866,6 +4866,125 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
 }
 
 #[test]
+fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let test_name = interner.intern_string("test");
+    let test2_name = interner.intern_string("test2");
+
+    let c_type = interner.object(vec![PropertyInfo {
+        name: test_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+    let d_type = interner.object(vec![
+        PropertyInfo {
+            name: test_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        },
+        PropertyInfo {
+            name: test2_name,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+        },
+    ]);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(c_type),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let callback_param = interner.function(FunctionShape {
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("t1")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let higher_order = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("cb")),
+            type_id: callback_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let source_callback = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("ts")),
+            type_id: interner.array(d_type),
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    match evaluator.resolve_call(higher_order, &[source_callback]) {
+        CallResult::Success(ret) => assert_eq!(ret, d_type, "expected T to infer as D"),
+        other => panic!(
+            "Expected generic callback rest annotation to infer D for fixed target params, got {other:?}"
+        ),
+    }
+}
+
+#[test]
 fn test_array_union_is_not_strictly_assignable_to_tuple() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
