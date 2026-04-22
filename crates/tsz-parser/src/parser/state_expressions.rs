@@ -1047,6 +1047,9 @@ impl ParserState {
             params.push(param);
 
             if !self.parse_optional(SyntaxKind::CommaToken) {
+                if self.is_js_file() && self.is_token(SyntaxKind::ColonToken) {
+                    self.error_comma_expected();
+                }
                 break;
             }
             // If the next token is `>`, the comma we just consumed was trailing.
