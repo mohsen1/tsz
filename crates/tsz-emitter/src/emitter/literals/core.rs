@@ -198,56 +198,27 @@ impl<'a> Printer<'a> {
             had_separators && !self.ctx.options.target.supports_es2021();
         match bytes[1] {
             b'b' | b'B' if needs_es5_downlevel || needs_separator_downlevel => {
-                // Binary literal: parse and convert to decimal (or scientific notation for large values)
                 let digits = &text[2..];
                 if digits.is_empty() {
                     return None;
                 }
-                // Parse as f64 to handle overflow to Infinity correctly
-                let value: f64 = u128::from_str_radix(digits, 2)
-                    .map(|v| v as f64)
-                    .unwrap_or_else(|_| {
-                        // For very large binary numbers, compute as f64 directly
-                        digits
-                            .bytes()
-                            .fold(0.0_f64, |acc, b| acc * 2.0 + (b - b'0') as f64)
-                    });
+                let value = tsz_common::numeric::parse_radix_digits_as_f64(digits, 2)?;
                 Some(format_js_number(value))
             }
             b'o' | b'O' if needs_es5_downlevel || needs_separator_downlevel => {
-                // ES2015 octal literal: parse and convert to decimal
                 let digits = &text[2..];
                 if digits.is_empty() {
                     return None;
                 }
-                let value: f64 = u128::from_str_radix(digits, 8)
-                    .map(|v| v as f64)
-                    .unwrap_or_else(|_| {
-                        digits
-                            .bytes()
-                            .fold(0.0_f64, |acc, b| acc * 8.0 + (b - b'0') as f64)
-                    });
+                let value = tsz_common::numeric::parse_radix_digits_as_f64(digits, 8)?;
                 Some(format_js_number(value))
             }
             b'x' | b'X' if needs_separator_downlevel => {
-                // Hex literal with numeric separators: convert to decimal for < ES2021
                 let digits = &text[2..];
                 if digits.is_empty() {
                     return None;
                 }
-                let value: f64 = u128::from_str_radix(digits, 16)
-                    .map(|v| v as f64)
-                    .unwrap_or_else(|_| {
-                        digits.bytes().fold(0.0_f64, |acc, b| {
-                            let d = match b {
-                                b'0'..=b'9' => (b - b'0') as f64,
-                                b'a'..=b'f' => (b - b'a' + 10) as f64,
-                                b'A'..=b'F' => (b - b'A' + 10) as f64,
-                                _ => 0.0,
-                            };
-                            acc * 16.0 + d
-                        })
-                    });
+                let value = tsz_common::numeric::parse_radix_digits_as_f64(digits, 16)?;
                 Some(format_js_number(value))
             }
             b'0'..=b'9' => {
@@ -256,13 +227,7 @@ impl<'a> Printer<'a> {
                 let digits = &text[1..]; // skip leading '0'
                 let is_octal = digits.bytes().all(|b| matches!(b, b'0'..=b'7'));
                 let value: f64 = if is_octal {
-                    u128::from_str_radix(digits, 8)
-                        .map(|v| v as f64)
-                        .unwrap_or_else(|_| {
-                            digits
-                                .bytes()
-                                .fold(0.0_f64, |acc, b| acc * 8.0 + (b - b'0') as f64)
-                        })
+                    tsz_common::numeric::parse_radix_digits_as_f64(digits, 8).unwrap_or(0.0)
                 } else {
                     text.parse::<f64>().unwrap_or(0.0)
                 };
