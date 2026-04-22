@@ -705,6 +705,139 @@ export const f = { ...d };
 }
 
 #[test]
+fn isolated_declaration_emit_does_not_cascade_ts2339_from_imported_generic_builder() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("node_modules/@trpc/server/internals/config.d.ts"),
+        r#"
+export interface RootConfig<T> {
+    prop: T;
+}
+"#,
+    );
+    write_file(
+        &base.join("node_modules/@trpc/server/internals/utils.d.ts"),
+        r#"
+export interface ErrorFormatterShape<T={}> {
+    prop: T;
+}
+export type PickFirstDefined<TType, TPick> = undefined extends TType
+  ? undefined extends TPick
+    ? never
+    : TPick
+  : TType;
+export interface ErrorFormatter<T={},U={}> {
+    prop: [T, U];
+}
+export interface DefaultErrorShape<T={}> {
+    prop: T;
+}
+"#,
+    );
+    write_file(
+        &base.join("node_modules/@trpc/server/middleware.d.ts"),
+        r#"
+export interface MiddlewareFunction<T={},U={}> {
+    prop: [T, U];
+}
+export interface MiddlewareBuilder<T={},U={}> {
+    prop: [T, U];
+}
+"#,
+    );
+    write_file(
+        &base.join("node_modules/@trpc/server/index.d.ts"),
+        r#"
+import { RootConfig } from './internals/config';
+import { ErrorFormatterShape, PickFirstDefined, ErrorFormatter, DefaultErrorShape } from './internals/utils';
+declare class TRPCBuilder<TParams> {
+    create<TOptions extends Record<string, any>>(): {
+        procedure: {};
+        middleware: <TNewParams extends Record<string, any>>(fn: import("./middleware").MiddlewareFunction<{
+            _config: RootConfig<{
+                errorShape: ErrorFormatterShape<PickFirstDefined<TOptions["errorFormatter"], ErrorFormatter<TParams["ctx"] extends object ? TParams["ctx"] : object, DefaultErrorShape>>>;
+            }>;
+        }, TNewParams>) => import("./middleware").MiddlewareBuilder<{
+            _config: RootConfig<{
+                errorShape: ErrorFormatterShape<PickFirstDefined<TOptions["errorFormatter"], ErrorFormatter<TParams["ctx"] extends object ? TParams["ctx"] : object, DefaultErrorShape>>>;
+            }>;
+        }, TNewParams>;
+        router: {};
+    };
+}
+
+export declare const initTRPC: TRPCBuilder<object>;
+export {};
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"
+import { initTRPC } from "@trpc/server";
+
+const trpc = initTRPC.create();
+
+export const middleware = trpc.middleware;
+export const router = trpc.router;
+export const publicProcedure = trpc.procedure;
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "commonjs",
+    "declaration": true,
+    "isolatedDeclarations": true
+  },
+  "files": [
+    "node_modules/@trpc/server/internals/config.d.ts",
+    "node_modules/@trpc/server/internals/utils.d.ts",
+    "node_modules/@trpc/server/middleware.d.ts",
+    "node_modules/@trpc/server/index.d.ts",
+    "index.ts"
+  ]
+}"#,
+    );
+
+    let project = base.to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--project",
+        project.as_str(),
+        "--noEmit",
+        "--pretty",
+        "false",
+    ])
+    .expect("batch-style args");
+
+    tsz_solver::clear_thread_local_cache();
+    tsz_solver::reset_subtype_thread_local_state();
+    tsz::checker::clear_all_thread_local_state();
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let result = compile(&args, &repo_root).expect("batch-style compile should succeed");
+    let ts2339: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2339)
+        .map(|diag| diag.message_text.clone())
+        .collect();
+    assert!(
+        ts2339.is_empty(),
+        "expected no cascading TS2339 from imported generic builder result, got: {ts2339:#?}"
+    );
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code == 9010),
+        "expected the isolated-declarations TS9010 diagnostic to remain, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn declaration_emit_reports_ts2883_for_transitive_react_styled_form() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
