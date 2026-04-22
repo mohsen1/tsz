@@ -1598,7 +1598,7 @@ impl<'a> CallHierarchyProvider<'a> {
             .modifiers
             .as_ref()
             .and_then(|mods| mods.nodes.first().copied())
-            .and_then(|mod_idx| self.arena.get(mod_idx).map(|n| n.pos))
+            .and_then(|mod_idx| self.arena.pos_at(mod_idx))
             .unwrap_or(class_node.pos);
         if class_node.pos > 0 {
             let bytes = self.source_text.as_bytes();
