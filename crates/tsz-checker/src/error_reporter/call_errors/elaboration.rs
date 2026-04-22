@@ -1089,6 +1089,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            let is_iat =
+                |t| crate::query_boundaries::common::is_index_access_type(self.ctx.types, t);
+            if is_iat(target_prop_type) || is_iat(target_prop_type_for_diagnostic) {
+                continue; // tsc elaborateElementwise: keep TS2322 on outer object for generic indexed-access props
+            }
+
             // Get the type of the property value in the object literal.
             // Use the cached (contextually-typed) type for the assignability check.
             // This preserves literal types that were narrowed by contextual typing
