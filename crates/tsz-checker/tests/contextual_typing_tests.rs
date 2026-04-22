@@ -814,6 +814,42 @@ let obj: HasGreet = {
     );
 }
 
+/// Function expressions contextually typed by a callable `this` parameter should
+/// use that `this` type while checking the body.
+#[test]
+fn test_function_expression_contextual_this_enforces_private_access() {
+    let source = r#"
+declare function use(value: string): void;
+
+class Foo {
+    protected protec = "ok";
+    private privat = "";
+    copy!: string;
+}
+
+type BindingFunction = (this: Foo) => void;
+const bindCopy: BindingFunction = function () {
+    this.copy = this.protec;
+    use(this.privat);
+};
+"#;
+    let diagnostics = check_default(source);
+    let private_errors = diagnostics
+        .iter()
+        .filter(|d| d.code == 2341 && d.message_text.contains("'privat'"))
+        .count();
+    assert_eq!(
+        private_errors, 1,
+        "Expected exactly one TS2341 for contextual private access, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 2445 && d.message_text.contains("'protec'"))),
+        "Expected protected contextual this access to be allowed, got diagnostics={diagnostics:?}"
+    );
+}
+
 /// Object literal with getter and setter pair should not be a duplicate property error.
 #[test]
 fn test_object_literal_getter_setter_pair_no_duplicate() {
