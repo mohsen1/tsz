@@ -190,11 +190,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                     // be in the DefinitionStore).
                     let symbol = self.binder.symbols.get(sym_id);
                     if let Some(symbol) = symbol
-                        && (symbol.flags
-                            & (symbol_flags::CLASS
+                        && symbol.has_any_flags(
+                            symbol_flags::CLASS
                                 | symbol_flags::INTERFACE
-                                | symbol_flags::TYPE_ALIAS))
-                            != 0
+                                | symbol_flags::TYPE_ALIAS,
+                        )
                     {
                         return Some(*instance_type);
                     }
@@ -213,7 +213,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             // Type parameters are always local symbols (never from lib binders), so
             // only check the primary binder.
             if let Some(symbol) = self.binder.symbols.get(sym_id)
-                && (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0
+                && symbol.has_any_flags(symbol_flags::TYPE_PARAMETER)
                 && let Some(&tp_type) = self.type_parameter_scope.get(symbol.escaped_name.as_str())
             {
                 return Some(tp_type);
@@ -539,13 +539,13 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         };
 
         // Enum members resolve via their parent ENUM symbol.
-        let enum_symbol = if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+        let enum_symbol = if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             // It's a member, get the parent enum symbol
             let Some(parent) = self.binder.get_symbol(symbol.parent) else {
                 return false;
             };
             parent
-        } else if (symbol.flags & symbol_flags::ENUM) != 0 {
+        } else if symbol.has_any_flags(symbol_flags::ENUM) {
             // It's the enum itself
             symbol
         } else {
@@ -668,8 +668,8 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             };
 
             // It's an enum type if it has ENUM flag but not ENUM_MEMBER flag
-            return (symbol.flags & symbol_flags::ENUM) != 0
-                && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+            return symbol.has_any_flags(symbol_flags::ENUM)
+                && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER);
         }
 
         // Case 2: Union of Enum members (e.g., the full enum type E = E.A | E.B | ...)
@@ -696,7 +696,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                     };
 
                     // If this is an enum member, track the PARENT enum symbol
-                    if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+                    if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
                         // Get the parent symbol (the enum itself)
                         let parent_sym_id = symbol.parent;
 
@@ -764,7 +764,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         })?;
 
         // Check if this is an enum member
-        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return None;
         }
 
@@ -823,18 +823,18 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         };
 
         // Check if this is a user-defined enum or enum member
-        if (symbol.flags & symbol_flags::ENUM) != 0 {
+        if symbol.has_any_flags(symbol_flags::ENUM) {
             // This is an enum type - check it's not an intrinsic
-            return (symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+            return !symbol.has_any_flags(symbol_flags::ENUM_MEMBER);
         }
 
-        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             // This is an enum member - check if the parent is a user-defined enum
             let parent_sym_id = symbol.parent;
             if let Some(parent_symbol) = self.binder.get_symbol(parent_sym_id) {
                 // Parent is a user enum if it has ENUM flag but not ENUM_MEMBER
-                return (parent_symbol.flags & symbol_flags::ENUM) != 0
-                    && (parent_symbol.flags & symbol_flags::ENUM_MEMBER) == 0;
+                return parent_symbol.has_any_flags(symbol_flags::ENUM)
+                    && !parent_symbol.has_any_flags(symbol_flags::ENUM_MEMBER);
             }
         }
 
