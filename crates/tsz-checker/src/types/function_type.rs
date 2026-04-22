@@ -562,6 +562,8 @@ impl<'a> CheckerState<'a> {
                 };
                 let is_this_param = name == Some(this_atom);
                 let is_js_file = self.is_js_file();
+                let is_bare_js_prototype_assignment_function =
+                    is_js_file && prototype_owner_expr.is_some() && !has_jsdoc_type_function;
                 let contextual_type = if let Some(ref helper) = ctx_helper {
                     let expected_contextual_type = helper.expected().and_then(|expected| {
                         if param.dot_dot_dot_token {
@@ -732,10 +734,18 @@ impl<'a> CheckerState<'a> {
                 // Rest parameters (`...x`) are always contextually typed when a contextual
                 // type helper exists — even if the contextual function has fewer parameters,
                 // the rest param captures the "remaining" args (type `[]` for 0-param context).
-                let has_contextual_type = contextual_type
+                // A JS prototype assignment can synthesize its own method type while
+                // resolving the LHS. That `any` parameter context is not real user
+                // context, so it must not suppress TS7006 for the RHS function.
+                let weak_self_contextual_prototype_any = is_bare_js_prototype_assignment_function
+                    && contextual_type == Some(TypeId::ANY);
+                let has_contextual_type = (contextual_type
                     .is_some_and(|t| t != TypeId::UNKNOWN || !is_js_file)
+                    && !weak_self_contextual_prototype_any)
                     || (has_unknown_expected_context && !is_js_file)
-                    || (param.dot_dot_dot_token && ctx_helper.is_some())
+                    || (param.dot_dot_dot_token
+                        && ctx_helper.is_some()
+                        && !weak_self_contextual_prototype_any)
                     || jsdoc_initializer_callable_context;
                 let suppresses_implicit_any_context =
                     has_contextual_type && !has_never_expected_context;
@@ -913,20 +923,22 @@ impl<'a> CheckerState<'a> {
                         element_type_from_pattern = Some(pattern_type);
                     }
                 }
-                let cached_param_type = (!has_contextual_type && param.type_annotation.is_none())
-                    .then(|| {
-                        self.ctx
-                            .node_types
-                            .get(&param.name.0)
-                            .copied()
-                            .or_else(|| self.ctx.node_types.get(&param_idx.0).copied())
-                    })
-                    .flatten()
-                    .filter(|cached_param_type| {
-                        *cached_param_type != TypeId::ANY
-                            && *cached_param_type != TypeId::UNKNOWN
-                            && *cached_param_type != TypeId::ERROR
-                    });
+                let cached_param_type = (!has_contextual_type
+                    && param.type_annotation.is_none()
+                    && !(is_bare_js_prototype_assignment_function && ctx_helper.is_none()))
+                .then(|| {
+                    self.ctx
+                        .node_types
+                        .get(&param.name.0)
+                        .copied()
+                        .or_else(|| self.ctx.node_types.get(&param_idx.0).copied())
+                })
+                .flatten()
+                .filter(|cached_param_type| {
+                    *cached_param_type != TypeId::ANY
+                        && *cached_param_type != TypeId::UNKNOWN
+                        && *cached_param_type != TypeId::ERROR
+                });
                 let mut type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some()
                         || ((has_contextual_type || has_external_binding_context)
