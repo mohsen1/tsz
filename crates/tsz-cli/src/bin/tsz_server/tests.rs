@@ -121,6 +121,27 @@ fn test_line_offset_to_byte_end_of_line() {
 }
 
 #[test]
+fn test_normalize_fourslash_virtual_content_rewrites_harness_lines() {
+    let content = "//// const x = 1;\n//// x;\n";
+    let normalized = Server::normalize_fourslash_virtual_content("/fourslash.ts", content);
+    assert_eq!(normalized, " const x = 1;\n x;");
+}
+
+#[test]
+fn test_normalize_fourslash_virtual_content_keeps_non_harness_files_unchanged() {
+    let content = "//// const x = 1;\n//// x;\n";
+    let normalized = Server::normalize_fourslash_virtual_content("/workspace/src/app.ts", content);
+    assert_eq!(normalized, content);
+}
+
+#[test]
+fn test_normalize_fourslash_virtual_content_keeps_plain_harness_content_unchanged() {
+    let content = "// @module: none\nconst x = 1;\n";
+    let normalized = Server::normalize_fourslash_virtual_content("/fourslash.ts", content);
+    assert_eq!(normalized, content);
+}
+
+#[test]
 fn test_line_offset_to_byte_mid_line() {
     // Offset 3 (1-based) on line 1 means col 2 (0-based) -> byte 2
     assert_eq!(Server::line_offset_to_byte("hello\nworld\n", 1, 3), 2);

@@ -701,18 +701,22 @@ impl Server {
         None
     }
 
+    fn is_fourslash_virtual_harness_path(file_path: &str) -> bool {
+        let normalized = file_path.replace('\\', "/");
+        normalized == "/fourslash.ts"
+            || normalized == "fourslash.ts"
+            || normalized.starts_with("/tests/cases/fourslash/")
+            || normalized.starts_with("tests/cases/fourslash/")
+    }
+
     fn normalize_fourslash_virtual_content(file_path: &str, content: &str) -> String {
-        let has_virtual_lines = content
-            .lines()
-            .any(|line| line.trim_start().starts_with("////"));
-        if !has_virtual_lines {
+        if !Self::is_fourslash_virtual_harness_path(file_path) {
             return content.to_string();
         }
-        let looks_like_fourslash = file_path.contains("fourslash")
-            || content.contains("fourslash.ts")
-            || content.contains("verify.codeFix")
-            || content.contains("verify.codeFixAll");
-        if !looks_like_fourslash {
+        if !content
+            .lines()
+            .any(|line| line.trim_start().starts_with("////"))
+        {
             return content.to_string();
         }
 
