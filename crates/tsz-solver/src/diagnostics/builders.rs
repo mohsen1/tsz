@@ -775,13 +775,20 @@ impl<'a> DiagnosticCollector<'a> {
         std::mem::take(&mut self.diagnostics)
     }
 
+    /// Build a diagnostic via a fresh `DiagnosticBuilder`, attach the span
+    /// from `loc`, and push it onto this collector.
+    fn collect_with<F>(&mut self, loc: &SourceLocation, build: F)
+    where
+        F: FnOnce(&mut DiagnosticBuilder<'a>) -> TypeDiagnostic,
+    {
+        let mut builder = DiagnosticBuilder::new(self.interner);
+        let diag = build(&mut builder).with_span(loc.to_span());
+        self.diagnostics.push(diag);
+    }
+
     /// Report a type not assignable error.
     pub fn type_not_assignable(&mut self, source: TypeId, target: TypeId, loc: &SourceLocation) {
-        let mut builder = DiagnosticBuilder::new(self.interner);
-        let diag = builder
-            .type_not_assignable(source, target)
-            .with_span(loc.to_span());
-        self.diagnostics.push(diag);
+        self.collect_with(loc, |b| b.type_not_assignable(source, target));
     }
 
     /// Report a property missing error.
@@ -792,20 +799,12 @@ impl<'a> DiagnosticCollector<'a> {
         target: TypeId,
         loc: &SourceLocation,
     ) {
-        let mut builder = DiagnosticBuilder::new(self.interner);
-        let diag = builder
-            .property_missing(prop_name, source, target)
-            .with_span(loc.to_span());
-        self.diagnostics.push(diag);
+        self.collect_with(loc, |b| b.property_missing(prop_name, source, target));
     }
 
     /// Report a property not exist error.
     pub fn property_not_exist(&mut self, prop_name: &str, type_id: TypeId, loc: &SourceLocation) {
-        let mut builder = DiagnosticBuilder::new(self.interner);
-        let diag = builder
-            .property_not_exist(prop_name, type_id)
-            .with_span(loc.to_span());
-        self.diagnostics.push(diag);
+        self.collect_with(loc, |b| b.property_not_exist(prop_name, type_id));
     }
 
     /// Report an argument not assignable error.
@@ -815,18 +814,12 @@ impl<'a> DiagnosticCollector<'a> {
         param_type: TypeId,
         loc: &SourceLocation,
     ) {
-        let mut builder = DiagnosticBuilder::new(self.interner);
-        let diag = builder
-            .argument_not_assignable(arg_type, param_type)
-            .with_span(loc.to_span());
-        self.diagnostics.push(diag);
+        self.collect_with(loc, |b| b.argument_not_assignable(arg_type, param_type));
     }
 
     /// Report a cannot find name error.
     pub fn cannot_find_name(&mut self, name: &str, loc: &SourceLocation) {
-        let mut builder = DiagnosticBuilder::new(self.interner);
-        let diag = builder.cannot_find_name(name).with_span(loc.to_span());
-        self.diagnostics.push(diag);
+        self.collect_with(loc, |b| b.cannot_find_name(name));
     }
 
     /// Report an argument count mismatch error.
@@ -837,11 +830,9 @@ impl<'a> DiagnosticCollector<'a> {
         got: usize,
         loc: &SourceLocation,
     ) {
-        let mut builder = DiagnosticBuilder::new(self.interner);
-        let diag = builder
-            .argument_count_mismatch(expected_min, expected_max, got)
-            .with_span(loc.to_span());
-        self.diagnostics.push(diag);
+        self.collect_with(loc, |b| {
+            b.argument_count_mismatch(expected_min, expected_max, got)
+        });
     }
 
     /// Convert all collected diagnostics to checker diagnostics.

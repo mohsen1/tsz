@@ -169,6 +169,12 @@ fn post_process_checker_diagnostics(
     // Only keep TS1xxx codes that tsc is known to emit for JS files.
     if is_js {
         checker_diagnostics.retain(|diag| {
+            // TS1361/TS1362 are semantic type-only value-use diagnostics, not
+            // parser grammar errors. Keep them for checked JS files even
+            // though their codes live in the TS1xxx range.
+            if !should_filter_type_errors && matches!(diag.code, 1361 | 1362) {
+                return true;
+            }
             if tsz::checker::diagnostics::is_parser_grammar_diagnostic(diag.code) {
                 return is_ts1xxx_allowed_in_js(diag.code);
             }
@@ -910,6 +916,12 @@ pub(super) fn collect_diagnostics(
     // authoritative cross-file exports table; wrap once, share via `Arc`
     // to avoid N deep-clones into per-file cross-file lookup binders.
     let program_module_exports = Arc::new(program.module_exports.clone());
+    // Same rationale for `program.cross_file_node_symbols`: the outer
+    // map is `FxHashMap<usize, Arc<…>>` (~24 bytes * N_files for the
+    // entries plus hash overhead). Cloning into every one of N per-file
+    // binders scales outer-map allocation with N². Wrap once here and
+    // route consumers through `ctx.cross_file_node_symbols_for_arena`.
+    let program_cross_file_node_symbols = Arc::new(program.cross_file_node_symbols.clone());
 
     let mut project_env = tsz::checker::context::ProjectEnv {
         lib_contexts: std::sync::Arc::new(checker_libs.contexts.clone()),
@@ -930,6 +942,7 @@ pub(super) fn collect_diagnostics(
         program_wildcard_reexports: Some(program_wildcard_reexports),
         program_wildcard_reexports_type_only: Some(program_wildcard_reexports_type_only),
         program_module_exports: Some(program_module_exports),
+        program_cross_file_node_symbols: Some(program_cross_file_node_symbols),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.
@@ -1202,6 +1215,7 @@ pub(super) fn collect_diagnostics(
         // all see the same shared store, so summing per-file was both
         // wasted work and N× inflated).
         let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
+        let parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
@@ -1228,7 +1242,7 @@ pub(super) fn collect_diagnostics(
                 } else {
                     QueryCache::new(&program.type_interner)
                 };
-                let (lib_diags, lib_counters, lib_ds_stats) = check_checker_lib_file(
+                let (lib_diags, lib_counters, _lib_ds_stats) = check_checker_lib_file(
                     &checker_lib_file_env,
                     lib_idx,
                     &query_cache,
@@ -1239,7 +1253,6 @@ pub(super) fn collect_diagnostics(
                 diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
                 parallel_qc_stats.merge(&query_cache.statistics());
-                parallel_ds_stats.merge(&lib_ds_stats);
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
@@ -1247,7 +1260,7 @@ pub(super) fn collect_diagnostics(
             .shared_definition_store
             .as_ref()
             .map(|store| store.statistics())
-            .or_else(|| Some(tsz_solver::StoreStatistics::default()));
+            .or(Some(parallel_ds_stats));
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         let mut sequential_ds_stats = tsz_solver::StoreStatistics::default();
@@ -2698,10 +2711,7 @@ fn affected_lib_interface_names(
                 continue;
             };
             let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
-            inheritance_graph
-                .entry(name)
-                .or_default()
-                .extend(bases.into_iter());
+            inheritance_graph.entry(name).or_default().extend(bases);
         }
     }
 
@@ -4180,6 +4190,63 @@ let x2: string = f;
         assert!(
             f_diags.iter().all(|diag| diag.code != 2339),
             "did not expect follow-on TS2339 once TS1361 fired, got: {f_diags:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_collect_diagnostics_keeps_ts1362_for_checked_js_module_exports_type_only_require() {
+        let dir = std::env::temp_dir().join("tsz_check_js_module_exports_type_only_require");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let importer_path = dir.join("importer.cjs");
+        let exporter_path = dir.join("exporter.mts");
+
+        let importer_source = "const Foo = require(\"./exporter.mjs\");\nnew Foo();\n";
+        let exporter_source =
+            "export default class Foo {}\nexport type { Foo as \"module.exports\" };\n";
+
+        fs::write(&importer_path, importer_source).unwrap();
+        fs::write(&exporter_path, exporter_source).unwrap();
+
+        let options = ResolvedCompilerOptions {
+            allow_js: true,
+            check_js: true,
+            module_resolution: Some(crate::config::ModuleResolutionKind::NodeNext),
+            module_suffixes: vec![String::new()],
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2023,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2023,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (importer_path.to_str().unwrap(), importer_source),
+                (exporter_path.to_str().unwrap(), exporter_source),
+            ],
+            &options,
+            &dir,
+        );
+
+        let importer_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| Path::new(&diag.file) == importer_path.as_path())
+            .collect();
+
+        assert!(
+            importer_diags.iter().any(|diag| diag.code == 1362),
+            "expected TS1362 for checked CommonJS require() of a type-only \
+             \"module.exports\" binding, got: {importer_diags:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);

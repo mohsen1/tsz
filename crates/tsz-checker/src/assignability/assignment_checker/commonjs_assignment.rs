@@ -161,7 +161,9 @@ impl<'a> CheckerState<'a> {
             .get_identifier_at(access.name_or_argument)
             .map(|ident| ident.escaped_text.as_str());
         if let Some(prop_name) = prop_name
-            && let Some(file_exports) = self.ctx.binder.module_exports.get(&*self.ctx.file_name)
+            && let Some(file_exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, &self.ctx.file_name)
             && let Some(export_sym_id) = file_exports.get(prop_name)
             && let Some(symbol) = self.ctx.binder.get_symbol(export_sym_id)
             && symbol_is_container(symbol)

@@ -154,11 +154,16 @@ impl<'a> CheckerState<'a> {
         let quoted_module = format!("\"{module_name}\"");
         let has_json_default_export =
             self.module_has_json_default_export(module_name, Some(self.ctx.current_file_idx));
+        let has_module_exports_binding =
+            self.module_uses_module_exports_interop(module_name, resolution_mode);
         let has_default_binding = has_json_default_export
+            || has_module_exports_binding
             || self.module_has_default_binding_fast_path(module_name, resolution_mode)
-            || exports_table
-                .as_ref()
-                .is_some_and(|table| table.has("default") || table.has("export="));
+            || exports_table.as_ref().is_some_and(|table| {
+                table.has("default")
+                    || table.has("export=")
+                    || (has_module_exports_binding && table.has("module.exports"))
+            });
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
         // can only be referenced via default import. Applies to namespace imports
@@ -594,6 +599,7 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         } else if has_json_default_export
+                            || has_module_exports_binding
                             || exports_table.has("default")
                             || exports_table.has("export=")
                         {
@@ -1286,6 +1292,10 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         resolution_mode: Option<crate::context::ResolutionModeOverride>,
     ) -> bool {
+        if self.module_uses_module_exports_interop(module_name, resolution_mode) {
+            return true;
+        }
+
         let resolved_target = if resolution_mode.is_some() {
             self.ctx.resolve_import_target_from_file_with_mode(
                 self.ctx.current_file_idx,
@@ -1389,8 +1399,8 @@ impl<'a> CheckerState<'a> {
                         "Checking all binders (fallback)"
                     );
                     for binder in all_binders.iter() {
-                        if binder.module_exports.contains_key(module_name)
-                            || binder.module_exports.contains_key(normalized)
+                        if self.ctx.module_exports_contains_module(binder, module_name)
+                            || self.ctx.module_exports_contains_module(binder, normalized)
                         {
                             tracing::trace!("Found matching binder via exports");
                             if let Some(exists) = self.check_symbol_in_binder(
@@ -1510,7 +1520,7 @@ impl<'a> CheckerState<'a> {
         }
 
         for &key in &module_keys {
-            if let Some(exports) = binder.module_exports.get(key) {
+            if let Some(exports) = self.ctx.module_exports_for_module(binder, key) {
                 // Check if the symbol is exported under a different name
                 // by looking through all export names
                 for (export_name, sym_id) in exports.iter() {
@@ -1536,7 +1546,7 @@ impl<'a> CheckerState<'a> {
 
         // Also check with file name
         if let Some(fname) = file_name
-            && let Some(exports) = binder.module_exports.get(fname)
+            && let Some(exports) = self.ctx.module_exports_for_module(binder, fname)
         {
             for (export_name, sym_id) in exports.iter() {
                 if let Some(sym) = binder.symbols.get(*sym_id) {

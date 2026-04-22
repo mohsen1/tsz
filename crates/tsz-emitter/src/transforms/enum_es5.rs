@@ -803,7 +803,7 @@ impl<'a> EnumES5Transformer<'a> {
         }
         if node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.arena.get_literal(node)
-            && let Some(val) = Self::parse_numeric_literal_text(&lit.text)
+            && let Some(val) = tsz_common::numeric::parse_numeric_literal_value(&lit.text)
         {
             // If the value is an exact integer, emit as integer
             if val == val.floor() && val.is_finite() && val.abs() < (i64::MAX as f64) {
@@ -861,24 +861,6 @@ impl<'a> EnumES5Transformer<'a> {
             }
         }
         IRNode::StringLiteral(member_name.to_string().into())
-    }
-
-    /// Parse a numeric literal source text to its f64 value.
-    /// Handles decimal, hex (0x), binary (0b), octal (0o), and scientific notation.
-    fn parse_numeric_literal_text(text: &str) -> Option<f64> {
-        let text = text.trim();
-        if text.is_empty() {
-            return None;
-        }
-        if text.starts_with("0x") || text.starts_with("0X") {
-            u64::from_str_radix(&text[2..], 16).ok().map(|v| v as f64)
-        } else if text.starts_with("0b") || text.starts_with("0B") {
-            u64::from_str_radix(&text[2..], 2).ok().map(|v| v as f64)
-        } else if text.starts_with("0o") || text.starts_with("0O") {
-            u64::from_str_radix(&text[2..], 8).ok().map(|v| v as f64)
-        } else {
-            text.parse::<f64>().ok()
-        }
     }
 
     /// Format a float value as an IR node.

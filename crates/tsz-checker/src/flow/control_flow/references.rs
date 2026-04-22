@@ -5,7 +5,7 @@
 //! Contains:
 //! - Reference matching (`is_matching_reference`, `property_reference`)
 //! - Literal value extraction from AST nodes (`literal_number_from_node`, `literal_atom_from`_*)
-//! - Numeric parsing (`parse_numeric_literal_value`, `parse_radix_digits`, `bigint_base_to_decimal`)
+//! - Numeric parsing (`bigint_base_to_decimal`; numeric-literal parsing lives in `tsz_common::numeric`)
 //! - Symbol resolution (`reference_symbol`, `resolve_namespace_member`, `resolve_alias_symbol`)
 
 use crate::query_boundaries::flow_analysis::{LiteralValueKind, classify_for_literal_value};
@@ -30,66 +30,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
         Cow::Owned(out)
-    }
-
-    pub(crate) fn parse_numeric_literal_value(
-        &self,
-        value: Option<f64>,
-        text: &str,
-    ) -> Option<f64> {
-        if let Some(value) = value {
-            return Some(value);
-        }
-
-        if let Some(rest) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-            return Self::parse_radix_digits(rest, 16);
-        }
-        if let Some(rest) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-            return Self::parse_radix_digits(rest, 2);
-        }
-        if let Some(rest) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
-            return Self::parse_radix_digits(rest, 8);
-        }
-
-        if text.as_bytes().contains(&b'_') {
-            let cleaned = self.strip_numeric_separators(text);
-            return cleaned.as_ref().parse::<f64>().ok();
-        }
-
-        text.parse::<f64>().ok()
-    }
-
-    pub(crate) fn parse_radix_digits(text: &str, base: u32) -> Option<f64> {
-        if text.is_empty() {
-            return None;
-        }
-
-        let mut value = 0f64;
-        let base_value = base as f64;
-        let mut saw_digit = false;
-        for &byte in text.as_bytes() {
-            if byte == b'_' {
-                continue;
-            }
-
-            let digit = match byte {
-                b'0'..=b'9' => (byte - b'0') as u32,
-                b'a'..=b'f' => (byte - b'a' + 10) as u32,
-                b'A'..=b'F' => (byte - b'A' + 10) as u32,
-                _ => return None,
-            };
-            if digit >= base {
-                return None;
-            }
-            saw_digit = true;
-            value = value * base_value + digit as f64;
-        }
-
-        if !saw_digit {
-            return None;
-        }
-
-        Some(value)
     }
 
     pub(crate) fn normalize_bigint_literal<'b>(&self, text: &'b str) -> Option<Cow<'b, str>> {
@@ -474,7 +414,8 @@ impl<'a> FlowAnalyzer<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
-                self.parse_numeric_literal_value(lit.value, &lit.text)
+                lit.value
+                    .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
             }
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 let unary = self.arena.get_unary_expr(node)?;
@@ -488,7 +429,9 @@ impl<'a> FlowAnalyzer<'a> {
                     return None;
                 }
                 let lit = self.arena.get_literal(operand_node)?;
-                let value = self.parse_numeric_literal_value(lit.value, &lit.text)?;
+                let value = lit
+                    .value
+                    .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))?;
                 Some(if op == SyntaxKind::MinusToken as u16 {
                     -value
                 } else {
