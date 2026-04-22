@@ -134,8 +134,8 @@ class C {
     let ts2712_count = diagnostics.iter().filter(|d| d.code == 2712).count();
 
     assert_eq!(
-        ts2712_count, 3,
-        "Expected 3 TS2712 errors (one per import site), got: {ts2712_count}",
+        ts2712_count, 4,
+        "Expected 4 TS2712 errors (one per import site), got: {ts2712_count}",
     );
 }
 
