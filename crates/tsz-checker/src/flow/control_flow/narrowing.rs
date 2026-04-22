@@ -1228,7 +1228,9 @@ impl<'a> FlowAnalyzer<'a> {
             }
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
-                let value = self.parse_numeric_literal_value(lit.value, &lit.text)?;
+                let value = lit
+                    .value
+                    .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))?;
                 Some(self.interner.literal_number(value))
             }
             k if k == SyntaxKind::BigIntLiteral as u16 => {
@@ -1253,7 +1255,9 @@ impl<'a> FlowAnalyzer<'a> {
                 match operand_node.kind {
                     k if k == SyntaxKind::NumericLiteral as u16 => {
                         let lit = self.arena.get_literal(operand_node)?;
-                        let value = self.parse_numeric_literal_value(lit.value, &lit.text)?;
+                        let value = lit.value.or_else(|| {
+                            tsz_common::numeric::parse_numeric_literal_value(&lit.text)
+                        })?;
                         let value = if op == SyntaxKind::MinusToken as u16 {
                             -value
                         } else {

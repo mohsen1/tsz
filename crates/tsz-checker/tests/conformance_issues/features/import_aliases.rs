@@ -513,6 +513,96 @@ new Foo();
 }
 
 #[test]
+fn test_esm_module_exports_type_only_in_node20_cts_reports_ts1362_and_ts2614() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"
+export default class Foo {}
+export type { Foo as "module.exports" };
+                "#,
+            ),
+            (
+                "importer.cts",
+                r#"
+import Foo = require("./exporter.mjs");
+new Foo();
+
+import Foo2 from "./exporter.mjs";
+new Foo2();
+
+import * as Foo3 from "./exporter.mjs";
+new Foo3();
+
+import { Oops } from "./exporter.mjs";
+                "#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    let ts1362_count = diagnostics.iter().filter(|(code, _)| *code == 1362).count();
+    let ts2614_count = diagnostics.iter().filter(|(code, _)| *code == 2614).count();
+
+    assert_eq!(
+        ts1362_count, 3,
+        "Expected TS1362 for require/default/namespace value use of a type-only \
+         \"module.exports\" binding. Got diagnostics: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2614_count, 1,
+        "Expected TS2614 for named import from a module with only a default-like \
+         Node20 CommonJS interop binding. Got diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2305),
+        "TS2305 should not be emitted when Node20 require interop sees a \
+         default-like \"module.exports\" binding. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_esm_module_exports_type_only_in_node20_cjs_require_reports_ts1362() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"
+export default class Foo {}
+export type { Foo as "module.exports" };
+                "#,
+            ),
+            (
+                "importer.cjs",
+                r#"
+const Foo = require("./exporter.mjs");
+new Foo();
+                "#,
+            ),
+        ],
+        "importer.cjs",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1362),
+        "Expected TS1362 when a CommonJS require() binding resolves to a type-only \
+         \"module.exports\" export. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2339_on_generic_class_computed_property_self_reference() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

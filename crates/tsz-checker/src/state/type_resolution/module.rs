@@ -3,6 +3,8 @@
 //! Constructor type operations have been extracted to
 //! `type_resolution/constructors.rs`.
 
+mod interop;
+
 use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -41,26 +43,6 @@ impl<'a> CheckerState<'a> {
         }
 
         candidates
-    }
-
-    pub(crate) fn module_exports_for_file<'b>(
-        &self,
-        binder: &'b tsz_binder::BinderState,
-        file_name: &str,
-    ) -> Option<&'b tsz_binder::SymbolTable> {
-        self.module_export_file_key_candidates(file_name)
-            .into_iter()
-            .find_map(|candidate| binder.module_exports.get(&candidate))
-    }
-
-    fn keyed_exports_for_file<'b, T>(
-        &self,
-        map: &'b rustc_hash::FxHashMap<String, T>,
-        file_name: &str,
-    ) -> Option<&'b T> {
-        self.module_export_file_key_candidates(file_name)
-            .into_iter()
-            .find_map(|candidate| map.get(&candidate))
     }
 
     fn resolve_module_augmentation_export_for_file(
@@ -329,7 +311,10 @@ impl<'a> CheckerState<'a> {
         let export_equals_sym = {
             let mut found = None;
             for candidate in module_specifier_candidates(module_name) {
-                if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
+                if let Some(exports) = self
+                    .ctx
+                    .module_exports_for_module(self.ctx.binder, &candidate)
+                {
                     if let Some(sym_id) = exports.get("export=") {
                         found = Some(sym_id);
                         break;
@@ -340,7 +325,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(all_binders) = &self.ctx.all_binders {
                     for binder in all_binders.iter() {
                         for candidate in module_specifier_candidates(module_name) {
-                            if let Some(exports) = binder.module_exports.get(&candidate) {
+                            if let Some(exports) =
+                                self.ctx.module_exports_for_module(binder, &candidate)
+                            {
                                 if let Some(sym_id) = exports.get("export=") {
                                     found = Some(sym_id);
                                     break;
@@ -580,7 +567,9 @@ impl<'a> CheckerState<'a> {
 
         // Look up the export in the target binder's module_exports.
         // Prefer canonical file key, then module specifier fallback.
-        if let Some(exports_table) = self.module_exports_for_file(target_binder, &target_file_name)
+        if let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
         {
@@ -710,7 +699,8 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(tsz_binder::SymbolId, usize)> {
         let binders = self.ctx.all_binders.as_ref()?;
         for (idx, binder) in binders.iter().enumerate() {
-            if let Some(exports_table) = binder.module_exports.get(module_specifier)
+            if let Some(exports_table) =
+                self.ctx.module_exports_for_module(binder, module_specifier)
                 && let Some(sym_id) =
                     self.resolve_export_from_table(binder, exports_table, export_name)
             {
@@ -751,7 +741,10 @@ impl<'a> CheckerState<'a> {
         let default_skips_export_equals = export_name == "default" && target_is_explicit_esm;
 
         // Check direct exports (module_exports)
-        if let Some(exports) = self.module_exports_for_file(target_binder, &target_file_name) {
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
+        {
             let sym_id = if default_skips_export_equals {
                 exports
                     .get("default")
@@ -854,7 +847,8 @@ impl<'a> CheckerState<'a> {
         // Try to find exports in the target binder's module_exports.
         // Prefer canonical file key first, then module specifier fallback.
         let direct_exports = self
-            .module_exports_for_file(target_binder, &target_file_name)
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             .or_else(|| {
                 self.ctx
                     .module_exports_for_module(target_binder, module_specifier)
@@ -935,7 +929,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let direct_exports = self
-            .module_exports_for_file(target_binder, &target_file_name)
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
             .or_else(|| {
                 module_specifier.and_then(|specifier| {
                     self.ctx.module_exports_for_module(target_binder, specifier)
@@ -1108,7 +1103,10 @@ impl<'a> CheckerState<'a> {
                 return Some(exports);
             }
 
-            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate) {
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, &candidate)
+            {
                 let mut combined = exports.clone();
                 self.merge_export_equals_members(self.ctx.binder, exports, &mut combined);
                 if let Some(export_equals_sym_id) = exports.get("export=")
@@ -1137,7 +1135,8 @@ impl<'a> CheckerState<'a> {
         if let Some(file_indices) = self.ctx.files_for_module_specifier(module_specifier) {
             for &file_idx in file_indices {
                 if let Some(binder) = binders.get(file_idx)
-                    && let Some(exports) = binder.module_exports.get(module_specifier)
+                    && let Some(exports) =
+                        self.ctx.module_exports_for_module(binder, module_specifier)
                 {
                     let mut combined = exports.clone();
                     self.merge_export_equals_members(binder, exports, &mut combined);
@@ -1155,7 +1154,8 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             for (file_idx, binder) in binders.iter().enumerate() {
-                if let Some(exports) = binder.module_exports.get(module_specifier) {
+                if let Some(exports) = self.ctx.module_exports_for_module(binder, module_specifier)
+                {
                     let mut combined = exports.clone();
                     self.merge_export_equals_members(binder, exports, &mut combined);
                     if let Some(export_equals_sym_id) = exports.get("export=")
@@ -1432,8 +1432,9 @@ impl<'a> CheckerState<'a> {
                         .first()
                         .map(|sf| sf.file_name.clone());
                     if let Some(source_file_name) = source_file_name
-                        && let Some(exports) =
-                            self.module_exports_for_file(source_binder, &source_file_name)
+                        && let Some(exports) = self
+                            .ctx
+                            .module_exports_for_module(source_binder, &source_file_name)
                     {
                         for (name, sym_id) in exports.iter() {
                             if !result.has(name) {
@@ -1987,33 +1988,6 @@ impl<'a> CheckerState<'a> {
         name.ends_with(".mjs") || name.ends_with(".mts")
     }
 
-    /// Check if the target module is a pure ESM module (from a package with
-    /// `"type": "module"` or using `.mjs`/`.mts` extension).
-    pub(crate) fn module_is_esm(&self, module_specifier: &str) -> bool {
-        let Some(target_idx) = self.ctx.resolve_import_target(module_specifier) else {
-            return false;
-        };
-        let arena = self.ctx.get_arena_for_file(target_idx as u32);
-        let Some(source_file) = arena.source_files.first() else {
-            return false;
-        };
-        let file_name = source_file.file_name.as_str();
-
-        if file_name.ends_with(".mjs") || file_name.ends_with(".mts") {
-            return true;
-        }
-        if file_name.ends_with(".cjs") || file_name.ends_with(".cts") {
-            return false;
-        }
-
-        self.ctx
-            .file_is_esm_map
-            .as_ref()
-            .and_then(|map| map.get(file_name))
-            .copied()
-            .unwrap_or(false)
-    }
-
     pub(crate) fn module_has_export_equals(&self, module_specifier: &str) -> bool {
         if self
             .ctx
@@ -2237,7 +2211,9 @@ impl<'a> CheckerState<'a> {
         };
 
         for candidate in module_specifier_candidates(module_specifier) {
-            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, &candidate)
                 && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
             {
                 return Some(sym_id);
@@ -2246,7 +2222,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(file_indices) = self.ctx.files_for_module_specifier(&candidate) {
                     for &file_idx in file_indices {
                         if let Some(binder) = all_binders.get(file_idx)
-                            && let Some(exports) = binder.module_exports.get(&candidate)
+                            && let Some(exports) =
+                                self.ctx.module_exports_for_module(binder, &candidate)
                             && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);
@@ -2254,7 +2231,8 @@ impl<'a> CheckerState<'a> {
                     }
                 } else {
                     for binder in all_binders.iter() {
-                        if let Some(exports) = binder.module_exports.get(&candidate)
+                        if let Some(exports) =
+                            self.ctx.module_exports_for_module(binder, &candidate)
                             && let Some(sym_id) = resolve_from_exports(exports, visited_aliases)
                         {
                             return Some(sym_id);
@@ -2412,7 +2390,12 @@ impl<'a> CheckerState<'a> {
 
         let has_default =
             if let Some(exports_table) = self.resolve_effective_module_exports(module_specifier) {
-                exports_table.has("default") || exports_table.has("export=")
+                exports_table.has("default")
+                    || exports_table.has("export=")
+                    || self.module_uses_module_exports_interop(
+                        module_specifier,
+                        Some(self.current_file_emit_resolution_mode()),
+                    )
             } else {
                 false
             };
