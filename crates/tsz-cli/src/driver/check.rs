@@ -586,10 +586,12 @@ pub(super) fn collect_diagnostics(
 
     // Pre-create all binders for cross-file resolution
     let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new({
-        let _span = tracing::info_span!("build_cross_file_binders").entered();
+        use rayon::prelude::*;
+        let _span =
+            tracing::info_span!("build_cross_file_binders", files = program.files.len()).entered();
         program
             .files
-            .iter()
+            .par_iter()
             .enumerate()
             .map(|(file_idx, file)| {
                 Arc::new(create_cross_file_lookup_binder_with_augmentations(
