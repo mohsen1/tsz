@@ -133,6 +133,10 @@ pub enum TestResult {
         missing_fingerprints: Vec<DiagnosticFingerprint>,
         /// Extra diagnostic fingerprints (present in tsz but not TSC)
         extra_fingerprints: Vec<DiagnosticFingerprint>,
+        /// Full expected diagnostic fingerprints after conformance filtering.
+        expected_fingerprints: Vec<DiagnosticFingerprint>,
+        /// Full actual diagnostic fingerprints after conformance filtering.
+        actual_fingerprints: Vec<DiagnosticFingerprint>,
         /// Resolved compiler options used
         options: std::collections::HashMap<String, String>,
         /// Known conformance debt reason. These are reported separately and are
