@@ -36,9 +36,9 @@ impl<'a> CheckerState<'a> {
 
             symbol.escaped_name == identifier_text
                 && (is_unannotated_impl || is_local_ambient_signature)
-                && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
-                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
-                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                && symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+                && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE)
+                && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
                 && (symbol.decl_file_idx == u32::MAX
                     || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
         })
@@ -93,12 +93,12 @@ impl<'a> CheckerState<'a> {
             // Emit the correct diagnostic based on symbol kind:
             // TS2449 for classes, TS2450 for enums, TS2448 for variables
             let (msg_template, code) = if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
-                if sym.flags & tsz_binder::symbol_flags::CLASS != 0 {
+                if sym.has_any_flags(tsz_binder::symbol_flags::CLASS) {
                     (
                         diagnostic_messages::CLASS_USED_BEFORE_ITS_DECLARATION,
                         diagnostic_codes::CLASS_USED_BEFORE_ITS_DECLARATION,
                     )
-                } else if sym.flags & tsz_binder::symbol_flags::ENUM != 0 {
+                } else if sym.has_any_flags(tsz_binder::symbol_flags::ENUM) {
                     (
                         diagnostic_messages::ENUM_USED_BEFORE_ITS_DECLARATION,
                         diagnostic_codes::ENUM_USED_BEFORE_ITS_DECLARATION,
@@ -139,10 +139,10 @@ impl<'a> CheckerState<'a> {
                         && sym.decl_file_idx != self.ctx.current_file_idx as u32
                 }))
                 && self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
-                    sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
-                        && sym.flags
-                            & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::ENUM)
-                            == 0
+                    sym.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                        && !sym.has_any_flags(
+                            tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::ENUM,
+                        )
                 })
                 && let Some(usage_node) = self.ctx.arena.get(idx)
             {
@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
                                 base_sym.members.as_ref().and_then(|m| m.get(member_name))
                             })?;
                         let member_sym = self.ctx.binder.get_symbol(member_sym_id)?;
-                        Some(member_sym.flags & tsz_binder::symbol_flags::METHOD != 0)
+                        Some(member_sym.has_any_flags(tsz_binder::symbol_flags::METHOD))
                     })
                     .unwrap_or(false);
                 if !member_is_method {
@@ -941,8 +941,8 @@ impl<'a> CheckerState<'a> {
                 .binder
                 .get_symbol_with_libs(value_sym_id, &lib_binders)
             {
-                let has_type_side = (symbol.flags & tsz_binder::symbol_flags::TYPE) != 0;
-                let has_value_side = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                let has_type_side = symbol.has_any_flags(tsz_binder::symbol_flags::TYPE);
+                let has_value_side = symbol.has_any_flags(tsz_binder::symbol_flags::VALUE);
                 if has_type_side && has_value_side {
                     // Merged symbol: scan declarations for a variable declaration
                     for &decl_idx in &symbol.declarations {

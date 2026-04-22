@@ -647,7 +647,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
-        if symbol.flags & tsz_binder::symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
             return type_id;
         }
 

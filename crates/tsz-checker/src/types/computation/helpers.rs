@@ -1422,8 +1422,8 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self
                 .get_cross_file_symbol(obj_sym)
                 .or_else(|| self.ctx.binder.get_symbol(obj_sym))
-            && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
-            && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
         {
             let symbol_declarations = symbol.declarations.clone();
             let declaration_is_function_value = |decl_idx: NodeIndex| -> bool {

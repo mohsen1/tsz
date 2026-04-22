@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
             let node = self.ctx.arena.get(value_decl)?;
 
             // Only handle plain JS function constructors (not classes).
-            if symbol.flags & symbol_flags::CLASS != 0
+            if symbol.has_any_flags(symbol_flags::CLASS)
                 && !self.declaration_is_checked_js_constructor_value_declaration(sym_id, value_decl)
             {
                 return None;

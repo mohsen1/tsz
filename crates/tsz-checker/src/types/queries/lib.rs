@@ -249,7 +249,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
         // Defensive: Verify symbol is valid before accessing fields
         // This prevents crashes when symbol IDs reference non-existent symbols
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return Some(sym_id);
         }
         if visited_aliases.contains(&sym_id) {
@@ -683,7 +683,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let resolved_member_id = if let Some(member_symbol) = self.get_cross_file_symbol(member_id)
-            && member_symbol.flags & symbol_flags::ALIAS != 0
+            && member_symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             let resolved = self
@@ -721,7 +721,7 @@ impl<'a> CheckerState<'a> {
             && let Some(member_symbol) = self
                 .get_cross_file_symbol(resolved_member_id)
                 .or_else(|| self.ctx.binder.get_symbol(resolved_member_id))
-            && (member_symbol.flags & symbol_flags::CLASS) != 0
+            && member_symbol.has_any_flags(symbol_flags::CLASS)
             && member_symbol.value_declaration.is_some()
         {
             return Some(self.type_of_value_declaration_for_symbol(
@@ -789,9 +789,9 @@ impl<'a> CheckerState<'a> {
         // Namespace export tables may point at EXPORT_VALUE wrapper symbols
         // (e.g. `export { x }`). Treat them as runtime-value members.
         if let Some(member_symbol) = self.get_cross_file_symbol(resolved_member_id)
-            && member_symbol.flags & symbol_flags::VALUE == 0
-            && member_symbol.flags & symbol_flags::ALIAS == 0
-            && member_symbol.flags & symbol_flags::EXPORT_VALUE == 0
+            && !member_symbol.has_any_flags(
+                symbol_flags::VALUE | symbol_flags::ALIAS | symbol_flags::EXPORT_VALUE,
+            )
         {
             return None;
         }
@@ -1225,7 +1225,7 @@ impl<'a> CheckerState<'a> {
                 // map to wrong symbols in the local binder (SymbolId collision).
                 let symbol = self.get_cross_file_symbol(sym_id)?;
 
-                if symbol.flags & symbol_flags::ENUM == 0 {
+                if !symbol.has_any_flags(symbol_flags::ENUM) {
                     return None;
                 }
 

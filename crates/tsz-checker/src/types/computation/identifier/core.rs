@@ -189,7 +189,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .binder
                         .get_symbol(sym_id)
-                        .map(|s| s.flags & tsz_binder::symbol_flags::VALUE != 0)
+                        .map(|s| s.has_any_flags(tsz_binder::symbol_flags::VALUE))
                 })
                 .unwrap_or(false);
             if !has_value_shadow {
@@ -211,8 +211,8 @@ impl<'a> CheckerState<'a> {
                                 // Accept VALUE symbols and non-type-only ALIAS symbols
                                 // (e.g., `import * as E from "mod"` provides a runtime
                                 // namespace object).
-                                (s.flags & tsz_binder::symbol_flags::VALUE != 0)
-                                    || ((s.flags & tsz_binder::symbol_flags::ALIAS != 0)
+                                s.has_any_flags(tsz_binder::symbol_flags::VALUE)
+                                    || (s.has_any_flags(tsz_binder::symbol_flags::ALIAS)
                                         && !s.is_type_only)
                             })
                     })
@@ -720,8 +720,8 @@ impl<'a> CheckerState<'a> {
                             .get_symbol_with_libs(sid, &lib_binders)
                             .is_some_and(|s| {
                                 sid != sym_id
-                                    && ((s.flags & tsz_binder::symbol_flags::VALUE) != 0
-                                        || ((s.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                                    && (s.has_any_flags(tsz_binder::symbol_flags::VALUE)
+                                        || (s.has_any_flags(tsz_binder::symbol_flags::ALIAS)
                                             && !s.is_type_only))
                             })
                     })
