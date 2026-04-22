@@ -359,7 +359,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
-                        .is_some_and(|s| (s.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_PARAMETER))
                     {
                         if let Some(file_sym) = self.ctx.binder.file_locals.get(&left_name) {
                             let mut visited = AliasCycleTracker::new();
@@ -370,7 +370,7 @@ impl<'a> CheckerState<'a> {
                                 .ctx
                                 .binder
                                 .get_symbol_with_libs(resolved, &lib_binders)
-                                .is_none_or(|s| (s.flags & symbol_flags::TYPE_PARAMETER) == 0)
+                                .is_none_or(|s| !s.has_any_flags(symbol_flags::TYPE_PARAMETER))
                             {
                                 TypeSymbolResolution::Type(resolved)
                             } else {
@@ -408,7 +408,7 @@ impl<'a> CheckerState<'a> {
                         // export has an alias_partner (TYPE_ALIAS+ALIAS merge), as
                         // the partner provides namespace access. Skip when parse
                         // errors exist, as the qualified name may be malformed.
-                        let is_alias = (symbol.flags & symbol_flags::ALIAS) != 0;
+                        let is_alias = symbol.has_any_flags(symbol_flags::ALIAS);
                         let has_alias_partner =
                             self.ctx.alias_partners_contains(self.ctx.binder, sym_id)
                                 || self.ctx.binder.resolve_import_symbol(sym_id).is_some_and(
@@ -650,11 +650,11 @@ impl<'a> CheckerState<'a> {
             // on the outer namespace. In tsc, import-equals and qualified type names
             // prefer namespace meaning, so a local interface shouldn't cause TS2694
             // when an outer namespace with the same name has the member.
-            let is_pure_interface = (symbol.flags & symbol_flags::INTERFACE) != 0
-                && (symbol.flags & symbol_flags::MODULE) == 0
-                && (symbol.flags & symbol_flags::CLASS) == 0
-                && (symbol.flags & symbol_flags::REGULAR_ENUM) == 0
-                && (symbol.flags & symbol_flags::CONST_ENUM) == 0;
+            let is_pure_interface = symbol.has_any_flags(symbol_flags::INTERFACE)
+                && !symbol.has_any_flags(symbol_flags::MODULE)
+                && !symbol.has_any_flags(symbol_flags::CLASS)
+                && !symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
+                && !symbol.has_any_flags(symbol_flags::CONST_ENUM);
             if is_pure_interface {
                 // Check if an outer namespace with this name has the member
                 let left_name_str = self
@@ -719,7 +719,7 @@ impl<'a> CheckerState<'a> {
                     .binder
                     .get_symbol_with_libs(member_sym_id, &lib_binders)
                 {
-                    let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
+                    let is_namespace = member_symbol.has_any_flags(symbol_flags::MODULE);
                     if !is_namespace
                         && (self
                             .alias_resolves_to_value_only(member_sym_id, Some(right_name.as_str()))
@@ -749,7 +749,7 @@ impl<'a> CheckerState<'a> {
 
             // If the symbol is an enum member, it cannot have exports.
             // Emit TS2749 (value used as type) instead of TS2694.
-            if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+            if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
                 let full_name = self
                     .entity_name_text(idx)
                     .unwrap_or_else(|| right_name.clone());
@@ -834,7 +834,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<SymbolId> {
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        if (symbol.flags & symbol_flags::CLASS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
 
@@ -871,7 +871,7 @@ impl<'a> CheckerState<'a> {
         while let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) {
             if let Some(sym_id) = scope.table.get(namespace_name)
                 && let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                && (sym.flags & symbol_flags::NAMESPACE) != 0
+                && sym.has_any_flags(symbol_flags::NAMESPACE)
             {
                 // Found a namespace - check if it has the member
                 if let Some(exports) = sym.exports.as_ref()
@@ -913,14 +913,14 @@ impl<'a> CheckerState<'a> {
 
         // For classes, also check members (for static members in type queries)
         // This handles `typeof C.staticMember` where C is a class
-        if symbol.flags & symbol_flags::CLASS != 0
+        if symbol.has_any_flags(symbol_flags::CLASS)
             && let Some(ref members) = symbol.members
             && let Some(member_id) = members.get(member_name)
         {
             return Some(member_id);
         }
 
-        if symbol.flags & symbol_flags::MODULE != 0 {
+        if symbol.has_any_flags(symbol_flags::MODULE) {
             if let Some(member_id) =
                 self.resolve_module_export_from_declarations(symbol, member_name)
             {
@@ -956,7 +956,7 @@ impl<'a> CheckerState<'a> {
         // If not found in direct exports, check for re-exports
         // The member might be re-exported from another module
         if let Some(ref module_specifier) = symbol.import_module {
-            if (symbol.flags & symbol_flags::ALIAS) != 0
+            if symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
                     .module_resolves_to_non_module_entity(module_specifier)
@@ -2031,7 +2031,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol(sym_id)
-                .is_some_and(|s| s.flags & symbol_flags::CLASS != 0)
+                .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
         {
             self.ctx.symbol_types.remove(&sym_id);
         } else {
@@ -2052,7 +2052,7 @@ impl<'a> CheckerState<'a> {
             // For class symbols, we need to cache BOTH the constructor type (for value position)
             // and the instance type (for type position with typeof/TypeQuery resolution).
             let class_env_entry = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
-                if symbol.flags & symbol_flags::CLASS != 0 {
+                if symbol.has_any_flags(symbol_flags::CLASS) {
                     self.class_instance_type_with_params_from_symbol(sym_id)
                 } else {
                     None
@@ -2151,7 +2151,7 @@ impl<'a> CheckerState<'a> {
                 // Register enum parent relationships for Task #17 (Enum Type Resolution)
                 if let Some(def_id) = def_id
                     && let Some(symbol) = self.ctx.binder.symbols.get(sym_id)
-                    && (symbol.flags & symbol_flags::ENUM_MEMBER) != 0
+                    && symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
                 {
                     let parent_sym_id = symbol.parent;
                     if let Some(parent_def_id) = self.ctx.get_existing_def_id(parent_sym_id) {
@@ -2226,7 +2226,7 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .symbols
                         .get(sym_id)
-                        .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS))
                 });
             if let Some(def_id) = alias_def_id {
                 self.ctx
