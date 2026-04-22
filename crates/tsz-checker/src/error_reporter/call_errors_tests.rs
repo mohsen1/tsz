@@ -420,6 +420,106 @@ takes("abc");
 }
 
 #[test]
+fn ts2345_call_argument_display_widens_boolean_literal_for_non_boolean_union_target() {
+    let source = r#"
+declare function takes(...value: (number | string)[]): void;
+takes(1, 2, "hello", true);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains("Argument of type 'boolean'"),
+        "TS2345 should widen boolean literals for non-boolean union targets, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Argument of type 'true'"),
+        "TS2345 should not preserve boolean literal text for non-boolean union targets, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_array_literal_tuple_overflow_elaborates_element_mismatch_to_ts2322() {
+    let source = r#"
+function a5([a, b, [[c]]]) { }
+a5([1, 2, "string", false, true]);
+a5([1, 2]);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type 'string' is not assignable to type '[[any]]'.")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected element-level TS2322 for overflowing tuple literal call, got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2322.start > 0,
+        "expected TS2322 to anchor to the mismatched element"
+    );
+
+    let has_outer_overflow_ts2345 = diagnostics.iter().any(|d| {
+        d.code == 2345
+            && d.message_text
+                .contains("Argument of type '[number, number, string, false, true]'")
+    });
+    assert!(
+        !has_outer_overflow_ts2345,
+        "should suppress outer TS2345 when tuple overflow literal has a concrete element mismatch, got: {diagnostics:?}"
+    );
+
+    let has_short_tuple_ts2345 = diagnostics.iter().any(|d| {
+        d.code == 2345
+            && d.message_text
+                .contains("Argument of type '[number, number]'")
+    });
+    assert!(
+        has_short_tuple_ts2345,
+        "should still report TS2345 for the short tuple argument, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn inferred_generic_call_suppresses_ts2345_when_other_argument_is_error() {
+    let source = r#"
+declare let anythingAny: any;
+function foo1<T extends number>(...a: T[]) { }
+foo1(1, 2, "string", anythingAny);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2345),
+        "inferred generic call should suppress cascading TS2345 when another argument is error-like (`any`), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn explicit_generic_call_keeps_ts2345_with_other_error_arguments() {
+    let source = r#"
+declare let anythingAny: any;
+function foo1<T extends number>(...a: T[]) { }
+foo1<number>(1, "string", anythingAny);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345),
+        "explicit generic instantiation should still report TS2345 for mismatched typed arguments even with `any` arguments, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn ts2322_optional_function_property_target_display_omits_synthetic_undefined() {
     let source = r#"
 interface Stuff {

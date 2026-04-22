@@ -456,6 +456,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
+        // Primitive wrapper fallback must not make primitives assignable to tuple
+        // targets. Structural checks against boxed interfaces can otherwise
+        // incorrectly accept cases like `string <: [any]`.
+        let evaluated_target = self.evaluate_type(target);
+        if tuple_list_id(self.interner, target).is_some()
+            || tuple_list_id(self.interner, evaluated_target).is_some()
+        {
+            return false;
+        }
+        if readonly_inner_type(self.interner, target)
+            .is_some_and(|inner| tuple_list_id(self.interner, inner).is_some())
+            || readonly_inner_type(self.interner, evaluated_target)
+                .is_some_and(|inner| tuple_list_id(self.interner, inner).is_some())
+        {
+            return false;
+        }
+
         // String-iterable shortcut: when the target is iterable with a yield type
         // compatible with `string`, check if the target is PURELY iterable (no extra
         // named properties beyond what String provides). This is needed because the
