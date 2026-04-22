@@ -1052,6 +1052,29 @@ impl<'a> CheckerContext<'a> {
         binder.alias_partners.contains_key(&sym_id)
     }
 
+    /// Reverse lookup: find the TYPE_ALIAS partner that points at
+    /// `alias_sym_id`. Used by the type-position symbol resolver to redirect
+    /// an ALIAS symbol back to its merged TYPE_ALIAS counterpart. Prefers
+    /// the project-wide map; falls back to the per-binder map for
+    /// standalone callers.
+    pub fn alias_partner_reverse(
+        &self,
+        binder: &tsz_binder::BinderState,
+        alias_sym_id: SymbolId,
+    ) -> Option<SymbolId> {
+        if let Some(ref ap) = self.program_alias_partners {
+            return ap.iter().find_map(|(&type_alias_id, &alias_id)| {
+                (alias_id == alias_sym_id).then_some(type_alias_id)
+            });
+        }
+        binder
+            .alias_partners
+            .iter()
+            .find_map(|(&type_alias_id, &alias_id)| {
+                (alias_id == alias_sym_id).then_some(type_alias_id)
+            })
+    }
+
     /// Resolve an import specifier to its target file index.
     /// Uses the `resolved_module_paths` map populated by the driver.
     /// Returns None if the import cannot be resolved (e.g., external module).
