@@ -1418,6 +1418,7 @@ pub struct CheckerContext<'a> {
     /// Program-wide wildcard re-exports map; see `program_reexports`.
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
     /// Program-wide type-only wildcard re-exports map; see `program_reexports`.
+    #[allow(clippy::type_complexity)]
     pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
     /// Program-wide module-exports index keyed by file name (or ambient
     /// module specifier). Consulted by `ctx.module_exports_for_module`
@@ -1689,6 +1690,7 @@ pub struct ProjectEnv {
     /// see `CheckerContext::program_reexports`.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
+    #[allow(clippy::type_complexity)]
     pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
     /// Program-wide module-exports index; see `CheckerContext::program_module_exports`.
     pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
