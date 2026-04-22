@@ -1747,6 +1747,46 @@ let check: number = result;
 }
 
 #[test]
+fn generic_callback_rest_annotation_does_not_emit_false_extra_ts2345() {
+    let source = r#"
+class C {
+  test: string
+}
+
+class D extends C {
+  test2: string
+}
+
+declare function test<T extends C>(a: (t: T, t1: T) => void): T
+declare function testRest<T extends C>(a: (t: T, t1: T, ...ts: T[]) => void): T
+
+test((...ts: D[]) => {})
+testRest((t2, ...t3: D[]) => {})
+"#;
+
+    let diagnostics = get_diagnostics(source);
+    let ts2345: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected only the trailing rest mismatch to emit TS2345, got diagnostics={diagnostics:?}"
+    );
+    assert!(
+        ts2345[0].1.contains("(t2: C, ...t3: D[]) => void"),
+        "Expected the surviving TS2345 to be the target-rest mismatch, got {:?}",
+        ts2345[0]
+    );
+    assert!(
+        !ts2345[0].1.contains("(...ts: D[]) => void"),
+        "Unexpected false-positive TS2345 for source rest callback: {:?}",
+        ts2345[0]
+    );
+}
+
+#[test]
 fn generic_return_context_inference() {
     // Return-context substitution: when a generic call is in a contextual
     // position, the return type context should help infer type params.
