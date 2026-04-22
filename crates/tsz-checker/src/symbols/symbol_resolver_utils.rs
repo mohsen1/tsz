@@ -392,7 +392,10 @@ impl<'a> CheckerState<'a> {
         // Check if it has an import_module - if so, check if that module is resolved
         if let Some(ref module_name) = symbol.import_module {
             // Check various ways a module can be resolved
-            if self.ctx.binder.module_exports.contains_key(module_name) {
+            if self
+                .ctx
+                .module_exports_contains_module(self.ctx.binder, module_name)
+            {
                 return false; // Module is resolved (has exports)
             }
             // Check if this is a shorthand ambient module (no body/exports)
@@ -430,7 +433,9 @@ impl<'a> CheckerState<'a> {
                 && let Some(lit) = self.ctx.arena.get_literal(ref_node)
             {
                 let module_name = &lit.text;
-                if !self.ctx.binder.module_exports.contains_key(module_name)
+                if !self
+                    .ctx
+                    .module_exports_contains_module(self.ctx.binder, module_name)
                     && !self
                         .ctx
                         .binder

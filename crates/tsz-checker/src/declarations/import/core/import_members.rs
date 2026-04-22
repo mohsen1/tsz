@@ -1389,8 +1389,8 @@ impl<'a> CheckerState<'a> {
                         "Checking all binders (fallback)"
                     );
                     for binder in all_binders.iter() {
-                        if binder.module_exports.contains_key(module_name)
-                            || binder.module_exports.contains_key(normalized)
+                        if self.ctx.module_exports_contains_module(binder, module_name)
+                            || self.ctx.module_exports_contains_module(binder, normalized)
                         {
                             tracing::trace!("Found matching binder via exports");
                             if let Some(exists) = self.check_symbol_in_binder(
@@ -1510,7 +1510,7 @@ impl<'a> CheckerState<'a> {
         }
 
         for &key in &module_keys {
-            if let Some(exports) = binder.module_exports.get(key) {
+            if let Some(exports) = self.ctx.module_exports_for_module(binder, key) {
                 // Check if the symbol is exported under a different name
                 // by looking through all export names
                 for (export_name, sym_id) in exports.iter() {
@@ -1536,7 +1536,7 @@ impl<'a> CheckerState<'a> {
 
         // Also check with file name
         if let Some(fname) = file_name
-            && let Some(exports) = binder.module_exports.get(fname)
+            && let Some(exports) = self.ctx.module_exports_for_module(binder, fname)
         {
             for (export_name, sym_id) in exports.iter() {
                 if let Some(sym) = binder.symbols.get(*sym_id) {

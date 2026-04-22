@@ -859,7 +859,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.binder.module_exports.contains_key(module_name) {
+        if self
+            .ctx
+            .module_exports_contains_module(self.ctx.binder, module_name)
+        {
             return;
         }
 

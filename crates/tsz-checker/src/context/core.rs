@@ -1207,7 +1207,7 @@ impl<'a> CheckerContext<'a> {
         import_name: &str,
     ) -> Option<tsz_binder::SymbolId> {
         // Check current binder first
-        if let Some(exports) = self.binder.module_exports.get(module_specifier)
+        if let Some(exports) = self.module_exports_for_module(self.binder, module_specifier)
             && let Some(sym_id) = exports.get(import_name)
         {
             return Some(sym_id);
@@ -1234,7 +1234,7 @@ impl<'a> CheckerContext<'a> {
         import_name: &str,
     ) -> Option<(tsz_binder::SymbolId, usize)> {
         // Check current binder first
-        if let Some(exports) = self.binder.module_exports.get(module_specifier)
+        if let Some(exports) = self.module_exports_for_module(self.binder, module_specifier)
             && let Some(sym_id) = exports.get(import_name)
         {
             return Some((sym_id, self.current_file_idx));

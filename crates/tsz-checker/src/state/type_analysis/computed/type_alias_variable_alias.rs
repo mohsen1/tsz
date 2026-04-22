@@ -1546,7 +1546,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Check if the module exists first (for proper error differentiation)
-                let module_exists = self.ctx.binder.module_exports.contains_key(module_name)
+                let module_exists = self
+                    .ctx
+                    .module_exports_contains_module(self.ctx.binder, module_name)
                     || self.module_exists_cross_file(module_name);
                 if self.is_ambient_module_match(module_name) && !module_exists {
                     return (TypeId::ANY, Vec::new());
@@ -1683,7 +1685,9 @@ impl<'a> CheckerState<'a> {
 
                 // If the module resolved externally but isn't part of the program,
                 // skip export member validation (treat as `any`).
-                let has_exports_table = self.ctx.binder.module_exports.contains_key(module_name)
+                let has_exports_table = self
+                    .ctx
+                    .module_exports_contains_module(self.ctx.binder, module_name)
                     || self.resolve_effective_module_exports(module_name).is_some();
                 if module_exists
                     && !has_exports_table

@@ -838,7 +838,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .or_else(|| self.ctx.resolve_import_target(module_name))
                 .is_some()
-                || self.ctx.binder.module_exports.contains_key(module_name);
+                || self
+                    .ctx
+                    .module_exports_contains_module(self.ctx.binder, module_name);
             if !module_resolves {
                 return;
             }
@@ -872,7 +874,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
             .is_some()
-            || self.ctx.binder.module_exports.contains_key(module_name);
+            || self
+                .ctx
+                .module_exports_contains_module(self.ctx.binder, module_name);
         if let Some((dts_suffix, ts_ext, js_ext)) = dts_ext
             && !is_type_only_import
             && module_resolves_dts
@@ -923,7 +927,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_import_target_from_file_with_mode(self.ctx.current_file_idx, module_name, None)
             .is_some()
-            || self.ctx.binder.module_exports.contains_key(module_name);
+            || self
+                .ctx
+                .module_exports_contains_module(self.ctx.binder, module_name);
         if !self.ctx.compiler_options.allow_importing_ts_extensions
             && !self.ctx.compiler_options.rewrite_relative_import_extensions
             && !is_type_only_import
@@ -1419,7 +1425,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.binder.module_exports.contains_key(module_name)
+        if self
+            .ctx
+            .module_exports_contains_module(self.ctx.binder, module_name)
             && self.ctx.get_resolution_error(module_name).is_none()
         {
             tracing::trace!(%module_name, "check_import_declaration: found in module_exports, checking members");
@@ -1898,7 +1906,10 @@ impl<'a> CheckerState<'a> {
                                     for &binder_idx in indices {
                                         if let Some(binder) = binders.get(binder_idx)
                                             && let Some(exports) =
-                                                binder.module_exports.get(module_name.as_str())
+                                                self.ctx.module_exports_for_module(
+                                                    binder,
+                                                    module_name.as_str(),
+                                                )
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
@@ -1920,8 +1931,9 @@ impl<'a> CheckerState<'a> {
                                     }
                                 } else {
                                     for binder in binders.iter() {
-                                        if let Some(exports) =
-                                            binder.module_exports.get(module_name.as_str())
+                                        if let Some(exports) = self
+                                            .ctx
+                                            .module_exports_for_module(binder, module_name.as_str())
                                             && let Some(target_sym_id) = exports.get(export_name)
                                             && let Some(target_sym) =
                                                 binder.symbols.get(target_sym_id)
