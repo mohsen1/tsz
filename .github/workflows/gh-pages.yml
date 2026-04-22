@@ -26,8 +26,8 @@ permissions:
 
 concurrency:
   # Full benchmark suite is ~75 minutes — never cancel one in flight.
-  # Newer triggers wait for the running deploy to finish (GitHub auto-
-  # coalesces queued pending runs so we don't pile up duplicates).
+  # The `check` job below also early-exits if another deploy is already
+  # running, so in-between commits during a run are dropped (not queued).
   group: pages-${{ github.ref }}
   cancel-in-progress: false
 
@@ -41,9 +41,38 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Skip if another deploy is already running
+        id: in_flight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Bench is ~75 min. If another run is already in_progress we
+          # ignore this trigger entirely — when the running one finishes,
+          # the next *new* trigger gets to start fresh.
+          IN_FLIGHT=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/gh-pages.yml/runs?status=in_progress&per_page=20" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | length")
+          QUEUED=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/gh-pages.yml/runs?status=queued&per_page=20" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }} and .id < ${{ github.run_id }})] | length")
+          BUSY=$((IN_FLIGHT + QUEUED))
+          echo "Other deploy runs in_progress=${IN_FLIGHT} queued_before_us=${QUEUED}"
+          if [ "$BUSY" -gt 0 ]; then
+            echo "another deploy is busy — skipping this trigger"
+            echo "in_flight=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_flight=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check for changes since last deploy
         id: diff
         run: |
+          # If another run is already busy, drop this trigger entirely.
+          if [ "${{ steps.in_flight.outputs.in_flight }}" = "true" ]; then
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Always deploy for non-schedule triggers
           if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "should_deploy=true" >> "$GITHUB_OUTPUT"
