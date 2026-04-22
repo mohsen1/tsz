@@ -786,7 +786,7 @@ impl<'a> CheckerState<'a> {
                         // For numeric enums, this includes a number index signature for reverse mapping.
                         // This is the same logic as Ref branch above - check for ENUM flags
                         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                            if symbol.flags & symbol_flags::ENUM != 0
+                            if symbol.has_any_flags(symbol_flags::ENUM)
                                 && let Some(enum_object) = self.enum_object_type(sym_id)
                             {
                                 if enum_object != type_id {
@@ -809,7 +809,7 @@ impl<'a> CheckerState<'a> {
                             //   var f: (a: A) => void = (a) => a.foo;
                             // would fail because get_type_of_symbol returns the
                             // constructor type (Callable), not the instance type.
-                            if symbol.flags & symbol_flags::CLASS != 0 {
+                            if symbol.has_any_flags(symbol_flags::CLASS) {
                                 // Try the symbol-indexed cache first (populated
                                 // after class building completes).
                                 let cached = self.ctx.symbol_instance_types.get(&sym_id).copied();
@@ -1268,7 +1268,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let resolved = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            if symbol.flags & symbol_flags::CLASS != 0 {
+            if symbol.has_any_flags(symbol_flags::CLASS) {
                 // Keep class references in type position as instance types to avoid
                 // constructor/instance split diagnostics (e.g. `Type 'Dataset' is not
                 // assignable to type 'Dataset'` in parser harness regressions).
@@ -1428,7 +1428,7 @@ impl<'a> CheckerState<'a> {
                 // while `type_reference_symbol_type` returns the instance type for
                 // classes — which would incorrectly overwrite the constructor type
                 // already in the TypeEnvironment.
-                let is_class = symbol.is_some_and(|s| s.flags & symbol_flags::CLASS != 0);
+                let is_class = symbol.is_some_and(|s| s.has_any_flags(symbol_flags::CLASS));
                 let resolved = if is_class {
                     self.get_type_of_symbol(sym_id)
                 } else {
@@ -1472,7 +1472,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(target) = alias_target {
                     let target_sym = self.get_symbol_globally(target);
                     let is_class_target = target_sym
-                        .is_some_and(|s| (s.flags & tsz_binder::symbol_flags::CLASS) != 0);
+                        .is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::CLASS));
                     if is_class_target {
                         (target, target_sym, true)
                     } else {
@@ -1490,7 +1490,7 @@ impl<'a> CheckerState<'a> {
                     )
                 }
             };
-            let is_class = symbol.is_some_and(|s| (s.flags & tsz_binder::symbol_flags::CLASS) != 0);
+            let is_class = symbol.is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::CLASS));
             let resolved = if let Some(symbol) = symbol
                 && is_class
             {
