@@ -659,8 +659,8 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self
                 .get_cross_file_symbol(obj_sym)
                 .or_else(|| self.ctx.binder.get_symbol(obj_sym))
-            && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
-            && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
         {
             return;
         }
@@ -1142,7 +1142,7 @@ impl<'a> CheckerState<'a> {
         if symbol_is_namespace_import {
             return true;
         }
-        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+        if symbol.has_any_flags(symbol_flags::ALIAS) {
             let mut visited = AliasCycleTracker::new();
             if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited)
                 && let Some(resolved_symbol) = self.ctx.binder.get_symbol(resolved_sym_id)
@@ -1153,7 +1153,7 @@ impl<'a> CheckerState<'a> {
                 if resolved_is_namespace_import {
                     return true;
                 }
-                if (resolved_symbol.flags & symbol_flags::MODULE) != 0 {
+                if resolved_symbol.has_any_flags(symbol_flags::MODULE) {
                     return true;
                 }
             }
@@ -1983,9 +1983,9 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::{SymbolId, symbol_flags};
 
         const fn is_pure_namespace(symbol: &tsz_binder::Symbol) -> bool {
-            (symbol.flags & symbol_flags::MODULE) != 0
-                && (symbol.flags & symbol_flags::ENUM) == 0
-                && (symbol.flags & symbol_flags::CLASS) == 0
+            symbol.has_any_flags(symbol_flags::MODULE)
+                && !symbol.has_any_flags(symbol_flags::ENUM)
+                && !symbol.has_any_flags(symbol_flags::CLASS)
         }
 
         let kind = classify_namespace_member(self.ctx.types, type_id);
