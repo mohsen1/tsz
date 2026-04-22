@@ -292,10 +292,8 @@ impl<'a> CheckerState<'a> {
                     //    be emitted instead during statement checking).
                     let has_import_partner = self
                         .ctx
-                        .binder
-                        .alias_partners
-                        .get(&sym_id)
-                        .and_then(|&partner_id| self.ctx.binder.get_symbol(partner_id))
+                        .alias_partner_for(self.ctx.binder, sym_id)
+                        .and_then(|partner_id| self.ctx.binder.get_symbol(partner_id))
                         .is_some_and(|partner| partner.flags & symbol_flags::ALIAS != 0);
                     // tsc's hasParseDiagnostics() checks ALL parse diagnostics
                     // (including grammar checks like TS1359) to suppress TS2456.

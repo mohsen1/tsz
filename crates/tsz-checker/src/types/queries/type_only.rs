@@ -1453,10 +1453,9 @@ impl<'a> CheckerState<'a> {
                 // the name has both a TYPE meaning and a value NAMESPACE
                 // meaning. If the partner aliases a module whose exports
                 // include any runtime value, this name IS usable as a value.
-                let has_namespace_alias_partner = target_binder
-                    .alias_partners
-                    .get(&sym_id)
-                    .copied()
+                let has_namespace_alias_partner = self
+                    .ctx
+                    .alias_partner_for(target_binder, sym_id)
                     .is_some_and(|partner_id| {
                         target_binder
                             .get_symbol(partner_id)

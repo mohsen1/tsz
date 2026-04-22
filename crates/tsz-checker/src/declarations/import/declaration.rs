@@ -1373,7 +1373,9 @@ impl<'a> CheckerState<'a> {
                     if !is_side_effect_import
                         && (!binder.is_external_module || target_is_global_augmentation_dts)
                         && !self.is_ambient_module_match(module_name)
-                        && !binder.declared_modules.contains(normalized_module_name)
+                        && !self
+                            .ctx
+                            .declared_modules_contains(binder, normalized_module_name)
                         && let Some(source_file) = source_file
                     {
                         let file_name = source_file.file_name.as_str();
