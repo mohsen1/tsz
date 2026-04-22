@@ -440,6 +440,7 @@ impl<'a> TypePrinter<'a> {
 
         if !needs_typeof
             && !self.symbol_is_import_qualifiable(sym_id)
+            && !self.is_global_like_symbol(sym_id)
             && let Some(symbol_type) = self.non_qualifiable_symbol_inline_fallback(sym_id)
         {
             let mut nested = self.clone();
@@ -471,6 +472,18 @@ impl<'a> TypePrinter<'a> {
         }
 
         symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE)
+    }
+
+    pub(crate) fn is_global_like_symbol(&self, sym_id: SymbolId) -> bool {
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(symbol) = arena.get(sym_id) else {
+            return false;
+        };
+        symbol.parent == SymbolId::NONE
+            && self.resolve_symbol_module_path(sym_id).is_none()
+            && !self.is_local_import_alias(sym_id)
     }
 
     pub(crate) fn print_namespace_reference(&self, sym_id: SymbolId) -> Option<String> {

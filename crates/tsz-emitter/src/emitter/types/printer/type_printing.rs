@@ -1142,6 +1142,7 @@ impl<'a> TypePrinter<'a> {
             );
             if !needs_typeof
                 && !self.symbol_is_import_qualifiable(sym_id)
+                && !self.is_global_like_symbol(sym_id)
                 && let Some(symbol_type) = self
                     .def_type_fallback(def_id)
                     .or_else(|| self.symbol_type_fallback(sym_id))
@@ -1155,14 +1156,9 @@ impl<'a> TypePrinter<'a> {
             if let Some(name) = self.print_named_symbol_reference(sym_id, needs_typeof) {
                 return name;
             }
-            // Some lib-global generic bases (notably Promise/PromiseLike)
-            // may fail visibility heuristics in mixed multi-file contexts.
-            // Preserve their canonical global names instead of degrading to
-            // `any<...>` in declaration emit.
-            if symbol.parent == SymbolId::NONE
-                && self.resolve_symbol_module_path(sym_id).is_none()
-                && matches!(symbol.escaped_name.as_str(), "Promise" | "PromiseLike")
-            {
+            // Preserve canonical names for global-like symbols when visibility
+            // heuristics fail (e.g. utility aliases like `Extract`, `FlatArray`).
+            if !needs_typeof && self.is_global_like_symbol(sym_id) {
                 return symbol.escaped_name.clone();
             }
         }
@@ -1170,7 +1166,6 @@ impl<'a> TypePrinter<'a> {
         if let Some(name) = self
             .type_cache
             .and_then(|cache| cache.def_to_name.get(&def_id))
-            && matches!(name.as_str(), "Promise" | "PromiseLike")
         {
             return name.clone();
         }
