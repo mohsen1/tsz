@@ -34,6 +34,21 @@ typescript_ref() {
   tr -d '[:space:]' < scripts/ci/typescript-submodule-ref
 }
 
+typescript_deps_hash() {
+  local files=()
+  if [[ -f TypeScript/package.json ]]; then
+    files+=(TypeScript/package.json)
+  fi
+  if [[ -f TypeScript/package-lock.json ]]; then
+    files+=(TypeScript/package-lock.json)
+  fi
+  if [[ "${#files[@]}" -eq 0 ]]; then
+    printf 'missing-package-files\n'
+    return 0
+  fi
+  hash_files "${files[@]}"
+}
+
 commit_key() {
   local key="${COMMIT_SHA:-${REVISION_ID:-}}"
   if [[ -z "$key" || "$key" == "HEAD" ]]; then
@@ -143,13 +158,14 @@ restore_typescript() {
 }
 
 restore_caches() {
-  local cargo_hash node_hash ts_ref commit
+  local cargo_hash node_hash ts_ref ts_deps_hash commit
   cargo_hash="$(cargo_lock_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
   commit="$(commit_key)"
 
   restore_typescript
+  ts_deps_hash="$(typescript_deps_hash)"
 
   mkdir -p .ci-cache/cargo-home .ci-cache/npm .target scripts
 
@@ -173,6 +189,12 @@ restore_caches() {
     "$(cache_uri "typescript-harness/${ts_ref}.tar.gz")" \
     "TypeScript"
 
+  restore_archive \
+    "typescript-node-modules-${ts_ref}-${ts_deps_hash}" \
+    "$(cache_uri "typescript-node-modules/${ts_ref}-${ts_deps_hash}.tar.gz")" \
+    "TypeScript" \
+    node_modules
+
   if [[ "$commit" != "unknown" ]]; then
     local dist_cache
     dist_cache="$(cache_uri "dist-fast/${commit}.tar.gz")"
@@ -195,10 +217,11 @@ restore_caches() {
 }
 
 save_caches() {
-  local cargo_hash node_hash ts_ref commit
+  local cargo_hash node_hash ts_ref ts_deps_hash commit
   cargo_hash="$(cargo_lock_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
+  ts_deps_hash="$(typescript_deps_hash)"
   commit="$(commit_key)"
 
   save_archive \
@@ -224,6 +247,12 @@ save_caches() {
     "$(cache_uri "typescript-harness/${ts_ref}.tar.gz")" \
     "TypeScript" \
     built/local
+
+  save_archive \
+    "typescript-node-modules-${ts_ref}-${ts_deps_hash}" \
+    "$(cache_uri "typescript-node-modules/${ts_ref}-${ts_deps_hash}.tar.gz")" \
+    "TypeScript" \
+    node_modules
 
   if [[ "$commit" != "unknown" ]]; then
     save_archive \
