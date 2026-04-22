@@ -38,6 +38,7 @@
 pub(crate) mod diagnostics;
 pub(crate) mod lookup;
 pub(crate) mod params;
+pub(crate) mod params_generic_instantiation;
 pub(crate) mod parsing;
 pub(crate) mod resolution;
 pub(crate) mod types;
