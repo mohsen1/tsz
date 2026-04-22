@@ -6,9 +6,15 @@ cd "$ROOT_DIR"
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
+export CARGO_HOME="${CARGO_HOME:-$ROOT_DIR/.ci-cache/cargo-home}"
+export CARGO_PROFILE_DIST_FAST_LTO="${CARGO_PROFILE_DIST_FAST_LTO:-false}"
 export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
 export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
-export PATH="$HOME/.cargo/bin:$PATH"
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$ROOT_DIR/.ci-cache/npm}"
+export npm_config_cache="$NPM_CONFIG_CACHE"
+export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+
+mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE"
 
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$HOST_CPUS}"
@@ -106,7 +112,7 @@ suite_needs_group() {
       [[ "$suite" == "wasm" ]]
       ;;
     node)
-      [[ "$suite" == "emit" || "$suite" == "fourslash" ]]
+      [[ "$suite" == "conformance" || "$suite" == "emit" || "$suite" == "fourslash" ]]
       ;;
     *)
       return 1
@@ -258,11 +264,45 @@ run_unit_tests() {
 
 build_test_binaries() {
   ci_section "Build dist-fast test binaries"
+  local binaries=(
+    .target/dist-fast/tsz
+    .target/dist-fast/tsz-server
+    .target/dist-fast/tsz-conformance
+    .target/dist-fast/generate-tsc-cache
+  )
+  local missing=0
+  local bin
+  for bin in "${binaries[@]}"; do
+    if [[ ! -x "$bin" ]]; then
+      missing=1
+      break
+    fi
+  done
+  local trusted_cache=0
+  if [[ "${TSZ_CI_TRUST_DIST_FAST_CACHE:-0}" == "1" ]]; then
+    trusted_cache=1
+  elif [[ -f .ci-cache/dist-fast-cache-hit ]]; then
+    local cache_commit expected_commit
+    cache_commit="$(tr -d '[:space:]' < .ci-cache/dist-fast-cache-hit)"
+    expected_commit="${COMMIT_SHA:-${REVISION_ID:-}}"
+    if [[ -n "$expected_commit" && "$cache_commit" == "$expected_commit" ]]; then
+      trusted_cache=1
+    fi
+  fi
+
+  if [[ "$missing" -eq 0 && "$trusted_cache" -eq 1 ]]; then
+    echo "Using cached dist-fast binaries"
+    ls -lh "${binaries[@]}"
+    mkdir -p .target/release
+    ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
+    return 0
+  fi
+
   cargo build --profile dist-fast -p tsz-cli --bin tsz --bin tsz-server
-  cargo build --profile dist-fast -p tsz-conformance --bin tsz-conformance
+  cargo build --profile dist-fast -p tsz-conformance --bin tsz-conformance --bin generate-tsc-cache
   mkdir -p .target/release
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
-  ls -lh .target/dist-fast/tsz .target/dist-fast/tsz-conformance .target/dist-fast/tsz-server
+  ls -lh "${binaries[@]}"
 }
 
 build_wasm() {
@@ -279,7 +319,11 @@ prep_node_artifacts() {
   ci_section "Prep Node harnesses"
   (
     cd scripts
-    npm install --silent
+    if [[ ! -x node_modules/.bin/tsc ]]; then
+      npm install --silent
+    else
+      echo "Using cached scripts/node_modules"
+    fi
     cd emit
     npx tsc -p tsconfig.json
   )

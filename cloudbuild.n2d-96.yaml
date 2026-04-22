@@ -1,43 +1,44 @@
 steps:
-  - id: restore-typescript
+  - id: restore-cache
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-
-      ref="$(tr -d '[:space:]' < scripts/ci/typescript-submodule-ref)"
-      cache_uri="${_TSZ_CI_CACHE_BUCKET}/typescript/${ref}.tar.gz"
-      archive="/tmp/typescript-${ref}.tar.gz"
-
-      rm -rf TypeScript
-      if gsutil -q stat "$cache_uri"; then
-        echo "TypeScript cache hit: ${cache_uri}"
-        gsutil -q cp "$cache_uri" "$archive"
-        tar --warning=no-unknown-keyword -xzf "$archive" -C .
-      else
-        echo "TypeScript cache miss: ${cache_uri}"
-        if ! command -v curl >/dev/null 2>&1; then
-          apt-get update -qq
-          apt-get install -y --no-install-recommends ca-certificates curl
-        fi
-        mkdir -p TypeScript
-        curl -fsSL "https://codeload.github.com/microsoft/TypeScript/tar.gz/${ref}" \
-          -o "${archive}.upstream"
-        tar -xzf "${archive}.upstream" -C TypeScript --strip-components=1
-        echo "$ref" > TypeScript/.tsz-cache-ref
-        tar -czf "$archive" TypeScript
-        gsutil -q cp "$archive" "$cache_uri"
-      fi
-
-      test -f TypeScript/src/lib/es5.d.ts
-      test "$(tr -d '[:space:]' < TypeScript/.tsz-cache-ref)" = "$ref"
+      scripts/ci/gcp-cache.sh restore
 
   - id: full-ci
     name: rust:1.90-bookworm
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
+      mkdir -p .ci-status
+      set +e
       scripts/ci/gcp-full-ci.sh "${_TSZ_CI_SUITE}"
+      rc="$?"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/full-ci.exit
+      exit 0
+
+  - id: save-cache
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    waitFor:
+      - full-ci
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      if ! scripts/ci/gcp-cache.sh save; then
+        echo "warning: cache save failed" >&2
+      fi
+
+  - id: finish-ci
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    waitFor:
+      - save-cache
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      rc="$(cat .ci-status/full-ci.exit 2>/dev/null || echo 1)"
+      exit "$rc"
 
 options:
   pool:
