@@ -358,7 +358,7 @@ pub struct BinderState {
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
 
     /// Modules that use `export =` syntax (CommonJS-style exports)
     /// Used by the import checker to validate require-style imports
@@ -810,7 +810,7 @@ pub struct BinderStateScopeInputs {
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     pub declaration_arenas: DeclarationArenaMap,
     pub cross_file_node_symbols: CrossFileNodeSymbols,
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: FlowNodeArena,
     pub node_flow: FxHashMap<u32, FlowNodeId>,
