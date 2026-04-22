@@ -513,8 +513,10 @@ pub struct BindResult {
     /// Arenas corresponding to each `lib_binder` (same order/length as `lib_binders`).
     /// Used by `merge_bind_results_ref` to populate `declaration_arenas` for lib symbols.
     pub lib_arenas: Vec<Arc<NodeArena>>,
-    /// Symbol IDs that originated from lib files (pre-merge local IDs)
-    pub lib_symbol_ids: FxHashSet<SymbolId>,
+    /// Symbol IDs that originated from lib files (pre-merge local IDs).
+    /// `Arc`-wrapped so the merge can move it into the per-file
+    /// `BinderState.lib_symbol_ids` (also `Arc`) without deep-cloning.
+    pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`)
     pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
     /// Flow nodes for control flow analysis
@@ -1581,8 +1583,12 @@ pub struct MergedProgram {
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
     pub lib_binders: Vec<Arc<BinderState>>,
-    /// Global symbol IDs that originated from lib files (remapped to global arena IDs)
-    pub lib_symbol_ids: FxHashSet<SymbolId>,
+    /// Global symbol IDs that originated from lib files (remapped to global arena IDs).
+    /// `Arc`-wrapped so the CLI driver can install the same set into
+    /// every per-file `BinderState.lib_symbol_ids` via `Arc::clone`
+    /// (cheap atomic increment) instead of deep-cloning the
+    /// `FxHashSet` for each of N per-file binders.
+    pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
     /// Global type interner - shared across all threads for type deduplication
     pub type_interner: TypeInterner,
     /// Alias partners: maps `TYPE_ALIAS` `SymbolId` → `ALIAS` `SymbolId` for merged type+namespace exports.
@@ -2565,7 +2571,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         // Track remapped lib symbol IDs for unused-checking exclusion
-        for &old_lib_id in &result.lib_symbol_ids {
+        for &old_lib_id in result.lib_symbol_ids.iter() {
             if let Some(&new_id) = id_remap.get(&old_lib_id) {
                 global_lib_symbol_ids.insert(new_id);
             }
@@ -3268,7 +3274,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         wildcard_reexports,
         wildcard_reexports_type_only,
         lib_binders,
-        lib_symbol_ids: global_lib_symbol_ids,
+        lib_symbol_ids: Arc::new(global_lib_symbol_ids),
         type_interner,
         alias_partners,
         semantic_defs,
