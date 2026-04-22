@@ -754,7 +754,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         // Must be a namespace/module symbol
-        if symbol.flags & symbol_flags::MODULE == 0 {
+        if !symbol.has_any_flags(symbol_flags::MODULE) {
             return Some(false);
         }
 
@@ -763,7 +763,7 @@ impl<'a> CheckerState<'a> {
         let member_symbol = self.ctx.binder.get_symbol(member_sym_id)?;
 
         // Check if the member is a block-scoped variable (const/let)
-        if member_symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0 {
+        if !member_symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             return Some(false);
         }
 
@@ -812,7 +812,7 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
 
-                if (resolved_symbol.flags & symbol_flags::NAMESPACE) == 0 {
+                if !resolved_symbol.has_any_flags(symbol_flags::NAMESPACE) {
                     return false;
                 }
 
@@ -821,7 +821,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(member_sym_id) = exports.get(name)
                     && let Some(member_symbol) = self.ctx.binder.get_symbol(member_sym_id)
                 {
-                    return member_symbol.flags & symbol_flags::ENUM != 0;
+                    return member_symbol.has_any_flags(symbol_flags::ENUM);
                 }
             }
             return false;
@@ -837,7 +837,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(resolved_sym_id) else {
             return false;
         };
-        symbol.flags & symbol_flags::ENUM != 0
+        symbol.has_any_flags(symbol_flags::ENUM)
     }
 
     /// Check whether an expression resolves to an immutable module import binding.
@@ -862,7 +862,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
 

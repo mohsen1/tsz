@@ -924,7 +924,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .binder
                     .get_symbol(sym_id)
-                    .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
+                    .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS))
             })
             .collect::<FxHashSet<_>>()
             .into_iter()

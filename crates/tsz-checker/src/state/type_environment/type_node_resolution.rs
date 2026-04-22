@@ -793,7 +793,7 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                if (symbol.flags & symbol_flags::VALUE) == 0 {
+                if !symbol.has_any_flags(symbol_flags::VALUE) {
                     // Route through wrong-meaning boundary: symbol has no value meaning
                     use crate::query_boundaries::name_resolution::NameLookupKind;
                     self.report_wrong_meaning_diagnostic(name, error_node, NameLookupKind::Type);
@@ -802,8 +802,8 @@ impl<'a> CheckerState<'a> {
                 // In TypeScript, `typeof globalThis` only exposes `var`-declared
                 // globals (FUNCTION_SCOPED_VARIABLE) and function/class declarations.
                 // Block-scoped variables (let/const) are NOT properties of globalThis.
-                if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
-                    && symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE == 0
+                if symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                    && !symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE)
                 {
                     // Before erroring, check if a lib `var` declaration exists.
                     // E.g. `const Symbol = globalThis.Symbol` — the local const shadows
@@ -835,8 +835,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let base_type = if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                let has_type_side = (symbol.flags & symbol_flags::TYPE) != 0;
-                let has_value_side = (symbol.flags & symbol_flags::VALUE) != 0;
+                let has_type_side = symbol.has_any_flags(symbol_flags::TYPE);
+                let has_value_side = symbol.has_any_flags(symbol_flags::VALUE);
                 if has_type_side && has_value_side {
                     let value_type = self.type_of_value_symbol_by_name(name);
                     if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {

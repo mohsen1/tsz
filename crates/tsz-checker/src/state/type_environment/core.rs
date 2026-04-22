@@ -37,7 +37,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM) {
             return None;
         }
 
@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        let is_const_enum = symbol.flags & symbol_flags::CONST_ENUM != 0;
+        let is_const_enum = symbol.has_any_flags(symbol_flags::CONST_ENUM);
         let flags = if is_const_enum {
             tsz_solver::ObjectFlags::CONST_ENUM
         } else {
@@ -1403,7 +1403,7 @@ impl<'a> CheckerState<'a> {
 
         let mut sym_id = sym_id;
         if let Some(symbol) = self.get_symbol_globally(sym_id)
-            && symbol.flags & symbol_flags::ALIAS != 0
+            && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
