@@ -132,6 +132,35 @@ let s: Shape = { kind: "sq", x: 12, y: 13 }
 }
 
 #[test]
+fn discriminated_union_excess_narrows_with_partial_discriminant_presence() {
+    let source = r#"
+type Overlapping =
+    | { a: 1, b: 1, first: string }
+    | { a: 2, second: string }
+    | { b: 3, third: string }
+let over: Overlapping
+over = { a: 1, b: 1, first: "ok", second: "error" }
+over = { a: 1, b: 1, first: "ok", third: "error" }
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected two narrowed excess-property diagnostics, got: {diags:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| d.1.contains("'second'")),
+        "Expected excess property 'second', got: {diags:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| d.1.contains("'third'")),
+        "Expected excess property 'third', got: {diags:?}"
+    );
+}
+
+#[test]
 fn discriminated_union_excess_message_uses_type_alias_name() {
     // The error message should reference the type alias name (e.g., "Square")
     // instead of the structural type "{ size: number; kind: \"sq\" }".

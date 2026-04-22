@@ -927,30 +927,42 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let mut target_prop_types = Vec::with_capacity(union_shapes.len());
-            for shape in union_shapes {
-                let Some(target_prop) =
+            let mut present_target_props = Vec::with_capacity(union_shapes.len());
+            for (i, shape) in union_shapes.iter().enumerate() {
+                if let Some(target_prop) =
                     shape.properties.iter().find(|p| p.name == source_prop.name)
-                else {
-                    target_prop_types.clear();
-                    break;
-                };
-                target_prop_types.push(target_prop.type_id);
+                {
+                    present_target_props.push((i, target_prop.type_id));
+                }
             }
 
-            if target_prop_types.len() != union_shapes.len() {
+            if present_target_props.is_empty() {
                 continue;
             }
 
-            // tsc's discriminant narrowing doesn't require ALL member property types
-            // to be unit types. It checks which members the source unit value is
-            // assignable to. E.g., for { a: null } | { a: string }, source `a: null`
-            // narrows to the first member because null is assignable to null but not
-            // to string (in strict mode).
-            let matching_indices: Vec<usize> = target_prop_types
+            // tsc's discriminant narrowing doesn't require ALL member property
+            // types to be unit types when the property exists on every member. It
+            // checks which members the source unit value is assignable to. E.g.,
+            // for { a: null } | { a: string }, source `a: null` narrows to the
+            // first member because null is assignable to null but not to string
+            // (in strict mode).
+            //
+            // For the partial-presence case, keep the criterion stricter: a member
+            // that lacks the property is a non-match only when the members that do
+            // declare it use unit property types. This captures overlapping
+            // discriminant keys like `a: 1 | 2` without treating arbitrary payload
+            // properties such as `abc: string` as discriminants.
+            if present_target_props.len() != union_shapes.len()
+                && !present_target_props
+                    .iter()
+                    .all(|&(_, target_ty)| query::is_unit_type(self.ctx.types, target_ty))
+            {
+                continue;
+            }
+
+            let matching_indices: Vec<usize> = present_target_props
                 .iter()
-                .enumerate()
-                .filter_map(|(i, &target_ty)| self.is_subtype_of(prop_type, target_ty).then_some(i))
+                .filter_map(|&(i, target_ty)| self.is_subtype_of(prop_type, target_ty).then_some(i))
                 .collect();
 
             if !matching_indices.is_empty() && matching_indices.len() < union_shapes.len() {
