@@ -752,6 +752,78 @@ interface ExplicitArgDefault<T = SelfRef<number>> {}
     );
 }
 
+#[test]
+fn test_type_parameter_default_constraints_validate_type_parameter_references() {
+    let source = r#"
+declare function f04<T extends string, U extends number = T>(): void;
+declare function f05<T, U extends number = T>(): void;
+declare function f06<T, U extends T = number>(): void;
+interface i06<T extends string, U extends number = T> { }
+interface i07<T, U extends number = T> { }
+interface i08<T, U extends T = number> { }
+"#;
+
+    let diagnostics = crate::test_utils::check_source_diagnostics(source);
+    let ts2344_messages = diagnostics
+        .iter()
+        .filter(|d| d.code == 2344)
+        .map(|d| d.message_text.as_str())
+        .collect::<Vec<_>>();
+
+    let default_type_param_vs_number = ts2344_messages
+        .iter()
+        .filter(|message| message.contains("Type 'T' does not satisfy the constraint 'number'."))
+        .count();
+    let number_vs_default_type_param = ts2344_messages
+        .iter()
+        .filter(|message| message.contains("Type 'number' does not satisfy the constraint 'T'."))
+        .count();
+
+    assert_eq!(
+        ts2344_messages.len(),
+        6,
+        "Expected six TS2344 default-constraint diagnostics, got {ts2344_messages:?}"
+    );
+    assert_eq!(
+        default_type_param_vs_number, 4,
+        "Expected four TS2344 diagnostics for T defaulting into number constraints, got {ts2344_messages:?}"
+    );
+    assert_eq!(
+        number_vs_default_type_param, 2,
+        "Expected two TS2344 diagnostics for number defaulting into T constraints, got {ts2344_messages:?}"
+    );
+}
+
+#[test]
+fn test_type_parameter_default_constraints_skip_self_and_derived_type_parameter_references() {
+    let source = r#"
+type SelfDefault<T extends string = T> = { value: T };
+
+interface Settable<T, V> {
+    set(value: V): T;
+}
+interface Identity<V> extends Settable<Identity<V>, V> { }
+interface Test1<V, T extends Settable<T, V> = Identity<V>> { }
+
+type Prefixes = "foo" | "bar";
+type AllPrefixData = "foo:baz" | "bar:baz";
+type PrefixData<P extends Prefixes> = `${P}:baz`;
+interface ITest<P extends Prefixes, E extends AllPrefixData = PrefixData<P>> { }
+"#;
+
+    let diagnostics = crate::test_utils::check_source_diagnostics(source);
+    let ts2344_messages = diagnostics
+        .iter()
+        .filter(|d| d.code == 2344)
+        .map(|d| d.message_text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2344_messages.is_empty(),
+        "Expected no TS2344 diagnostics for self or derived generic defaults, got {ts2344_messages:?}"
+    );
+}
+
 /// Generic function references passed as callback arguments should be properly
 /// instantiated, not cause the earlier arguments to be deferred from inference.
 /// Regression test for: `map("", identity)` incorrectly inferred T as `unknown`
