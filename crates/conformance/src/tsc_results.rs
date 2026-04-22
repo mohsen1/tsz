@@ -116,6 +116,7 @@ impl Hash for DiagnosticFingerprint {
 
 /// Test comparison result
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum TestResult {
     /// Test passed (results match)
     Pass,
