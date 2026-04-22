@@ -817,8 +817,7 @@ impl<'a> CheckerState<'a> {
         if let query::MappedConstraintKind::KeyOf(source) =
             query::classify_mapped_constraint(self.ctx.types, mapped.constraint)
         {
-            let resolved_source = self.evaluate_type_with_resolution(source);
-            let source_kind = query::classify_mapped_source(self.ctx.types, resolved_source);
+            let source_kind = query::classify_mapped_source(self.ctx.types, source);
             if !matches!(source_kind, query::MappedSourceKind::Object) {
                 // Source is array/tuple-like — delegate to the solver's evaluator
                 // which preserves the structural identity.
@@ -839,6 +838,15 @@ impl<'a> CheckerState<'a> {
         // decision and for property expansion below.
         let is_homomorphic_source = query::keyof_inner_type(self.ctx.types, mapped.constraint);
         let is_homomorphic = is_homomorphic_source.is_some();
+        let is_identity_homomorphic =
+            crate::query_boundaries::common::homomorphic_mapped_source(self.ctx.types, type_id)
+                .is_some();
+        let source_has_type_params = is_homomorphic_source.is_some_and(|source| {
+            crate::query_boundaries::common::is_type_parameter_or_intersection_with_type_parameter(
+                self.ctx.types,
+                source,
+            )
+        });
 
         // For non-homomorphic mapped types with a resolved constraint, retry the
         // solver's evaluator. The pre-resolved template (ensure_relation_input_ready
@@ -870,12 +878,37 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        let mut source_decl_order = Vec::new();
         let source_prop_map: rustc_hash::FxHashMap<tsz_common::Atom, (bool, bool, TypeId)> =
             if let Some(source) = is_homomorphic_source {
                 // Pre-resolve lazy refs in the homomorphic source so property
                 // collection sees the fully resolved object shape.
                 self.ensure_relation_input_ready(source);
-                query::collect_homomorphic_source_properties(self.ctx.types, source)
+                let resolved_source = self.evaluate_type_with_resolution(source);
+                let source_props = {
+                    let ordered =
+                        query::collect_homomorphic_source_property_infos(self.ctx.types, source);
+                    if !ordered.is_empty() {
+                        ordered
+                    } else {
+                        match tsz_solver::objects::collect_properties(
+                            resolved_source,
+                            self.ctx.types,
+                            &self.ctx,
+                        ) {
+                            tsz_solver::objects::PropertyCollectionResult::Properties {
+                                properties,
+                                ..
+                            } => properties,
+                            _ => Vec::new(),
+                        }
+                    }
+                };
+                source_decl_order = source_props.iter().map(|prop| prop.name).collect();
+                source_props
+                    .into_iter()
+                    .map(|prop| (prop.name, (prop.optional, prop.readonly, prop.type_id)))
+                    .collect()
             } else {
                 Default::default()
             };
@@ -913,9 +946,22 @@ impl<'a> CheckerState<'a> {
                 vec![key_name]
             };
 
-            // Use env-evaluated template instantiation (needed for Lazy/DefId resolution).
-            let mut property_type =
-                self.instantiate_mapped_property_template_with_env(&mapped, key_name);
+            // Match the solver's identity-homomorphic fast path: when the
+            // template is `T[K]` and the source surface is already specialized
+            // (e.g. `number[]` -> `Array<number>` members), reuse that declared
+            // property type instead of re-indexing the generic template and
+            // leaking unspecialized `Array<T>` method signatures into diagnostics.
+            let property_type = if is_identity_homomorphic && !source_has_type_params {
+                source_prop_map
+                    .get(&key_name)
+                    .map(|(_, _, declared_type)| *declared_type)
+                    .unwrap_or_else(|| {
+                        self.instantiate_mapped_property_template_with_env(&mapped, key_name)
+                    })
+            } else {
+                // Use env-evaluated template instantiation (needed for Lazy/DefId resolution).
+                self.instantiate_mapped_property_template_with_env(&mapped, key_name)
+            };
 
             // Look up source property info for modifier computation
             let source_info = source_prop_map.get(&key_name);
@@ -929,16 +975,6 @@ impl<'a> CheckerState<'a> {
                 source_optional,
                 source_readonly,
             );
-
-            // For homomorphic mapped types with optional source properties, use the
-            // source property's declared type to avoid double-encoding undefined.
-            // This matches the solver's evaluate_mapped behavior.
-            if is_homomorphic
-                && source_optional
-                && let Some((_, _, declared_type)) = source_info
-            {
-                property_type = *declared_type;
-            }
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
@@ -955,6 +991,15 @@ impl<'a> CheckerState<'a> {
                     is_string_named: false,
                 });
             }
+        }
+
+        if !source_decl_order.is_empty() {
+            let order_map: rustc_hash::FxHashMap<tsz_common::Atom, usize> = source_decl_order
+                .iter()
+                .enumerate()
+                .map(|(idx, &name)| (name, idx))
+                .collect();
+            properties.sort_by_key(|prop| order_map.get(&prop.name).copied().unwrap_or(usize::MAX));
         }
 
         factory.object(properties)

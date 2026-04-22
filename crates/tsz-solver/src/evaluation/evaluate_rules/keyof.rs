@@ -495,6 +495,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Get the keyof keys for an array type (includes all array methods and number index).
     pub(crate) fn array_keyof_keys(&self) -> Vec<TypeId> {
+        let array_base = self
+            .interner()
+            .get_array_display_base_type()
+            .or_else(|| self.resolver().get_array_base_type());
+        if let Some(array_base) = array_base {
+            let base_props = crate::type_queries::collect_homomorphic_source_property_infos(
+                self.interner(),
+                array_base,
+            );
+            if !base_props.is_empty() {
+                let mut keys = Vec::with_capacity(base_props.len() + 1);
+                keys.push(TypeId::NUMBER);
+                for prop in base_props {
+                    keys.push(self.property_name_atom_to_key_type(prop.name));
+                }
+                return keys;
+            }
+        }
+
         let mut keys = Vec::new();
         keys.push(TypeId::NUMBER);
         keys.push(self.interner().literal_string("length"));

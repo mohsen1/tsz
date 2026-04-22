@@ -528,6 +528,10 @@ pub struct TypeInterner {
     /// `RwLock` so file checkers can overwrite the prime checker's value without
     /// lock contention on this frequently-read field.
     pub(super) array_base_type: AtomicU32,
+    /// Display-order Array base type used for keyof/mapped diagnostics.
+    /// This may differ from `array_base_type` when the semantic base and the
+    /// lib-merged display surface are not the same lowered type.
+    pub(super) array_display_base_type: AtomicU32,
     /// Type parameters for the Array base type.
     /// Kept as `OnceLock` since params don't contain `DefIds` and are stable
     /// across checkers (the interner allocates `TypeParam` `TypeIds` centrally).
@@ -628,6 +632,7 @@ impl TypeInterner {
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
             contains_this_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
+            array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
             boxed_def_ids: DashMap::with_hasher(FxBuildHasher),
@@ -694,10 +699,27 @@ impl TypeInterner {
         let _ = self.array_base_type_params.set(params);
     }
 
+    /// Set the Array base type used for display-order-sensitive queries.
+    pub fn set_array_display_base_type(&self, type_id: TypeId) {
+        self.array_display_base_type
+            .store(type_id.0, Ordering::Relaxed);
+    }
+
     /// Get the global Array base type, if it has been set.
     #[inline]
     pub fn get_array_base_type(&self) -> Option<TypeId> {
         let raw = self.array_base_type.load(Ordering::Relaxed);
+        if raw == u32::MAX {
+            None
+        } else {
+            Some(TypeId(raw))
+        }
+    }
+
+    /// Get the Array base type used for display-order-sensitive queries.
+    #[inline]
+    pub fn get_array_display_base_type(&self) -> Option<TypeId> {
+        let raw = self.array_display_base_type.load(Ordering::Relaxed);
         if raw == u32::MAX {
             None
         } else {

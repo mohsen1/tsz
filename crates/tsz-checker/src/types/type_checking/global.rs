@@ -122,7 +122,7 @@ impl<'a> CheckerState<'a> {
         // For Array<T>, extract the actual type parameters from the interface definition
         // rather than synthesizing fresh ones. This ensures the T used in Array's method
         // signatures has the same TypeId as the T registered in TypeEnvironment.
-        let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
+        let (array_type_for_params, array_type_params) = self.resolve_lib_type_with_params("Array");
         let array_type_params_for_flow = array_type_params.clone();
 
         // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
@@ -197,7 +197,9 @@ impl<'a> CheckerState<'a> {
         // We register this type directly so that resolve_array_property can use it
         // No need to extract instance type from construct signatures - the methods
         // are already on the Callable itself
-        let array_instance_type = array_type;
+        let array_instance_type =
+            array_type_for_params.or_else(|| self.resolve_lib_type_by_name("Array"));
+        let array_display_type = self.resolve_lib_type_by_name("Array");
 
         // PropertyAccessEvaluator runs through multiple database backends
         // (query cache, interner, binder-backed resolver). Register Array<T>
@@ -206,6 +208,25 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .types
                 .register_array_base_type(ty, array_type_params.clone());
+            if let Some(display_ty) = array_display_type {
+                self.ctx.types.register_array_display_base_type(display_ty);
+                let display_props = crate::query_boundaries::common::callable_shape_for_type(
+                    self.ctx.types,
+                    display_ty,
+                )
+                .map(|shape| shape.properties.clone())
+                .or_else(|| {
+                    crate::query_boundaries::common::object_shape_for_type(
+                        self.ctx.types,
+                        display_ty,
+                    )
+                    .map(|shape| shape.properties.clone())
+                })
+                .unwrap_or_default();
+                if !display_props.is_empty() {
+                    self.ctx.types.store_display_properties(ty, display_props);
+                }
+            }
         }
 
         // If the user has augmented the Array interface (e.g.,

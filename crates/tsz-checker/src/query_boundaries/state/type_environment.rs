@@ -124,6 +124,14 @@ pub(crate) fn collect_homomorphic_source_properties(
     tsz_solver::type_queries::collect_homomorphic_source_properties(db, source)
 }
 
+/// Collect ordered source properties for a homomorphic mapped type.
+pub(crate) fn collect_homomorphic_source_property_infos(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+) -> Vec<tsz_solver::PropertyInfo> {
+    tsz_solver::type_queries::collect_homomorphic_source_property_infos(db, source)
+}
+
 /// Expand a mapped type with resolved finite keys into PropertyInfo list.
 pub(crate) fn expand_mapped_type_to_properties(
     db: &dyn TypeDatabase,

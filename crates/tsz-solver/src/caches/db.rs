@@ -181,6 +181,25 @@ pub trait TypeDatabase {
     /// Results are cached for O(1) lookup after first computation.
     fn is_identity_comparable_type(&self, type_id: TypeId) -> bool;
 
+    /// Get the canonical `Array<T>` base type registered from lib.d.ts.
+    ///
+    /// This is used by solver-only paths that need array member metadata
+    /// (for example mapped-type display ordering) even when no richer
+    /// `TypeResolver` is available.
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the registered `Array<T>` base type parameters.
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        &[]
+    }
+
+    /// Get the `Array<T>` base type used for display-order-sensitive queries.
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
     /// Get the boxed interface type for a primitive intrinsic kind.
     ///
     /// For example, `IntrinsicKind::Function` returns the `TypeId` of the `Function` interface
@@ -534,6 +553,18 @@ impl TypeDatabase for TypeInterner {
         Self::is_identity_comparable_type(self, type_id)
     }
 
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        Self::get_array_base_type(self)
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        Self::get_array_base_type_params(self)
+    }
+
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        Self::get_array_display_base_type(self)
+    }
+
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
         Self::get_boxed_type(self, kind)
     }
@@ -613,6 +644,9 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// store this in whichever backing stores they use so `T[]` methods/properties
     /// (e.g. `push`, `length`) resolve consistently.
     fn register_array_base_type(&self, _type_id: TypeId, _type_params: Vec<TypeParamInfo>) {}
+
+    /// Register the `Array<T>` base type used for display-order-sensitive queries.
+    fn register_array_display_base_type(&self, _type_id: TypeId) {}
 
     /// Register a boxed interface type for a primitive intrinsic kind.
     ///
@@ -941,6 +975,10 @@ impl QueryDatabase for TypeInterner {
 
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.set_array_base_type(type_id, type_params);
+    }
+
+    fn register_array_display_base_type(&self, type_id: TypeId) {
+        self.set_array_display_base_type(type_id);
     }
 
     fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
