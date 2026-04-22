@@ -560,16 +560,24 @@ pub(super) fn collect_diagnostics(
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut request_cache_counters = RequestCacheCounters::default();
-    let mut used_paths = FxHashSet::default();
+    let file_count = program.files.len();
+    let mut used_paths = FxHashSet::with_capacity_and_hasher(file_count, Default::default());
     let mut cache = cache;
     let mut resolution_cache = ModuleResolutionCache::default();
-    let mut program_paths = FxHashSet::default();
-    let mut canonical_to_file_name: FxHashMap<PathBuf, String> = FxHashMap::default();
-    let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> = FxHashMap::default();
+    // Pre-size: each map ends up with exactly one entry per file. Without
+    // capacity hints the inserts go through the standard power-of-two grow
+    // path (~12 rehashes for a 6000-entry map). Driver setup runs once per
+    // build, but on a 6000-file project the rehash cost is real startup
+    // overhead.
+    let mut program_paths = FxHashSet::with_capacity_and_hasher(file_count, Default::default());
+    let mut canonical_to_file_name: FxHashMap<PathBuf, String> =
+        FxHashMap::with_capacity_and_hasher(file_count, Default::default());
+    let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> =
+        FxHashMap::with_capacity_and_hasher(file_count, Default::default());
     let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
 
     {
-        let _span = tracing::info_span!("build_program_path_maps").entered();
+        let _span = tracing::info_span!("build_program_path_maps", files = file_count).entered();
         for (idx, file) in program.files.iter().enumerate() {
             let canonical = normalize_resolved_path(Path::new(&file.file_name), options);
             program_paths.insert(canonical.clone());
