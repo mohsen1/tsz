@@ -3,23 +3,6 @@ import path from "node:path";
 
 const WEBSITE = path.resolve(import.meta.dirname, "..", "..");
 const ROOT = path.resolve(WEBSITE, "..", "..");
-const SAMPLE_BENCHMARKS = {
-  generated_at: "renderer-sample",
-  results: [
-    { name: "250 classes", lines: 250, kb: 6, tsz_ms: 41, tsgo_ms: 66, winner: "tsz", factor: 1.6 },
-    { name: "500 generic functions", lines: 500, kb: 15, tsz_ms: 73, tsgo_ms: 115, winner: "tsz", factor: 1.6 },
-    { name: "1000 union members", lines: 1000, kb: 24, tsz_ms: 90, tsgo_ms: 154, winner: "tsz", factor: 1.7 },
-    { name: "Shallow optional object", lines: 320, kb: 8, tsz_ms: 49, tsgo_ms: 67, winner: "tsz", factor: 1.4 },
-    { name: "DeepPartial object", lines: 780, kb: 20, tsz_ms: 108, tsgo_ms: 137, winner: "tsz", factor: 1.3 },
-    { name: "Recursive generic breadth", lines: 520, kb: 12, tsz_ms: 127, tsgo_ms: 191, winner: "tsz", factor: 1.5 },
-    { name: "Conditional dist chain", lines: 410, kb: 11, tsz_ms: 112, tsgo_ms: 144, winner: "tsz", factor: 1.3 },
-    { name: "Mapped type matrix", lines: 640, kb: 17, tsz_ms: 123, tsgo_ms: 186, winner: "tsz", factor: 1.5 },
-    { name: "utility-types/index.d.ts", lines: 1200, kb: 29, tsz_ms: 164, tsgo_ms: 239, winner: "tsz", factor: 1.5 },
-    { name: "ts-toolbelt/sources/Object/Assign.ts", lines: 1750, kb: 43, tsz_ms: 221, tsgo_ms: 337, winner: "tsz", factor: 1.5 },
-    { name: "ts-essentials/lib/deep-partial/index.ts", lines: 980, kb: 27, tsz_ms: 148, tsgo_ms: 198, winner: "tsz", factor: 1.3 },
-    { name: "nextjs", lines: 58200, kb: 2100, tsz_ms: 2380, tsgo_ms: 3140, winner: "tsz", factor: 1.3 },
-  ],
-};
 
 function fmt(n) {
   return Number(n).toLocaleString("en-US");
@@ -62,7 +45,7 @@ function loadBenchmarks() {
     const data = readJsonIfExists(location);
     if (data?.results) return data;
   }
-  return SAMPLE_BENCHMARKS;
+  return null;
 }
 
 function categoryFor(name) {
