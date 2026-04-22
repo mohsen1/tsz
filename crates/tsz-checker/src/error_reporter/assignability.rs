@@ -1300,7 +1300,8 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_for_assignability(source);
         let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
-        let widened_display = self.format_type_diagnostic_widened(widened);
+        let widened_display = self
+            .format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic);
         if Self::display_has_member_literals_assignability(&widened_display) {
             Self::widen_member_literals_in_display_text(&widened_display)
         } else {
@@ -1333,7 +1334,8 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_for_assignability(target);
         let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
-        let widened_display = self.format_type_diagnostic_widened(widened);
+        let widened_display = self
+            .format_type_for_diagnostic_role(widened, DiagnosticTypeDisplayRole::WidenedDiagnostic);
         if Self::display_has_member_literals_assignability(&widened_display) {
             Self::widen_member_literals_in_display_text(&widened_display)
         } else {
