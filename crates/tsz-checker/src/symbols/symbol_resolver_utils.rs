@@ -41,13 +41,13 @@ impl<'a> CheckerState<'a> {
                 trace!(
                     name = name,
                     val_sym_id = ?val_sym_id,
-                    has_value = (val_symbol.flags & symbol_flags::VALUE) != 0,
+                    has_value = val_symbol.has_any_flags(symbol_flags::VALUE),
                     is_type_only = val_symbol.is_type_only,
                     flags = val_symbol.flags,
                     "find_value_symbol_in_libs: symbol details"
                 );
                 let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-                if (val_symbol.flags & value_flags_except_module) != 0 && !val_symbol.is_type_only {
+                if val_symbol.has_any_flags(value_flags_except_module) && !val_symbol.is_type_only {
                     trace!(
                         name = name,
                         returned_sym_id = ?val_sym_id,
@@ -71,12 +71,12 @@ impl<'a> CheckerState<'a> {
                         name = name,
                         lib_idx = lib_idx,
                         val_sym_id = ?val_sym_id,
-                        has_value = (val_symbol.flags & symbol_flags::VALUE) != 0,
+                        has_value = val_symbol.has_any_flags(symbol_flags::VALUE),
                         is_type_only = val_symbol.is_type_only,
                         flags = val_symbol.flags,
                         "find_value_symbol_in_libs: lib symbol details"
                     );
-                    if (val_symbol.flags & symbol_flags::VALUE) != 0 && !val_symbol.is_type_only {
+                    if val_symbol.has_any_flags(symbol_flags::VALUE) && !val_symbol.is_type_only {
                         trace!(
                             name = name,
                             lib_idx = lib_idx,
@@ -111,7 +111,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(val_sym_id, &lib_binders)
-            && (val_symbol.flags & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)) != 0
+            && val_symbol.has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)
             && !val_symbol.is_type_only
             && val_symbol.value_declaration.is_some()
         {
@@ -122,7 +122,7 @@ impl<'a> CheckerState<'a> {
         for lib_binder in lib_binders.iter() {
             if let Some(val_sym_id) = lib_binder.file_locals.get(name)
                 && let Some(val_symbol) = lib_binder.get_symbol(val_sym_id)
-                && (val_symbol.flags & symbol_flags::VALUE) != 0
+                && val_symbol.has_any_flags(symbol_flags::VALUE)
                 && !val_symbol.is_type_only
                 && val_symbol.value_declaration.is_some()
             {
@@ -172,9 +172,9 @@ impl<'a> CheckerState<'a> {
             for &lib_id in &self.ctx.binder.lib_symbol_ids {
                 if let Some(lib_sym) = self.ctx.binder.get_symbol(lib_id)
                     && lib_sym.escaped_name == name
-                    && (lib_sym.flags & symbol_flags::VALUE) != 0
-                    && ((lib_sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
-                        || (lib_sym.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0)
+                    && lib_sym.has_any_flags(symbol_flags::VALUE)
+                    && (!lib_sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                        || lib_sym.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
                 {
                     return Some(lib_id);
                 }
@@ -184,9 +184,9 @@ impl<'a> CheckerState<'a> {
             for lib_binder in lib_binders.iter() {
                 if let Some(sym_id) = lib_binder.file_locals.get(name)
                     && let Some(lib_sym) = lib_binder.get_symbol(sym_id)
-                    && (lib_sym.flags & symbol_flags::VALUE) != 0
-                    && ((lib_sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
-                        || (lib_sym.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0)
+                    && lib_sym.has_any_flags(symbol_flags::VALUE)
+                    && (!lib_sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
+                        || lib_sym.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE))
                 {
                     return Some(sym_id);
                 }
@@ -260,7 +260,7 @@ impl<'a> CheckerState<'a> {
                 // For import aliases (import X = require("./module")), X represents
                 // the entire module namespace. Look up the member in module_exports.
                 if let Some(ref module_specifier) = left_symbol.import_module {
-                    if (left_symbol.flags & symbol_flags::ALIAS) != 0
+                    if left_symbol.has_any_flags(symbol_flags::ALIAS)
                         && self
                             .ctx
                             .module_resolves_to_non_module_entity(module_specifier)
@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if this is an ALIAS symbol (import)
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
 
@@ -659,11 +659,11 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
         // Only suppress when the left is a pure interface (no namespace meaning)
-        let is_pure_interface = (left_symbol.flags & symbol_flags::INTERFACE) != 0
-            && (left_symbol.flags & symbol_flags::MODULE) == 0
-            && (left_symbol.flags & CLASS) == 0
-            && (left_symbol.flags & symbol_flags::REGULAR_ENUM) == 0
-            && (left_symbol.flags & symbol_flags::CONST_ENUM) == 0;
+        let is_pure_interface = left_symbol.has_any_flags(symbol_flags::INTERFACE)
+            && !left_symbol.has_any_flags(symbol_flags::MODULE)
+            && !left_symbol.has_any_flags(CLASS)
+            && !left_symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
+            && !left_symbol.has_any_flags(symbol_flags::CONST_ENUM);
         if !is_pure_interface {
             return false;
         }
@@ -693,7 +693,7 @@ impl<'a> CheckerState<'a> {
         while let Some(scope) = self.ctx.binder.scopes.get(walk_id.0 as usize) {
             if let Some(sym_id) = scope.table.get(&left_name)
                 && let Some(sym) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                && (sym.flags & symbol_flags::NAMESPACE) != 0
+                && sym.has_any_flags(symbol_flags::NAMESPACE)
                 && let Some(exports) = sym.exports.as_ref()
                 && exports.has(right_name)
             {
@@ -773,7 +773,7 @@ impl<'a> CheckerState<'a> {
 
         // For classes, check if the member exists in the class's members (static members)
         // This handles `typeof C.staticMember` where C is a class
-        if left_symbol.flags & CLASS != 0
+        if left_symbol.has_any_flags(CLASS)
             && let Some(members) = left_symbol.members.as_ref()
             && members.has(right_name)
         {
@@ -783,7 +783,7 @@ impl<'a> CheckerState<'a> {
         // Check for re-exports from other modules
         // This handles cases like: export { foo } from './bar'
         if let Some(ref module_specifier) = left_symbol.import_module {
-            if (left_symbol.flags & symbol_flags::ALIAS) != 0
+            if left_symbol.has_any_flags(symbol_flags::ALIAS)
                 && self
                     .ctx
                     .module_resolves_to_non_module_entity(module_specifier)
@@ -1076,7 +1076,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
             && let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::CLASS != 0
+            && symbol.has_any_flags(symbol_flags::CLASS)
             && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
         {
             return Some((class_idx, true));
@@ -1112,7 +1112,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
             && let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::CLASS != 0
+            && symbol.has_any_flags(symbol_flags::CLASS)
         {
             return self.get_class_declaration_from_symbol(sym_id);
         }
@@ -1153,7 +1153,7 @@ impl<'a> CheckerState<'a> {
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
                         return is_from_lib(sym_id)
-                            && (symbol.flags & tsz_binder::symbol_flags::EXPORT_VALUE) != 0;
+                            && symbol.has_any_flags(tsz_binder::symbol_flags::EXPORT_VALUE);
                     }
                 }
                 true
