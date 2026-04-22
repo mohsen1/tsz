@@ -44,6 +44,29 @@ const fn flow_step_budget(flow_node_count: usize) -> usize {
     }
 }
 
+/// Schedule `ant` to be processed before `current_flow` by pushing it to the
+/// front of the worklist and re-enqueuing `current_flow` at the back.
+///
+/// Used by the BFS traversal when a node must defer until an antecedent's
+/// narrowing result is available. Caller must still `continue` after invoking
+/// this — the helper only manages the shared buffers.
+fn defer_to_antecedent(
+    worklist: &mut VecDeque<(FlowNodeId, TypeId)>,
+    in_worklist: &mut FxHashSet<FlowNodeId>,
+    ant: FlowNodeId,
+    current_flow: FlowNodeId,
+    current_type: TypeId,
+) {
+    if !in_worklist.contains(&ant) {
+        worklist.push_front((ant, current_type));
+        in_worklist.insert(ant);
+    }
+    if !in_worklist.contains(&current_flow) {
+        worklist.push_back((current_flow, current_type));
+        in_worklist.insert(current_flow);
+    }
+}
+
 fn resolve_tuple_binding_type(
     db: &dyn QueryDatabase,
     elems: &[TupleElement],
@@ -1216,14 +1239,13 @@ impl<'a> FlowAnalyzer<'a> {
                             || ant_is_targeting_assignment
                             || ant_is_passthrough_assignment;
                         if ant_needs_defer {
-                            if !in_worklist.contains(&ant) {
-                                worklist.push_front((ant, current_type));
-                                in_worklist.insert(ant);
-                            }
-                            if !in_worklist.contains(&current_flow) {
-                                worklist.push_back((current_flow, current_type));
-                                in_worklist.insert(current_flow);
-                            }
+                            defer_to_antecedent(
+                                worklist,
+                                in_worklist,
+                                ant,
+                                current_flow,
+                                current_type,
+                            );
                             continue;
                         }
                         (current_type, ant)
@@ -1252,14 +1274,7 @@ impl<'a> FlowAnalyzer<'a> {
                     && !visited.contains(&ant)
                     && !results.contains_key(&ant)
                 {
-                    if !in_worklist.contains(&ant) {
-                        worklist.push_front((ant, current_type));
-                        in_worklist.insert(ant);
-                    }
-                    if !in_worklist.contains(&current_flow) {
-                        worklist.push_back((current_flow, current_type));
-                        in_worklist.insert(current_flow);
-                    }
+                    defer_to_antecedent(worklist, in_worklist, ant, current_flow, current_type);
                     continue;
                 }
 
@@ -1295,14 +1310,13 @@ impl<'a> FlowAnalyzer<'a> {
                             if let Some(&ant_type) = results.get(&ant) {
                                 ant_type
                             } else if !visited.contains(&ant) {
-                                if !in_worklist.contains(&ant) {
-                                    worklist.push_front((ant, current_type));
-                                    in_worklist.insert(ant);
-                                }
-                                if !in_worklist.contains(&current_flow) {
-                                    worklist.push_back((current_flow, current_type));
-                                    in_worklist.insert(current_flow);
-                                }
+                                defer_to_antecedent(
+                                    worklist,
+                                    in_worklist,
+                                    ant,
+                                    current_flow,
+                                    current_type,
+                                );
                                 continue;
                             } else {
                                 current_type
@@ -1528,14 +1542,13 @@ impl<'a> FlowAnalyzer<'a> {
                                         )
                                     });
                                 if ant_needs_defer {
-                                    if !in_worklist.contains(&ant) {
-                                        worklist.push_front((ant, current_type));
-                                        in_worklist.insert(ant);
-                                    }
-                                    if !in_worklist.contains(&current_flow) {
-                                        worklist.push_back((current_flow, current_type));
-                                        in_worklist.insert(current_flow);
-                                    }
+                                    defer_to_antecedent(
+                                        worklist,
+                                        in_worklist,
+                                        ant,
+                                        current_flow,
+                                        current_type,
+                                    );
                                     continue;
                                 }
                                 if !in_worklist.contains(&ant) {
@@ -1576,14 +1589,13 @@ impl<'a> FlowAnalyzer<'a> {
                                     )
                                 });
                             if ant_needs_defer {
-                                if !in_worklist.contains(&ant) {
-                                    worklist.push_front((ant, current_type));
-                                    in_worklist.insert(ant);
-                                }
-                                if !in_worklist.contains(&current_flow) {
-                                    worklist.push_back((current_flow, current_type));
-                                    in_worklist.insert(current_flow);
-                                }
+                                defer_to_antecedent(
+                                    worklist,
+                                    in_worklist,
+                                    ant,
+                                    current_flow,
+                                    current_type,
+                                );
                                 continue;
                             }
                             if !in_worklist.contains(&ant) {
@@ -1628,14 +1640,13 @@ impl<'a> FlowAnalyzer<'a> {
                     if let Some(&ant) = flow.antecedent.first() {
                         if !visited.contains(&ant) && !results.contains_key(&ant) {
                             // Antecedent not ready - schedule it and defer self
-                            if !in_worklist.contains(&ant) {
-                                worklist.push_front((ant, current_type));
-                                in_worklist.insert(ant);
-                            }
-                            if !in_worklist.contains(&current_flow) {
-                                worklist.push_back((current_flow, current_type));
-                                in_worklist.insert(current_flow);
-                            }
+                            defer_to_antecedent(
+                                worklist,
+                                in_worklist,
+                                ant,
+                                current_flow,
+                                current_type,
+                            );
                             continue;
                         }
                         // Antecedent is ready - get its result
