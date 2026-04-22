@@ -304,6 +304,24 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-family: var(--mono);
 }
 
+.metrics-note {
+  margin: 1rem 0 0.25rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--text-secondary);
+  border-radius: 6px;
+  background: var(--bg-code);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.metrics-meta {
+  margin: 0.25rem 0 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-family: var(--mono);
+}
+
 /* ── Alert ── */
 .alert {
   border-radius: 8px;

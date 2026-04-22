@@ -14,102 +14,231 @@ function readIfExists(p) {
 
 function readJsonIfExists(p) {
   const text = readIfExists(p);
-  return text ? JSON.parse(text) : null;
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function fmt(n) {
   return Number(n).toLocaleString("en-US");
 }
 
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function toInt(value) {
+  const n = Number.parseInt(String(value ?? "").replaceAll(",", "").trim(), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function suiteSourceLabel(source) {
+  switch (source) {
+    case "ci":
+      return "CI artifacts";
+    case "readme":
+      return "README fallback";
+    default:
+      return "Unavailable";
+  }
+}
+
+function setSuiteUnavailable(metrics, key) {
+  metrics[`${key}_rate`] = "N/A";
+  metrics[`${key}_rate_label`] = "N/A";
+  metrics[`${key}_bar_rate`] = "0";
+  metrics[`${key}_passed`] = "N/A";
+  metrics[`${key}_total`] = "N/A";
+  metrics[`${key}_source`] = "missing";
+  metrics[`${key}_source_label`] = suiteSourceLabel("missing");
+}
+
+function setSuiteMetrics(metrics, key, rate, passed, total, source) {
+  const normalizedRate = Number(rate).toFixed(1);
+  metrics[`${key}_rate`] = normalizedRate;
+  metrics[`${key}_rate_label`] = `${normalizedRate}%`;
+  metrics[`${key}_bar_rate`] = normalizedRate;
+  metrics[`${key}_passed`] = fmt(passed);
+  metrics[`${key}_total`] = fmt(total);
+  metrics[`${key}_source`] = source;
+  metrics[`${key}_source_label`] = suiteSourceLabel(source);
+}
+
+function setSuiteIfValid(metrics, key, rate, passed, total, source) {
+  if (rate === null || passed === null || total === null || total <= 0) {
+    return false;
+  }
+  setSuiteMetrics(metrics, key, rate, passed, total, source);
+  return true;
+}
+
 function extractMetrics() {
   const metrics = {
-    conformance_rate: "0",
-    conformance_passed: "0",
-    conformance_total: "0",
-    emit_js_rate: "0",
-    emit_js_passed: "0",
-    emit_js_total: "0",
-    emit_dts_rate: "0",
-    emit_dts_passed: "0",
-    emit_dts_total: "0",
-    fourslash_rate: "0",
-    fourslash_passed: "0",
-    fourslash_total: "0",
     ts_version: "unknown",
+    metrics_notice: "",
+    metrics_source_summary: "",
+    uses_fallback_metrics: false,
+    has_missing_metrics: false,
   };
+  setSuiteUnavailable(metrics, "conformance");
+  setSuiteUnavailable(metrics, "emit_js");
+  setSuiteUnavailable(metrics, "emit_dts");
+  setSuiteUnavailable(metrics, "fourslash");
 
   const metricsDir = path.join(ROOT, ".ci-metrics");
   const conformance = readJsonIfExists(path.join(metricsDir, "conformance.json"));
   const emit = readJsonIfExists(path.join(metricsDir, "emit.json"));
   const fourslash = readJsonIfExists(path.join(metricsDir, "fourslash.json"));
 
-  if (conformance) {
-    metrics.conformance_rate = Number(conformance.pass_rate).toFixed(1);
-    metrics.conformance_passed = fmt(conformance.passed);
-    metrics.conformance_total = fmt(conformance.total);
-  }
-  if (emit) {
-    metrics.emit_js_rate = Number(emit.js_pass_rate).toFixed(1);
-    metrics.emit_js_passed = fmt(emit.js_passed);
-    metrics.emit_js_total = fmt(emit.js_total);
-    metrics.emit_dts_rate = Number(emit.dts_pass_rate).toFixed(1);
-    metrics.emit_dts_passed = fmt(emit.dts_passed);
-    metrics.emit_dts_total = fmt(emit.dts_total);
-  }
-  if (fourslash) {
-    metrics.fourslash_rate = Number(fourslash.pass_rate).toFixed(1);
-    metrics.fourslash_passed = fmt(fourslash.passed);
-    metrics.fourslash_total = fmt(fourslash.total);
-  }
-
   const readme = readIfExists(path.join(ROOT, "README.md"));
   if (readme) {
     const versionMatch = readme.match(/TypeScript.*?`([\d.]+[^`]*)`/);
     if (versionMatch) metrics.ts_version = versionMatch[1];
+  }
 
-    if (!conformance) {
-      const confSection = readme.match(/<!-- CONFORMANCE_START -->([\s\S]*?)<!-- CONFORMANCE_END -->/);
+  const hasCiConformance = conformance
+    ? setSuiteIfValid(
+        metrics,
+        "conformance",
+        toNumber(conformance.pass_rate),
+        toInt(conformance.passed),
+        toInt(conformance.total),
+        "ci",
+      )
+    : false;
+  const hasCiEmitJs = emit
+    ? setSuiteIfValid(
+        metrics,
+        "emit_js",
+        toNumber(emit.js_pass_rate),
+        toInt(emit.js_passed),
+        toInt(emit.js_total),
+        "ci",
+      )
+    : false;
+  const hasCiEmitDts = emit
+    ? setSuiteIfValid(
+        metrics,
+        "emit_dts",
+        toNumber(emit.dts_pass_rate),
+        toInt(emit.dts_passed),
+        toInt(emit.dts_total),
+        "ci",
+      )
+    : false;
+  const hasCiFourslash = fourslash
+    ? setSuiteIfValid(
+        metrics,
+        "fourslash",
+        toNumber(fourslash.pass_rate),
+        toInt(fourslash.passed),
+        toInt(fourslash.total),
+        "ci",
+      )
+    : false;
+
+  if (readme) {
+    if (!hasCiConformance) {
+      const confSection = readme.match(
+        /<!-- CONFORMANCE_START -->([\s\S]*?)<!-- CONFORMANCE_END -->/,
+      );
       if (confSection) {
         const m = confSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
         if (m) {
-          metrics.conformance_rate = m[1];
-          metrics.conformance_passed = m[2];
-          metrics.conformance_total = m[3];
+          setSuiteIfValid(
+            metrics,
+            "conformance",
+            toNumber(m[1]),
+            toInt(m[2]),
+            toInt(m[3]),
+            "readme",
+          );
         }
       }
     }
 
-    if (!emit) {
+    if (!hasCiEmitJs || !hasCiEmitDts) {
       const emitSection = readme.match(/<!-- EMIT_START -->([\s\S]*?)<!-- EMIT_END -->/);
       if (emitSection) {
         const lines = emitSection[1].split("\n");
         for (const line of lines) {
           const m = line.match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
           if (!m) continue;
-          if (line.includes("JavaScript")) {
-            metrics.emit_js_rate = m[1];
-            metrics.emit_js_passed = m[2];
-            metrics.emit_js_total = m[3];
-          } else if (line.includes("Declaration")) {
-            metrics.emit_dts_rate = m[1];
-            metrics.emit_dts_passed = m[2];
-            metrics.emit_dts_total = m[3];
+          if (!hasCiEmitJs && line.includes("JavaScript")) {
+            setSuiteIfValid(
+              metrics,
+              "emit_js",
+              toNumber(m[1]),
+              toInt(m[2]),
+              toInt(m[3]),
+              "readme",
+            );
+          } else if (!hasCiEmitDts && line.includes("Declaration")) {
+            setSuiteIfValid(
+              metrics,
+              "emit_dts",
+              toNumber(m[1]),
+              toInt(m[2]),
+              toInt(m[3]),
+              "readme",
+            );
           }
         }
       }
     }
 
-    if (!fourslash) {
-      const fsSection = readme.match(/<!-- FOURSLASH_START -->([\s\S]*?)<!-- FOURSLASH_END -->/);
+    if (!hasCiFourslash) {
+      const fsSection = readme.match(
+        /<!-- FOURSLASH_START -->([\s\S]*?)<!-- FOURSLASH_END -->/,
+      );
       if (fsSection) {
         const m = fsSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
         if (m) {
-          metrics.fourslash_rate = m[1];
-          metrics.fourslash_passed = m[2];
-          metrics.fourslash_total = m[3];
+          setSuiteIfValid(
+            metrics,
+            "fourslash",
+            toNumber(m[1]),
+            toInt(m[2]),
+            toInt(m[3]),
+            "readme",
+          );
         }
       }
     }
+  }
+
+  const sources = [
+    ["Conformance", metrics.conformance_source_label],
+    ["JS Emit", metrics.emit_js_source_label],
+    ["Declaration Emit", metrics.emit_dts_source_label],
+    ["Language Service", metrics.fourslash_source_label],
+  ];
+  metrics.metrics_source_summary = sources.map(([k, v]) => `${k}: ${v}`).join(" | ");
+  metrics.uses_fallback_metrics = [
+    metrics.conformance_source,
+    metrics.emit_js_source,
+    metrics.emit_dts_source,
+    metrics.fourslash_source,
+  ].includes("readme");
+  metrics.has_missing_metrics = [
+    metrics.conformance_source,
+    metrics.emit_js_source,
+    metrics.emit_dts_source,
+    metrics.fourslash_source,
+  ].includes("missing");
+  if (metrics.uses_fallback_metrics && metrics.has_missing_metrics) {
+    metrics.metrics_notice =
+      "Some progress metrics are sourced from README fallback and others are unavailable. README-derived values may be stale.";
+  } else if (metrics.uses_fallback_metrics) {
+    metrics.metrics_notice =
+      "Some progress metrics are sourced from README fallback because CI artifacts were unavailable. README-derived values may be stale.";
+  } else if (metrics.has_missing_metrics) {
+    metrics.metrics_notice =
+      "Some progress metrics are currently unavailable because CI artifacts are missing or invalid.";
   }
 
   try {
