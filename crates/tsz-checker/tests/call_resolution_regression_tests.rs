@@ -452,6 +452,22 @@ id<number>("hello");
     );
 }
 
+#[test]
+fn generic_call_rechecks_null_arg_against_constrained_inference() {
+    let source = r#"
+class Base { x!: string; }
+function f3<T extends Base>(y: (a: T) => T, x: T) { return y(null); }
+let r = f3(x => x, null);
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345 && message.contains("parameter of type 'Base'")
+        }),
+        "Generic call should reject null against the inferred constrained argument type. Diagnostics: {diagnostics:?}"
+    );
+}
+
 // ============================================================================
 // Contextual callback typing through calls
 // ============================================================================
