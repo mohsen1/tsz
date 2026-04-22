@@ -379,26 +379,6 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    /// Return true if a binary operator token is any assignment operator.
-    const fn is_assignment_operator(op: u16) -> bool {
-        op == SyntaxKind::EqualsToken as u16
-            || op == SyntaxKind::PlusEqualsToken as u16
-            || op == SyntaxKind::MinusEqualsToken as u16
-            || op == SyntaxKind::AsteriskEqualsToken as u16
-            || op == SyntaxKind::SlashEqualsToken as u16
-            || op == SyntaxKind::PercentEqualsToken as u16
-            || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-            || op == SyntaxKind::LessThanLessThanEqualsToken as u16
-            || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-            || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-            || op == SyntaxKind::AmpersandEqualsToken as u16
-            || op == SyntaxKind::BarEqualsToken as u16
-            || op == SyntaxKind::CaretEqualsToken as u16
-            || op == SyntaxKind::BarBarEqualsToken as u16
-            || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-            || op == SyntaxKind::QuestionQuestionEqualsToken as u16
-    }
-
     /// Check if a class has any reads of private fields in its method bodies.
     pub(super) fn class_has_private_field_reads(
         &self,
@@ -524,7 +504,7 @@ impl<'a> LoweringPass<'a> {
                     let Some(bin) = self.arena.get_binary_expr(n) else {
                         continue;
                     };
-                    if !Self::is_assignment_operator(bin.operator_token) {
+                    if !tsz_solver::is_assignment_operator(bin.operator_token) {
                         continue;
                     }
                     let left = self.unwrap_parens_and_types(bin.left);
@@ -644,7 +624,7 @@ impl<'a> LoweringPass<'a> {
                 // Check for binary expressions with private field on LHS
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && Self::is_assignment_operator(bin.operator_token)
+                    && tsz_solver::is_assignment_operator(bin.operator_token)
                 {
                     let left = self.unwrap_parens(bin.left);
                     if self.is_private_field_access(left) {
@@ -677,7 +657,7 @@ impl<'a> LoweringPass<'a> {
                 // skip those — they're already handled.
                 if n.kind == syntax_kind_ext::BINARY_EXPRESSION
                     && let Some(bin) = self.arena.get_binary_expr(n)
-                    && !Self::is_assignment_operator(bin.operator_token)
+                    && !tsz_solver::is_assignment_operator(bin.operator_token)
                 {
                     // Check if either side has a private field access
                     let left = self.unwrap_parens(bin.left);
