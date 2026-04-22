@@ -552,8 +552,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let symbol = self.get_cross_file_symbol(parent_sym)?;
-        if !has_js_ctor_brand
-            && (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) == 0
+        if !has_js_ctor_brand && !symbol.has_any_flags(symbol_flags::FUNCTION | symbol_flags::CLASS)
         {
             return None;
         }
@@ -1250,8 +1249,8 @@ impl<'a> CheckerState<'a> {
 
             if let Some(sym_id) = self.resolve_identifier_symbol(expr_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
-                && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
+                && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
             {
                 return self.format_assignability_type_for_message(display_type, target);
             }
@@ -1945,12 +1944,12 @@ impl<'a> CheckerState<'a> {
         }
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE) {
             return None;
         }
         // Merged INTERFACE+VALUE (e.g. `Date`): `get_type_of_symbol` returns the interface side, not the value-position constructor.
-        if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0
-            && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+        if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
         {
             return None;
         }
