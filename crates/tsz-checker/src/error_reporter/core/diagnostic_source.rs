@@ -2062,6 +2062,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if prefer_declared_display
+            && crate::query_boundaries::common::is_mapped_type(self.ctx.types, declared_type)
+        {
+            let declared_structural_display = self.format_type_diagnostic(declared_type);
+            if declared_structural_display.starts_with('{')
+                && !declared_structural_display.contains(" in ")
+            {
+                let expr_display =
+                    self.format_assignability_type_for_message(expr_display_type, target);
+                if declared_structural_display != expr_display {
+                    return Some(declared_structural_display);
+                }
+            }
+        }
+
         let declared_display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(declared_type));
         let expr_display_type =

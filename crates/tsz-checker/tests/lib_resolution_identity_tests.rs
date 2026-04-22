@@ -127,6 +127,86 @@ fn compile_with_lib_and_options(source: &str, options: CheckerOptions) -> Vec<(u
         .collect()
 }
 
+fn inspect_symbol_with_lib(
+    source: &str,
+    symbol_name: &str,
+    options: CheckerOptions,
+) -> (String, Vec<String>, Vec<String>) {
+    let lib_files = load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let checker_lib_contexts = if lib_files.is_empty() {
+        Vec::new()
+    } else {
+        let raw_contexts: Vec<_> = lib_files
+            .iter()
+            .map(|lib| BinderLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        binder.merge_lib_contexts_into_binder(&raw_contexts);
+        lib_files
+            .iter()
+            .map(|lib| CheckerLibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect()
+    };
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    if !checker_lib_contexts.is_empty() {
+        checker.ctx.set_lib_contexts(checker_lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+    }
+
+    checker.check_source_file(root);
+
+    let sym_id = checker
+        .ctx
+        .binder
+        .file_locals
+        .get(symbol_name)
+        .expect("expected symbol to exist");
+    let ty = checker.get_type_of_symbol(sym_id);
+    let formatted = checker.format_type_diagnostic(ty);
+    let display_props = checker
+        .ctx
+        .types
+        .get_display_properties(ty)
+        .map(|props| {
+            props
+                .iter()
+                .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let shape_props = tsz_solver::type_queries::get_object_shape(checker.ctx.types, ty)
+        .map(|shape| {
+            shape
+                .properties
+                .iter()
+                .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    (formatted, display_props, shape_props)
+}
+
 // ---- Lib binder pre-population tests ----
 
 #[test]
@@ -1072,6 +1152,160 @@ const p: Promise<number> = getNum();
     assert!(
         !real_errors.iter().any(|(c, _)| *c == 2322),
         "Array and Promise boxed types should resolve via stable DefId.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_array_boxed_type_registration_preserves_array_method_surface() {
+    if !lib_files_available() {
+        return;
+    }
+    let diagnostics = compile_with_lib(
+        r#"
+class Ship {
+    isSunk = false;
+}
+
+class Board {
+    ships: Ship[] = [];
+
+    allShipsSunk() {
+        return this.ships.every(function (val) { return val.isSunk; });
+    }
+}
+"#,
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    assert!(
+        !real_errors.iter().any(|(c, _)| *c == 2339 || *c == 7006),
+        "Array boxed type registration should preserve Array<T> methods and callback inference.\nDiagnostics: {real_errors:#?}"
+    );
+}
+
+#[test]
+fn test_array_base_display_properties_preserve_lib_order() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let lib_files = load_lib_files_for_test();
+    let source = "const marker = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    let checker_lib_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| CheckerLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    let raw_contexts: Vec<_> = lib_files
+        .iter()
+        .map(|lib| BinderLibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    binder.merge_lib_contexts_into_binder(&raw_contexts);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+    checker.ctx.set_lib_contexts(checker_lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
+    checker.prime_boxed_types();
+
+    let array_base = tsz_solver::TypeDatabase::get_array_base_type(checker.ctx.types)
+        .expect("expected registered Array<T> base");
+    let display_props: Vec<_> = checker
+        .ctx
+        .types
+        .get_display_properties(array_base)
+        .expect("expected Array<T> display properties")
+        .iter()
+        .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
+        .collect();
+    let shape_props: Vec<_> =
+        tsz_solver::type_queries::get_callable_shape(checker.ctx.types, array_base)
+            .expect("expected callable Array<T> base")
+            .properties
+            .iter()
+            .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
+            .collect();
+
+    assert!(
+        display_props.starts_with(&["toString".to_string(), "toLocaleString".to_string()]),
+        "expected Array<T> display order to start with toString/toLocaleString, got display_props={display_props:?} shape_props={shape_props:?}"
+    );
+    assert!(
+        shape_props.iter().any(|name| name == "every"),
+        "expected registered Array<T> base to preserve every(); shape_props={shape_props:?}"
+    );
+}
+
+#[test]
+fn test_array_remap_symbol_type_preserves_lib_order_for_diagnostics() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let (formatted, display_props, shape_props) = inspect_symbol_with_lib(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+declare let src2: { [K in keyof number[] as Exclude<K, "length">]: (number[])[K] };
+"#,
+        "src2",
+        CheckerOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        formatted.contains("{ [x: number]: number; toString: () => string; toLocaleString:"),
+        "expected src2 diagnostic display to start with toString/toLocaleString, got formatted={formatted:?} display_props={display_props:?} shape_props={shape_props:?}"
+    );
+}
+
+#[test]
+fn test_array_remap_missing_property_message_preserves_lib_order() {
+    if !lib_files_available() {
+        return;
+    }
+
+    let diagnostics = compile_with_lib_and_options(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+declare let tgt2: number[];
+declare let src2: { [K in keyof number[] as Exclude<K, "length">]: (number[])[K] };
+tgt2 = src2;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    );
+    let real_errors: Vec<_> = diagnostics.iter().filter(|(c, _)| *c != 2318).collect();
+    let message = real_errors
+        .iter()
+        .find(|(code, _)| *code == 2741)
+        .map(|(_, message)| message.as_str())
+        .expect("expected TS2741");
+    assert!(
+        message.contains("{ [x: number]: number; toString: () => string; toLocaleString:")
+            && !message.contains("find: {"),
+        "expected TS2741 source display to preserve Array<T> lib order, got: {message}"
     );
 }
 

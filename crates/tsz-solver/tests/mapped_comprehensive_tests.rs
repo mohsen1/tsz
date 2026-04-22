@@ -9,9 +9,13 @@
 
 use super::*;
 use crate::def::DefId;
+use crate::diagnostics::format::TypeFormatter;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
-use crate::types::{MappedModifier, MappedType, PropertyInfo, TypeData, TypeParamInfo};
+use crate::types::{
+    ConditionalType, FunctionShape, IndexSignature, MappedModifier, MappedType, ObjectFlags,
+    ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeParamInfo,
+};
 
 // =============================================================================
 // Basic Mapped Type Tests
@@ -620,6 +624,173 @@ fn test_mapped_type_preserves_property_order() {
     } else {
         panic!("Expected object type, got {:?}", interner.lookup(result));
     }
+}
+
+#[test]
+fn test_mapped_type_array_remap_preserves_array_base_display_order() {
+    let interner = TypeInterner::new();
+
+    // Pre-intern the method names in a non-lib order so the pre-fix mapped-key
+    // path falls back to Atom allocation order instead of declaration order.
+    for name in [
+        "concat",
+        "filter",
+        "map",
+        "slice",
+        "find",
+        "entries",
+        "includes",
+        "findIndex",
+        "forEach",
+        "join",
+        "toString",
+        "toLocaleString",
+        "shift",
+        "pop",
+        "push",
+        "reverse",
+        "sort",
+        "splice",
+        "unshift",
+        "indexOf",
+        "lastIndexOf",
+        "every",
+        "some",
+        "reduce",
+        "reduceRight",
+        "fill",
+        "copyWithin",
+        "keys",
+        "values",
+        "[Symbol.unscopables]",
+    ] {
+        interner.intern_string(name);
+    }
+
+    let k_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.type_param(k_info);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+
+    let string_method = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+    let number_method = interner.function(FunctionShape::new(vec![], TypeId::NUMBER));
+    let any_method = interner.function(FunctionShape::new(vec![], TypeId::ANY));
+    let find_method = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(interner.intern_string("value"), t_type)],
+        interner.union2(t_type, TypeId::UNDEFINED),
+    ));
+    let number_or_undefined = interner.union2(TypeId::NUMBER, TypeId::UNDEFINED);
+    let pop_method = interner.function(FunctionShape::new(vec![], number_or_undefined));
+    let unscopables =
+        PropertyInfo::readonly(interner.intern_string("[Symbol.unscopables]"), TypeId::ANY);
+
+    let array_base = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![
+            PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER),
+            PropertyInfo::method(interner.intern_string("toString"), string_method),
+            PropertyInfo::method(interner.intern_string("toLocaleString"), string_method),
+            PropertyInfo::method(interner.intern_string("pop"), pop_method),
+            PropertyInfo::method(interner.intern_string("push"), number_method),
+            PropertyInfo::method(interner.intern_string("concat"), any_method),
+            PropertyInfo::method(interner.intern_string("join"), string_method),
+            PropertyInfo::method(interner.intern_string("reverse"), any_method),
+            PropertyInfo::method(interner.intern_string("shift"), pop_method),
+            PropertyInfo::method(interner.intern_string("slice"), any_method),
+            PropertyInfo::method(interner.intern_string("sort"), any_method),
+            PropertyInfo::method(interner.intern_string("splice"), any_method),
+            PropertyInfo::method(interner.intern_string("unshift"), number_method),
+            PropertyInfo::method(interner.intern_string("indexOf"), number_method),
+            PropertyInfo::method(interner.intern_string("lastIndexOf"), number_method),
+            PropertyInfo::method(interner.intern_string("every"), any_method),
+            PropertyInfo::method(interner.intern_string("some"), any_method),
+            PropertyInfo::method(interner.intern_string("forEach"), any_method),
+            PropertyInfo::method(interner.intern_string("map"), any_method),
+            PropertyInfo::method(interner.intern_string("filter"), any_method),
+            PropertyInfo::method(interner.intern_string("reduce"), any_method),
+            PropertyInfo::method(interner.intern_string("reduceRight"), any_method),
+            PropertyInfo::method(interner.intern_string("find"), find_method),
+            PropertyInfo::method(interner.intern_string("findIndex"), number_method),
+            PropertyInfo::method(interner.intern_string("fill"), any_method),
+            PropertyInfo::method(interner.intern_string("copyWithin"), any_method),
+            PropertyInfo::method(interner.intern_string("entries"), any_method),
+            PropertyInfo::method(interner.intern_string("keys"), any_method),
+            PropertyInfo::method(interner.intern_string("values"), any_method),
+            PropertyInfo::method(interner.intern_string("includes"), any_method),
+            unscopables,
+        ],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+    });
+    interner.set_array_base_type(array_base, vec![t_param]);
+
+    let array_type = interner.array(TypeId::NUMBER);
+    let keyof_array = interner.keyof(array_type);
+    let exclude_length = interner.conditional(ConditionalType {
+        check_type: k_type,
+        extends_type: interner.literal_string("length"),
+        true_type: TypeId::NEVER,
+        false_type: k_type,
+        is_distributive: true,
+    });
+    let mapped = MappedType {
+        type_param: k_info,
+        constraint: keyof_array,
+        name_type: Some(exclude_length),
+        template: interner.index_access(array_type, k_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+
+    let result = evaluate_type(&interner, interner.mapped(mapped));
+    let mut formatter = TypeFormatter::new(&interner);
+    let formatted = formatter.format(result).into_owned();
+
+    assert!(
+        formatted.starts_with(
+            "{ [x: number]: number; toString: () => string; toLocaleString: () => string;"
+        ),
+        "Expected mapped display to preserve Array<T> declaration order, got: {formatted}"
+    );
+    let find_prop_type = match interner.lookup(result) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .find(|prop| interner.resolve_atom_ref(prop.name).as_ref() == "find")
+            .map(|prop| prop.type_id)
+            .expect("expected remapped array result to include find"),
+        other => panic!("Expected mapped result object, got {other:?}"),
+    };
+    let find_display = formatter.format(find_prop_type).into_owned();
+    assert!(
+        find_display.contains("value: number") && find_display.contains("=> number | undefined"),
+        "Expected mapped display to specialize Array<T> member types, got: {find_display}"
+    );
+    assert!(
+        !find_display.contains("value: T"),
+        "Mapped display should not leak unspecialized Array<T> member types, got: {find_display}"
+    );
+    assert!(
+        !formatted.contains("findLastIndex"),
+        "Mapped display should not invent array keys that are absent from the registered Array<T> base, got: {formatted}"
+    );
 }
 
 // =============================================================================
