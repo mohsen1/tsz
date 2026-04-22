@@ -573,8 +573,7 @@ impl<'a> InferenceContext<'a> {
             let template_priority = InferencePriority::MappedType;
             for prop in &source.properties {
                 let key_literal = self.interner.literal_string_atom(prop.name);
-                let mut subst = TypeSubstitution::new();
-                subst.insert(mapped.type_param.name, key_literal);
+                let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                 let instantiated_template =
                     instantiate_type(self.interner, mapped.template, &subst);
                 // Use the partially inferable version of the source property type.
@@ -693,8 +692,7 @@ impl<'a> InferenceContext<'a> {
         let template_priority = InferencePriority::MappedType;
         for (i, elem) in source_elems.iter().enumerate() {
             let key_literal = name_literals[i];
-            let mut subst = TypeSubstitution::new();
-            subst.insert(iter_param_name, key_literal);
+            let subst = TypeSubstitution::single(iter_param_name, key_literal);
             let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
             let inferable_elem_type = self.get_partially_inferable_type(elem.type_id);
             self.infer_from_types(

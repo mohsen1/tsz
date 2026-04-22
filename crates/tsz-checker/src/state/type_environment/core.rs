@@ -885,8 +885,7 @@ impl<'a> CheckerState<'a> {
         for key_name in string_keys {
             let remapped_names: Vec<Atom> = if let Some(name_type) = mapped.name_type {
                 let key_literal = self.ctx.types.literal_string_atom(key_name);
-                let mut subst = TypeSubstitution::new();
-                subst.insert(mapped.type_param.name, key_literal);
+                let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                 let instantiated_name = instantiate_type(self.ctx.types, name_type, &subst);
                 let remapped = self.evaluate_type_with_env(instantiated_name);
                 if remapped == TypeId::NEVER {
