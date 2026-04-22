@@ -24,6 +24,39 @@ if [[ -z "$current_created" ]]; then
   exit 0
 fi
 
+newer_ids="$(
+  gcloud builds list \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --filter='status=(QUEUED OR WORKING)' \
+    --format=json |
+    python3 -c '
+import json
+import sys
+
+current_id, trigger, branch, current_created = sys.argv[1:5]
+for build in json.load(sys.stdin):
+    if build.get("id") == current_id:
+        continue
+    substitutions = build.get("substitutions") or {}
+    if substitutions.get("TRIGGER_NAME") != trigger:
+        continue
+    if substitutions.get("BRANCH_NAME") != branch:
+        continue
+    if build.get("createTime", "") > current_created:
+        print(build["id"])
+' "$CURRENT_BUILD_ID" "$CURRENT_TRIGGER" "$CURRENT_BRANCH" "$current_created"
+)"
+
+if [[ -n "$newer_ids" ]]; then
+  echo "Newer build exists for ${CURRENT_TRIGGER}/${CURRENT_BRANCH}; canceling current build ${CURRENT_BUILD_ID}"
+  gcloud builds cancel "$CURRENT_BUILD_ID" \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --quiet || true
+  exit 42
+fi
+
 superseded_ids="$(
   gcloud builds list \
     --project="$PROJECT" \

@@ -4,15 +4,14 @@ CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
-save updated caches, then report the original suite status. Conformance uses
-224-vCPU N2D workers, while the other suites stay smaller so one full PR run
-fits under the current private-pool CPU quota. PR conformance uses a separate
-224-vCPU pool so main conformance and PR conformance do not contend on the same
-pool:
+save updated caches, then report the original suite status. Main conformance
+uses 224-vCPU N2D workers, while PR conformance uses the existing C3 highcpu
+pool to avoid waiting on the same large N2D machine shape. The other suites stay
+smaller so one full PR run fits under the current private-pool CPU quota:
 
 ```text
 main conformance  tsz-ci-n2d-224     n2d-highcpu-224
-PR conformance    tsz-ci-n2d-224-pr  n2d-highcpu-224
+PR conformance    tsz-ci-c3-88       c3-highcpu-176
 emit              tsz-ci-n2d-96      n2d-highcpu-96
 fourslash         tsz-ci-n2d-96      n2d-highcpu-96
 unit              tsz-ci-n2d-64      n2d-highcpu-64
@@ -23,20 +22,39 @@ wasm              tsz-ci-n2d-48      n2d-highcpu-48
 The script
 keeps the old CI gates: Rust formatting, metadata guardrails,
 clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
-regression checks. Conformance defaults to up to 216 workers on the current
-224-vCPU pool. Emit and fourslash default to 4 shards. Emit uses up to 32
-workers per shard with a 30s per-test timeout, while fourslash uses up to 16
-workers per shard to avoid crashing the Node worker pool before it can record
-shard results.
+regression checks. Conformance is CPU- and memory-capped, defaulting to at most
+128 workers and about one worker per 2GB of RAM, because over-filling a highcpu
+machine with conformance batch workers can be slower than leaving headroom. Emit
+and fourslash default to 4 shards. Emit uses up to 32 workers per shard with a
+30s per-test timeout, while fourslash uses up to 16 workers per shard to avoid
+crashing the Node worker pool before it can record shard results.
 
 Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
 `lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
 that substitution keeps the `all` default for ad hoc full builds.
 
+Every build writes a sanitized markdown digest to
+`.ci-status/check-summary.md` and prints it from the final Cloud Build step.
+The summary is intentionally compact enough for GitHub Checks output:
+conformance includes aggregate counts, current failure cases, regression
+signals, and top diagnostic-code buckets; emit includes aggregate counts,
+timeouts, and failed baselines; fourslash includes shard totals and failed
+cases from the current run.
+
+Cloud Build owns the check runs that appear in GitHub, so repository code cannot
+directly edit the Google Cloud Build app's check-run markdown. Do not put a
+GitHub token or GitHub App key into the PR build steps to work around that; this
+is an open source repository and PR code can change the build config. To expose
+the digest publicly, run a trusted publisher outside the PR build, for example a
+Cloud Run service subscribed to Cloud Build events. That publisher can read the
+printed digest or a stored artifact, then create or update a sibling GitHub
+Check Run or PR comment with only `.ci-status/check-summary.md`.
+
 Builds use `queueTtl: 7200s`, so a build can survive Cloud Build private-pool
 cold starts and quota scheduling. Each build also best-effort cancels older
 queued or running builds for the same trigger and branch before restoring cache,
-which keeps rapid pushes from leaving the newest commit behind obsolete work.
+and cancels itself if a newer build already exists for that trigger and branch.
+That keeps rapid pushes from spending workers on obsolete commits.
 
 Cloud Build source archives do not preserve git submodule metadata, so
 `scripts/ci/typescript-submodule-ref` records the TypeScript submodule commit
@@ -75,10 +93,10 @@ gcloud builds worker-pools create tsz-ci-n2d-224 \
   --worker-machine-type=n2d-highcpu-224 \
   --worker-disk-size=200GB
 
-gcloud builds worker-pools create tsz-ci-n2d-224-pr \
+gcloud builds worker-pools create tsz-ci-c3-88 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-224 \
+  --worker-machine-type=c3-highcpu-176 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-96 \

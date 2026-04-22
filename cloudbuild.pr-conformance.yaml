@@ -4,7 +4,13 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      if ! scripts/ci/gcp-cancel-superseded.sh; then
+      set +e
+      scripts/ci/gcp-cancel-superseded.sh
+      cancel_rc="$?"
+      set -e
+      if [[ "$cancel_rc" -eq 42 ]]; then
+        exit 42
+      elif [[ "$cancel_rc" -ne 0 ]]; then
         echo "warning: superseded build cancellation failed" >&2
       fi
       scripts/ci/gcp-cache.sh restore
@@ -14,12 +20,18 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      mkdir -p .ci-status
+      mkdir -p .ci-status .ci-logs
       set +e
-      scripts/ci/gcp-full-ci.sh "${_TSZ_CI_SUITE}"
-      rc="$?"
+      scripts/ci/gcp-full-ci.sh "${_TSZ_CI_SUITE}" 2>&1 | tee .ci-logs/full-ci.log
+      rc="${PIPESTATUS[0]}"
       set -e
       printf '%s\n' "$rc" > .ci-status/full-ci.exit
+      python3 scripts/ci/gcp-summary.py \
+        --suite "${_TSZ_CI_SUITE}" \
+        --exit-code "$rc" \
+        --metrics-dir "${TSZ_CI_METRICS_DIR:-.ci-metrics}" \
+        --logs-dir "${TSZ_CI_LOG_DIR:-.ci-logs}" \
+        --out .ci-status/check-summary.md || true
       exit 0
 
   - id: save-cache
@@ -41,11 +53,16 @@ steps:
       #!/usr/bin/env bash
       set -euo pipefail
       rc="$(cat .ci-status/full-ci.exit 2>/dev/null || echo 1)"
+      if [[ -f .ci-status/check-summary.md ]]; then
+        echo
+        echo "==> TSZ CI summary"
+        cat .ci-status/check-summary.md
+      fi
       exit "$rc"
 
 options:
   pool:
-    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-n2d-224-pr
+    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-c3-88
   logging: CLOUD_LOGGING_ONLY
   automapSubstitutions: true
 
