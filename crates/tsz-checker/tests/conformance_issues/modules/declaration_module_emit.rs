@@ -513,6 +513,44 @@ class Foo<T> {
     );
 }
 
+#[test]
+fn test_ts2345_same_named_namespace_classes_use_qualified_pair() {
+    let code = r#"
+declare namespace N {
+    export class Token {
+        kind: "n";
+    }
+}
+declare namespace M {
+    export class Token {
+        kind: "m";
+    }
+}
+
+declare const n: N.Token;
+function acceptsM(value: M.Token): void {}
+acceptsM(n);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        code,
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 2345),
+        "Expected TS2345 for same-named namespace class argument, got: {diagnostics:?}"
+    );
+    let message = diagnostic_message(&diagnostics, 2345).unwrap_or("");
+    assert!(
+        message.contains("N.Token") && message.contains("M.Token"),
+        "Expected namespace-qualified Token names in TS2345 message. Message: {message}"
+    );
+}
+
 /// Union of tuple types with `.filter()` should contextually type callback parameters
 /// as the union of element types, matching tsc behavior.
 ///

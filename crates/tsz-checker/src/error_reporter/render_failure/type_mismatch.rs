@@ -242,6 +242,10 @@ impl<'a> CheckerState<'a> {
         }
 
         source_str = self.canonicalize_assignment_numeric_literal_union_display(source_str);
+        if depth == 0 {
+            (source_str, target_str) =
+                self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+        }
 
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
