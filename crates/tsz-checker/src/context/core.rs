@@ -416,6 +416,7 @@ impl<'a> CheckerContext<'a> {
         self.program_wildcard_reexports_type_only =
             parent.program_wildcard_reexports_type_only.clone();
         self.program_module_exports = parent.program_module_exports.clone();
+        self.program_cross_file_node_symbols = parent.program_cross_file_node_symbols.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
