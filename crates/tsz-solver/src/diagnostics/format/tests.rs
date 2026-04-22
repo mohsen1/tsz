@@ -1868,6 +1868,65 @@ fn structural_display_alias_can_replace_generic_helper_alias() {
     );
 }
 
+#[test]
+fn string_intrinsic_display_alias_keeps_resolved_intrinsic_surface() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let alias_name = db.intern_string("Wrapper");
+    let def_id = def_store.register(crate::def::DefinitionInfo::interface(
+        alias_name,
+        vec![TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        vec![],
+    ));
+    let app = db.application(db.lazy(def_id), vec![TypeId::STRING]);
+    let evaluated = db.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+
+    db.store_display_alias(evaluated, app);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(evaluated),
+        "Uppercase<string>",
+        "Resolved string intrinsics should not be repainted through alias provenance"
+    );
+}
+
+#[test]
+fn template_literal_display_alias_keeps_resolved_pattern_surface() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let alias_name = db.intern_string("Wrapper");
+    let def_id = def_store.register(crate::def::DefinitionInfo::interface(
+        alias_name,
+        vec![TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        vec![],
+    ));
+    let app = db.application(db.lazy(def_id), vec![TypeId::STRING]);
+    let evaluated = db.template_literal(vec![
+        TemplateSpan::Text(db.intern_string("AA")),
+        TemplateSpan::Type(db.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING)),
+    ]);
+
+    db.store_display_alias(evaluated, app);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(evaluated),
+        "`AA${Uppercase<string>}`",
+        "Resolved template literal patterns should not be repainted through alias provenance"
+    );
+}
+
 // =================================================================
 // Callable type formatting
 // =================================================================

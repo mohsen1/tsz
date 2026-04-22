@@ -1429,6 +1429,21 @@ impl<'a> CheckerState<'a> {
                     self.widen_fresh_object_literal_properties_for_display(target),
                 )
             };
+            let assignability_display =
+                self.format_assignability_type_for_message(display_target, source);
+            if assignability_display.starts_with('"')
+                || assignability_display.starts_with('`')
+                || assignability_display == "true"
+                || assignability_display == "false"
+                || (crate::query_boundaries::common::string_intrinsic_components(
+                    self.ctx.types,
+                    display_target,
+                )
+                .is_some()
+                    && assignability_display != fallback)
+            {
+                return assignability_display;
+            }
             // Generic callable targets preserve type alias names from annotations
             let target_is_generic_callable =
                 crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
@@ -1482,12 +1497,46 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.target_preserves_literal_surface(source) {
-            self.format_type_diagnostic(display_target)
+            let assignability_display =
+                self.format_assignability_type_for_message(display_target, source);
+            let fallback = self.format_type_diagnostic(display_target);
+            if assignability_display.starts_with('"')
+                || assignability_display.starts_with('`')
+                || assignability_display == "true"
+                || assignability_display == "false"
+                || (crate::query_boundaries::common::string_intrinsic_components(
+                    self.ctx.types,
+                    display_target,
+                )
+                .is_some()
+                    && assignability_display != fallback)
+            {
+                assignability_display
+            } else {
+                fallback
+            }
         } else {
             // Use diagnostic mode to avoid synthetic `?: undefined` in unions
-            self.format_type_diagnostic_widened(
+            let assignability_display =
+                self.format_assignability_type_for_message(display_target, source);
+            let fallback = self.format_type_diagnostic_widened(
                 self.widen_fresh_object_literal_properties_for_display(display_target),
-            )
+            );
+            if assignability_display.starts_with('"')
+                || assignability_display.starts_with('`')
+                || assignability_display == "true"
+                || assignability_display == "false"
+                || (crate::query_boundaries::common::string_intrinsic_components(
+                    self.ctx.types,
+                    display_target,
+                )
+                .is_some()
+                    && assignability_display != fallback)
+            {
+                assignability_display
+            } else {
+                fallback
+            }
         }
     }
 
