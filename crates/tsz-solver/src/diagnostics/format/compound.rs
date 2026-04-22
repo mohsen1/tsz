@@ -1565,6 +1565,19 @@ impl<'a> TypeFormatter<'a> {
 
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
     pub(super) fn resolve_object_shape_name(&mut self, shape: &ObjectShape) -> Option<String> {
+        // The empty object `{}` is a universally-shared shape. `find_def_by_shape`
+        // is keyed on structural hash, so any *type alias* registered with an
+        // empty body (e.g., `type T52 = T50<unknown>` reducing to `{}`) would
+        // repaint every user-written `{}` annotation with that alias's name.
+        // Skip the def-name fallback for empty anonymous shapes when the
+        // matched def is a type alias; named empty types (interfaces, classes)
+        // still resolve through `shape.symbol` above this guard, and lib
+        // interfaces below are unaffected because the Object-interface special
+        // case handles the only realistic empty lib shape.
+        let shape_is_empty_anonymous = shape.symbol.is_none()
+            && shape.properties.is_empty()
+            && shape.string_index.is_none()
+            && shape.number_index.is_none();
         if let Some(sym_id) = shape.symbol
             && let Some(name) = self.format_symbol_name(sym_id)
         {
@@ -1594,11 +1607,22 @@ impl<'a> TypeFormatter<'a> {
         // This path handles: (a) type aliases (always symbol=None), and (b) lib interfaces
         // (built without symbol stamps, e.g. String) whose unique structural content prevents
         // false matches.
+        //
+        // Exception: for empty anonymous shapes (`{}`), skip the fallback
+        // when the matched def is a type alias. Any alias whose body reduces
+        // to `{}` (e.g., `type T52 = T50<unknown>`) would otherwise repaint
+        // every user-written `{}` annotation with the alias name; tsc shows
+        // the literal `{}` in that case. Lib interfaces do not have empty
+        // shapes, so the guard never hides them.
         if let Some(def_store) = self.def_store
             && let Some(def_id) = def_store.find_def_by_shape(shape)
             && let Some(def) = def_store.get(def_id)
         {
-            return Some(self.format_def_name(&def));
+            use crate::def::DefKind;
+            let skip_for_empty_alias = shape_is_empty_anonymous && def.kind == DefKind::TypeAlias;
+            if !skip_for_empty_alias {
+                return Some(self.format_def_name(&def));
+            }
         }
         // Special case: detect the global Object interface by its characteristic properties.
         // The Object interface has: constructor, toString, toLocaleString, valueOf,
