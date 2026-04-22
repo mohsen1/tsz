@@ -3157,6 +3157,21 @@ impl ParserState {
         // - Contextually reserved words (await in async/static contexts)
         // - String literals ("key")
         // - Numeric literals (0, 1, etc.)
+        let property_name_start = self.token_pos();
+        let property_name_kind = self.token();
+        let property_name_had_prior_missing_colon =
+            self.parse_diagnostics.last().is_some_and(|diag| {
+                diag.start == property_name_start && diag.message == "':' expected."
+            });
+        let literal_property_name = matches!(
+            property_name_kind,
+            SyntaxKind::StringLiteral
+                | SyntaxKind::NumericLiteral
+                | SyntaxKind::BigIntLiteral
+                | SyntaxKind::TrueKeyword
+                | SyntaxKind::FalseKeyword
+                | SyntaxKind::NullKeyword
+        );
         let requires_colon = self.is_reserved_word()
             || (self.is_token(SyntaxKind::AwaitKeyword)
                 && (self.in_async_context() || self.in_static_block_context()))
@@ -3254,7 +3269,12 @@ impl ParserState {
             // Shorthand property - but certain property names require `:` syntax
             if requires_colon {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+                let defer_to_comma_recovery = literal_property_name
+                    && property_name_had_prior_missing_colon
+                    && self.is_token(SyntaxKind::SemicolonToken);
+                if !defer_to_comma_recovery {
+                    self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+                }
             }
 
             // CoverInitializedName: `{ x = expr }` in destructuring patterns
