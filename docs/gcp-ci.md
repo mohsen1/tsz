@@ -4,13 +4,13 @@ CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
-save updated caches, then report the original suite status. Main conformance
-uses 224-vCPU N2D workers, while PR conformance uses the existing C3 highcpu
-pool to avoid waiting on the same large N2D machine shape. The other suites stay
+save updated caches, then report the original suite status. Main and PR
+conformance use the existing C3 highcpu pool to avoid waiting on the largest
+N2D machine shape. The other suites stay
 smaller so one full PR run fits under the current private-pool CPU quota:
 
 ```text
-main conformance  tsz-ci-n2d-224     n2d-highcpu-224
+main conformance  tsz-ci-c3-88       c3-highcpu-176
 PR conformance    tsz-ci-c3-88       c3-highcpu-176
 emit              tsz-ci-n2d-96      n2d-highcpu-96
 fourslash         tsz-ci-n2d-96      n2d-highcpu-96
@@ -89,12 +89,6 @@ then the final Cloud Build step exits with the original suite status.
 Create the private pool before running builds or creating triggers:
 
 ```bash
-gcloud builds worker-pools create tsz-ci-n2d-224 \
-  --project=thirdface-ai-oauth \
-  --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-224 \
-  --worker-disk-size=200GB
-
 gcloud builds worker-pools create tsz-ci-c3-88 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
