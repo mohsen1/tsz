@@ -297,11 +297,11 @@ impl<'a> CheckerState<'a> {
         // `typeof NS.Point` needs the namespace object (e.g., `{ Origin(): ... }`)
         // not the interface type (`{ x: number; y: number }`).
         let is_ns_interface_merge = self.ctx.binder.get_symbol(sym_id).is_some_and(|s| {
-            s.flags & tsz_binder::symbol_flags::INTERFACE != 0
-                && s.flags
-                    & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                        | tsz_binder::symbol_flags::VALUE_MODULE)
-                    != 0
+            s.has_any_flags(tsz_binder::symbol_flags::INTERFACE)
+                && s.has_any_flags(
+                    tsz_binder::symbol_flags::NAMESPACE_MODULE
+                        | tsz_binder::symbol_flags::VALUE_MODULE,
+                )
         });
         if !is_ns_interface_merge
             && let Some(&cached) = self.ctx.symbol_instance_types.get(&sym_id)
@@ -660,12 +660,11 @@ impl<'a> CheckerState<'a> {
                 let Some(candidate_symbol) = binder.get_symbol(candidate_id) else {
                     continue;
                 };
-                if (candidate_symbol.flags
-                    & (tsz_binder::symbol_flags::MODULE
+                if !candidate_symbol.has_any_flags(
+                    tsz_binder::symbol_flags::MODULE
                         | tsz_binder::symbol_flags::NAMESPACE_MODULE
-                        | tsz_binder::symbol_flags::VALUE_MODULE))
-                    == 0
-                {
+                        | tsz_binder::symbol_flags::VALUE_MODULE,
+                ) {
                     continue;
                 }
                 if let Some(exports) = candidate_symbol.exports.as_ref()
@@ -690,7 +689,7 @@ impl<'a> CheckerState<'a> {
             // Found direct export - but we need to resolve if it's itself a re-export
             // Get the symbol and check if it's an alias
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && symbol.flags & tsz_binder::symbol_flags::ALIAS != 0
+                && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
             {
                 // Follow the alias
                 if let Some(ref import_module) = symbol.import_module {
@@ -806,7 +805,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             use tsz_binder::symbol_flags;
-            if member_symbol.flags & symbol_flags::VALUE == 0 {
+            if !member_symbol.has_any_flags(symbol_flags::VALUE) {
                 continue;
             }
 
@@ -814,9 +813,9 @@ impl<'a> CheckerState<'a> {
             // The binder sets VALUE_MODULE | NAMESPACE_MODULE on ALL namespaces,
             // but only instantiated ones (with value declarations like classes,
             // functions, variables) should appear in the structural value type.
-            if (member_symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0 {
+            if member_symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE) {
                 let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-                if (member_symbol.flags & value_flags_except_module) == 0 {
+                if !member_symbol.has_any_flags(value_flags_except_module) {
                     let mut is_instantiated = false;
                     for &decl_idx in &member_symbol.declarations {
                         if self.is_namespace_declaration_instantiated(decl_idx) {
@@ -830,10 +829,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let is_pure_namespace = (member_symbol.flags
-                & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
-                != 0
-                && (member_symbol.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0;
+            let is_pure_namespace = member_symbol
+                .has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)
+                && !member_symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::FUNCTION);
 
             let mut type_id = if is_pure_namespace {
                 self.ctx
@@ -848,13 +846,13 @@ impl<'a> CheckerState<'a> {
             // not the enum instance type (Color = union of member values).
             // This ensures `m3.Color` resolves to `typeof Color` when
             // `m3: typeof M3` and M3 is a namespace exporting enum Color.
-            if member_symbol.flags & symbol_flags::ENUM != 0
-                && (member_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+            if member_symbol.has_any_flags(symbol_flags::ENUM)
+                && !member_symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
                 && let Some(&ns_type) = self.ctx.enum_namespace_types.get(member_id)
             {
                 type_id = ns_type;
             }
-            if member_symbol.flags & symbol_flags::INTERFACE != 0 {
+            if member_symbol.has_any_flags(symbol_flags::INTERFACE) {
                 let mut candidate = self.type_of_value_declaration_for_symbol(
                     *member_id,
                     member_symbol.value_declaration,
