@@ -6,7 +6,9 @@
 //! - `error_emission`: Call error emission functions
 
 mod display_formatting;
+mod display_formatting_boolean;
 mod elaboration;
+mod elaboration_array_mismatch;
 mod error_emission;
 
 #[path = "../call_errors_binding_patterns.rs"]
