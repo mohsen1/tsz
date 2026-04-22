@@ -291,10 +291,10 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (root_symbol.flags & symbol_flags::ALIAS) != 0 && root_symbol.import_module.is_some() {
+        if root_symbol.has_any_flags(symbol_flags::ALIAS) && root_symbol.import_module.is_some() {
             return false;
         }
-        if (root_symbol.flags & symbol_flags::CLASS) != 0 {
+        if root_symbol.has_any_flags(symbol_flags::CLASS) {
             return false;
         }
 
@@ -402,18 +402,16 @@ impl<'a> CheckerState<'a> {
             && let Some(member_symbol) = self
                 .get_cross_file_symbol(member_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
-            && (member_symbol.flags & symbol_flags::ENUM) != 0
+            && member_symbol.has_any_flags(symbol_flags::ENUM)
         {
             let parent_sym_id = member_symbol.parent;
             if let Some(parent_symbol) = self
                 .get_cross_file_symbol(parent_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-                && (parent_symbol.flags
-                    & (symbol_flags::MODULE
-                        | symbol_flags::NAMESPACE
-                        | symbol_flags::NAMESPACE_MODULE))
-                    != 0
-                && (parent_symbol.flags & symbol_flags::ENUM) == 0
+                && parent_symbol.has_any_flags(
+                    symbol_flags::MODULE | symbol_flags::NAMESPACE | symbol_flags::NAMESPACE_MODULE,
+                )
+                && !parent_symbol.has_any_flags(symbol_flags::ENUM)
             {
                 return true;
             }
@@ -427,8 +425,8 @@ impl<'a> CheckerState<'a> {
             && let Some(enum_symbol) = self
                 .get_cross_file_symbol(enum_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(enum_sym_id))
-            && (enum_symbol.flags & symbol_flags::ENUM) != 0
-            && (enum_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+            && enum_symbol.has_any_flags(symbol_flags::ENUM)
+            && !enum_symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
         {
             // If the property being assigned is a declared member of this enum,
             // this is an enum member assignment (should get TS2540), not a rebind.
@@ -447,12 +445,10 @@ impl<'a> CheckerState<'a> {
             if let Some(parent_symbol) = self
                 .get_cross_file_symbol(parent_sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-                && (parent_symbol.flags
-                    & (symbol_flags::MODULE
-                        | symbol_flags::NAMESPACE
-                        | symbol_flags::NAMESPACE_MODULE))
-                    != 0
-                && (parent_symbol.flags & symbol_flags::ENUM) == 0
+                && parent_symbol.has_any_flags(
+                    symbol_flags::MODULE | symbol_flags::NAMESPACE | symbol_flags::NAMESPACE_MODULE,
+                )
+                && !parent_symbol.has_any_flags(symbol_flags::ENUM)
             {
                 return true;
             }
@@ -474,10 +470,9 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if (base_symbol.flags
-            & (symbol_flags::MODULE | symbol_flags::NAMESPACE | symbol_flags::NAMESPACE_MODULE))
-            == 0
-        {
+        if !base_symbol.has_any_flags(
+            symbol_flags::MODULE | symbol_flags::NAMESPACE | symbol_flags::NAMESPACE_MODULE,
+        ) {
             return false;
         }
 
@@ -494,7 +489,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        (member_symbol.flags & symbol_flags::ENUM) != 0
+        member_symbol.has_any_flags(symbol_flags::ENUM)
     }
 
     pub(crate) fn is_js_namespace_enum_expando_member_assignment(
@@ -559,8 +554,8 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if (enum_symbol.flags & symbol_flags::ENUM) == 0
-            || (enum_symbol.flags & symbol_flags::ENUM_MEMBER) != 0
+        if !enum_symbol.has_any_flags(symbol_flags::ENUM)
+            || enum_symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
         {
             return false;
         }
@@ -571,10 +566,9 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if (parent_symbol.flags
-            & (symbol_flags::MODULE | symbol_flags::NAMESPACE | symbol_flags::NAMESPACE_MODULE))
-            == 0
-            || (parent_symbol.flags & symbol_flags::ENUM) != 0
+        if !parent_symbol.has_any_flags(
+            symbol_flags::MODULE | symbol_flags::NAMESPACE | symbol_flags::NAMESPACE_MODULE,
+        ) || parent_symbol.has_any_flags(symbol_flags::ENUM)
         {
             return false;
         }
@@ -637,7 +631,7 @@ impl<'a> CheckerState<'a> {
         let member_symbol = self
             .get_cross_file_symbol(member_sym_id)
             .or_else(|| self.ctx.binder.get_symbol(member_sym_id));
-        member_symbol.is_some_and(|sym| (sym.flags & symbol_flags::ENUM_MEMBER) != 0)
+        member_symbol.is_some_and(|sym| sym.has_any_flags(symbol_flags::ENUM_MEMBER))
     }
 
     pub(crate) fn error_top_level_js_this_computed_element_assignment(
