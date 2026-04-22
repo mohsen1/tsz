@@ -969,7 +969,7 @@ impl<'a> FlowAnalyzer<'a> {
         let sym_id = self.binder.resolve_identifier(self.arena, expr)?;
         let symbol = self.binder.get_symbol(sym_id)?;
         let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
-        if (symbol.flags & symbol_flags::CLASS) != 0 {
+        if symbol.has_any_flags(symbol_flags::CLASS) {
             return Some(
                 self.resolve_symbol_to_lazy(symbol_ref)
                     .unwrap_or_else(|| self.interner.reference(symbol_ref)),
@@ -980,8 +980,8 @@ impl<'a> FlowAnalyzer<'a> {
         // have both INTERFACE and VARIABLE flags. The interface type IS the instance type
         // since interfaces describe instances, not constructors.
         // This handles `x instanceof Array`, `x instanceof Date`, etc.
-        if (symbol.flags & symbol_flags::INTERFACE) != 0
-            && (symbol.flags & symbol_flags::VARIABLE) != 0
+        if symbol.has_any_flags(symbol_flags::INTERFACE)
+            && symbol.has_any_flags(symbol_flags::VARIABLE)
         {
             return Some(
                 self.resolve_symbol_to_lazy(symbol_ref)
@@ -992,7 +992,7 @@ impl<'a> FlowAnalyzer<'a> {
         // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
         // resolve the function's type and extract the instance type from construct
         // signatures or prototype property.
-        if (symbol.flags & symbol_flags::FUNCTION) != 0
+        if symbol.has_any_flags(symbol_flags::FUNCTION)
             && let Some(env) = &self.type_environment
         {
             let env_borrow = env.borrow();
@@ -1010,7 +1010,7 @@ impl<'a> FlowAnalyzer<'a> {
         // For plain VARIABLE symbols (e.g., `declare var C: CConstructor`),
         // resolve the variable's type annotation to find the constructor type,
         // then extract the instance type from its construct signatures or prototype.
-        if (symbol.flags & symbol_flags::VARIABLE) != 0 {
+        if symbol.has_any_flags(symbol_flags::VARIABLE) {
             // Strategy 1: Try type environment lookup for the variable
             if let Some(env) = &self.type_environment {
                 let env_borrow = env.borrow();
@@ -1422,7 +1422,7 @@ impl<'a> FlowAnalyzer<'a> {
         let base_sym = self.binder.get_symbol(base_sym_id)?;
 
         // Check that the base is an enum
-        if base_sym.flags & symbol_flags::ENUM == 0 {
+        if !base_sym.has_any_flags(symbol_flags::ENUM) {
             return None;
         }
 
@@ -1463,7 +1463,7 @@ impl<'a> FlowAnalyzer<'a> {
         let symbol = self.binder.get_symbol(sym_id)?;
 
         // Must be a block-scoped variable (const/let)
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             return None;
         }
 
@@ -1593,7 +1593,7 @@ impl<'a> FlowAnalyzer<'a> {
         let sym_id = self.binder.resolve_identifier(self.arena, node)?;
         let symbol = self.binder.get_symbol(sym_id)?;
         // Must be a block-scoped (const/let) variable
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             return None;
         }
         let decl_idx = symbol.primary_declaration()?;
@@ -1805,7 +1805,7 @@ impl<'a> FlowAnalyzer<'a> {
 
             if let Some(sym_id) = self.reference_symbol(idx)
                 && let Some(sym) = self.binder.get_symbol(sym_id)
-                && (sym.flags & symbol_flags::ENUM_MEMBER) != 0
+                && sym.has_any_flags(symbol_flags::ENUM_MEMBER)
             {
                 return self.literal_type_from_node(idx);
             }
