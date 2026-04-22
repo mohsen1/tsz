@@ -73,7 +73,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Check ambient module declarations (`declare module "X" { ... }`)
-        if self.ctx.declared_modules_contains(self.ctx.binder, module_name) {
+        if self
+            .ctx
+            .declared_modules_contains(self.ctx.binder, module_name)
+        {
             return true;
         }
 
