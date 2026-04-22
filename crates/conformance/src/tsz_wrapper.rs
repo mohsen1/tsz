@@ -706,8 +706,7 @@ pub fn parse_tsz_output(
     // them are false positives. Filter before parsing to avoid counting them.
     let combined = filter_lib_diagnostics(&combined, project_root);
     let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
-    let mut error_codes = parse_error_codes_from_text(&combined);
-    apply_ts5110_fixup(&mut error_codes, &options);
+    let error_codes = parse_error_codes_from_text(&combined);
     CompilationResult {
         error_codes,
         diagnostic_fingerprints,
@@ -1475,44 +1474,6 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
     codes
 }
 
-/// Inject a synthetic TS5110 error when moduleResolution and module are
-/// incompatible (node16/nodenext resolution requires matching module kind).
-/// tsz may not emit TS5110 itself, so the conformance harness synthesizes it.
-fn apply_ts5110_fixup(error_codes: &mut Vec<u32>, options: &HashMap<String, String>) {
-    const TS5110: u32 = 5110;
-    if !error_codes.contains(&TS5110) {
-        if let (Some(module_resolution), Some(module)) =
-            (options.get("moduleresolution"), options.get("module"))
-        {
-            let resolution = module_resolution
-                .split(',')
-                .next()
-                .unwrap_or(module_resolution)
-                .trim()
-                .to_lowercase();
-            let module = module
-                .split(',')
-                .next()
-                .unwrap_or(module)
-                .trim()
-                .to_lowercase();
-            // node18 and node20 are aliases for nodenext; normalize before comparing.
-            fn canonical(s: &str) -> &str {
-                match s {
-                    "node18" | "node20" => "nodenext",
-                    other => other,
-                }
-            }
-            let res_canon = canonical(&resolution);
-            let mod_canon = canonical(&module);
-            let needs_match = res_canon == "node16" || res_canon == "nodenext";
-            if needs_match && mod_canon != res_canon {
-                error_codes.push(TS5110);
-            }
-        }
-    }
-}
-
 /// Parse @symlink associations from raw test file content.
 /// Returns a map of source filename -> list of symlink paths.
 /// Format in test files: @filename: /path followed by @symlink: /link1,/link2
@@ -1930,8 +1891,7 @@ pub fn parse_batch_output(
     // them are false positives.
     let text = filter_lib_diagnostics(text, project_root);
     let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
-    let mut error_codes = parse_error_codes_from_text(&text);
-    apply_ts5110_fixup(&mut error_codes, &options);
+    let error_codes = parse_error_codes_from_text(&text);
 
     CompilationResult {
         error_codes,
