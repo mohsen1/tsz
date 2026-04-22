@@ -459,6 +459,13 @@ impl<'a> TypeFormatter<'a> {
                 use crate::def::DefKind;
                 let skip_alias = if def.kind == DefKind::TypeAlias {
                     def.body.is_some_and(|b| def_store.is_computed_body(b))
+                        || (!def.type_params.is_empty()
+                            && def.body.is_some_and(|b| {
+                                matches!(
+                                    self.interner.lookup(b),
+                                    Some(TypeData::IndexAccess(_, _) | TypeData::Conditional(_))
+                                )
+                            }))
                         || (self.skip_application_alias_names
                             && def.type_params.is_empty()
                             && self.interner.get_display_alias(type_id).is_some())
