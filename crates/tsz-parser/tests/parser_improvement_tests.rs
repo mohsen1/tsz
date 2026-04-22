@@ -2605,6 +2605,54 @@ type T = {
 }
 
 #[test]
+fn test_postfix_optional_method_signature_recovers_with_semicolon_expected() {
+    let source = r"
+type T = { x()?: number; };
+interface I { y()?: string; }
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let x_question = source.find("x()?").expect("x method") as u32 + 3;
+    let y_question = source.find("y()?").expect("y method") as u32 + 3;
+    let question_positions = vec![x_question, y_question];
+    let colon_positions = vec![x_question + 1, y_question + 1];
+
+    let actual_positions: Vec<u32> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::EXPECTED && diag.message == "';' expected.")
+        .map(|diag| diag.start)
+        .collect();
+    assert_eq!(
+        actual_positions, question_positions,
+        "Expected TS1005 ';' expected at postfix optional method markers, got {diagnostics:?}",
+    );
+
+    let actual_ts1131_positions: Vec<u32> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED)
+        .map(|diag| diag.start)
+        .collect();
+    assert_eq!(
+        actual_ts1131_positions, colon_positions,
+        "Expected TS1131 at the colon following postfix optional method markers: {diagnostics:?}",
+    );
+
+    let ts1131_at_question = diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED
+                && question_positions.contains(&diag.start)
+        })
+        .count();
+    assert_eq!(
+        ts1131_at_question, 0,
+        "Postfix optional method markers should not fall through to TS1131: {diagnostics:?}",
+    );
+}
+
+#[test]
 fn test_type_literal_statement_recovery_matches_interface_extending_class2() {
     let source = r"
 class Foo {
