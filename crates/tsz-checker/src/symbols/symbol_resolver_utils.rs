@@ -169,7 +169,7 @@ impl<'a> CheckerState<'a> {
     /// Handles block-scoped local shadowing a lib global var (e.g. `const Symbol = globalThis.Symbol`).
     pub(crate) fn resolve_lib_global_var_symbol(&self, name: &str) -> Option<SymbolId> {
         if self.ctx.binder.lib_symbols_are_merged() {
-            for &lib_id in &self.ctx.binder.lib_symbol_ids {
+            for &lib_id in self.ctx.binder.lib_symbol_ids.iter() {
                 if let Some(lib_sym) = self.ctx.binder.get_symbol(lib_id)
                     && lib_sym.escaped_name == name
                     && lib_sym.has_any_flags(symbol_flags::VALUE)
