@@ -2,6 +2,7 @@
 //! type queries, and contextual literal type analysis.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::common::lazy_def_id;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -1737,22 +1738,22 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let constraint_has_type_params =
-                crate::query_boundaries::checkers::generic::contains_type_parameters(
-                    self.ctx.types,
-                    constraint_type,
-                );
+                generic_query::contains_type_parameters(self.ctx.types, constraint_type);
             let default_has_type_params =
-                crate::query_boundaries::checkers::generic::contains_type_parameters(
-                    self.ctx.types,
-                    default_type,
-                );
-            if constraint_has_type_params
-                || default_has_type_params
-                || !self.is_assignable_to(default_type, constraint_type)
-            {
-                if constraint_has_type_params || default_has_type_params {
+                generic_query::contains_type_parameters(self.ctx.types, default_type);
+            if constraint_has_type_params || default_has_type_params {
+                let is_other_bare_type_parameter = |type_id| {
+                    generic_query::is_bare_type_parameter(self.ctx.types, type_id)
+                        && generic_query::type_parameter_name(self.ctx.types, type_id)
+                            .is_some_and(|name| name != param.name)
+                };
+                if !is_other_bare_type_parameter(default_type)
+                    && !is_other_bare_type_parameter(constraint_type)
+                {
                     continue;
                 }
+            }
+            if !self.is_assignable_to(default_type, constraint_type) {
                 let Some(node) = self.ctx.arena.get(param_idx) else {
                     continue;
                 };
