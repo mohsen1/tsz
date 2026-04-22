@@ -1105,7 +1105,7 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> Option<(SymbolId, NodeIndex)> {
         let sym_id = self.binder.resolve_identifier(self.arena, ident_idx)?;
         let symbol = self.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             return None;
         }
         let mut decl_idx = symbol.primary_declaration()?;

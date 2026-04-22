@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
             || self.is_well_known_lib_type_name(&name)
             || self
                 .get_cross_file_symbol(heritage_sym)
-                .is_some_and(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VARIABLE))
         {
             return;
         }

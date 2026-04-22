@@ -814,7 +814,7 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(symbol) = self.binder.get_symbol(sym_id) else {
             return false;
         };
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
             return false;
         }
 
@@ -869,7 +869,7 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(symbol) = self.binder.get_symbol(sym_id) else {
             return false;
         };
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
             return false;
         }
 
