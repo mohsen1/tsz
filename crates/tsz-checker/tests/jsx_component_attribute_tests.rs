@@ -980,6 +980,23 @@ fn cross_file_jsx_diagnostics_with_mode_and_default_libs(
     jsx_mode: JsxMode,
     include_default_libs: bool,
 ) -> Vec<(u32, String)> {
+    cross_file_jsx_diagnostics_with_options_and_default_libs(
+        lib_source,
+        main_source,
+        CheckerOptions {
+            jsx_mode,
+            ..CheckerOptions::default()
+        },
+        include_default_libs,
+    )
+}
+
+fn cross_file_jsx_diagnostics_with_options_and_default_libs(
+    lib_source: &str,
+    main_source: &str,
+    options: CheckerOptions,
+    include_default_libs: bool,
+) -> Vec<(u32, String)> {
     let default_lib_files = if include_default_libs {
         load_cross_file_jsx_lib_files()
     } else {
@@ -1023,11 +1040,6 @@ fn cross_file_jsx_diagnostics_with_mode_and_default_libs(
     }
     let all_arenas = Arc::new(all_arenas_vec);
     let all_binders = Arc::new(all_binders_vec);
-
-    let options = CheckerOptions {
-        jsx_mode,
-        ..CheckerOptions::default()
-    };
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -1847,6 +1859,94 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
     assert!(
         !has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "real react16 fixture should not emit TS7006, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_jsx_fragment_factory_no_unused_locals_react16_fixture_checks_nested_callback_body() {
+    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
+        return;
+    };
+    let Some(source) = load_typescript_fixture(
+        "TypeScript/tests/cases/compiler/jsxFragmentFactoryNoUnusedLocals.tsx",
+    ) else {
+        return;
+    };
+    let source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
+
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        &react_types,
+        &source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            jsx_factory: "createElement".to_string(),
+            jsx_factory_from_config: true,
+            jsx_fragment_factory: "Fragment".to_string(),
+            jsx_fragment_factory_from_config: true,
+            no_unused_locals: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "expected nested setCnt callback to emit TS7006 for prev, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ
+                && message.contains("'setCnt'")
+        }),
+        "setCnt is read inside the JSX onClick callback body and should not emit TS6133, got: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_any_intrinsic_props_still_evaluate_attribute_callback_body() {
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        p: any;
+        button: any;
+    }
+}
+declare function createElement(...args: any[]): any;
+declare const Fragment: any;
+
+export function Counter() {
+    const [cnt, setCnt] = null as any;
+    return <>
+        <p>{cnt}</p>
+        <button onClick={() => setCnt((prev) => prev + 1)} type="button">Update</button>
+    </>;
+}
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        "",
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            jsx_factory: "createElement".to_string(),
+            jsx_factory_from_config: true,
+            jsx_fragment_factory: "Fragment".to_string(),
+            jsx_fragment_factory_from_config: true,
+            no_unused_locals: true,
+            ..CheckerOptions::default()
+        },
+        false,
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
+        "any intrinsic props should still evaluate nested callback bodies, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ
+                && message.contains("'setCnt'")
+        }),
+        "setCnt is read inside an any-props JSX attribute callback, got: {diags:?}"
     );
 }
 

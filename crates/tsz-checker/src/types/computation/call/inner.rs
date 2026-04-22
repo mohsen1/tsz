@@ -171,14 +171,15 @@ impl<'a> CheckerState<'a> {
                     self.get_type_of_node(type_arg_idx);
                 }
             }
-            // Still need to check arguments for definite assignment (TS2454) and other errors.
-            // Return Some(ANY) for every index so spread arguments are accepted (avoids
-            // false TS2556 — `any` is callable with any arguments).
-            let check_excess_properties = false;
+            // Untyped calls accept ordinary args; callbacks still get their own context for TS7006.
+            let cb_args: Vec<_> = args
+                .iter()
+                .map(|&idx| self.is_callback_like_argument(idx))
+                .collect();
             self.collect_call_argument_types_with_context(
                 args,
-                |_i, _arg_count| Some(TypeId::ANY),
-                check_excess_properties,
+                |i, _arg_count| (!matches!(cb_args.get(i), Some(true))).then_some(TypeId::ANY),
+                false,
                 None, // No skipping needed
                 CallableContext::none(),
             );
