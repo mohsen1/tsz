@@ -218,6 +218,24 @@ var prop3: Y< <Tany>() => Tany, <Tany>() => Tany>;
 }
 
 #[test]
+fn test_array_flat_return_preserves_flat_array_alias() {
+    let output = emit_dts_with_binding(
+        r#"
+function foo<T>(arr: T[], depth: number) {
+    return arr.flat(depth);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function foo<T>(arr: T[], depth: number): FlatArray<T, 0 | 1 | -1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20>[];"
+        ),
+        "Expected array flat return to preserve FlatArray alias: {output}"
+    );
+}
+
+#[test]
 fn test_named_class_expression_constructor_type_is_inlined() {
     let source = r#"
 export function wrapClass(param: any) {
