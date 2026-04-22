@@ -88,6 +88,11 @@ pub type ResolvedModuleRequestPathMap =
 pub type ResolvedModuleRequestErrorMap =
     FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
 
+/// Program-wide type-only wildcard re-exports index: module name -> list of
+/// `(source_module, is_type_only)` pairs. Shared across cross-file lookup
+/// binders so we don't re-materialise a copy per binder.
+pub type ProgramWildcardReexportsTypeOnly = Arc<FxHashMap<String, Vec<(String, bool)>>>;
+
 /// Represents a failed module resolution with specific error details.
 #[derive(Clone, Debug)]
 pub struct ResolutionError {
@@ -1418,7 +1423,7 @@ pub struct CheckerContext<'a> {
     /// Program-wide wildcard re-exports map; see `program_reexports`.
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
     /// Program-wide type-only wildcard re-exports map; see `program_reexports`.
-    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
     /// Program-wide module-exports index keyed by file name (or ambient
     /// module specifier). Consulted by `ctx.module_exports_for_module`
     /// in preference to per-binder `module_exports`. Driver wraps
@@ -1689,7 +1694,7 @@ pub struct ProjectEnv {
     /// see `CheckerContext::program_reexports`.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
-    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
     /// Program-wide module-exports index; see `CheckerContext::program_module_exports`.
     pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
