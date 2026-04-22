@@ -7,6 +7,11 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct CallTypeArgumentValidation {
+    pub count_mismatch: bool,
+}
+
 // =============================================================================
 // Generic Type Argument Checking Methods
 // =============================================================================
@@ -425,15 +430,13 @@ impl<'a> CheckerState<'a> {
     /// Validate explicit type arguments against their constraints for call expressions.
     /// Reports TS2344 when a type argument doesn't satisfy its constraint.
     /// Reports TS2558 when a non-generic function is called with type arguments.
-    /// Returns `true` when a type argument count mismatch was detected (TS2558 emitted),
-    /// signaling that the caller should skip argument type checking against the
-    /// incorrectly-instantiated signature.
+    /// Returns validation state for downstream call diagnostics.
     pub(crate) fn validate_call_type_arguments(
         &mut self,
         callee_type: TypeId,
         type_args_list: &tsz_parser::parser::NodeList,
         call_idx: NodeIndex,
-    ) -> bool {
+    ) -> CallTypeArgumentValidation {
         use tsz_scanner::SyntaxKind;
 
         if let Some(call_expr) = self.ctx.arena.get_call_expr_at(call_idx)
@@ -443,7 +446,7 @@ impl<'a> CheckerState<'a> {
         {
             // The parser already reports TS2754 for `super<T>(...)`.
             // Skip re-emitting it here to avoid duplicate diagnostics.
-            return false;
+            return CallTypeArgumentValidation::default();
         }
 
         let callee_type_orig = callee_type;
@@ -476,7 +479,7 @@ impl<'a> CheckerState<'a> {
             for &arg_idx in &type_args_list.nodes {
                 self.get_type_of_node(arg_idx);
             }
-            return false;
+            return CallTypeArgumentValidation::default();
         }
 
         // Get the type parameters from the callee type. For callables with overloads,
@@ -488,7 +491,7 @@ impl<'a> CheckerState<'a> {
             got,
         ) else {
             // None = multiple overloads match or not a callable type; skip validation.
-            return false;
+            return CallTypeArgumentValidation::default();
         };
 
         let max_expected = type_params.len();
@@ -514,7 +517,9 @@ impl<'a> CheckerState<'a> {
                                 &counts[1].to_string(),
                             ],
                         );
-                        return false;
+                        return CallTypeArgumentValidation {
+                            count_mismatch: true,
+                        };
                     }
                 }
                 // TS2558: Expected 0 type arguments, but got N.
@@ -523,12 +528,11 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
                     &["0", &got.to_string()],
                 );
-                // For non-generic functions (0 type params), tsc still proceeds with argument
-                // type checking against the original signature. Return false (not a count mismatch)
-                // so the caller continues to check argument types.
-                return false;
+                return CallTypeArgumentValidation {
+                    count_mismatch: true,
+                };
             }
-            return false;
+            return CallTypeArgumentValidation::default();
         }
 
         if got < min_required || got > max_expected {
@@ -547,7 +551,9 @@ impl<'a> CheckerState<'a> {
                         &counts[1].to_string(),
                     ],
                 );
-                return true;
+                return CallTypeArgumentValidation {
+                    count_mismatch: true,
+                };
             }
             // TS2558: Expected N type arguments, but got M.
             // When there are type params with defaults, show the range
@@ -561,11 +567,13 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
                 &[&expected_str, &got.to_string()],
             );
-            return true;
+            return CallTypeArgumentValidation {
+                count_mismatch: true,
+            };
         }
 
         self.validate_type_args_against_params(&type_params, type_args_list);
-        false
+        CallTypeArgumentValidation::default()
     }
 
     /// Validate type arguments against their constraints for type references (e.g., `A<X, Y>`).
