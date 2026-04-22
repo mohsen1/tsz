@@ -1061,11 +1061,17 @@ pub(super) fn collect_diagnostics(
         let _parallel_span =
             tracing::info_span!("parallel_check_files", files = work_queue.len()).entered();
 
-        // Pre-compute per-file module bridging (sequential, fast — uses resolved_module_paths)
+        // Pre-compute per-file module bridging — parallel across files since
+        // each binder is constructed independently from the shared
+        // `program`/`merged_augmentations`/`cached_module_specifiers`/
+        // `resolved_module_paths` borrows. On large-ts-repo (6086 files) this
+        // moves the prepare phase from sequential to N-way parallel, since
+        // the bottleneck is symbol-table cloning per binder rather than IO.
         let per_file_binders: Vec<BinderState> = {
+            use rayon::prelude::*;
             let _prep_span = tracing::info_span!("prepare_binders").entered();
             work_queue
-                .iter()
+                .par_iter()
                 .map(|&file_idx| {
                     let file = &program.files[file_idx];
                     let mut binder = create_binder_from_bound_file_with_augmentations(
