@@ -21,6 +21,51 @@ fn expression_parsing_handles_shift_and_greater_token_ambiguity() {
 }
 
 #[test]
+fn expression_type_argument_probe_rejects_greater_equals_as_closing_angle() {
+    let source = r#"
+const enum MyVer { v1 = 1, v2 = 2 }
+let ver = 21
+const a = ver < (MyVer.v1 >= MyVer.v2 ? MyVer.v1 : MyVer.v2)
+"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert_eq!(
+        diags.len(),
+        0,
+        "`>=` inside a relational expression should not close speculative expression type arguments: {diags:?}"
+    );
+}
+
+#[test]
+fn jsx_empty_type_arguments_accept_compound_closer_without_text_child() {
+    let source = "const a = <div<>></div>;";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    parser.parse_source_file();
+
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_ARGUMENT_LIST_CANNOT_BE_EMPTY),
+        "empty JSX type arguments should still report TS1099: {diags:?}"
+    );
+    assert!(
+        parser
+            .get_arena()
+            .jsx_text
+            .iter()
+            .all(|text| text.text.trim() != ">"),
+        "the JSX opening tag closer should not be parsed as a text child: {:?}",
+        parser
+            .get_arena()
+            .jsx_text
+            .iter()
+            .map(|text| text.text.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn expression_parsing_handles_regex_division_boundary_after_tokens() {
     let diag_count =
         parse_diagnostics("const n = 10 / 2; const re = /foo/g; const tail = (a / b) / c;");
