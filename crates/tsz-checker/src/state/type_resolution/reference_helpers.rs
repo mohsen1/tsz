@@ -46,7 +46,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags & symbol_flags::ALIAS) == 0 && (symbol.flags & symbol_flags::TYPE) != 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) && symbol.has_any_flags(symbol_flags::TYPE) {
             return true;
         }
 
@@ -143,7 +143,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .binder
                             .get_symbol(sym_id)
-                            .map(|s| s.flags & (symbol_flags::CLASS | symbol_flags::INTERFACE) != 0)
+                            .map(|s| s.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE))
                             .unwrap_or(false);
                         let in_constraint_context =
                             self.is_inside_type_parameter_declaration(type_name_idx);
@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
         if let TypeSymbolResolution::Type(sym_id) =
             self.resolve_identifier_symbol_in_type_position(type_name_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            && symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
         {
             let _def_id = self.ctx.get_or_create_def_id(sym_id);
         }
@@ -368,8 +368,8 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
         let declarations = symbol.declarations.clone();
-        let mixed_class_interface = (symbol.flags & symbol_flags::CLASS) != 0
-            && (symbol.flags & symbol_flags::INTERFACE) != 0;
+        let mixed_class_interface = symbol.has_any_flags(symbol_flags::CLASS)
+            && symbol.has_any_flags(symbol_flags::INTERFACE);
 
         for &decl_idx in &declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -440,7 +440,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let lib_binders = self.get_lib_binders();
         if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-            if symbol.flags & symbol_flags::ALIAS != 0 {
+            if symbol.has_any_flags(symbol_flags::ALIAS) {
                 if self.symbol_has_declared_type_meaning(sym_id) {
                     return false;
                 }
@@ -489,11 +489,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let is_namespace = (symbol.flags
-                & (symbol_flags::MODULE
-                    | symbol_flags::NAMESPACE_MODULE
-                    | symbol_flags::VALUE_MODULE))
-                != 0;
+            let is_namespace = symbol.has_any_flags(
+                symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+            );
             let has_type = self.symbol_has_declared_type_meaning(sym_id);
             return is_namespace && !has_type;
         }
@@ -516,7 +514,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if this is a type alias (original behavior)
-        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return self.type_args_match_alias_params(sym_id, type_args);
         }
 
@@ -524,7 +522,7 @@ impl<'a> CheckerState<'a> {
         // Don't force eager resolution - this prevents false cycle detection for patterns like:
         // class C<T extends C<T>>
         // interface I<T extends I<T>>
-        if symbol.flags & (symbol_flags::CLASS | symbol_flags::INTERFACE) != 0 {
+        if symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE) {
             // Only resolve if we're not in a direct self-reference scenario
             // The symbol_resolution_stack check above handles direct recursion
             return false;
@@ -542,7 +540,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return false;
         }
 
