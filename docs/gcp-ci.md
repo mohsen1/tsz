@@ -6,12 +6,12 @@ The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
 save updated caches, then report the original suite status. Conformance uses
 224-vCPU N2D workers, while the other suites stay smaller so one full PR run
-fits under the current private-pool CPU quota. PR conformance has its own pool
-so it does not wait behind main conformance:
+fits under the current private-pool CPU quota. PR conformance uses the warm
+224-vCPU pool until the requested private-pool CPU quota increase is granted:
 
 ```text
 main conformance  tsz-ci-n2d-224     n2d-highcpu-224
-PR conformance    tsz-ci-n2d-224-pr  n2d-highcpu-224
+PR conformance    tsz-ci-n2d-224     n2d-highcpu-224
 emit              tsz-ci-n2d-96      n2d-highcpu-96
 fourslash         tsz-ci-n2d-96      n2d-highcpu-96
 unit              tsz-ci-n2d-64      n2d-highcpu-64
