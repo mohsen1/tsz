@@ -567,9 +567,8 @@ impl<'a> CheckerState<'a> {
 
         let mut member_sym_id = symbol_named_member(base_symbol, member_name)?;
         let mut member_symbol = source_binder.get_symbol_with_libs(member_sym_id, &lib_binders)?;
-        if member_symbol.flags
-            & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
-            == 0
+        if !member_symbol
+            .has_any_flags(symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
         {
             // Namespace-merge fallback: for `export default C.B`, the merged class symbol
             // can surface the static VALUE member (`C.B: number`) first, while the type
@@ -585,12 +584,11 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
-                if (candidate_symbol.flags
-                    & (symbol_flags::MODULE
+                if !candidate_symbol.has_any_flags(
+                    symbol_flags::MODULE
                         | symbol_flags::NAMESPACE_MODULE
-                        | symbol_flags::VALUE_MODULE))
-                    == 0
-                {
+                        | symbol_flags::VALUE_MODULE,
+                ) {
                     continue;
                 }
                 let Some(candidate_member_id) = symbol_named_member(candidate_symbol, member_name)
@@ -602,20 +600,18 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
-                if candidate_member_symbol.flags
-                    & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
-                    == 0
-                {
+                if !candidate_member_symbol.has_any_flags(
+                    symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS,
+                ) {
                     continue;
                 }
                 member_sym_id = candidate_member_id;
                 member_symbol = candidate_member_symbol;
                 break;
             }
-            if member_symbol.flags
-                & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
-                == 0
-            {
+            if !member_symbol.has_any_flags(
+                symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS,
+            ) {
                 return None;
             }
         }
@@ -632,7 +628,7 @@ impl<'a> CheckerState<'a> {
         // for class members, can lose the instance-side type and fall back to
         // the constructor object type.
         if file_idx.is_some() {
-            if member_symbol.flags & symbol_flags::CLASS != 0
+            if member_symbol.has_any_flags(symbol_flags::CLASS)
                 && let Some((instance_type, params)) =
                     self.delegate_cross_arena_class_instance_type(member_sym_id)
             {
@@ -679,7 +675,7 @@ impl<'a> CheckerState<'a> {
             .map(|lc| std::sync::Arc::clone(&lc.binder))
             .collect();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return None;
         }
         let module_specifier = symbol.import_module.as_ref()?;
@@ -982,10 +978,10 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             // For classes, use class_instance_type_with_params_from_symbol which
             // returns both the instance type AND the type params used to build it
-            let prefer_interface_type_position = symbol.flags & symbol_flags::CLASS != 0
-                && symbol.flags & symbol_flags::INTERFACE != 0;
+            let prefer_interface_type_position = symbol.has_any_flags(symbol_flags::CLASS)
+                && symbol.has_any_flags(symbol_flags::INTERFACE);
 
-            if symbol.flags & symbol_flags::CLASS != 0
+            if symbol.has_any_flags(symbol_flags::CLASS)
                 && !prefer_interface_type_position
                 && let Some((instance_type, params)) =
                     self.class_instance_type_with_params_from_symbol(sym_id)
@@ -1001,8 +997,8 @@ impl<'a> CheckerState<'a> {
             // `type Request<T> = ...` merged with lib's `interface Request`), the
             // local type alias should take precedence. Check whether the TYPE_ALIAS
             // declaration lives in the current arena and skip the INTERFACE path if so.
-            let prefer_type_alias_over_interface = symbol.flags & symbol_flags::TYPE_ALIAS != 0
-                && symbol.flags & symbol_flags::INTERFACE != 0
+            let prefer_type_alias_over_interface = symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                && symbol.has_any_flags(symbol_flags::INTERFACE)
                 && symbol.declarations.iter().any(|&d| {
                     self.ctx
                         .arena
@@ -1020,7 +1016,7 @@ impl<'a> CheckerState<'a> {
                 });
 
             // For interfaces, lower with type parameters and return both
-            if symbol.flags & symbol_flags::INTERFACE != 0
+            if symbol.has_any_flags(symbol_flags::INTERFACE)
                 && !symbol.declarations.is_empty()
                 && !prefer_type_alias_over_interface
             {
@@ -1181,7 +1177,7 @@ impl<'a> CheckerState<'a> {
                     }
                     let sym_id = binder.file_locals.get(ident_name)?;
                     let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                    ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id)
+                    symbol.has_any_flags(symbol_flags::TYPE).then_some(sym_id)
                 };
 
                 let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
@@ -1278,7 +1274,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // For type aliases, get body type and params together
-            if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+            if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                 // When a type alias name collides with a global value declaration
                 // (e.g., user-defined `type Proxy<T>` vs global `declare var Proxy`),
                 // the merged symbol's value_declaration points to the var decl, not the
@@ -1403,7 +1399,7 @@ impl<'a> CheckerState<'a> {
                             }
                             let sym_id = resolve_type_name(ident_name)?;
                             let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                            ((symbol.flags & symbol_flags::TYPE) != 0).then_some(sym_id.0)
+                            symbol.has_any_flags(symbol_flags::TYPE).then_some(sym_id.0)
                         };
                         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
                             self.resolve_value_symbol_for_lowering(node_idx)
@@ -1416,7 +1412,8 @@ impl<'a> CheckerState<'a> {
                                 }
                                 let sym_id = resolve_type_name(ident_name)?;
                                 let symbol = binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                                ((symbol.flags & symbol_flags::TYPE) != 0)
+                                symbol
+                                    .has_any_flags(symbol_flags::TYPE)
                                     .then(|| self.ctx.get_or_create_def_id(sym_id))
                             };
                         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
