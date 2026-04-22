@@ -97,7 +97,11 @@ impl<'a> CheckerState<'a> {
                                 .unwrap_or(TypeId::STRING),
                             k if k == SyntaxKind::NumericLiteral as u16 => enum_arena
                                 .get_literal(init_node)
-                                .and_then(|lit| lit.value.or_else(|| lit.text.parse::<f64>().ok()))
+                                .and_then(|lit| {
+                                    lit.value.or_else(|| {
+                                        tsz_common::numeric::parse_numeric_literal_value(&lit.text)
+                                    })
+                                })
                                 .map(|value| factory.literal_number(value))
                                 .unwrap_or(TypeId::NUMBER),
                             _ => TypeId::NUMBER,

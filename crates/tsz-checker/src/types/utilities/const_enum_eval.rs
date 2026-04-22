@@ -55,7 +55,8 @@ pub(crate) fn evaluate_const_enum_initializer(
     match node.kind {
         k if k == SyntaxKind::NumericLiteral as u16 => {
             let lit = arena.get_literal(node)?;
-            lit.value.or_else(|| lit.text.parse::<f64>().ok())
+            lit.value
+                .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
         }
         k if k == SyntaxKind::Identifier as u16 => {
             let name = arena.get_identifier_text(expr_idx)?;
