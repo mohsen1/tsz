@@ -3756,6 +3756,43 @@ const abac: AB = {
     );
 }
 
+#[test]
+fn object_freeze_preserves_literal_property_values_for_readonly_return() {
+    let source = r#"
+const PUPPETEER_REVISIONS = Object.freeze({
+    chromium: '1011831',
+    firefox: 'latest',
+});
+
+let preferredRevision = PUPPETEER_REVISIONS.chromium;
+preferredRevision = PUPPETEER_REVISIONS.firefox;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322 for Object.freeze literal property mismatch. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0]
+            .message_text
+            .contains("Type '\"latest\"' is not assignable to type '\"1011831\"'."),
+        "Expected literal property values to be preserved through Object.freeze. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322[0].start,
+        source
+            .find("preferredRevision = PUPPETEER_REVISIONS.firefox")
+            .expect("assignment should exist") as u32,
+        "Expected TS2322 to anchor at the assignment expression. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression: assignFromStringInterface2.ts
 /// When both source and target have number index signatures but the source is
 /// missing named properties from the target, TS2739/TS2740 should be emitted

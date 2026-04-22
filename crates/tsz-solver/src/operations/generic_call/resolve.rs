@@ -11,8 +11,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
 use super::{
-    constraint_is_primitive_type, instantiate_call_type, type_implies_literals_deep,
-    type_references_placeholder, unique_placeholder_name,
+    constraint_contains_primitive_constrained_type_param, constraint_is_primitive_type,
+    instantiate_call_type, type_implies_literals_deep, type_references_placeholder,
+    unique_placeholder_name,
 };
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -1593,30 +1594,40 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .expect("inference substitution cache just initialized")
                     };
                     self.normalize_inferred_placeholder_type(ty, infer_subst)
-                } else if !tp.is_const
-                    && !contra_only
-                    && !tp
-                        .constraint
-                        .is_some_and(|c| constraint_is_primitive_type(self.interner, c))
-                {
-                    // Widen fresh inference results from expressions when the type
-                    // parameter does NOT have a primitive constraint (string, number,
-                    // bigint).
-                    // tsc preserves literal types when the constraint is a primitive:
-                    //   <T extends string>(a: T) => T  -- T="z" preserved
-                    //   <T>(a: T) => T                  -- T="z" widened to string
-                    if infer_ctx.all_candidates_are_fresh_literals(var) {
-                        crate::widen_literal_type(self.interner.as_type_database(), ty)
-                    } else if self.inference_type_contains_fresh_object_or_array(ty) {
-                        crate::operations::widening::widen_type_for_inference(
-                            self.interner.as_type_database(),
-                            ty,
-                        )
+                } else {
+                    let constraint_preserves_literals = tp.constraint.is_some_and(|constraint| {
+                        let instantiated_constraint = instantiate_call_type(
+                            self.interner,
+                            constraint,
+                            &substitution,
+                            actual_this_type,
+                        );
+                        constraint_is_primitive_type(self.interner, instantiated_constraint)
+                            || constraint_contains_primitive_constrained_type_param(
+                                self.interner,
+                                instantiated_constraint,
+                                0,
+                            )
+                    });
+                    if !tp.is_const && !contra_only && !constraint_preserves_literals {
+                        // Widen fresh inference results from expressions when the type
+                        // parameter does NOT have a primitive literal-preserving constraint.
+                        // tsc preserves literal types when the constraint is a primitive:
+                        //   <T extends string>(a: T) => T  -- T="z" preserved
+                        //   <T>(a: T) => T                  -- T="z" widened to string
+                        if infer_ctx.all_candidates_are_fresh_literals(var) {
+                            crate::widen_literal_type(self.interner.as_type_database(), ty)
+                        } else if self.inference_type_contains_fresh_object_or_array(ty) {
+                            crate::operations::widening::widen_type_for_inference(
+                                self.interner.as_type_database(),
+                                ty,
+                            )
+                        } else {
+                            ty
+                        }
                     } else {
                         ty
                     }
-                } else {
-                    ty
                 }
             } else if let Some(default) = tp.default {
                 let ty =
