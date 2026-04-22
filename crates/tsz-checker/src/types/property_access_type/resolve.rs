@@ -1097,12 +1097,12 @@ impl<'a> CheckerState<'a> {
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
                     // Check if this is a merged symbol (has both MODULE and value constructor flags)
-                    let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
-                        && (symbol.flags
-                            & (symbol_flags::CLASS
+                    let is_merged = symbol.has_any_flags(symbol_flags::MODULE)
+                        && symbol.has_any_flags(
+                            symbol_flags::CLASS
                                 | symbol_flags::FUNCTION
-                                | symbol_flags::REGULAR_ENUM))
-                            != 0;
+                                | symbol_flags::REGULAR_ENUM,
+                        );
 
                     if is_merged
                         && let Some(exports) = symbol.exports.as_ref()
@@ -1133,7 +1133,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
                 && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
-                && (base_symbol.flags & symbol_flags::ALIAS) != 0
+                && base_symbol.has_any_flags(symbol_flags::ALIAS)
                 && base_symbol.import_module.is_some()
                 && base_symbol
                     .import_name
@@ -1260,7 +1260,7 @@ impl<'a> CheckerState<'a> {
                     .is_namespace_member_transitively_type_only(access.expression, property_name);
                 if !member_symbol.is_type_only
                     && !self.symbol_member_is_type_only(member_sym_id, Some(property_name))
-                    && (member_symbol.flags & symbol_flags::VALUE) != 0
+                    && member_symbol.has_any_flags(symbol_flags::VALUE)
                     && !transitively_type_only
                     // For merged symbols (e.g., namespace + interface), verify that the VALUE
                     // part is actually exported. If only the TYPE part is exported, the value
@@ -1271,18 +1271,18 @@ impl<'a> CheckerState<'a> {
                     if let Some(parent_symbol) = self
                         .get_cross_file_symbol(parent_sym_id)
                         .or_else(|| self.ctx.binder.get_symbol(parent_sym_id))
-                        && (parent_symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
+                        && parent_symbol.has_any_flags(symbol_flags::MODULE | symbol_flags::ENUM)
                     {
                         // If the member is an enum (not an enum member), return
                         // the enum object type so property access on enum members
                         // (e.g., M3.Color.Blue) resolves correctly.
-                        let member_type = if (member_symbol.flags & symbol_flags::ENUM) != 0
-                            && (member_symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+                        let member_type = if member_symbol.has_any_flags(symbol_flags::ENUM)
+                            && !member_symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
                         {
                             self.enum_object_type(member_sym_id)
                                 .unwrap_or_else(|| self.get_type_of_symbol(member_sym_id))
-                        } else if (member_symbol.flags & symbol_flags::INTERFACE) != 0
-                            && (member_symbol.flags & symbol_flags::VALUE) != 0
+                        } else if member_symbol.has_any_flags(symbol_flags::INTERFACE)
+                            && member_symbol.has_any_flags(symbol_flags::VALUE)
                         {
                             // When a namespace member is both an interface and a value
                             // (e.g., `interface NumberFormat` + `var NumberFormat: { new(): ... }`
@@ -1480,7 +1480,7 @@ impl<'a> CheckerState<'a> {
                         .resolve_identifier_symbol(access.expression)
                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                         .is_some_and(|sym| {
-                            (sym.flags & symbol_flags::ALIAS) != 0 && sym.import_module.is_some()
+                            sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_some()
                         })
                 {
                     return TypeId::ANY;
@@ -2276,7 +2276,7 @@ impl<'a> CheckerState<'a> {
                             .resolve_identifier_symbol(access.expression)
                             .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                             .is_some_and(|sym| {
-                                (sym.flags & symbol_flags::ALIAS) != 0
+                                sym.has_any_flags(symbol_flags::ALIAS)
                                     && sym.import_module.is_some()
                             })
                     {
@@ -2606,8 +2606,8 @@ impl<'a> CheckerState<'a> {
         // the base symbol carries both ALIAS and VALUE_MODULE flags. Prefer the
         // base symbol's own exports first, then fall back to the alias target's
         // exports so that enum members from the aliased source remain reachable.
-        let (resolved_sym_id, resolved_flags) = if base_symbol.flags & symbol_flags::ALIAS != 0
-            && base_symbol.flags & (symbol_flags::ENUM | symbol_flags::VALUE_MODULE) == 0
+        let (resolved_sym_id, resolved_flags) = if base_symbol.has_any_flags(symbol_flags::ALIAS)
+            && !base_symbol.has_any_flags(symbol_flags::ENUM | symbol_flags::VALUE_MODULE)
         {
             let mut visited = crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
             if let Some(target_id) = self.resolve_alias_symbol(base_sym_id, &mut visited) {
@@ -2632,7 +2632,7 @@ impl<'a> CheckerState<'a> {
         // original base symbol is a merged alias + namespace, follow the alias to
         // consult the aliased target's exports (const-enum members accessible via
         // a re-exported + locally-merged namespace).
-        let base_has_alias = base_symbol.flags & symbol_flags::ALIAS != 0;
+        let base_has_alias = base_symbol.has_any_flags(symbol_flags::ALIAS);
         let (member_sym_id, resolved_value_decl, resolved_first_decl, resolved_is_ambient) = {
             let resolved_symbol = self
                 .get_cross_file_symbol(resolved_sym_id)
@@ -2746,7 +2746,7 @@ impl<'a> CheckerState<'a> {
         let member_is_method = self
             .get_cross_file_symbol(member_sym_id)
             .or_else(|| self.ctx.binder.get_symbol(member_sym_id))
-            .is_some_and(|s| s.flags & symbol_flags::METHOD != 0);
+            .is_some_and(|s| s.has_any_flags(symbol_flags::METHOD));
         if resolved_flags & symbol_flags::VALUE_MODULE != 0
             && !member_is_method
             && self.is_in_static_property_initializer_ast_context(expression)
@@ -2780,8 +2780,8 @@ impl<'a> CheckerState<'a> {
             .get_cross_file_symbol(member_sym_id)
             .or_else(|| self.ctx.binder.get_symbol(member_sym_id));
         let member_type = if let Some(member_sym) = member_sym
-            && member_sym.flags & symbol_flags::INTERFACE != 0
-            && member_sym.flags & symbol_flags::VARIABLE != 0
+            && member_sym.has_any_flags(symbol_flags::INTERFACE)
+            && member_sym.has_any_flags(symbol_flags::VARIABLE)
             && member_sym.value_declaration.is_some()
         {
             self.type_of_value_declaration_for_symbol(member_sym_id, member_sym.value_declaration)
