@@ -203,12 +203,12 @@ declare module "renameModule" {
 
     assert_eq!(n3_symbol.escaped_name, "n3");
     assert!(
-        (n3_symbol.flags
-            & (symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-            != 0,
+        n3_symbol.has_any_flags(
+            symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+        ),
         "n3 should resolve to a namespace/module-like symbol"
     );
-    assert_ne!(d_symbol.flags & symbol_flags::CLASS, 0);
-    assert_ne!(c_symbol.flags & symbol_flags::CLASS, 0);
-    assert_ne!(ee_symbol.flags & symbol_flags::CLASS, 0);
+    assert!(d_symbol.has_any_flags(symbol_flags::CLASS));
+    assert!(c_symbol.has_any_flags(symbol_flags::CLASS));
+    assert!(ee_symbol.has_any_flags(symbol_flags::CLASS));
 }
