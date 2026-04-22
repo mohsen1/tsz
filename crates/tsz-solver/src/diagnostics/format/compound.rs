@@ -1918,6 +1918,18 @@ impl<'a> TypeFormatter<'a> {
 
         let data = self.interner.lookup(type_id);
 
+        // Type parameters are modeled as `TypeData::TypeParameter` and lose direct
+        // declaration span information unless the checker registers their DefId.
+        // When available, use that DefId span so diagnostics can display unions in
+        // declaration/source order (e.g. `Top | T | U` instead of alloc-order drift).
+        if matches!(data, Some(TypeData::TypeParameter(_) | TypeData::Infer(_)))
+            && let Some(def_id) = def_store.find_def_for_type(type_id)
+            && let Some(def) = def_store.get(def_id)
+            && let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span)
+        {
+            return (1, file_id, span_start);
+        }
+
         // Try Lazy(DefId) - type aliases, interfaces, classes
         if let Some(TypeData::Lazy(def_id)) = &data
             && let Some(def) = def_store.get(*def_id)

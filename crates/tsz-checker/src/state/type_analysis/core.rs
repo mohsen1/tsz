@@ -1615,6 +1615,13 @@ impl<'a> CheckerState<'a> {
             }
 
             let type_id = factory.type_param(info);
+            if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&data.name.0)
+                && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
+            {
+                self.ctx
+                    .definition_store
+                    .register_type_to_def(type_id, def_id);
+            }
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, shadowed_class_param));
             param_indices.push(param_idx);
@@ -1695,6 +1702,13 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let constrained_type_id = factory.type_param(info);
+                if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&data.name.0)
+                    && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
+                {
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(constrained_type_id, def_id);
+                }
                 if self.ctx.type_parameter_scope.get(&name).copied() != Some(constrained_type_id) {
                     self.ctx
                         .type_parameter_scope
