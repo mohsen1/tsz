@@ -1548,7 +1548,18 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             })
             .collect();
 
-    let mut file_locals = SymbolTable::new();
+    // Pre-size to avoid repeated rehashing when merging globals into the
+    // file-local table. The merged map ends up holding (file_locals ∪ globals);
+    // pre-allocating that upper bound eliminates the power-of-two rehashes
+    // during the per-file `set()` calls. Per-file work is small individually
+    // but multiplied across all per-binder constructions on large repos this
+    // is a measurable startup tax.
+    let local_count = program
+        .file_locals
+        .get(file_idx)
+        .map(|t| t.len())
+        .unwrap_or(0);
+    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
 
     if file_idx < program.file_locals.len() {
         for (name, &sym_id) in program.file_locals[file_idx].iter() {
@@ -1646,7 +1657,18 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
-    let mut file_locals = SymbolTable::new();
+    // Pre-size to avoid repeated rehashing when merging globals into the
+    // file-local table. The merged map ends up holding (file_locals ∪ globals);
+    // pre-allocating that upper bound eliminates the power-of-two rehashes
+    // during the per-file `set()` calls. Per-file work is small individually
+    // but multiplied across all per-binder constructions on large repos this
+    // is a measurable startup tax.
+    let local_count = program
+        .file_locals
+        .get(file_idx)
+        .map(|t| t.len())
+        .unwrap_or(0);
+    let mut file_locals = SymbolTable::with_capacity(local_count + program.globals.len());
 
     if file_idx < program.file_locals.len() {
         for (name, &sym_id) in program.file_locals[file_idx].iter() {
