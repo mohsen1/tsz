@@ -7,6 +7,12 @@ fn parse_source(source: &str) -> (ParserState, NodeIndex) {
     (parser, root)
 }
 
+fn parse_source_named(file_name: &str, source: &str) -> (ParserState, NodeIndex) {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    (parser, root)
+}
+
 #[test]
 fn parse_complex_type_expressions_have_no_errors() {
     let (parser, _root) = parse_source(
@@ -26,6 +32,27 @@ fn parse_conditional_and_infer_types_emit_expected_members() {
 fn parse_invalid_type_member_reports_diagnostics() {
     let (parser, _root) = parse_source("type T = <; ");
     assert!(!parser.get_diagnostics().is_empty());
+}
+
+#[test]
+fn parse_flow_style_type_parameter_bound_reports_comma_expected() {
+    let source = "export default class B<T: BaseA> {}";
+    let (parser, _root) = parse_source_named("test.js", source);
+    let diagnostics = parser.get_diagnostics();
+    let colon_pos = source.find(':').expect("expected colon") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| { d.code == 1005 && d.start == colon_pos && d.message == "',' expected." }),
+        "Expected TS1005 comma diagnostic at Flow-style type parameter bound, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !(d.code == 1005 && d.start == colon_pos && d.message == "'>' expected.")),
+        "Type parameter list recovery should not report a closing `>` at the same colon, got {diagnostics:?}"
+    );
 }
 
 #[test]
