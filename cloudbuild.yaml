@@ -13,7 +13,7 @@ steps:
       if gsutil -q stat "$cache_uri"; then
         echo "TypeScript cache hit: ${cache_uri}"
         gsutil -q cp "$cache_uri" "$archive"
-        tar -xzf "$archive" -C .
+        tar --warning=no-unknown-keyword -xzf "$archive" -C .
       else
         echo "TypeScript cache miss: ${cache_uri}"
         if ! command -v curl >/dev/null 2>&1; then
