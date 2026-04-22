@@ -18,13 +18,21 @@ extra_scripts: <script src="/sound-mode-editors.js"></script>
 
 Today, Sound Mode is deliberately small:
 
-1. **Current entrypoint:** CLI `--sound`
+1. **Current entrypoints:** CLI `--sound` and `compilerOptions.sound`
 2. **Current target:** user-authored TypeScript implementation code first
 3. **Current behavior:** tighter checking in a few high-value areas such as method bivariance, `any` propagation, and sticky freshness
 4. **Current diagnostics:** standard TypeScript codes like `TS2322` / `TS2345`, not the final public TSZ diagnostic surface
 
 ```bash
 tsz check --sound src/
+```
+
+```json
+{
+  "compilerOptions": {
+    "sound": true
+  }
+}
 ```
 
 ## What It Is Not
@@ -42,7 +50,7 @@ TypeScript itself treats full soundness as a non-goal. tsz uses the word **sound
 
 The base rollout is intentionally narrow:
 
-1. start with explicit opt-in via `--sound`
+1. start with explicit opt-in via `--sound` or `compilerOptions.sound`
 2. focus on user source, not the whole ecosystem
 3. keep declaration files as trust boundaries instead of adoption blockers
 4. add migration tools before broadening semantics
@@ -56,7 +64,7 @@ The first stable target is roughly:
 
 ## Planned Flags
 
-These names reflect the intended rollout shape, but most of them are still planned rather than fully wired today:
+Only `compilerOptions.sound` is currently wired. The other names below reflect the intended rollout shape and are still planned:
 
 ```json
 {
