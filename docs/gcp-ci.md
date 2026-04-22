@@ -3,8 +3,10 @@
 CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoint is `cloudbuild.yaml`, which runs
-`scripts/ci/gcp-full-ci.sh` on a `c3-highcpu-88` Cloud Build private-pool
-worker. The script keeps the old CI gates: Rust formatting, metadata guardrails,
+`scripts/ci/gcp-full-ci.sh` on Cloud Build private-pool workers. Heavy suites
+use the `c3-highcpu-88` pool, while lighter suites can use the `e2-highcpu-32`
+pool so they do not occupy scarce C3 capacity. The script keeps the old CI gates:
+Rust formatting, metadata guardrails,
 clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
 regression checks. Conformance runs through the repository wrapper with 80
 workers, while emit and fourslash default to 4 shards with 20 workers per shard.
@@ -13,7 +15,12 @@ larger machine.
 
 Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
 `lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
-that substitution keeps the `all` default for ad hoc full builds.
+that substitution keeps the `all` default for ad hoc full builds. Triggers can
+also set `_TSZ_CI_WORKER_POOL` to choose the private pool. The default remains
+the C3 pool for ad hoc full builds.
+
+Builds use `queueTtl: 900s`, so a build that cannot start within 15 minutes is
+expired instead of waiting indefinitely behind newer commits.
 
 Cloud Build source archives do not preserve git submodule metadata, so
 `scripts/ci/typescript-submodule-ref` records the TypeScript submodule commit
@@ -38,6 +45,12 @@ gcloud builds worker-pools create tsz-ci-c3-88 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
   --worker-machine-type=c3-highcpu-88 \
+  --worker-disk-size=200GB
+
+gcloud builds worker-pools create tsz-ci-e2-32 \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=e2-highcpu-32 \
   --worker-disk-size=200GB
 ```
 
@@ -66,7 +79,19 @@ gcloud builds repositories create tsz \
 Create one pull request trigger per suite in the GCP project:
 
 ```bash
+pool_for_suite() {
+  case "$1" in
+    lint|unit|wasm)
+      printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-e2-32
+      ;;
+    *)
+      printf '%s\n' projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-c3-88
+      ;;
+  esac
+}
+
 for suite in lint unit wasm conformance emit fourslash; do
+  pool="$(pool_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
     --region=us-central1 \
@@ -77,7 +102,7 @@ for suite in lint unit wasm conformance emit fourslash; do
     --build-config=cloudbuild.yaml \
     --include-logs-with-status \
     --no-require-approval \
-    --substitutions="_TSZ_CI_SUITE=${suite}" \
+    --substitutions="_TSZ_CI_SUITE=${suite},_TSZ_CI_WORKER_POOL=${pool}" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 ```
@@ -86,6 +111,7 @@ Create one main branch trigger per suite:
 
 ```bash
 for suite in lint unit wasm conformance emit fourslash; do
+  pool="$(pool_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
     --region=us-central1 \
@@ -95,7 +121,7 @@ for suite in lint unit wasm conformance emit fourslash; do
     --build-config=cloudbuild.yaml \
     --include-logs-with-status \
     --no-require-approval \
-    --substitutions="_TSZ_CI_SUITE=${suite}" \
+    --substitutions="_TSZ_CI_SUITE=${suite},_TSZ_CI_WORKER_POOL=${pool}" \
     --service-account=projects/thirdface-ai-oauth/serviceAccounts/135226528921-compute@developer.gserviceaccount.com
 done
 ```
