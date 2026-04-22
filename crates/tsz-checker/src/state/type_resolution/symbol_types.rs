@@ -98,11 +98,10 @@ impl<'a> CheckerState<'a> {
                 return lazy_type;
             }
             let has_interface_decl = declarations.iter().copied().any(|decl_idx| {
-                let arena = self
-                    .ctx
-                    .binder
-                    .get_arena_for_declaration(sym_id, decl_idx)
-                    .map_or(self.ctx.arena, |arena| arena.as_ref());
+                let arena =
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
                 arena
                     .get(decl_idx)
                     .is_some_and(|node| node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
@@ -321,8 +320,7 @@ impl<'a> CheckerState<'a> {
                 let arena = self
                     .ctx
                     .binder
-                    .get_arena_for_declaration(sym_id, d)
-                    .map_or(self.ctx.arena, |arena| arena.as_ref());
+                    .arena_for_declaration_or(sym_id, d, self.ctx.arena);
                 arena
                     .get(d)
                     .and_then(|n| {

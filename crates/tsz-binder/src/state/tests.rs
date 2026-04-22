@@ -6507,3 +6507,27 @@ enum MyEnum { A = 1, B = 2 }
         );
     }
 }
+
+#[test]
+fn arena_for_declaration_or_falls_back_when_unmapped() {
+    // Fresh binder has no cross-file declaration arenas registered, so the
+    // helper should return the fallback arena for any (sym, decl) pair.
+    let source = r"const x = 1;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let sym_id = binder.file_locals.get("x").expect("symbol for x");
+    let sym = binder.symbols.get(sym_id).expect("symbol data");
+    let decl_idx = sym.primary_declaration().expect("primary declaration");
+
+    // No cross-file mapping exists — helper must hand back the fallback arena.
+    let got = binder.arena_for_declaration_or(sym_id, decl_idx, arena);
+    assert!(std::ptr::eq(got, arena));
+
+    // Helper matches the explicit Option-collapsing expression it replaces.
+    assert!(binder.get_arena_for_declaration(sym_id, decl_idx).is_none());
+}

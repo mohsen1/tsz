@@ -346,6 +346,26 @@ impl BinderState {
         self.symbol_arenas.get(&sym_id)
     }
 
+    /// Resolve the arena that owns a declaration, falling back to a caller-provided
+    /// arena when no cross-file mapping exists.
+    ///
+    /// Callers frequently need the concrete `&NodeArena` that a declaration was
+    /// parsed into (e.g. to read its `kind`, children, or identifier text) and
+    /// want to default to the arena they are currently iterating over if the
+    /// declaration is purely local. This helper collapses the common
+    /// `get_arena_for_declaration(..).map_or(fallback, |arc| arc.as_ref())`
+    /// pattern into one call.
+    #[inline]
+    pub fn arena_for_declaration_or<'a>(
+        &'a self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+        fallback: &'a NodeArena,
+    ) -> &'a NodeArena {
+        self.get_arena_for_declaration(sym_id, decl_idx)
+            .map_or(fallback, Arc::as_ref)
+    }
+
     /// Create a `BinderState` from pre-parsed lib data.
     ///
     /// This is used for loading pre-parsed lib files where we only have
