@@ -128,6 +128,8 @@ impl<'a> CheckerState<'a> {
 
         let arg_str = self.format_call_argument_type_for_diagnostic(arg_type, param_type, idx);
         let param_str = self.format_call_parameter_type_for_diagnostic(param_type, arg_type, idx);
+        let (arg_str, param_str) =
+            self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
         let message = format_message(
             diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
             &[&arg_str, &param_str],

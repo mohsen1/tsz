@@ -652,6 +652,8 @@ impl<'a> CheckerState<'a> {
         if needs_downgrade {
             let src_str = self.format_type_for_assignability_message(source);
             let tgt_str = self.format_type_for_assignability_message(target);
+            let (src_str, tgt_str) =
+                self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
             let new_message = crate::diagnostics::format_message(
                 crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],
@@ -1140,7 +1142,7 @@ impl<'a> CheckerState<'a> {
         ) {
             source_str = widened;
         }
-        (source_str, target_str)
+        self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str)
     }
 
     pub(in crate::error_reporter) fn rewrite_standalone_literal_source_for_keyof_display(
@@ -1200,7 +1202,7 @@ impl<'a> CheckerState<'a> {
         let (source_str, _) = self.format_top_level_assignability_message_types(source, target);
         let target_str =
             self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
-        (source_str, target_str)
+        self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str)
     }
 
     pub(super) fn rewrite_source_display_for_non_literal_target_assignability(
@@ -1666,6 +1668,8 @@ impl<'a> CheckerState<'a> {
                 self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
             let tgt_str =
                 self.format_assignment_target_type_for_diagnostic(target, source, anchor_idx);
+            let (src_str, tgt_str) =
+                self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);
@@ -1691,13 +1695,17 @@ impl<'a> CheckerState<'a> {
                     && authoritative_src == authoritative_tgt
                     && source_generic_base == target_generic_base
                     && authoritative_src.as_deref() == source_generic_base;
-                let source_name = if src_str.starts_with("typeof ") || preserve_generic_nominal_pair
+                let source_name = if src_str.starts_with("typeof ")
+                    || src_str.starts_with("import(")
+                    || preserve_generic_nominal_pair
                 {
                     src_str.as_str()
                 } else {
                     authoritative_src.as_deref().unwrap_or(&src_str)
                 };
-                let target_name = if tgt_str.starts_with("typeof ") || preserve_generic_nominal_pair
+                let target_name = if tgt_str.starts_with("typeof ")
+                    || tgt_str.starts_with("import(")
+                    || preserve_generic_nominal_pair
                 {
                     tgt_str.as_str()
                 } else {
