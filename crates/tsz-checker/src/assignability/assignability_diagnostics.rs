@@ -724,6 +724,53 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Like `check_assignable_or_report_at_exact_anchor`, but skips
+    /// assignment-source elaboration so diagnostics stay on the enclosing
+    /// source type shape.
+    pub(crate) fn check_assignable_or_report_at_exact_anchor_without_source_elaboration(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
+            return true;
+        }
+        if self.is_assignable_to(source, target) {
+            return true;
+        }
+
+        // Build a RelationRequest so the weak-union hint is collected alongside
+        // the failure reason, avoiding a redundant solver round-trip in
+        // should_skip_weak_union_error's fallback path.
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (ps, pt) = self.prepare_assignability_inputs(source, target);
+            RelationRequest::assign(ps, pt)
+        };
+        let outcome = self.execute_relation_request(&request);
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
+            return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
+        }
+
+        self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+        false
+    }
+
     /// Check assignability and emit a generic TS2322 diagnostic at `diag_idx`.
     ///
     /// This is used for call sites that intentionally avoid detailed reason rendering

@@ -612,6 +612,100 @@ fn jsx_class_component_multi_construct_overload_children_tuple_mismatch() {
 }
 
 #[test]
+fn jsx_single_child_mismatch_uses_react_element_display_and_child_anchors() {
+    let source = r#"
+        declare namespace React {
+            interface ReactElement<P = any> {
+                props: P;
+            }
+            class Component<P = {}, S = {}> {
+                props: P;
+                state: S;
+                setState(state: S): void;
+                forceUpdate(): void;
+                render(): any;
+            }
+        }
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any, any> {
+                render(): any;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { div: {}; }
+        }
+
+        interface Prop {
+            a: number;
+            b: string;
+            children: Button;
+        }
+
+        class Button extends React.Component<any, any> {
+            render() {
+                return <div />;
+            }
+        }
+
+        function Comp(_p: Prop) {
+            return <div />;
+        }
+
+        let k = <Comp a={10} b="hi" />;
+        let k1 =
+            <Comp a={10} b="hi">
+                <Button />
+            </Comp>;
+        let k2 =
+            <Comp a={10} b="hi">
+                {Button}
+            </Comp>;
+        "#;
+    let diagnostics = check_jsx(source);
+    let child_mismatch_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2739 || diag.code == 2740)
+        .collect();
+    assert_eq!(
+        child_mismatch_diags.len(),
+        2,
+        "Expected exactly two JSX child mismatch diagnostics, got: {diagnostics:?}"
+    );
+
+    let react_element_diag = child_mismatch_diags
+        .iter()
+        .copied()
+        .find(|diag| diag.message_text.contains("Type 'ReactElement<any>'"))
+        .expect("Expected JSX child mismatch diagnostic to report source as ReactElement<any>");
+    assert!(
+        !react_element_diag.message_text.contains("Type 'Element'"),
+        "TS2740 should not report JSX child source as bare Element, got: {react_element_diag:?}"
+    );
+
+    let expected_button_child_start = source
+        .find("<Button />")
+        .expect("fixture should contain <Button />") as u32;
+    assert_eq!(
+        react_element_diag.start, expected_button_child_start,
+        "TS2740 for JSX element child should be anchored at <Button />"
+    );
+
+    let typeof_button_diag = child_mismatch_diags
+        .iter()
+        .copied()
+        .find(|diag| diag.message_text.contains("Type 'typeof Button'"))
+        .expect("Expected JSX child mismatch diagnostic for {Button} child");
+    let expected_button_expr_start = source
+        .find("{Button}")
+        .expect("fixture should contain {Button}") as u32
+        + 1;
+    assert_eq!(
+        typeof_button_diag.start, expected_button_expr_start,
+        "TS2740 for expression child should be anchored at the Button identifier"
+    );
+}
+
+#[test]
 fn jsx_generic_sfc_defaulted_props_contextually_type_function_attributes() {
     let diagnostics = check_jsx_codes(
         r#"
