@@ -1119,6 +1119,60 @@ fn test_parse_error_codes_ignores_indented_related_diagnostics() {
 }
 
 #[test]
+fn test_parse_batch_output_does_not_synthesize_ts5110() {
+    let output = "test.ts(1,1): error TS2304: Cannot find name 'missing'.";
+    let options = HashMap::from([
+        ("module".to_string(), "esnext".to_string()),
+        ("moduleresolution".to_string(), "node16".to_string()),
+    ]);
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_batch_output(output, root, options);
+
+    assert_eq!(result.error_codes, vec![2304]);
+    assert!(
+        !result.error_codes.contains(&5110),
+        "parse_batch_output should not inject synthetic TS5110"
+    );
+}
+
+#[test]
+fn test_parse_tsz_output_does_not_synthesize_ts5110() {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
+
+    let output = std::process::Output {
+        status: {
+            #[cfg(unix)]
+            {
+                std::process::ExitStatus::from_raw(1 << 8)
+            }
+            #[cfg(windows)]
+            {
+                std::process::ExitStatus::from_raw(1)
+            }
+        },
+        stdout: b"test.ts(1,1): error TS2304: Cannot find name 'missing'.\n".to_vec(),
+        stderr: Vec::new(),
+    };
+    let options = HashMap::from([
+        ("module".to_string(), "esnext".to_string()),
+        ("moduleresolution".to_string(), "node16".to_string()),
+    ]);
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_tsz_output(&output, root, options);
+
+    assert_eq!(result.error_codes, vec![2304]);
+    assert!(
+        !result.error_codes.contains(&5110),
+        "parse_tsz_output should not inject synthetic TS5110"
+    );
+}
+
+#[test]
 fn test_parse_diagnostic_fingerprints_ignores_indented_related_diagnostics() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let output = "test.ts(3,1): error TS2322: Type 'B' is not assignable to type 'A'.\n  test.ts(3,5): error TS2328: Types of parameters 'cb' and 'cb' are incompatible.";
