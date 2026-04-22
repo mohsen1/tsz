@@ -77,6 +77,8 @@ impl<'a> CheckerContext<'a> {
             lib_heritage_in_progress: FxHashSet::default(),
             node_types: crate::context::NodeTypeCache::with_capacity(arena.nodes.len()),
             request_node_types: FxHashMap::default(),
+            object_literal_property_diag_targets: FxHashMap::default(),
+            object_literal_contextual_targets: FxHashMap::default(),
             request_cache_counters: crate::context::RequestCacheCounters::default(),
             type_environment: RefCell::new(TypeEnvironment::new()),
             application_eval_set: FxHashSet::default(),
