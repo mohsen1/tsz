@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
             return self
                 .class_symbol_from_expression(query.expr_name)
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| (symbol.flags & symbol_flags::ABSTRACT) != 0);
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ABSTRACT));
         }
 
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
@@ -58,7 +58,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
-            if (symbol.flags & symbol_flags::TYPE_ALIAS) == 0 {
+            if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                 return false;
             }
 
@@ -229,16 +229,16 @@ impl<'a> CheckerState<'a> {
             return Some(TypeId::ERROR);
         }
 
-        let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
-        let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-        let is_type_alias = (symbol.flags & symbol_flags::TYPE_ALIAS) != 0;
+        let has_type = symbol.has_any_flags(symbol_flags::TYPE);
+        let has_value = symbol.has_any_flags(symbol_flags::VALUE);
+        let is_type_alias = symbol.has_any_flags(symbol_flags::TYPE_ALIAS);
 
         if !has_value && (is_type_alias || has_type) {
             // Type parameters only shadow in type contexts, not value contexts.
             // `new A()` where `A` is a type param shadowing an outer class should
             // resolve to the outer class, not emit TS2693.
             let is_type_param_only =
-                (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0 && !has_value;
+                symbol.has_any_flags(symbol_flags::TYPE_PARAMETER) && !has_value;
             if is_type_param_only {
                 let lib_binders = self.get_lib_binders();
                 let has_outer_value = self
@@ -248,7 +248,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .binder
                             .get_symbol_with_libs(sid, &lib_binders)
-                            .is_some_and(|s| s.flags & symbol_flags::VALUE != 0)
+                            .is_some_and(|s| s.has_any_flags(symbol_flags::VALUE))
                     })
                     .is_some();
                 if has_outer_value {
@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
                 return Some(TypeId::ERROR);
             }
         }
-        let resolved_sym_id = if (symbol.flags & symbol_flags::ALIAS) != 0 {
+        let resolved_sym_id = if symbol.has_any_flags(symbol_flags::ALIAS) {
             self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
                 .unwrap_or(sym_id)
         } else {
@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
             // construct signatures; this suppresses the false TS2351.
             if let Some(sym_id) = self.resolve_qualified_symbol(expr_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & symbol_flags::CLASS) != 0
+                && symbol.has_any_flags(symbol_flags::CLASS)
             {
                 return true;
             }
@@ -380,14 +380,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            if (symbol.flags & symbol_flags::CLASS) != 0 {
+            if symbol.has_any_flags(symbol_flags::CLASS) {
                 return true;
             }
             // Variables initialized with class expressions (e.g., `let C = class { ... }`)
             // should be treated as class symbols for circular self-reference suppression.
             // The variable has VARIABLE flags, not CLASS, but `new C()` inside the class
             // body is a valid self-referencing construct that tsc accepts.
-            if (symbol.flags & symbol_flags::VARIABLE) != 0
+            if symbol.has_any_flags(symbol_flags::VARIABLE)
                 && symbol.value_declaration.is_some()
                 && let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration)
                 && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
@@ -429,25 +429,24 @@ impl<'a> CheckerState<'a> {
                             let Some(parent_sym) = self.ctx.binder.get_symbol(parent_sym_id) else {
                                 continue;
                             };
-                            if parent_sym.flags
-                                & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                                == 0
-                            {
+                            if !parent_sym.has_any_flags(
+                                symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                            ) {
                                 continue;
                             }
                             if let Some(parent_exports) = parent_sym.exports.as_ref()
                                 && let Some(nested_ns_id) = parent_exports.get(ns_name)
                                 && let Some(nested_ns) = self.ctx.binder.get_symbol(nested_ns_id)
-                                && nested_ns.flags
-                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                                    != 0
+                                && nested_ns.has_any_flags(
+                                    symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                                )
                                 && let Some(nested_exports) = nested_ns.exports.as_ref()
                                 && let Some(member_id) = nested_exports.get(name)
                                 && self
                                     .ctx
                                     .binder
                                     .get_symbol(member_id)
-                                    .is_some_and(|s| (s.flags & symbol_flags::CLASS) != 0)
+                                    .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
                             {
                                 return true;
                             }
@@ -484,7 +483,7 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier(self.ctx.arena, expr_idx)
             .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return Some(false);
         }
 
