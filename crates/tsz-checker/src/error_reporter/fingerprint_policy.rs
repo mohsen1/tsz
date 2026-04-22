@@ -503,8 +503,14 @@ impl<'a> CheckerState<'a> {
                 source_value_type,
                 target_value_type,
             } => {
-                let source_str = self.format_type_diagnostic(*source_value_type);
-                let target_str = self.format_type_diagnostic(*target_value_type);
+                let source_str = self.format_type_for_diagnostic_role(
+                    *source_value_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
+                let target_str = self.format_type_for_diagnostic_role(
+                    *target_value_type,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
@@ -533,8 +539,14 @@ impl<'a> CheckerState<'a> {
                 source_element,
                 target_element,
             } => {
-                let source_str = self.format_type_diagnostic(*source_element);
-                let target_str = self.format_type_diagnostic(*target_element);
+                let source_str = self.format_type_for_diagnostic_role(
+                    *source_element,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
+                let target_str = self.format_type_for_diagnostic_role(
+                    *target_element,
+                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
                 vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
@@ -568,7 +580,13 @@ impl<'a> CheckerState<'a> {
                     length,
                     message_text: format_message(
                         diagnostic_messages::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE,
-                        &[index_kind, &self.format_type_diagnostic(source)],
+                        &[
+                            index_kind,
+                            &self.format_type_for_diagnostic_role(
+                                source,
+                                DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                            ),
+                        ],
                     ),
                 }]
             }
