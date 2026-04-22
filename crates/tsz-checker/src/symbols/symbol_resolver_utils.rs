@@ -441,7 +441,9 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .shorthand_ambient_modules
                         .contains(module_name)
-                    && !self.ctx.binder.declared_modules.contains(module_name)
+                    && !self
+                        .ctx
+                        .declared_modules_contains(self.ctx.binder, module_name)
                     && !self
                         .ctx
                         .resolved_modules

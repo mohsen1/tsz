@@ -1164,42 +1164,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         );
                     }
 
-                    // Special case: If target has a rest parameter with a type parameter,
-                    // and source has more parameters, we should infer the tuple type.
-                    // Example: source `(a: string, b: number) => R` vs target `(...args: A) => R`
-                    // should infer `A = [string, number]`.
-                    if let Some(t_last) = t_params_unpacked.last()
-                        && t_last.rest
-                        && var_map.contains_key(&t_last.type_id)
-                    {
-                        let target_fixed_count = t_params_unpacked.len().saturating_sub(1);
-                        if s_params_unpacked.len() > target_fixed_count {
-                            // Create tuple from source's extra parameters
-                            let tuple_elements: Vec<TupleElement> = s_params_unpacked
-                                [target_fixed_count..]
-                                .iter()
-                                .map(|p| TupleElement {
-                                    type_id: p.type_id,
-                                    name: p.name,
-                                    optional: p.optional,
-                                    rest: p.rest,
-                                })
-                                .collect();
-                            let source_tuple = self.interner.tuple(tuple_elements);
-
-                            // Infer: A = [string, number]
-                            // When matching (x: string, y: number) => R against (...args: A) => R
-                            // We want to infer A = [string, number] (the tuple of parameter types)
-                            if let Some(&var) = var_map.get(&t_last.type_id) {
-                                // Add as a high-priority candidate since this is structural information
-                                ctx.add_candidate(
-                                    var,
-                                    source_tuple,
-                                    crate::types::InferencePriority::NakedTypeVariable,
-                                );
-                            }
-                        }
-                    }
+                    self.infer_rest_param_tuple_candidate(
+                        ctx,
+                        var_map,
+                        &s_params_unpacked,
+                        &t_params_unpacked,
+                    );
 
                     if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
                         self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
@@ -1350,40 +1320,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         );
                     }
 
-                    // Special case: If target has a rest parameter with a type parameter,
-                    // and source has more parameters, we should infer the tuple type.
-                    // Example: source `<T>(a: T) => T[]` vs target `(...args: A) => B`
-                    // should infer `A = [T]`.
-                    if let Some(t_last) = target_params_unpacked.last()
-                        && t_last.rest
-                        && combined_var_map.contains_key(&t_last.type_id)
-                    {
-                        let target_fixed_count = target_params_unpacked.len().saturating_sub(1);
-                        if instantiated_params_unpacked.len() > target_fixed_count {
-                            // Create tuple from source's extra parameters
-                            let tuple_elements: Vec<TupleElement> = instantiated_params_unpacked
-                                [target_fixed_count..]
-                                .iter()
-                                .map(|p| TupleElement {
-                                    type_id: p.type_id,
-                                    name: p.name,
-                                    optional: p.optional,
-                                    rest: p.rest,
-                                })
-                                .collect();
-                            let source_tuple = self.interner.tuple(tuple_elements);
-
-                            // Infer: A = [T, U, ...]
-                            // When matching generic function parameters, infer the tuple type
-                            if let Some(&var) = combined_var_map.get(&t_last.type_id) {
-                                ctx.add_candidate(
-                                    var,
-                                    source_tuple,
-                                    crate::types::InferencePriority::NakedTypeVariable,
-                                );
-                            }
-                        }
-                    }
+                    self.infer_rest_param_tuple_candidate(
+                        ctx,
+                        &combined_var_map,
+                        &instantiated_params_unpacked,
+                        &target_params_unpacked,
+                    );
 
                     if let (Some(s_this), Some(t_this)) = (instantiated_this, t_fn.this_type) {
                         self.constrain_parameter_types(
@@ -2126,6 +2068,49 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// If the target's last parameter is a rest parameter typed as a direct
+    /// inference variable, collect the source's trailing parameters past the
+    /// target's fixed arity into a tuple and add it as a `NakedTypeVariable`
+    /// candidate for that variable.
+    ///
+    /// Example: source `(a: string, b: number) => R` vs target `(...args: A) => R`
+    /// infers `A = [string, number]`.
+    pub(super) fn infer_rest_param_tuple_candidate(
+        &self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_params: &[ParamInfo],
+        target_params: &[ParamInfo],
+    ) {
+        let Some(t_last) = target_params.last() else {
+            return;
+        };
+        if !t_last.rest || !var_map.contains_key(&t_last.type_id) {
+            return;
+        }
+        let target_fixed_count = target_params.len().saturating_sub(1);
+        if source_params.len() <= target_fixed_count {
+            return;
+        }
+        let tuple_elements: Vec<TupleElement> = source_params[target_fixed_count..]
+            .iter()
+            .map(|p| TupleElement {
+                type_id: p.type_id,
+                name: p.name,
+                optional: p.optional,
+                rest: p.rest,
+            })
+            .collect();
+        let source_tuple = self.interner.tuple(tuple_elements);
+        if let Some(&var) = var_map.get(&t_last.type_id) {
+            ctx.add_candidate(
+                var,
+                source_tuple,
+                crate::types::InferencePriority::NakedTypeVariable,
+            );
         }
     }
 }

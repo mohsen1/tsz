@@ -164,30 +164,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // If target has a rest param typed as an inference variable, collect
         // remaining source params into a tuple and infer against the variable.
-        if let Some(t_last) = t_params.last()
-            && t_last.rest
-            && var_map.contains_key(&t_last.type_id)
-        {
-            let target_fixed_count = t_params.len().saturating_sub(1);
-            if s_params.len() > target_fixed_count {
-                let tuple_elements: Vec<TupleElement> = s_params[target_fixed_count..]
-                    .iter()
-                    .map(|p| TupleElement {
-                        type_id: p.type_id,
-                        name: p.name,
-                        optional: p.optional,
-                        rest: p.rest,
-                    })
-                    .collect();
-                let source_tuple = self.interner.tuple(tuple_elements);
-                if let Some(&var) = var_map.get(&t_last.type_id) {
-                    ctx.add_candidate(
-                        var,
-                        source_tuple,
-                        crate::types::InferencePriority::NakedTypeVariable,
-                    );
-                }
-            }
+        let target_rest_is_typevar = t_params
+            .last()
+            .is_some_and(|t| t.rest && var_map.contains_key(&t.type_id));
+        if target_rest_is_typevar {
+            self.infer_rest_param_tuple_candidate(ctx, var_map, &s_params, &t_params);
         } else if let Some(s_last) = s_params.last()
             && s_last.rest
         {
