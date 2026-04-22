@@ -1074,9 +1074,7 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(bin) = self.arena.get_binary_expr(node_data) else {
             return false;
         };
-        bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-            || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
-            || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+        crate::query_boundaries::common::is_logical_compound_assignment_operator(bin.operator_token)
     }
 
     /// Check if a node is a binding pattern (array or object destructuring pattern)

@@ -29,6 +29,17 @@ pub const fn is_assignment_operator(operator_token: u16) -> bool {
         || is_compound_assignment_operator(operator_token)
 }
 
+/// Check if a token is a logical compound assignment: `&&=`, `||=`, or `??=`.
+///
+/// These three operators share a short-circuit semantics (the RHS is only
+/// evaluated when the LHS fails the guard), which is why so many flow and
+/// narrowing paths treat them as a distinct subset of compound assignment.
+pub const fn is_logical_compound_assignment_operator(operator_token: u16) -> bool {
+    operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+        || operator_token == SyntaxKind::BarBarEqualsToken as u16
+        || operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+}
+
 pub const fn map_compound_assignment_to_binary(operator_token: u16) -> Option<&'static str> {
     match operator_token {
         k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),

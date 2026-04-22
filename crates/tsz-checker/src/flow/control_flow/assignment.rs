@@ -226,10 +226,9 @@ impl<'a> FlowAnalyzer<'a> {
                         );
                     }
 
-                    if bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                        || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
-                        || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
-                    {
+                    if crate::query_boundaries::common::is_logical_compound_assignment_operator(
+                        bin.operator_token,
+                    ) {
                         // For logical assignments (&&=, ||=, ??=), the post-assignment
                         // type of the LHS must reflect the full expression semantics:
                         //   x ??= y  →  NonNullable<x> | typeof y

@@ -1,7 +1,7 @@
 use crate::{
     BinaryOpEvaluator, BinaryOpResult, QueryDatabase, TypeDatabase, TypeId, TypeInterner,
     fallback_compound_assignment_result, is_compound_assignment_operator,
-    map_compound_assignment_to_binary,
+    is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 use tsz_scanner::SyntaxKind;
 
@@ -14,6 +14,30 @@ fn recognizes_compound_assignment_tokens() {
         SyntaxKind::QuestionQuestionEqualsToken as u16
     ));
     assert!(!is_compound_assignment_operator(
+        SyntaxKind::EqualsToken as u16
+    ));
+}
+
+#[test]
+fn recognizes_logical_compound_assignment_tokens() {
+    assert!(is_logical_compound_assignment_operator(
+        SyntaxKind::AmpersandAmpersandEqualsToken as u16
+    ));
+    assert!(is_logical_compound_assignment_operator(
+        SyntaxKind::BarBarEqualsToken as u16
+    ));
+    assert!(is_logical_compound_assignment_operator(
+        SyntaxKind::QuestionQuestionEqualsToken as u16
+    ));
+    // Non-logical compound forms are rejected.
+    assert!(!is_logical_compound_assignment_operator(
+        SyntaxKind::PlusEqualsToken as u16
+    ));
+    assert!(!is_logical_compound_assignment_operator(
+        SyntaxKind::AmpersandEqualsToken as u16
+    ));
+    // Simple assignment is rejected.
+    assert!(!is_logical_compound_assignment_operator(
         SyntaxKind::EqualsToken as u16
     ));
 }
