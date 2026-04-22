@@ -118,6 +118,11 @@ save_archive() {
   local label="$1" uri="$2" base="$3"
   shift 3
 
+  if [[ "${TSZ_CI_CACHE_OVERWRITE:-0}" != "1" ]] && gsutil -q stat "$uri"; then
+    echo "Cache save skipped: ${label} (already exists)"
+    return 0
+  fi
+
   if [[ ! -d "$base" ]]; then
     echo "Cache save skipped: ${label} (${base} missing)"
     return 0
@@ -144,6 +149,24 @@ save_archive() {
   else
     echo "warning: failed to upload cache ${label}" >&2
   fi
+}
+
+should_save_cargo_target() {
+  local suite shard_index
+  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
+  shard_index="${_TSZ_CI_CONFORMANCE_SHARD_INDEX:-${TSZ_CI_CONFORMANCE_SHARD_INDEX:-0}}"
+
+  case "$suite" in
+    all|full)
+      return 0
+      ;;
+    conformance)
+      [[ "$shard_index" == "0" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 restore_typescript() {
@@ -275,11 +298,15 @@ save_caches() {
     ".ci-cache/cargo-home" \
     registry git
 
-  save_archive \
-    "cargo-target-${cargo_target_hash}" \
-    "$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")" \
-    "." \
-    .target
+  if should_save_cargo_target; then
+    save_archive \
+      "cargo-target-${cargo_target_hash}" \
+      "$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")" \
+      "." \
+      .target
+  else
+    echo "Cache save skipped: cargo-target-${cargo_target_hash} (suite does not own cargo target upload)"
+  fi
 
   save_archive \
     "npm-${node_hash}" \
