@@ -49,6 +49,40 @@ class ArchGuardCompatCheckerBoundaryTests(unittest.TestCase):
         self.assertEqual(query_boundary_hits, [])
         self.assertEqual(test_hits, [])
 
+
+class ArchGuardConformanceFixtureGateTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _fixture_gate_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Production code must not branch on conformance fixture identity":
+                return pattern, excludes
+        self.fail("conformance fixture identity guard is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._fixture_gate_check()
+
+    def test_rule_flags_production_fixture_gate(self):
+        pattern, excludes = self._fixture_gate_check()
+        text = 'if test_path.contains("promiseTry") { diagnostics.clear(); }'
+        hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-cli/src/driver/check.rs", excludes
+        )
+        self.assertEqual(hits, [1])
+
+    def test_rule_ignores_conformance_harness_and_tests(self):
+        pattern, excludes = self._fixture_gate_check()
+        text = 'let _ = std::env::var("TSZ_CONFORMANCE_TEST");'
+        harness_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/conformance/src/runner.rs", excludes
+        )
+        test_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-cli/tests/conformance_gate.rs", excludes
+        )
+        self.assertEqual(harness_hits, [])
+        self.assertEqual(test_hits, [])
+
 class ArchGuardCallBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()

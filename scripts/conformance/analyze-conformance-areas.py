@@ -31,9 +31,10 @@ def parse_results(tmpfile):
     with open(tmpfile) as f:
         for line in f:
             line = line.rstrip()
-            m = re.match(r"^(PASS|FAIL|SKIP|CRASH)\s+(.+?)(?:\s+\(.+\))?$", line)
+            m = re.match(r"^(PASS|FAIL|XFAIL|SKIP|CRASH)\s+(.+?)(?:\s+\(.+\))?$", line)
             if m:
-                results.append((m.group(2), m.group(1)))
+                status = "FAIL" if m.group(1) == "XFAIL" else m.group(1)
+                results.append((m.group(2), status))
                 continue
             m = re.match(r"^⏱️\s+TIMEOUT\s+(.+?)(?:\s+\(.+\))?$", line)
             if m:

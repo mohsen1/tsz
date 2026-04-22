@@ -135,6 +135,9 @@ pub enum TestResult {
         extra_fingerprints: Vec<DiagnosticFingerprint>,
         /// Resolved compiler options used
         options: std::collections::HashMap<String, String>,
+        /// Known conformance debt reason. These are reported separately and are
+        /// never counted as raw passes.
+        known_failure: Option<&'static str>,
     },
     /// Test was skipped (@noCheck, @skip, etc.)
     Skipped(&'static str),
@@ -230,6 +233,8 @@ pub struct TestStats {
     pub skipped: AtomicUsize,
     pub crashed: AtomicUsize,
     pub timeout: AtomicUsize,
+    /// Failing tests that match an explicit known-debt entry.
+    pub known_failures: AtomicUsize,
     /// Tests where error codes match exactly but fingerprints differ
     pub fingerprint_only: AtomicUsize,
 }

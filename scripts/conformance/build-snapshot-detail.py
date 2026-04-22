@@ -35,11 +35,13 @@ def parse_runner_output(path):
                 current_path = None
                 continue
 
-            # FAIL line
-            m = re.match(r"^FAIL\s+(.+?)(?:\s+\(ERROR: .+\))?$", line)
+            # FAIL/XFAIL line
+            m = re.match(r"^(FAIL|XFAIL)\s+(.+?)(?:\s+\((.+)\))?$", line)
             if m:
-                current_path = m.group(1)
-                current_status = {"status": "FAIL", "expected": [], "actual": []}
+                current_path = m.group(2)
+                current_status = {"status": m.group(1), "expected": [], "actual": []}
+                if m.group(1) == "XFAIL" and m.group(3):
+                    current_status["known_failure"] = m.group(3)
                 tests[current_path] = current_status
                 continue
 
@@ -102,7 +104,7 @@ def build_aggregates(tests):
     fail_tests = {}
 
     for path, result in tests.items():
-        if result["status"] != "FAIL":
+        if result["status"] not in ("FAIL", "XFAIL"):
             continue
 
         expected = result.get("expected", [])
@@ -220,10 +222,10 @@ def main():
     passed = sum(1 for t in tests.values() if t["status"] == "PASS")
     failed = total - passed
 
-    # Build compact per-test detail: only store FAIL tests (PASS is implicit)
+    # Build compact per-test detail: only store non-passing tests (PASS is implicit)
     fail_detail = {}
     for path, result in sorted(tests.items()):
-        if result["status"] != "FAIL":
+        if result["status"] not in ("FAIL", "XFAIL"):
             continue
         expected = result.get("expected", [])
         actual = result.get("actual", [])
@@ -237,10 +239,19 @@ def main():
             entry["m"] = missing
         if extra:
             entry["x"] = extra
+        if result["status"] == "XFAIL":
+            entry["status"] = "XFAIL"
+            if reason := result.get("known_failure"):
+                entry["reason"] = reason
         fail_detail[path] = entry
 
     output = {
-        "summary": {"total": total, "passed": passed, "failed": failed},
+        "summary": {
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "known_failures": sum(1 for t in tests.values() if t["status"] == "XFAIL"),
+        },
         "aggregates": aggregates,
         "failures": fail_detail,
     }
