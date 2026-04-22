@@ -1167,6 +1167,17 @@ impl<'a> CheckerState<'a> {
                 }
             }
         } else {
+            if let Some(comment_start) = jsdoc_comment_start {
+                // Keep JSDoc @param generic-instantiation diagnostics anchored to the
+                // same source offsets as conformance baselines.
+                let type_expr_start = comment_start + type_expr_offset as u32 + 7;
+                if self.report_jsdoc_param_generic_instantiation_errors(
+                    &effective_type_expr,
+                    type_expr_start,
+                ) {
+                    return Some(tsz_solver::TypeId::ERROR);
+                }
+            }
             self.resolve_jsdoc_type_str(&effective_type_expr)?
         };
 
