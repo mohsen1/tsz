@@ -85,11 +85,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first_decl) = symbol.declarations.first() {
-            first_decl
-        } else {
+        let Some(decl_idx) = symbol.primary_declaration() else {
             return false;
         };
         let Some(class_decl) = self.ctx.arena.get_class_at(decl_idx) else {
