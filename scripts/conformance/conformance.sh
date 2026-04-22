@@ -73,6 +73,14 @@ Analyze options:
   --paths-only      Output only test paths for code queries
   --top N           Show top N rows in detailed views (default: 20)
 
+Render-corpus options:
+  --fingerprint-log PATH
+                    Verbose run output from --print-fingerprints
+  --category CAT    Filter render buckets, e.g. location-only, under-count,
+                    over-count, message-only
+  --code TSXXXX     Filter render records by diagnostic code
+  --paths-only      Output only matching test paths
+
 Areas options:
   --depth N         Grouping depth: 1=top-level, 2=sub-areas (default: 1)
   --min-tests N     Minimum tests in area to display (default: 5)
@@ -86,6 +94,7 @@ Examples:
   ./scripts/conformance/conformance.sh analyze --campaigns        # Ranked root-cause campaigns
   ./scripts/conformance/conformance.sh analyze --campaign big3    # Deep dive one campaign
   ./scripts/conformance/conformance.sh render-corpus              # Render failure buckets
+  ./scripts/conformance/conformance.sh render-corpus --category location-only --paths-only
   ./scripts/conformance/conformance.sh areas --depth 2            # Sub-area breakdown
 
 Note: Fingerprint comparison (code + location + message) is always enabled.

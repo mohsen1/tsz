@@ -99,6 +99,7 @@ def build_aggregates(tests):
     n_all_missing = 0
     n_wrong_code = 0
     n_fingerprint_only = 0
+    n_same_code_count_drift = 0
     n_close = 0  # diff <= 2
 
     fail_tests = {}
@@ -109,6 +110,8 @@ def build_aggregates(tests):
 
         expected = result.get("expected", [])
         actual = result.get("actual", [])
+        exp_counter = Counter(expected)
+        act_counter = Counter(actual)
         missing, extra = compute_diff(expected, actual)
 
         all_emitted.update(actual)
@@ -133,6 +136,8 @@ def build_aggregates(tests):
             if diff_size == 0:
                 n_fingerprint_only += 1
             else:
+                if set(exp_counter) == set(act_counter):
+                    n_same_code_count_drift += 1
                 n_wrong_code += 1
                 if diff_size <= 2:
                     n_close += 1
@@ -172,6 +177,7 @@ def build_aggregates(tests):
             "all_missing": n_all_missing,
             "wrong_code": n_wrong_code,
             "fingerprint_only": n_fingerprint_only,
+            "same_code_count_drift": n_same_code_count_drift,
             "close_to_passing": n_close,
         },
         "one_missing_zero_extra": [
