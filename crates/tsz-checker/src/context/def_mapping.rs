@@ -309,7 +309,43 @@ impl<'a> CheckerContext<'a> {
     /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
     /// recovery pattern.
     pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
-        self.binder.file_locals.get(name).unwrap_or(per_lib_sym_id)
+        if let Some(sym_id) = self.binder.file_locals.get(name) {
+            return sym_id;
+        }
+
+        if let Some(sym_id) = self
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name))
+            .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
+            .map(|&(_, sym)| sym)
+        {
+            return sym_id;
+        }
+
+        // When the local binder does not contain merged lib symbols, collect
+        // candidates from all known binders and prefer the largest SymbolId.
+        // Merged binders typically allocate from a wider shared symbol space,
+        // while per-lib binders frequently reuse low IDs (0, 1, ...), which can
+        // collide across files.
+        let mut best = per_lib_sym_id;
+        if let Some(all_binders) = self.all_binders.as_ref() {
+            for binder in all_binders.iter() {
+                if let Some(sym_id) = binder.file_locals.get(name)
+                    && sym_id.0 > best.0
+                {
+                    best = sym_id;
+                }
+            }
+        }
+        for lib_ctx in self.lib_contexts.iter() {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
+                && sym_id.0 > best.0
+            {
+                best = sym_id;
+            }
+        }
+        best
     }
 
     /// Return the `DefId` for a lib symbol, canonicalizing the `SymbolId` first.
@@ -321,7 +357,36 @@ impl<'a> CheckerContext<'a> {
     /// before creating/looking up the `DefId`.
     pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
         let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
-        self.get_lib_def_id(canonical_sym)
+        if canonical_sym == per_lib_sym_id {
+            let atom = self.types.intern_string(name);
+            self.definition_store
+                .find_defs_by_name(atom)
+                .and_then(|defs| {
+                    defs.into_iter()
+                        .filter(|def_id| {
+                            self.definition_store.get(*def_id).is_some_and(|info| {
+                                matches!(
+                                    info.kind,
+                                    tsz_solver::def::DefKind::TypeAlias
+                                        | tsz_solver::def::DefKind::Interface
+                                        | tsz_solver::def::DefKind::Class
+                                        | tsz_solver::def::DefKind::Enum
+                                        | tsz_solver::def::DefKind::Namespace
+                                        | tsz_solver::def::DefKind::ClassConstructor
+                                )
+                            })
+                        })
+                        .max_by_key(|def_id| {
+                            self.definition_store
+                                .get(*def_id)
+                                .and_then(|info| info.symbol_id)
+                                .unwrap_or_default()
+                        })
+                })
+                .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
+        } else {
+            self.get_lib_def_id(canonical_sym)
+        }
     }
 
     /// Cache type parameters for a canonical lib symbol (without body registration).

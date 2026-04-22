@@ -737,6 +737,11 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     return_type_id
                 };
+                let preferred_return = if func_body.is_some() {
+                    self.function_body_preferred_return_type_text(func_body)
+                } else {
+                    None
+                };
                 // If solver returned `any` but the function body clearly returns void,
                 // prefer void (the solver's `any` is a fallback, not an actual inference)
                 if effective_return_type_id == tsz_solver::types::TypeId::ANY
@@ -744,9 +749,8 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
-                } else if func_body.is_some()
-                    && let Some(type_text) =
-                        self.function_body_preferred_return_type_text(func_body)
+                } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
+                    && let Some(type_text) = preferred_return
                 {
                     if let Some(returned_identifier) =
                         self.function_body_unique_return_identifier(func_body)

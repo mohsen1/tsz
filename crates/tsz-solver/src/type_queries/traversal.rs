@@ -6,9 +6,10 @@
 //! and diagnostic property name collection — without directly matching on
 //! `TypeData` variants.
 
+use crate::def::DefId;
 use crate::type_queries::data::{get_callable_shape, get_object_shape};
 use crate::types::{IntrinsicKind, TemplateSpan, TypeData, TypeId};
-use crate::{TypeDatabase, TypeResolver};
+use crate::{TypeDatabase, TypeResolver, TypeSubstitution, instantiate_type};
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
@@ -222,6 +223,111 @@ pub fn collect_property_name_atoms_for_diagnostics(
 
 pub trait DeclarationTypeCycleHost: TypeResolver {
     fn evaluate_application_for_serialization(&mut self, type_id: TypeId) -> TypeId;
+
+    /// Return true for aliases whose application can be referenced by name in
+    /// declaration emit without serializing their source body, such as standard
+    /// library aliases.
+    fn is_application_alias_serialization_exempt(&self, _base_def_id: DefId) -> bool {
+        false
+    }
+}
+
+fn application_base_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<DefId> {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let Some(TypeData::Lazy(def_id)) = db.lookup(app.base) else {
+        return None;
+    };
+    Some(def_id)
+}
+
+fn application_contains_nonserializable_recursive_alias<H>(
+    db: &dyn TypeDatabase,
+    host: &H,
+    type_id: TypeId,
+) -> bool
+where
+    H: DeclarationTypeCycleHost,
+{
+    let Some(target_def_id) = application_base_def_id(db, type_id) else {
+        return false;
+    };
+    if host.is_application_alias_serialization_exempt(target_def_id) {
+        return false;
+    }
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    let Some(body) = host.resolve_lazy(target_def_id, db) else {
+        return false;
+    };
+    let Some(type_params) = host.get_lazy_type_params(target_def_id) else {
+        return false;
+    };
+    if type_params.is_empty() || body == type_id {
+        return false;
+    }
+
+    let subst = TypeSubstitution::from_args(db, &type_params, &app.args);
+    let instantiated = instantiate_type(db, body, &subst);
+    let mut visited = FxHashSet::default();
+    contains_recursive_alias_application_in_conditional_branch(
+        db,
+        host,
+        instantiated,
+        target_def_id,
+        false,
+        &mut visited,
+    )
+}
+
+fn contains_recursive_alias_application_in_conditional_branch<H>(
+    db: &dyn TypeDatabase,
+    host: &H,
+    type_id: TypeId,
+    target_def_id: DefId,
+    in_conditional_branch: bool,
+    visited: &mut FxHashSet<(TypeId, bool)>,
+) -> bool
+where
+    H: DeclarationTypeCycleHost,
+{
+    let mut stack = vec![(type_id, in_conditional_branch)];
+    while let Some((current, in_branch)) = stack.pop() {
+        if current == TypeId::ERROR || current == TypeId::ANY {
+            continue;
+        }
+        if !visited.insert((current, in_branch)) {
+            continue;
+        }
+
+        let Some(key) = db.lookup(current) else {
+            continue;
+        };
+        if let TypeData::Application(app_id) = &key {
+            let app = db.type_application(*app_id);
+            if in_branch
+                && let Some(TypeData::Lazy(def_id)) = db.lookup(app.base)
+                && host.defs_are_equivalent(def_id, target_def_id)
+            {
+                return true;
+            }
+        }
+
+        if let TypeData::Conditional(cond_id) = &key {
+            let cond = db.conditional_type(*cond_id);
+            stack.push((cond.check_type, in_branch));
+            stack.push((cond.extends_type, in_branch));
+            stack.push((cond.true_type, true));
+            stack.push((cond.false_type, true));
+        } else {
+            crate::visitor::for_each_child(db, &key, |child| stack.push((child, in_branch)));
+        }
+    }
+    false
 }
 
 /// Check whether a declaration type contains a cyclic structure that cannot be
@@ -273,7 +379,14 @@ where
             }),
             Some(TypeData::Application(app_id)) => {
                 let evaluated = host.evaluate_application_for_serialization(type_id);
-                if evaluated != type_id {
+                if application_contains_nonserializable_recursive_alias(db, host, type_id)
+                    || (evaluated != type_id
+                        && application_contains_nonserializable_recursive_alias(
+                            db, host, evaluated,
+                        ))
+                {
+                    true
+                } else if evaluated != type_id {
                     visit(db, host, evaluated, active, finished, in_cond_branch)
                 } else {
                     let app = db.type_application(app_id);

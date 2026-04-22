@@ -1551,11 +1551,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             index_type,
         };
         if let Some(result) = visitor.visit_type(interner, object_type) {
-            return result;
+            return self.evaluate_index_access_result(result);
         }
 
         // For other types, keep as IndexAccess (deferred)
         self.interner().index_access(object_type, index_type)
+    }
+
+    fn evaluate_index_access_result(&mut self, result: TypeId) -> TypeId {
+        if result.is_intrinsic() {
+            return result;
+        }
+
+        match self.interner().lookup(result) {
+            Some(
+                TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Mapped(_)
+                | TypeData::KeyOf(_)
+                | TypeData::Lazy(_)
+                | TypeData::Application(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::StringIntrinsic { .. }
+                | TypeData::ReadonlyType(_)
+                | TypeData::TypeQuery(_),
+            ) => self.evaluate(result),
+            _ => result,
+        }
     }
 
     /// Evaluate property access on an object type

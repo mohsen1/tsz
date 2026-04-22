@@ -178,6 +178,7 @@ export class CliTranspiler {
       expectedDtsFileName?: string;
       expectedJsContent?: string | null;
       expectedDtsContent?: string | null;
+      lib?: string[];
     } = {}
   ): Promise<TranspileResult> {
     const {
@@ -215,6 +216,7 @@ export class CliTranspiler {
       expectedDtsFileName,
       expectedJsContent,
       expectedDtsContent,
+      lib,
     } = options;
     const testName = `test_${this.counter++}`;
     const testDir = path.join(this.tempDir, testName);
@@ -290,6 +292,7 @@ export class CliTranspiler {
       // Add --allowJs when any input file is a .js/.jsx/.mjs/.cjs file
       const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
       if (hasJsInput) args.push('--allowJs');
+      if (lib && lib.length > 0) args.push('--lib', lib.join(','));
       if (alwaysStrict) args.push('--alwaysStrict', 'true');
       if (sourceMap) args.push('--sourceMap');
       if (inlineSourceMap) args.push('--inlineSourceMap');

@@ -123,4 +123,20 @@ impl<'a> CheckerContext<'a> {
             .iter()
             .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
     }
+
+    /// Check if a symbol originates from an actual standard lib file.
+    ///
+    /// `lib_contexts` can also contain user files for cross-file resolution, so
+    /// callers that need standard-library behavior must only inspect the leading
+    /// `actual_lib_file_count` contexts.
+    pub fn symbol_is_from_actual_lib(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol_arena) = self.binder.symbol_arenas.get(&sym_id) else {
+            return false;
+        };
+
+        self.lib_contexts
+            .iter()
+            .take(self.actual_lib_file_count)
+            .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
+    }
 }

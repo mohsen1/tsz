@@ -1115,6 +1115,7 @@ pub(super) fn collect_diagnostics(
             checker_libs,
             &affected_lib_interfaces,
             &affected_lib_extension_interfaces,
+            &project_env,
         )
     } else {
         FxHashSet::default()
@@ -2352,6 +2353,7 @@ fn check_checker_lib_file(
 }
 
 fn check_checker_lib_file_baseline(
+    project_env: &tsz::checker::context::ProjectEnv,
     options: &ResolvedCompilerOptions,
     checker_libs: &CheckerLibSet,
     lib_idx: usize,
@@ -2379,6 +2381,7 @@ fn check_checker_lib_file_baseline(
         lib_file.file_name.clone(),
         &options.checker,
     );
+    project_env.apply_to(&mut checker.ctx);
     let other_lib_contexts: Vec<LibContext> = checker_libs
         .contexts
         .iter()
@@ -2993,12 +2996,14 @@ fn collect_checker_lib_baseline_fingerprints(
     checker_libs: &CheckerLibSet,
     affected_interfaces: &FxHashSet<String>,
     extension_interfaces: &FxHashSet<String>,
+    project_env: &tsz::checker::context::ProjectEnv,
 ) -> FxHashSet<LibDiagnosticFingerprint> {
     let mut fingerprints = FxHashSet::default();
 
     for lib_idx in 0..checker_libs.files.len() {
         let query_cache = QueryCache::new(&program.type_interner);
         let (diagnostics, _, _) = check_checker_lib_file_baseline(
+            project_env,
             options,
             checker_libs,
             lib_idx,

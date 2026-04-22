@@ -1301,11 +1301,29 @@ impl<'a> CheckerState<'a> {
         let mut segments = name.split('.');
         let root_name = segments.next()?;
         let lib_binders = self.get_lib_binders();
-        let mut current_sym = self.ctx.binder.file_locals.get(root_name).or_else(|| {
-            lib_binders
-                .iter()
-                .find_map(|binder| binder.file_locals.get(root_name))
-        })?;
+        let mut current_sym = self
+            .ctx
+            .binder
+            .file_locals
+            .get(root_name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs(root_name, &lib_binders)
+            })
+            .or_else(|| {
+                self.ctx
+                    .global_file_locals_index
+                    .as_ref()
+                    .and_then(|idx| idx.get(root_name))
+                    .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
+                    .map(|&(_, sym)| sym)
+            })
+            .or_else(|| {
+                lib_binders
+                    .iter()
+                    .find_map(|binder| binder.file_locals.get(root_name))
+            })?;
 
         for segment in segments {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -1373,7 +1391,10 @@ impl<'a> CheckerState<'a> {
         let resolved_sym = self
             .resolve_alias_symbol(current_sym, &mut visited_aliases)
             .unwrap_or(current_sym);
-        let def_id = self.ctx.get_or_create_def_id(resolved_sym);
+        let canonical_name = name.rsplit('.').next().unwrap_or(name);
+        let def_id = self
+            .ctx
+            .get_canonical_lib_def_id(canonical_name, resolved_sym);
         self.ctx
             .lowering_entity_name_resolution_cache
             .borrow_mut()
