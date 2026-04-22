@@ -1395,25 +1395,9 @@ impl<'a> CheckerState<'a> {
         if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
         {
-            let is_compound_assign = matches!(
+            return crate::query_boundaries::common::is_compound_assignment_operator(
                 bin.operator_token,
-                op if op == SyntaxKind::PlusEqualsToken as u16
-                    || op == SyntaxKind::MinusEqualsToken as u16
-                    || op == SyntaxKind::AsteriskEqualsToken as u16
-                    || op == SyntaxKind::SlashEqualsToken as u16
-                    || op == SyntaxKind::PercentEqualsToken as u16
-                    || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                    || op == SyntaxKind::LessThanLessThanEqualsToken as u16
-                    || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                    || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                    || op == SyntaxKind::AmpersandEqualsToken as u16
-                    || op == SyntaxKind::BarEqualsToken as u16
-                    || op == SyntaxKind::CaretEqualsToken as u16
-                    || op == SyntaxKind::BarBarEqualsToken as u16
-                    || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                    || op == SyntaxKind::QuestionQuestionEqualsToken as u16
-            );
-            return is_compound_assign && bin.left == ident_idx;
+            ) && bin.left == ident_idx;
         }
 
         false

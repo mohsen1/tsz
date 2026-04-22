@@ -708,23 +708,9 @@ impl<'a> FlowAnalyzer<'a> {
         if node_data.kind == syntax_kind_ext::BINARY_EXPRESSION
             && let Some(bin) = self.arena.get_binary_expr(node_data)
         {
-            use tsz_scanner::SyntaxKind;
-            let op = bin.operator_token;
-            return op == SyntaxKind::PlusEqualsToken as u16
-                || op == SyntaxKind::MinusEqualsToken as u16
-                || op == SyntaxKind::AsteriskEqualsToken as u16
-                || op == SyntaxKind::SlashEqualsToken as u16
-                || op == SyntaxKind::PercentEqualsToken as u16
-                || op == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || op == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || op == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || op == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || op == SyntaxKind::AmpersandEqualsToken as u16
-                || op == SyntaxKind::BarEqualsToken as u16
-                || op == SyntaxKind::CaretEqualsToken as u16
-                || op == SyntaxKind::BarBarEqualsToken as u16
-                || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || op == SyntaxKind::QuestionQuestionEqualsToken as u16;
+            return crate::query_boundaries::common::is_compound_assignment_operator(
+                bin.operator_token,
+            );
         }
 
         false
