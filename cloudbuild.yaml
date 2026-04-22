@@ -4,6 +4,9 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
+      if ! scripts/ci/gcp-cancel-superseded.sh; then
+        echo "warning: superseded build cancellation failed" >&2
+      fi
       scripts/ci/gcp-cache.sh restore
 
   - id: full-ci
@@ -50,5 +53,5 @@ substitutions:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
   _TSZ_CI_SUITE: all
 
-queueTtl: 900s
+queueTtl: 7200s
 timeout: 3600s

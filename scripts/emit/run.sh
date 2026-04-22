@@ -202,6 +202,7 @@ resolve_tsz_binary() {
     fi
 
     candidates+=(
+        "$ROOT_DIR/.target/dist-fast/tsz"
         "$ROOT_DIR/.target/release/tsz"
         "$ROOT_DIR/target/release/tsz"
     )

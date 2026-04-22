@@ -1661,6 +1661,22 @@ async function runParallel(opts, testsToRun) {
 
         // Map worker index -> child process for watchdog kill
         const workerChildren = new Map();
+        const workerStderr = new Map();
+        const MAX_WORKER_STDERR = 8192;
+
+        function appendWorkerStderr(workerId, chunk) {
+            let stderr = (workerStderr.get(workerId) || "") + chunk.toString("utf8");
+            if (stderr.length > MAX_WORKER_STDERR) {
+                stderr = stderr.slice(-MAX_WORKER_STDERR);
+            }
+            workerStderr.set(workerId, stderr);
+        }
+
+        function workerStderrTail(workerId) {
+            const stderr = (workerStderr.get(workerId) || "").trim();
+            if (!stderr) return "";
+            return stderr.split("\n").slice(-40).join("\n");
+        }
 
         for (let i = 0; i < chunks.length; i++) {
             const child = fork(workerFile, [], {
@@ -1673,9 +1689,9 @@ async function runParallel(opts, testsToRun) {
             workerProgress.set(i, { total: chunks[i].length, completed: 0 });
             workerLastActivity.set(i, Date.now());
 
-            // Suppress child stdout/stderr
+            // Suppress child stdout and retain stderr tails for crash diagnostics.
             child.stdout.on("data", () => {});
-            child.stderr.on("data", () => {});
+            child.stderr.on("data", (chunk) => appendWorkerStderr(i, chunk));
 
             child.on("message", (msg) => {
                 workerLastActivity.set(i, Date.now());
@@ -1746,40 +1762,50 @@ async function runParallel(opts, testsToRun) {
                         console.log(`  [W${msg.workerId}] \x1b[33mBRIDGE RESTART\x1b[0m ${msg.reason}`);
                     }
                 } else if (msg.type === "error") {
-                    console.error(`  \x1b[31mWorker ${i} error:\x1b[0m ${msg.error}`);
+                    const stderr = workerStderrTail(i);
+                    console.error(`  \x1b[31mWorker ${i} error:\x1b[0m ${msg.error}${stderr ? `\n${stderr}` : ""}`);
                 }
             });
 
             child.on("exit", (code, signal) => {
                 workerChildren.delete(i);
-                if (code !== 0 && code !== null) {
+                if ((code !== 0 && code !== null) || signal !== null) {
                     // Worker crashed (likely OOM killed, segfault, or watchdog kill)
                     const wp = workerProgress.get(i);
                     const remaining = wp ? wp.total - wp.completed : 0;
                     if (remaining > 0) {
                         const reason = signal === "SIGKILL" ? "OOM killed"
                             : signal === "SIGTERM" ? "watchdog killed (stuck test)"
+                            : signal !== null ? `signal ${signal}`
                             : `exit code ${code}`;
+                        const stderr = workerStderrTail(i);
                         console.error(`\n  \x1b[31mWorker ${i} crashed (${reason}), ${remaining} tests lost\x1b[0m`);
+                        if (stderr) {
+                            console.error(`  Worker ${i} stderr tail:\n${stderr}`);
+                        }
                         // Count remaining tests as failed
                         failed += remaining;
                         timedOut += remaining;
                         for (let j = wp.completed; j < wp.total; j++) {
+                            const error = stderr ? `Worker crashed (${reason})\n${stderr}` : `Worker crashed (${reason})`;
                             errors.push({
                                 file: chunks[i][j],
-                                error: `Worker crashed (${reason})`,
+                                error,
                                 timedOut: true,
                             });
                             testResults.push({
                                 file: chunks[i][j],
                                 status: "timeout",
                                 timedOut: true,
-                                error: `Worker crashed (${reason})`,
+                                error,
                                 elapsed: 0,
                             });
                         }
                     }
+                    workerStderr.delete(i);
                     onWorkerDone();
+                } else {
+                    workerStderr.delete(i);
                 }
             });
 

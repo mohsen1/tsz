@@ -45,6 +45,30 @@ default_shard_workers() {
   cap_workers "$per"
 }
 
+default_emit_workers() {
+  local workers
+  workers="$(default_shard_workers)"
+  if (( workers > 32 )); then
+    workers=32
+  fi
+  cap_workers "$workers"
+}
+
+default_fourslash_workers() {
+  local usable per
+  usable=$((HOST_CPUS - 16))
+  if (( usable < SHARD_COUNT )); then
+    usable="$HOST_CPUS"
+  fi
+  per=$((usable / SHARD_COUNT))
+  if (( per < 8 )); then
+    per=8
+  elif (( per > 16 )); then
+    per=16
+  fi
+  cap_workers "$per"
+}
+
 default_conformance_workers() {
   local workers
   workers=$((HOST_CPUS - 8))
@@ -56,7 +80,8 @@ default_conformance_workers() {
   cap_workers "$workers"
 }
 
-SHARD_WORKERS="${TSZ_CI_SHARD_WORKERS:-$(default_shard_workers)}"
+EMIT_WORKERS="${TSZ_CI_EMIT_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_emit_workers)}}"
+FOURSLASH_WORKERS="${TSZ_CI_FOURSLASH_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_fourslash_workers)}}"
 CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers)}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
@@ -357,6 +382,14 @@ show_log_tail() {
   fi
 }
 
+show_log_tails() {
+  local dir="$1" path
+  for path in "$dir"/*.log; do
+    [[ -f "$path" ]] || continue
+    show_log_tail "$path"
+  done
+}
+
 run_conformance() {
   ci_section "Conformance"
   mkdir -p "$LOG_DIR/conformance"
@@ -409,13 +442,14 @@ run_emit_shards() {
   ci_section "Emit shards"
   mkdir -p "$LOG_DIR/emit"
   export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
+  echo "Emit shard config: shards=${SHARD_COUNT} workers_per_shard=${EMIT_WORKERS} chunk=${EMIT_CHUNK}"
 
   for shard in $(seq 0 $((SHARD_COUNT - 1))); do
     (
       set +e
       offset=$((shard * EMIT_CHUNK))
       detail_json="$METRICS_DIR/emit-detail-${shard}.json"
-      ./scripts/emit/run.sh --skip-build --max="$EMIT_CHUNK" --offset="$offset" --concurrency="$SHARD_WORKERS" \
+      ./scripts/emit/run.sh --skip-build --max="$EMIT_CHUNK" --offset="$offset" --concurrency="$EMIT_WORKERS" \
         --json-out="$detail_json" \
         >"$LOG_DIR/emit/shard-${shard}.log" 2>&1
       rc="$?"
@@ -436,6 +470,9 @@ run_emit_shards() {
       printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"js_skipped":%s,"js_timeouts":%s,"dts_passed":%s,"dts_total":%s,"dts_skipped":%s}\n' \
         "$shard" "$rc" "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" \
         > "$METRICS_DIR/emit-shard-${shard}.json"
+      if [[ "$rc" -ne 0 ]]; then
+        show_log_tail "$LOG_DIR/emit/shard-${shard}.log"
+      fi
       echo "EMIT_SHARD shard=${shard} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t} skip=${dts_s}"
       exit 0
     ) &
@@ -463,6 +500,7 @@ aggregate_emit() {
 
   if [[ "$shard_count" -lt "$SHARD_COUNT" || "$js_total" -eq 0 ]]; then
     echo "error: emit shard coverage is not trustworthy" >&2
+    show_log_tails "$LOG_DIR/emit"
     return 1
   fi
 
@@ -486,10 +524,12 @@ aggregate_emit() {
   base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
   if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
     echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
+    show_log_tails "$LOG_DIR/emit"
     return 1
   fi
   if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
     echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
+    show_log_tails "$LOG_DIR/emit"
     return 1
   fi
 }
@@ -497,6 +537,7 @@ aggregate_emit() {
 run_fourslash_shards() {
   ci_section "Fourslash shards"
   mkdir -p "$LOG_DIR/fourslash"
+  echo "Fourslash shard config: shards=${SHARD_COUNT} workers_per_shard=${FOURSLASH_WORKERS}"
 
   for shard in $(seq 0 $((SHARD_COUNT - 1))); do
     (
@@ -505,7 +546,7 @@ run_fourslash_shards() {
         --skip-cargo-build \
         --skip-ts-build \
         --shard="${shard}/${SHARD_COUNT}" \
-        --workers="$SHARD_WORKERS" --memory-limit=512 \
+        --workers="$FOURSLASH_WORKERS" --memory-limit=512 \
         >"$LOG_DIR/fourslash/shard-${shard}.log" 2>&1
       rc="$?"
       results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard}.log" | tail -1 || true)"
@@ -515,6 +556,9 @@ run_fourslash_shards() {
       total="$(num_or_zero "$total")"
       printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s}\n' "$shard" "$rc" "$passed" "$total" \
         > "$METRICS_DIR/fourslash-shard-${shard}.json"
+      if [[ "$rc" -ne 0 ]]; then
+        show_log_tail "$LOG_DIR/fourslash/shard-${shard}.log"
+      fi
       echo "FOURSLASH_SHARD shard=${shard} rc=${rc} passed=${passed} total=${total}"
       exit 0
     ) &
@@ -537,6 +581,7 @@ aggregate_fourslash() {
 
   if [[ "$shard_count" -lt "$SHARD_COUNT" || "$total_tests" -eq 0 ]]; then
     echo "error: fourslash shard coverage is not trustworthy" >&2
+    show_log_tails "$LOG_DIR/fourslash"
     return 1
   fi
 
@@ -546,6 +591,7 @@ aggregate_fourslash() {
     floor=$((baseline - tolerance))
     if [[ "$total_passed" -lt "$floor" ]]; then
       echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
+      show_log_tails "$LOG_DIR/fourslash"
       return 1
     fi
   fi
