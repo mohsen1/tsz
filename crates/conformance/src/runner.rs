@@ -227,6 +227,10 @@ fn compare_diagnostics(
             f.message_key.clone(),
         )
     };
+    let mut expected_fingerprints = tsc_fps.to_vec();
+    let mut actual_fingerprints = compile_result.diagnostic_fingerprints.clone();
+    expected_fingerprints.sort_by_key(fp_sort_key);
+    actual_fingerprints.sort_by_key(fp_sort_key);
     missing_fingerprints.sort_by_key(fp_sort_key);
     extra_fingerprints.sort_by_key(fp_sort_key);
 
@@ -246,6 +250,8 @@ fn compare_diagnostics(
             extra,
             missing_fingerprints,
             extra_fingerprints,
+            expected_fingerprints,
+            actual_fingerprints,
             options,
             known_failure: None,
         }
@@ -512,6 +518,8 @@ impl Runner {
                                     extra,
                                     missing_fingerprints,
                                     extra_fingerprints,
+                                    expected_fingerprints,
+                                    actual_fingerprints,
                                     options,
                                     known_failure,
                                 } => {
@@ -621,6 +629,14 @@ impl Runner {
                                                 .map(super::tsc_results::DiagnosticFingerprint::display_key)
                                                 .collect::<Vec<_>>(),
                                             "extra_fingerprints": extra_fingerprints
+                                                .iter()
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
+                                                .collect::<Vec<_>>(),
+                                            "expected_fingerprints": expected_fingerprints
+                                                .iter()
+                                                .map(super::tsc_results::DiagnosticFingerprint::display_key)
+                                                .collect::<Vec<_>>(),
+                                            "actual_fingerprints": actual_fingerprints
                                                 .iter()
                                                 .map(super::tsc_results::DiagnosticFingerprint::display_key)
                                                 .collect::<Vec<_>>(),
@@ -2010,6 +2026,47 @@ mod tests {
                         .map(|f| (f.code, f.file.clone()))
                         .collect::<Vec<_>>(),
                     vec![(2304, "a.ts".into()), (2322, "b.ts".into())],
+                );
+            }
+            other => panic!("expected Fail, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compare_diagnostics_carries_full_fingerprint_sets_on_fail() {
+        let tsc_codes = vec![2304, 2322];
+        let tsc_fps = vec![
+            fp(2322, "b.ts", "Type mismatch."),
+            fp(2304, "a.ts", "Cannot find."),
+        ];
+        let compile = compilation(
+            &[2304, 2322],
+            vec![
+                fp(2322, "actual.ts", "Type mismatch."),
+                fp(2304, "a.ts", "Cannot find."),
+            ],
+        );
+
+        let result = compare_diagnostics(&compile, &tsc_codes, &tsc_fps, HashMap::new());
+        match result {
+            TestResult::Fail {
+                expected_fingerprints,
+                actual_fingerprints,
+                ..
+            } => {
+                assert_eq!(
+                    expected_fingerprints
+                        .iter()
+                        .map(|f| (f.code, f.file.as_str()))
+                        .collect::<Vec<_>>(),
+                    vec![(2304, "a.ts"), (2322, "b.ts")],
+                );
+                assert_eq!(
+                    actual_fingerprints
+                        .iter()
+                        .map(|f| (f.code, f.file.as_str()))
+                        .collect::<Vec<_>>(),
+                    vec![(2304, "a.ts"), (2322, "actual.ts")],
                 );
             }
             other => panic!("expected Fail, got {other:?}"),
