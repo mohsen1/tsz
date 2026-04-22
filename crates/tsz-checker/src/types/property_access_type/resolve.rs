@@ -1628,8 +1628,44 @@ impl<'a> CheckerState<'a> {
 
             // Use the environment-aware resolver so that array methods, boxed
             // primitive types, and other lib-registered types are available.
-            let result =
+            let mut result =
                 self.resolve_property_access_with_env(object_type_for_access, property_name);
+            // Flow predicate narrowing can produce unions/intersections like
+            // `C2 | (C2 & C1)` or `(D1 & C2) | (D1 & C1)`. Looking up properties
+            // directly on those unevaluated shells may fall back to a bare `any`.
+            // Retry on the evaluated receiver to recover the concrete property type.
+            if matches!(
+                result,
+                PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                    ..
+                }
+            ) && !crate::query_boundaries::state::checking::is_type_parameter_like(
+                self.ctx.types,
+                object_type_for_access,
+            ) {
+                let evaluated_receiver = self.evaluate_type_with_env(object_type_for_access);
+                if evaluated_receiver != object_type_for_access
+                    && evaluated_receiver != TypeId::ANY
+                    && evaluated_receiver != TypeId::ERROR
+                {
+                    let retry =
+                        self.resolve_property_access_with_env(evaluated_receiver, property_name);
+                    let retry_improved = match retry {
+                        PropertyAccessResult::Success {
+                            type_id,
+                            from_index_signature,
+                            ..
+                        } => type_id != TypeId::ANY || from_index_signature,
+                        _ => true,
+                    };
+                    if retry_improved {
+                        object_type_for_access = evaluated_receiver;
+                        result = retry;
+                    }
+                }
+            }
             match result {
                 PropertyAccessResult::Success {
                     type_id: mut prop_type,
