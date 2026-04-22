@@ -46,7 +46,7 @@ impl<'a> CheckerContext<'a> {
                 authoritative_file_idx.is_none_or(|file_idx| file_idx == self.current_file_idx);
             authoritative_is_current
                 && symbol.import_module.is_none()
-                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
         });
         let symbol_name = self
             .binder
@@ -186,26 +186,24 @@ impl<'a> CheckerContext<'a> {
         // CLASS is checked before INTERFACE because declaration merging can give
         // a symbol both flags (e.g., `class Component<P,S>` + interface augmentation).
         // A class-with-interface-merge is semantically still a class.
-        let kind = if (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0 {
+        let kind = if symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
             tsz_solver::def::DefKind::TypeAlias
-        } else if (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0 {
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
             tsz_solver::def::DefKind::Class
-        } else if (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0 {
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
             tsz_solver::def::DefKind::Interface
-        } else if (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0 {
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM) {
             tsz_solver::def::DefKind::Enum
-        } else if (symbol.flags
-            & (tsz_binder::symbol_flags::NAMESPACE_MODULE | tsz_binder::symbol_flags::VALUE_MODULE))
-            != 0
-        {
+        } else if symbol.has_any_flags(
+            tsz_binder::symbol_flags::NAMESPACE_MODULE | tsz_binder::symbol_flags::VALUE_MODULE,
+        ) {
             tsz_solver::def::DefKind::Namespace
-        } else if (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0 {
+        } else if symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION) {
             tsz_solver::def::DefKind::Function
-        } else if (symbol.flags
-            & (tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
-                | tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE))
-            != 0
-        {
+        } else if symbol.has_any_flags(
+            tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE
+                | tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE,
+        ) {
             tsz_solver::def::DefKind::Variable
         } else {
             // Default to TypeAlias for remaining symbols (type parameters, etc.)
