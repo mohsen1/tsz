@@ -56,7 +56,7 @@ impl<'a> CheckerState<'a> {
         let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
             let sym_id = tsz_binder::SymbolId(sym_ref.0);
             if let Some(sym) = binder.get_symbol(sym_id) {
-                (sym.flags & symbol_flags::CLASS) != 0
+                sym.has_any_flags(symbol_flags::CLASS)
             } else {
                 false
             }
@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             // Skip type-only exports (interfaces, type aliases without value)
-            if member_symbol.flags & symbol_flags::VALUE == 0 {
+            if !member_symbol.has_any_flags(symbol_flags::VALUE) {
                 continue;
             }
 
@@ -207,7 +207,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             // Skip type-only exports (interfaces, type aliases without value)
-            if member_symbol.flags & symbol_flags::VALUE == 0 {
+            if !member_symbol.has_any_flags(symbol_flags::VALUE) {
                 continue;
             }
 
@@ -299,8 +299,8 @@ impl<'a> CheckerState<'a> {
             if crate::query_boundaries::common::is_enum_type(self.ctx.types, resolved) {
                 let binder_sym = tsz_binder::SymbolId(sym_id);
                 if let Some(symbol) = self.ctx.binder.get_symbol(binder_sym)
-                    && (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
-                    && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                    && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
+                    && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
                     && let Some(enum_obj) = self.enum_object_type(binder_sym)
                 {
                     return enum_obj;
