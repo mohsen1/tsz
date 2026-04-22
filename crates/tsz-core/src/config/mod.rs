@@ -2702,9 +2702,13 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "disablereferencedprojectload" => Some("disableReferencedProjectLoad"),
         // Keep the historical typo alias for compatibility, but accept the real key too.
         "disablesizelimit" | "disablesizelimt" => Some("disableSizeLimit"),
+        "disablesolutionsearching" => Some("disableSolutionSearching"),
         "disablesolutiontypecheck" => Some("disableSolutionTypeCheck"),
         "disablesolutioncaching" => Some("disableSolutionCaching"),
         "disablesolutiontypechecking" => Some("disableSolutionTypeChecking"),
+        "disablesourceofprojectreferenceredirect" => {
+            Some("disableSourceOfProjectReferenceRedirect")
+        }
         "disablesourceofreferencedprojectload" => Some("disableSourceOfReferencedProjectLoad"),
         "downleveliteration" => Some("downlevelIteration"),
         "emitbom" => Some("emitBOM"),
@@ -4412,6 +4416,21 @@ mod tests {
     }
 
     #[test]
+    fn test_disable_solution_searching_option_is_recognized() {
+        let source = r#"{
+  "compilerOptions": {
+    "disableSolutionSearching": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "disableSolutionSearching should not report unknown compiler option, got: {codes:?}"
+        );
+    }
+
+    #[test]
     fn test_disable_size_limit_miscase_reports_did_you_mean() {
         let source = r#"{
   "compilerOptions": {
@@ -4423,6 +4442,21 @@ mod tests {
         assert!(
             codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
             "Expected TS5025-style did-you-mean for mis-cased disableSizeLimit, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_disable_source_of_project_reference_redirect_option_is_recognized() {
+        let source = r#"{
+  "compilerOptions": {
+    "disableSourceOfProjectReferenceRedirect": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "disableSourceOfProjectReferenceRedirect should not report unknown compiler option, got: {codes:?}"
         );
     }
 
