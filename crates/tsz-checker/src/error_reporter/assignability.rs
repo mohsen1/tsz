@@ -176,6 +176,123 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Detect assignment-to-optional-slot mismatches that should produce TS2412.
+    ///
+    /// TS2412 applies for exact-optional write targets (e.g. `obj.a = value`)
+    /// where the write type excludes `undefined` but the source includes it.
+    pub(super) fn has_exact_optional_write_target_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) -> bool {
+        if !self.ctx.compiler_options.exact_optional_property_types {
+            return false;
+        }
+        if !crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, source) {
+            return false;
+        }
+        if crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target) {
+            return false;
+        }
+
+        let anchor_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
+        let Some(anchor_node) = self.ctx.arena.get(anchor_idx) else {
+            return false;
+        };
+
+        let mut write_target_idx = if anchor_node.kind
+            == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || anchor_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            Some(anchor_idx)
+        } else if anchor_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            self.ctx
+                .arena
+                .get_expression_statement(anchor_node)
+                .and_then(|stmt| self.ctx.arena.get(stmt.expression))
+                .and_then(|expr_node| {
+                    if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                        return None;
+                    }
+                    let binary = self.ctx.arena.get_binary_expr(expr_node)?;
+                    if !self.is_assignment_operator(binary.operator_token) {
+                        return None;
+                    }
+                    let lhs = self
+                        .ctx
+                        .arena
+                        .skip_parenthesized_and_assertions(binary.left);
+                    let lhs_node = self.ctx.arena.get(lhs)?;
+                    (lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                        .then_some(lhs)
+                })
+        } else if anchor_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            self.ctx
+                .arena
+                .get_binary_expr(anchor_node)
+                .and_then(|binary| {
+                    if !self.is_assignment_operator(binary.operator_token) {
+                        return None;
+                    }
+                    let lhs = self
+                        .ctx
+                        .arena
+                        .skip_parenthesized_and_assertions(binary.left);
+                    let lhs_node = self.ctx.arena.get(lhs)?;
+                    (lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                        .then_some(lhs)
+                })
+        } else {
+            None
+        };
+
+        if write_target_idx.is_none()
+            && let Some(ext) = self.ctx.arena.get_extended(anchor_idx)
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+            && access.name_or_argument == anchor_idx
+        {
+            write_target_idx = Some(ext.parent);
+        }
+
+        let Some(write_target_idx) = write_target_idx else {
+            return false;
+        };
+        let Some(write_target_node) = self.ctx.arena.get(write_target_idx) else {
+            return false;
+        };
+
+        let is_property_like_write =
+            if write_target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                true
+            } else if write_target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_access_expr(write_target_node)
+                    .is_some_and(|access| {
+                        self.get_literal_index_from_node(access.name_or_argument)
+                            .is_some()
+                            || self
+                                .get_literal_string_from_node(access.name_or_argument)
+                                .is_some()
+                    })
+            } else {
+                false
+            };
+        if !is_property_like_write {
+            return false;
+        }
+
+        let read_target = self
+            .get_type_of_node_with_request(write_target_idx, &crate::context::TypingRequest::NONE);
+        crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, read_target)
+    }
+
     /// Get the declaring type name for a property in a target type.
     /// For inherited properties (e.g., from a base class), returns the base class name.
     /// Falls back to formatting the target type if no parent info is available.
@@ -761,6 +878,28 @@ impl<'a> CheckerState<'a> {
                 DiagnosticRenderRequest::simple(
                     DiagnosticAnchorKind::Exact,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
+                    message,
+                ),
+            ) {
+                return;
+            }
+            return;
+        }
+
+        // TS2412: exactOptionalPropertyTypes write target mismatch (property/element write).
+        if self.has_exact_optional_write_target_mismatch(source, target, anchor_idx) {
+            let src_str =
+                self.format_assignment_source_type_for_diagnostic(source, target, anchor_idx);
+            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2,
+                &[&src_str, &tgt_str],
+            );
+            if !self.emit_render_request(
+                anchor_idx,
+                DiagnosticRenderRequest::simple(
+                    DiagnosticAnchorKind::Exact,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2,
                     message,
                 ),
             ) {

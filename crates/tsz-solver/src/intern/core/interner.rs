@@ -552,6 +552,8 @@ pub struct TypeInterner {
     pub(super) poisoned: std::sync::atomic::AtomicBool,
     /// Effective value for `noUncheckedIndexedAccess` used by query-boundary helpers.
     pub(super) no_unchecked_indexed_access: AtomicBool,
+    /// Effective value for `exactOptionalPropertyTypes` used by query-boundary helpers.
+    pub(super) exact_optional_property_types: AtomicBool,
     /// Display properties for fresh object literal types.
     ///
     /// When object literal properties are widened (e.g., `"hello"` → `string`),
@@ -633,6 +635,7 @@ impl TypeInterner {
             alloc_counter: AtomicU32::new(0),
             poisoned: std::sync::atomic::AtomicBool::new(false),
             no_unchecked_indexed_access: AtomicBool::new(false),
+            exact_optional_property_types: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
@@ -649,6 +652,17 @@ impl TypeInterner {
     #[inline]
     pub fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         self.no_unchecked_indexed_access
+            .store(enabled, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn exact_optional_property_types(&self) -> bool {
+        self.exact_optional_property_types.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn set_exact_optional_property_types(&self, enabled: bool) {
+        self.exact_optional_property_types
             .store(enabled, Ordering::Relaxed);
     }
 

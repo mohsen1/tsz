@@ -31,6 +31,7 @@ impl<'a> CheckerContext<'a> {
         if configure_no_unchecked_indexed_access {
             types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
         }
+        types.set_exact_optional_property_types(compiler_options.exact_optional_property_types);
         compiler_options
     }
 

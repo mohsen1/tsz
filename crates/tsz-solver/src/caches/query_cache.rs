@@ -31,7 +31,7 @@ use tsz_common::interner::Atom;
 type EvalCacheKey = (TypeId, bool);
 type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
-type PropertyAccessCacheKey = (TypeId, Atom, bool);
+type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 
 /// Build a `RelationCacheConfig` from the legacy packed `u16` flags in a way
 /// that matches the defaults a fresh `SubtypeChecker::new().apply_flags(flags)`
@@ -300,6 +300,7 @@ pub struct QueryCache<'a> {
     assignability_cache_hits: Cell<u64>,
     assignability_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
+    exact_optional_property_types: Cell<bool>,
     /// Optional shared cross-file cache for multi-file project checking.
     /// When present, local cache misses fall through to the shared `DashMap` cache,
     /// and local cache inserts are also written to the shared cache.
@@ -341,6 +342,7 @@ impl<'a> QueryCache<'a> {
             assignability_cache_hits: Cell::new(0),
             assignability_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
+            exact_optional_property_types: Cell::new(interner.exact_optional_property_types()),
             shared,
         }
     }
@@ -1472,13 +1474,20 @@ impl QueryDatabase for QueryCache<'_> {
         // QueryCache doesn't have full TypeResolver capability, so use PropertyAccessEvaluator
         // with the current QueryDatabase.
         let prop_atom = self.interner.intern_string(prop_name);
-        let key = (object_type, prop_atom, no_unchecked_indexed_access);
+        let exact_optional_property_types = self.exact_optional_property_types();
+        let key = (
+            object_type,
+            prop_atom,
+            no_unchecked_indexed_access,
+            exact_optional_property_types,
+        );
         if let Some(result) = self.check_property_cache(key) {
             return result;
         }
 
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        evaluator.set_exact_optional_property_types(exact_optional_property_types);
         let result = evaluator.resolve_property_access(object_type, prop_name);
         self.insert_property_cache(key, result);
         result
@@ -1526,6 +1535,14 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         self.no_unchecked_indexed_access.set(enabled);
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        self.exact_optional_property_types.get()
+    }
+
+    fn set_exact_optional_property_types(&self, enabled: bool) {
+        self.exact_optional_property_types.set(enabled);
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {

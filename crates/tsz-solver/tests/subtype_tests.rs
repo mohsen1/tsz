@@ -12137,6 +12137,30 @@ fn test_tuple_optional_required_to_optional() {
 }
 
 #[test]
+fn test_tuple_required_undefined_union_to_optional() {
+    // A required element typed as `T | undefined` should satisfy an optional `T` slot.
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let str_or_undef = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+    let tuple_required_union = interner.tuple(vec![TupleElement {
+        type_id: str_or_undef,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    let tuple_optional = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: true,
+        rest: false,
+    }]);
+
+    assert!(checker.is_subtype_of(tuple_required_union, tuple_optional));
+}
+
+#[test]
 fn test_tuple_optional_to_required_not_subtype() {
     // [string?] is NOT subtype of [string]
     let interner = TypeInterner::new();
