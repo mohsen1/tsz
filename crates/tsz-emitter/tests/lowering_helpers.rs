@@ -859,10 +859,6 @@ fn test_collect_module_dependencies_no_duplicates() {
     );
 }
 
-// =============================================================================
-// is_assignment_operator (const fn - test via static assertions)
-// =============================================================================
-
 #[test]
 fn test_is_commonjs_default_false() {
     let arena = NodeArena::new();
