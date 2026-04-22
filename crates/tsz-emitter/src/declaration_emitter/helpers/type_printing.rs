@@ -36,6 +36,35 @@ pub(crate) struct ResolvedDeclarationTypeText {
 }
 
 impl<'a> DeclarationEmitter<'a> {
+    fn should_preserve_named_application_for_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        interner: &tsz_solver::TypeInterner,
+    ) -> bool {
+        let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
+            return false;
+        };
+        let app = interner.type_application(app_id);
+        if app.args.is_empty() {
+            return false;
+        }
+        let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, app.base) else {
+            return false;
+        };
+        let Some(sym_id) = self
+            .type_cache
+            .as_ref()
+            .and_then(|cache| cache.def_to_symbol.get(&def_id).copied())
+        else {
+            return false;
+        };
+        self.binder
+            .and_then(|binder| binder.symbols.get(sym_id))
+            .is_some_and(|symbol| {
+                symbol.flags & (symbol_flags::CLASS | symbol_flags::INTERFACE) != 0
+            })
+    }
+
     pub(crate) fn get_node_type_or_names(
         &self,
         node_ids: &[NodeIndex],
@@ -189,11 +218,17 @@ impl<'a> DeclarationEmitter<'a> {
     /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
     pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
         if let Some(interner) = self.type_interner {
+            let type_id = interner
+                .get_display_alias(type_id)
+                .filter(|&alias| self.should_preserve_named_application_for_emit(alias, interner))
+                .unwrap_or(type_id);
             // Evaluate the type before printing to expand mapped types over
             // literal union constraints (e.g., `{[k in "ar"|"bg"]?: T}` becomes
             // `{ar?: T; bg?: T}`).  This matches tsc's behavior in declaration
             // emit where mapped types are fully resolved.
-            let type_id = if let Some(cache) = &self.type_cache {
+            let type_id = if self.should_preserve_named_application_for_emit(type_id, interner) {
+                type_id
+            } else if let Some(cache) = &self.type_cache {
                 let resolver = DtsCacheResolver { cache };
                 let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
                 evaluator.set_max_mapped_keys(1_024);
@@ -282,7 +317,13 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(interner) = self.type_interner else {
             return "any".to_string();
         };
-        let type_id = if let Some(cache) = &self.type_cache {
+        let type_id = interner
+            .get_display_alias(type_id)
+            .filter(|&alias| self.should_preserve_named_application_for_emit(alias, interner))
+            .unwrap_or(type_id);
+        let type_id = if self.should_preserve_named_application_for_emit(type_id, interner) {
+            type_id
+        } else if let Some(cache) = &self.type_cache {
             let resolver = DtsCacheResolver { cache };
             let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
             evaluator.set_max_mapped_keys(1_024);
