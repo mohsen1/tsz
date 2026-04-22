@@ -10,8 +10,8 @@ use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
-    FunctionShape, MappedType, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData,
-    TypeId, TypeParamInfo, TypePredicate, Variance,
+    FunctionShape, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
+    TypeData, TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
@@ -1465,17 +1465,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
             }
             (
                 Some(TypeData::ObjectWithIndex(s_shape_id)),
@@ -1483,17 +1473,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             ) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
                 if let (Some(s_idx), Some(t_idx)) = (&s_shape.string_index, &t_shape.string_index) {
                     self.constrain_types(
                         ctx,
@@ -1579,17 +1559,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Object(s_shape_id)), Some(TypeData::ObjectWithIndex(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
                 self.constrain_properties_against_index_signatures(
                     ctx,
                     var_map,
@@ -1601,17 +1571,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::ObjectWithIndex(s_shape_id)), Some(TypeData::Object(t_shape_id))) => {
                 let s_shape = self.interner.object_shape(s_shape_id);
                 let t_shape = self.interner.object_shape(t_shape_id);
-                let source_is_fresh = s_shape
-                    .flags
-                    .contains(crate::types::ObjectFlags::FRESH_LITERAL);
-                self.constrain_properties(
-                    ctx,
-                    var_map,
-                    &s_shape.properties,
-                    &t_shape.properties,
-                    priority,
-                    source_is_fresh,
-                );
+                self.constrain_object_properties(ctx, var_map, &s_shape, &t_shape, priority);
                 self.constrain_index_signatures_to_properties(
                     ctx,
                     var_map,
@@ -2052,6 +2012,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => {}
         }
+    }
+
+    /// Constrain source properties against target properties for two object
+    /// shapes, propagating freshness from the source's `FRESH_LITERAL` flag.
+    ///
+    /// All four `Object`/`ObjectWithIndex` arms of the main walker compute
+    /// `source_is_fresh` from the same flag bit and feed it into
+    /// [`Self::constrain_properties`]; this helper keeps that shared preamble
+    /// in one place.
+    fn constrain_object_properties(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        s_shape: &ObjectShape,
+        t_shape: &ObjectShape,
+        priority: crate::types::InferencePriority,
+    ) {
+        let source_is_fresh = s_shape
+            .flags
+            .contains(crate::types::ObjectFlags::FRESH_LITERAL);
+        self.constrain_properties(
+            ctx,
+            var_map,
+            &s_shape.properties,
+            &t_shape.properties,
+            priority,
+            source_is_fresh,
+        );
     }
 
     /// If the target's last parameter is a rest parameter typed as a direct
