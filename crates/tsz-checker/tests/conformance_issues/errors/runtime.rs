@@ -456,6 +456,159 @@ type TypeHardcodedAsParameterWithoutReturnType<
 }
 
 #[test]
+fn test_constraint_with_indexed_access_formats_instantiated_alias_bodies() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+interface CallableFunction extends Function {}
+interface NewableFunction extends Function {}
+
+type ReturnType<T extends (...args: any) => any> =
+    T extends (...args: any) => infer R ? R : any;
+
+type DataFetchFns = {
+    Boat: {
+        requiresLicense: (id: string) => boolean;
+        maxGroundSpeed: (id: string) => number;
+        description: (id: string) => string;
+        displacement: (id: string) => number;
+        name: (id: string) => string;
+    };
+    Plane: {
+        requiresLicense: (id: string) => boolean;
+        maxGroundSpeed: (id: string) => number;
+        maxTakeoffWeight: (id: string) => number;
+        maxCruisingAltitude: (id: string) => number;
+        name: (id: string) => string;
+    };
+};
+
+type TypeHardcodedAsParameterWithoutReturnType<
+    T extends 'Boat',
+    F extends keyof DataFetchFns[T]
+> = DataFetchFns[T][F];
+type NoTypeParamBoatRequired<F extends keyof DataFetchFns['Boat']> =
+    ReturnType<DataFetchFns['Boat'][F]>;
+type allAreFunctionsAsExpected =
+    TypeHardcodedAsParameterWithoutReturnType<'Boat', keyof DataFetchFns['Boat']>;
+type returnTypeOfFunctions = ReturnType<allAreFunctionsAsExpected>;
+type SucceedingCombo =
+    ReturnType<TypeHardcodedAsParameterWithoutReturnType<'Boat', keyof DataFetchFns['Boat']>>;
+type VehicleSelector<T extends keyof DataFetchFns> = DataFetchFns[T];
+
+type FailingCombo<
+    T extends 'Boat',
+    F extends keyof DataFetchFns[T]
+> = ReturnType<TypeHardcodedAsParameterWithoutReturnType<T, F>>;
+type TypeHardcodedAsParameter<
+    T extends 'Boat',
+    F extends keyof DataFetchFns[T]
+> = ReturnType<DataFetchFns[T][F]>;
+type TypeHardcodedAsParameter2<
+    T extends 'Boat',
+    F extends keyof DataFetchFns[T]
+> = ReturnType<VehicleSelector<T>[F]>;
+type TypeGeneric1<
+    T extends keyof DataFetchFns,
+    F extends keyof DataFetchFns[T]
+> = ReturnType<DataFetchFns[T][F]>;
+type TypeGeneric2<
+    T extends keyof DataFetchFns,
+    F extends keyof DataFetchFns[T]
+> = ReturnType<DataFetchFns[T][T]>;
+type TypeGeneric3<
+    T extends keyof DataFetchFns,
+    F extends keyof DataFetchFns[T]
+> = ReturnType<DataFetchFns[F][F]>;
+        ",
+    );
+
+    let ts2344 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2344.len(),
+        6,
+        "Expected the full conformance TS2344 surface. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|message| message.contains("TypeHardcodedAsParameterWithoutReturnType<T, F>")),
+        "Expected TS2344 to preserve the written helper alias surface for direct alias applications. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|message| message.contains("VehicleSelector<T>[F]")),
+        "Expected TS2344 to preserve the written helper alias surface for nested alias access. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|message| message.contains("DataFetchFns[T][F]")),
+        "Expected TS2344 to keep raw indexed-access expressions structural. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|message| message.contains("DataFetchFns[T][T]")),
+        "Expected TS2344 to keep raw indexed-access expressions structural for mismatched keys. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2344
+            .iter()
+            .any(|message| message.contains("DataFetchFns[F][F]")),
+        "Expected TS2344 to keep raw indexed-access expressions structural for mismatched object aliases. Actual diagnostics: {diagnostics:?}"
+    );
+
+    let ts2536 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2536)
+        .map(|(_, message)| message.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2536.len(),
+        3,
+        "Expected the full conformance TS2536 surface. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
+            .any(|message| message
+                .contains("Type 'T' cannot be used to index type 'DataFetchFns[T]'")),
+        "Expected TS2536 to display the expanded indexed-access object. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
+            .any(|message| message.contains("Type 'F' cannot be used to index type 'DataFetchFns'")),
+        "Expected TS2536 to preserve raw object surfaces for direct indexed access. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2536
+            .iter()
+            .any(|message| message
+                .contains("Type 'F' cannot be used to index type 'DataFetchFns[F]'")),
+        "Expected TS2536 to preserve nested raw object surfaces for direct indexed access. Actual diagnostics: {diagnostics:?}"
+    );
+    assert!(
+        ts2536.iter().all(|message| !message
+            .contains("Type 'T' cannot be used to index type 'VehicleSelector<T>'")),
+        "TS2536 should not repaint raw indexed-access objects with helper alias names. Actual diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_ts2344_for_concrete_indexed_access_callable_union() {
     let diagnostics = compile_and_get_diagnostics(
         r"

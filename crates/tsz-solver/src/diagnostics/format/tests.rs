@@ -2521,6 +2521,81 @@ fn application_lazy_shows_type_args() {
         "Application should show formatted type args"
     );
 }
+
+#[test]
+fn resolved_indexed_access_alias_bodies_stay_structural_without_repainting_written_aliases() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let data_fetch_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("DataFetchFns"),
+        vec![],
+        db.object(vec![]),
+    ));
+
+    let t_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let f_param = TypeParamInfo {
+        name: db.intern_string("F"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t = db.type_param(t_param);
+    let f = db.type_param(f_param);
+
+    let direct_body = db.index_access(db.index_access(db.lazy(data_fetch_def), t), f);
+    let direct_alias_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("TypeHardcodedAsParameterWithoutReturnType"),
+        vec![t_param, f_param],
+        direct_body,
+    ));
+    def_store.register_type_to_def(direct_body, direct_alias_def);
+    let direct_app = db.application(db.lazy(direct_alias_def), vec![t, f]);
+
+    let vehicle_t_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let vehicle_t = db.type_param(vehicle_t_param);
+    let vehicle_body = db.index_access(db.lazy(data_fetch_def), vehicle_t);
+    let vehicle_alias_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("VehicleSelector"),
+        vec![vehicle_t_param],
+        vehicle_body,
+    ));
+    def_store.register_type_to_def(vehicle_body, vehicle_alias_def);
+    let vehicle_app = db.application(db.lazy(vehicle_alias_def), vec![t]);
+    let nested_access = db.index_access(vehicle_app, f);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(direct_body),
+        "DataFetchFns[T][F]",
+        "Resolved indexed-access alias bodies should stay expanded"
+    );
+    assert_eq!(
+        fmt.format(vehicle_body),
+        "DataFetchFns[T]",
+        "Resolved indexed-access helper aliases should stay expanded"
+    );
+    assert_eq!(
+        fmt.format(direct_app),
+        "TypeHardcodedAsParameterWithoutReturnType<T, F>",
+        "Direct generic alias applications should preserve the alias name"
+    );
+    assert_eq!(
+        fmt.format(nested_access),
+        "VehicleSelector<T>[F]",
+        "Nested indexed access should preserve the helper alias surface when it is written directly"
+    );
+}
 // NOTE: lazy_raw_def_id_falls_back_to_symbol_name was removed.
 // DefId and SymbolId are independent ID spaces. The raw-value fallback
 // was removed in bfd1e1ad05 because it caused incorrect type names
