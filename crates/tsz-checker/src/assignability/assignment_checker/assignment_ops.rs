@@ -680,13 +680,7 @@ impl<'a> CheckerState<'a> {
                         })
                         .and_then(|identifier_idx| self.resolve_identifier_symbol(identifier_idx))
                         .and_then(|sym_id| self.get_symbol_from_any_binder(sym_id))
-                        .and_then(|symbol| {
-                            if symbol.value_declaration.is_some() {
-                                Some(symbol.value_declaration)
-                            } else {
-                                symbol.declarations.first().copied()
-                            }
-                        })
+                        .and_then(|symbol| symbol.primary_declaration())
                         .and_then(|decl_idx| self.enclosing_statement_node(decl_idx))
                         .unwrap_or(left_idx);
                     self.error_at_node_msg(

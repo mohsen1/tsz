@@ -970,13 +970,8 @@ impl<'a> CheckerState<'a> {
             Some(s) => s,
             None => return false,
         };
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            match symbol.declarations.first() {
-                Some(&d) => d,
-                None => return false,
-            }
+        let Some(decl_idx) = symbol.primary_declaration() else {
+            return false;
         };
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return false;
@@ -1019,13 +1014,8 @@ impl<'a> CheckerState<'a> {
                 None => break,
             };
 
-            let decl_idx = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else {
-                match symbol.declarations.first() {
-                    Some(&d) => d,
-                    None => break,
-                }
+            let Some(decl_idx) = symbol.primary_declaration() else {
+                break;
             };
 
             let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -1121,13 +1111,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Walk the class declarations for this symbol
-        let decl_idx = if child.value_declaration.is_some() {
-            child.value_declaration
-        } else {
-            match child.declarations.first() {
-                Some(&d) => d,
-                None => return false,
-            }
+        let Some(decl_idx) = child.primary_declaration() else {
+            return false;
         };
 
         let Some(node) = self.ctx.arena.get(decl_idx) else {

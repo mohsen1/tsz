@@ -564,11 +564,7 @@ impl<'a> CheckerState<'a> {
 
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol.declarations.first().copied()?
-        };
+        let decl_idx = symbol.primary_declaration()?;
 
         let var_decl = self.ctx.arena.get_variable_declaration_at(decl_idx)?;
         if var_decl.initializer.is_none() {

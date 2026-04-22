@@ -268,11 +268,7 @@ impl<'a> CheckerState<'a> {
             );
             return Some(TypeId::ERROR);
         }
-        let symbol_decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first().unwrap_or(&NodeIndex::NONE)
-        };
+        let symbol_decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         if let Some(decl_node) = self.ctx.arena.get(symbol_decl_idx)
             && decl_node.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_CLAUSE
             && let Some(ext) = self.ctx.arena.get_extended(symbol_decl_idx)

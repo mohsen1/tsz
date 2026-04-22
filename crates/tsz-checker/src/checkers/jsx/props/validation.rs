@@ -852,11 +852,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let decl_idx = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else if let Some(&decl_idx) = symbol.declarations.first() {
-                decl_idx
-            } else {
+            let Some(decl_idx) = symbol.primary_declaration() else {
                 continue;
             };
 

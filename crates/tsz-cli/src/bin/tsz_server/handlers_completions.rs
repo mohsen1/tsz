@@ -876,19 +876,11 @@ impl Server {
                 item = item.with_detail(alias_detail);
                 if let Some(symbol_id) = binder.file_locals.get(&local_name)
                     && let Some(symbol) = binder.symbols.get(symbol_id)
+                    && let Some(decl) = symbol.primary_declaration()
                 {
-                    let decl = if symbol.value_declaration.is_some() {
-                        symbol.value_declaration
-                    } else if let Some(&first) = symbol.declarations.first() {
-                        first
-                    } else {
-                        tsz::parser::base::NodeIndex::NONE
-                    };
-                    if decl.is_some() {
-                        let doc = jsdoc_for_node(&arena, root, decl, &target_source_text);
-                        if !doc.is_empty() {
-                            item = item.with_documentation(doc);
-                        }
+                    let doc = jsdoc_for_node(&arena, root, decl, &target_source_text);
+                    if !doc.is_empty() {
+                        item = item.with_documentation(doc);
                     }
                 }
                 items.push(item);
@@ -1556,17 +1548,9 @@ impl Server {
         if raw_doc.is_empty()
             && let Some(symbol_id) = binder.file_locals.get(name)
             && let Some(symbol) = binder.symbols.get(symbol_id)
+            && let Some(decl) = symbol.primary_declaration()
         {
-            let decl = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else if let Some(&first) = symbol.declarations.first() {
-                first
-            } else {
-                tsz::parser::base::NodeIndex::NONE
-            };
-            if decl.is_some() {
-                raw_doc = jsdoc_for_node(arena, root, decl, source_text);
-            }
+            raw_doc = jsdoc_for_node(arena, root, decl, source_text);
         }
         if raw_doc.trim().is_empty()
             && let Some(supplemental_jsdoc) = supplemental_jsdoc.as_deref()
@@ -1639,11 +1623,7 @@ impl Server {
 
         let symbol_id = binder.file_locals.get(name)?;
         let symbol = binder.symbols.get(symbol_id)?;
-        let decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl = symbol.primary_declaration()?;
         let node = arena.get(decl)?;
         let anchor = if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             if let Some(ext) = arena.get_extended(decl) {

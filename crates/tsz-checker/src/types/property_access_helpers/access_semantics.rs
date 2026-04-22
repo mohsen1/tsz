@@ -199,11 +199,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(root_sym) else {
             return use_owner.is_none();
         };
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first().unwrap_or(&NodeIndex::NONE)
-        };
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
         self.declaration_scope_owner_node(decl_idx) == use_owner
     }
 

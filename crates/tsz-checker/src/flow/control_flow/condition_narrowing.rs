@@ -1108,11 +1108,7 @@ impl<'a> FlowAnalyzer<'a> {
         if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
             return None;
         }
-        let mut decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let mut decl_idx = symbol.primary_declaration()?;
         let mut decl_node = self.arena.get(decl_idx)?;
         if decl_node.kind == SyntaxKind::Identifier as u16 {
             decl_idx = self.arena.get_extended(decl_idx)?.parent;

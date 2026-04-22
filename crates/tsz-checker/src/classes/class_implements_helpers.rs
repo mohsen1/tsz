@@ -433,13 +433,10 @@ impl<'a> CheckerState<'a> {
                     let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                         continue;
                     };
-                    if symbol.value_declaration.is_some() {
-                        symbol.value_declaration
-                    } else if let Some(&d) = symbol.declarations.first() {
-                        d
-                    } else {
+                    let Some(d) = symbol.primary_declaration() else {
                         continue;
-                    }
+                    };
+                    d
                 };
 
                 // Cycle detection
@@ -563,13 +560,10 @@ impl<'a> CheckerState<'a> {
                     let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                         continue;
                     };
-                    if symbol.value_declaration.is_some() {
-                        symbol.value_declaration
-                    } else if let Some(&d) = symbol.declarations.first() {
-                        d
-                    } else {
+                    let Some(d) = symbol.primary_declaration() else {
                         continue;
-                    }
+                    };
+                    d
                 };
 
                 if !visited.insert(base_decl) {

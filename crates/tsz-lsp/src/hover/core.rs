@@ -1576,13 +1576,7 @@ impl<'a> HoverProvider<'a> {
                 }
             }
         }
-        if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first) = symbol.declarations.first() {
-            first
-        } else {
-            NodeIndex::NONE
-        }
+        symbol.primary_declaration().unwrap_or(NodeIndex::NONE)
     }
 
     /// Check if `child` is a descendant of `ancestor` in the AST.

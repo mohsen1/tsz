@@ -905,11 +905,7 @@ impl<'a> CheckerState<'a> {
             return Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name));
         }
         let mut parts = vec![symbol.escaped_name.clone()];
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol.declarations.first().copied()?
-        };
+        let decl_idx = symbol.primary_declaration()?;
         let mut current = self.ctx.arena.get_extended(decl_idx)?.parent;
 
         while current.is_some() {

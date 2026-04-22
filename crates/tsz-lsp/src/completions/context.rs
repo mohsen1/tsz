@@ -697,12 +697,7 @@ impl<'a> Completions<'a> {
             mods.push("export");
         }
         // Check declaration node for ambient (declare) and deprecated
-        let decl_idx = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol.declarations.first().copied().unwrap_or_default()
-        };
-        if decl_idx.is_some() {
+        if let Some(decl_idx) = symbol.primary_declaration() {
             if let Some(decl_node) = self.arena.get(decl_idx) {
                 let nf = decl_node.flags as u32;
                 // Check for deprecated (set by JSDoc @deprecated tag during parsing)

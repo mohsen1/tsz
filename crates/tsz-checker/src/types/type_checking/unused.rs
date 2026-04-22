@@ -112,11 +112,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the declaration node
-            let decl_idx = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else if let Some(&first) = symbol.declarations.first() {
-                first
-            } else {
+            let Some(decl_idx) = symbol.primary_declaration() else {
                 continue;
             };
 
@@ -155,11 +151,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the declaration node
-            let decl_idx = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else if let Some(&first) = symbol.declarations.first() {
-                first
-            } else {
+            let Some(decl_idx) = symbol.primary_declaration() else {
                 continue;
             };
 
@@ -266,11 +258,7 @@ impl<'a> CheckerState<'a> {
             };
 
             let flags = symbol.flags;
-            let decl_idx = if symbol.value_declaration.is_some() {
-                symbol.value_declaration
-            } else if let Some(&first) = symbol.declarations.first() {
-                first
-            } else {
+            let Some(decl_idx) = symbol.primary_declaration() else {
                 continue;
             };
 

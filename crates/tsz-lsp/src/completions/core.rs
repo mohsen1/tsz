@@ -605,11 +605,7 @@ impl<'a> Completions<'a> {
     fn is_const_declaration(&self, symbol: &tsz_binder::Symbol) -> bool {
         use tsz_parser::parser::flags::node_flags;
 
-        let decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else if let Some(&first) = symbol.declarations.first() {
-            first
-        } else {
+        let Some(decl) = symbol.primary_declaration() else {
             return false;
         };
 
@@ -673,11 +669,7 @@ impl<'a> Completions<'a> {
     }
 
     fn parameter_annotation_text(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
-        let decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl = symbol.primary_declaration()?;
         let node = self.arena.get(decl)?;
         if node.kind != syntax_kind_ext::PARAMETER {
             return None;
@@ -857,11 +849,7 @@ impl<'a> Completions<'a> {
         symbol: &tsz_binder::Symbol,
         kind: CompletionItemKind,
     ) -> Option<String> {
-        let decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            *symbol.declarations.first()?
-        };
+        let decl = symbol.primary_declaration()?;
         let node = self.arena.get(decl)?;
         if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return None;
