@@ -505,6 +505,62 @@ fn compile_named_files_get_diagnostics_with_options_and_import_reporting(
         .collect()
 }
 
+fn compile_named_project_get_diagnostics_with_options(
+    files: &[(&str, &str)],
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let resolved_module_paths = Arc::new(resolved_module_paths);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut diagnostics = Vec::new();
+
+    for (file_idx, file_name) in file_names.iter().enumerate() {
+        let mut checker = CheckerState::new(
+            all_arenas[file_idx].as_ref(),
+            all_binders[file_idx].as_ref(),
+            &types,
+            file_name.clone(),
+            options.clone(),
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&all_binders));
+        checker.ctx.set_current_file_idx(file_idx);
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(&resolved_module_paths));
+        checker.ctx.set_resolved_modules(resolved_modules.clone());
+        checker.check_source_file(roots[file_idx]);
+        diagnostics.extend(
+            checker
+                .ctx
+                .diagnostics
+                .iter()
+                .filter(|d| d.code != 2318)
+                .map(|d| (d.code, d.message_text.clone())),
+        );
+    }
+
+    diagnostics
+}
+
 fn compile_named_files_get_diagnostics_with_lib_and_options(
     files: &[(&str, &str)],
     entry_file: &str,
@@ -582,6 +638,65 @@ fn compile_named_files_get_diagnostics_with_lib_and_options(
         .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+#[test]
+fn test_react_jsx_runtime_package_root_self_import_duplicates_intrinsic_index_signature() {
+    let diagnostics = compile_named_project_get_diagnostics_with_options(
+        &[
+            ("/file.tsx", "export const a = <div></div>;"),
+            (
+                "/node_modules/@types/react/package.json",
+                r#"
+{
+  "name": "@types/react",
+  "version": "0.0.1",
+  "main": "",
+  "types": "index.d.ts",
+  "exports": {
+    "./*.js": "./*.js",
+    "./*": "./*.js"
+  }
+}
+"#,
+            ),
+            (
+                "/node_modules/@types/react/index.d.ts",
+                r#"
+declare namespace JSX {
+    interface IntrinsicElements { [x: string]: any; }
+}
+"#,
+            ),
+            (
+                "/node_modules/@types/react/jsx-runtime.d.ts",
+                "import './';",
+            ),
+            (
+                "/node_modules/@types/react/jsx-dev-runtime.d.ts",
+                "import './';",
+            ),
+        ],
+        CheckerOptions {
+            module: ModuleKind::NodeNext,
+            target: ScriptTarget::ES2015,
+            jsx_mode: JsxMode::ReactJsx,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+
+    let ts2374: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            *code == 2374 && message.contains("Duplicate index signature for type 'string'")
+        })
+        .collect();
+    assert_eq!(
+        ts2374.len(),
+        1,
+        "Expected one TS2374 for duplicate JSX.IntrinsicElements string index signature through react/jsx-runtime package-root self import. Actual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
