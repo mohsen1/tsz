@@ -386,12 +386,8 @@ impl<'a> CheckerState<'a> {
 
         let result_type =
             self.compound_assignment_result_type(left_read_type, right_type, operator);
-        let is_logical_assignment = matches!(
-            operator,
-            k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-        );
+        let is_logical_assignment =
+            crate::query_boundaries::common::is_logical_compound_assignment_operator(operator);
         let assigned_type = if is_logical_assignment {
             right_type
         } else {
