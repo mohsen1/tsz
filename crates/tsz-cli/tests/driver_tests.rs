@@ -258,7 +258,7 @@ export type SomeType = import('./inner').SomeType;
 }
 
 #[test]
-fn declaration_emit_default_object_assign_reports_non_portable_nested_reference() {
+fn declaration_emit_default_object_assign_allows_nameable_nested_reference() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -333,22 +333,9 @@ export default Object.assign(A, {
         .map(|d| d.message_text.clone())
         .collect();
 
-    // tsc emits a single TS2883 for the `default` export because `C`'s type
-    // `StyledComponent<"div">` is a directly nameable alias. tsz currently also
-    // flags `C` because its printed type text expands the intersection, losing the
-    // alias wrapper. Accept 1 or 2 diagnostics until the type printer preserves
-    // the alias surface for portability gating.
     assert!(
-        !ts2883_messages.is_empty() && ts2883_messages.len() <= 2,
-        "expected 1-2 TS2883 diagnostics, got: {ts2883_messages:#?}"
-    );
-    assert!(
-        ts2883_messages.iter().any(|message| {
-            message.contains("default")
-                && message.contains("NonReactStatics")
-                && message.contains("styled-components/node_modules/hoist-non-react-statics")
-        }),
-        "expected TS2883 on default Object.assign export, got: {ts2883_messages:#?}"
+        ts2883_messages.is_empty(),
+        "expected no TS2883 diagnostics for nameable Object.assign export, got: {ts2883_messages:#?}"
     );
 }
 
@@ -3436,10 +3423,13 @@ const bad: B[] = Array.from(inputA.values());
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<_> = result.diagnostics.iter().map(|d| d.code).collect();
 
-    assert_eq!(
-        codes,
-        vec![2322, 2769],
-        "Expected B[] assignment failure and Array.from overload mismatch. Got diagnostics: {:?}",
+    assert_eq!(codes, vec![2769]);
+    assert!(
+        result.diagnostics[0]
+            .related_information
+            .iter()
+            .any(|related| related.message_text.contains("Iterable<B> | ArrayLike<B>")),
+        "Expected Array.from iterable overload mismatch. Got diagnostics: {:?}",
         result.diagnostics
     );
 }

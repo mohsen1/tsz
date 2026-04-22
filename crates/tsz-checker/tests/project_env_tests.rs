@@ -33,6 +33,7 @@ fn empty_project_env() -> ProjectEnv {
         program_wildcard_reexports: None,
         program_wildcard_reexports_type_only: None,
         program_module_exports: None,
+        program_cross_file_node_symbols: None,
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_request_paths: Arc::new(FxHashMap::default()),
         resolved_module_errors: Arc::new(FxHashMap::default()),

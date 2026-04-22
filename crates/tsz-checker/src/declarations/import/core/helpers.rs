@@ -141,8 +141,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn current_file_emit_resolution_mode(&self) -> crate::context::ResolutionModeOverride {
-        let file_name = self.ctx.file_name.as_str();
+    pub(crate) fn current_file_emit_resolution_mode(
+        &self,
+    ) -> crate::context::ResolutionModeOverride {
+        let file_name = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(self.ctx.current_file_idx))
+            .and_then(|arena| arena.source_files.first())
+            .map(|source_file| source_file.file_name.as_str())
+            .unwrap_or(self.ctx.file_name.as_str());
         if file_name.ends_with(".mts") || file_name.ends_with(".mjs") {
             return crate::context::ResolutionModeOverride::Import;
         }

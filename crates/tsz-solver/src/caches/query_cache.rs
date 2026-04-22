@@ -20,6 +20,7 @@ use crate::types::{
     TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
     Variance, Visibility,
 };
+use crate::visitor::is_error_type;
 use dashmap::DashMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
@@ -307,25 +308,7 @@ pub struct QueryCache<'a> {
 
 impl<'a> QueryCache<'a> {
     pub fn new(interner: &'a TypeInterner) -> Self {
-        QueryCache {
-            interner,
-            eval_cache: RefCell::new(FxHashMap::default()),
-            application_eval_cache: RefCell::new(FxHashMap::default()),
-            element_access_cache: RefCell::new(FxHashMap::default()),
-            object_spread_properties_cache: RefCell::new(FxHashMap::default()),
-            subtype_cache: RefCell::new(FxHashMap::default()),
-            assignability_cache: RefCell::new(FxHashMap::default()),
-            property_cache: RefCell::new(FxHashMap::default()),
-            variance_cache: RefCell::new(FxHashMap::default()),
-            canonical_cache: RefCell::new(FxHashMap::default()),
-            intersection_merge_cache: RefCell::new(FxHashMap::default()),
-            subtype_cache_hits: Cell::new(0),
-            subtype_cache_misses: Cell::new(0),
-            assignability_cache_hits: Cell::new(0),
-            assignability_cache_misses: Cell::new(0),
-            no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
-            shared: None,
-        }
+        Self::with_optional_shared(interner, None)
     }
 
     /// Create a `QueryCache` backed by a shared cross-file cache.
@@ -334,6 +317,13 @@ impl<'a> QueryCache<'a> {
     /// On local miss, the shared `DashMap` cache is consulted. Results are written
     /// to both local and shared caches for cross-file benefit.
     pub fn new_with_shared(interner: &'a TypeInterner, shared: &'a SharedQueryCache) -> Self {
+        Self::with_optional_shared(interner, Some(shared))
+    }
+
+    fn with_optional_shared(
+        interner: &'a TypeInterner,
+        shared: Option<&'a SharedQueryCache>,
+    ) -> Self {
         QueryCache {
             interner,
             eval_cache: RefCell::new(FxHashMap::default()),
@@ -351,7 +341,7 @@ impl<'a> QueryCache<'a> {
             assignability_cache_hits: Cell::new(0),
             assignability_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
-            shared: Some(shared),
+            shared,
         }
     }
 
@@ -918,6 +908,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.type_param(info)
     }
 
+    fn unresolved_type_name(&self, name: Atom) -> TypeId {
+        self.interner.unresolved_type_name(name)
+    }
+
     fn type_query(&self, symbol: SymbolRef) -> TypeId {
         self.interner.type_query(symbol)
     }
@@ -1117,6 +1111,7 @@ impl QueryDatabase for QueryCache<'_> {
             | TypeData::Function(_)
             | TypeData::Callable(_)
             | TypeData::TypeParameter(_)
+            | TypeData::UnresolvedTypeName(_)
             | TypeData::Infer(_)
             | TypeData::Enum(_, _)
             | TypeData::BoundParameter(_)
@@ -1218,6 +1213,8 @@ impl QueryDatabase for QueryCache<'_> {
             || source == TypeId::NEVER
             || source == TypeId::ERROR
             || target == TypeId::ERROR
+            || is_error_type(self.as_type_database(), source)
+            || is_error_type(self.as_type_database(), target)
         {
             return true;
         }
@@ -1300,6 +1297,8 @@ impl QueryDatabase for QueryCache<'_> {
             || source == TypeId::NEVER
             || source == TypeId::ERROR
             || target == TypeId::ERROR
+            || is_error_type(self.as_type_database(), source)
+            || is_error_type(self.as_type_database(), target)
         {
             return true;
         }

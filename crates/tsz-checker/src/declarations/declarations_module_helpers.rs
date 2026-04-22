@@ -42,7 +42,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
-        if self.ctx.binder.module_exports.contains_key(module_name) {
+        if self
+            .ctx
+            .module_exports_contains_module(self.ctx.binder, module_name)
+        {
             return true;
         }
 
@@ -70,7 +73,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Check ambient module declarations (`declare module "X" { ... }`)
-        if self.ctx.binder.declared_modules.contains(module_name) {
+        if self
+            .ctx
+            .declared_modules_contains(self.ctx.binder, module_name)
+        {
             return true;
         }
 

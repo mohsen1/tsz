@@ -11,11 +11,11 @@ pub fn parse_numeric_literal_value(text: &str) -> Option<f64> {
     if text.len() > 2 {
         let prefix = &text[0..2];
         if prefix.eq_ignore_ascii_case("0x") {
-            return parse_radix_digits(&text[2..], 16);
+            return parse_radix_digits_as_f64(&text[2..], 16);
         } else if prefix.eq_ignore_ascii_case("0b") {
-            return parse_radix_digits(&text[2..], 2);
+            return parse_radix_digits_as_f64(&text[2..], 2);
         } else if prefix.eq_ignore_ascii_case("0o") {
-            return parse_radix_digits(&text[2..], 8);
+            return parse_radix_digits_as_f64(&text[2..], 8);
         }
     }
 
@@ -32,7 +32,14 @@ pub fn parse_numeric_literal_value(text: &str) -> Option<f64> {
     text.parse::<f64>().ok()
 }
 
-fn parse_radix_digits(text: &str, base: u32) -> Option<f64> {
+/// Parse a digit sequence in the given base (2/8/10/16) as `f64`.
+///
+/// Hex digits are case-insensitive. Underscores (numeric separators) are
+/// skipped. Returns `None` for empty input, separator-only input, or any
+/// digit invalid for the chosen base. Accumulates directly as `f64`, so
+/// inputs larger than `u128::MAX` still produce the closest representable
+/// float — no two-path overflow fallback needed at the call site.
+pub fn parse_radix_digits_as_f64(text: &str, base: u32) -> Option<f64> {
     if text.is_empty() {
         // "0x" alone is invalid, but if caller stripped prefix and got empty, it might mean "0x"
         // which parser should have handled as error or incomplete.

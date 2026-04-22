@@ -913,7 +913,10 @@ impl<'a> CheckerState<'a> {
         }
 
         // 4. Declared modules (ambient modules with body)
-        if self.ctx.binder.declared_modules.contains(&module_name) {
+        if self
+            .ctx
+            .declared_modules_contains(self.ctx.binder, &module_name)
+        {
             // Check if there's already a resolution error (TS2307) - don't emit TS2694 as a cascading error
             if self
                 .ctx

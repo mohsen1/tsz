@@ -15648,3 +15648,109 @@ fn test_declared_number_constraint_preserves_numeric_literal() {
         "T extends number: literal 42 should be preserved, not widened to number"
     );
 }
+
+/// Regression test for destructuringTuple.ts: when a generic call has both a
+/// context-sensitive callback argument `(x: U) => U` and a concrete value
+/// argument `init: U`, U must be inferred from the concrete value — not from
+/// the callback's implicit-any parameter. Previously, the deferred callback
+/// would leave an `any` lower bound on U and the direct-parameter adjustment
+/// would union `{"hi", any}` down to `any`, which then silenced TS2488/TS2769
+/// downstream (e.g. `[1,2,3].reduce((a,e)=>a.concat(e), [])` destructure).
+#[test]
+fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let u_name = interner.intern_string("U");
+    let x_name = interner.intern_string("x");
+
+    let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Parameter shape: (x: U) => U
+    let callback_param_type = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(x_name),
+            type_id: u_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Argument: context-sensitive lambda (x: any) => any — simulates `(a) => a`.
+    let callback_arg_type = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(x_name),
+            type_id: TypeId::ANY,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Generic function <U>(fn: (x: U) => U, init: U): U
+    let func = FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: u_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("fn")),
+                type_id: callback_param_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("init")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // Call with (untyped-lambda, "hi"). U must be inferred from the concrete
+    // string literal argument, not collapsed to `any` by the deferred callback.
+    let hi_literal = interner.literal_string("hi");
+    let result = infer_generic_function(
+        &interner,
+        &mut checker,
+        &func,
+        &[callback_arg_type, hi_literal],
+    );
+
+    assert_ne!(
+        result,
+        TypeId::ANY,
+        "U must not collapse to `any` when a concrete init argument is present; \
+         got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        result == TypeId::STRING || result == hi_literal,
+        "U should be inferred from the concrete init argument (string / \"hi\"), got {:?}",
+        interner.lookup(result)
+    );
+}

@@ -12,7 +12,10 @@
 //! - `lib_queries` - Library/global type availability queries
 //! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
 
+mod aliases;
+mod caches;
 mod compiler_options;
+pub use caches::{NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache};
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
@@ -26,6 +29,7 @@ mod resolver;
 pub(crate) mod speculation;
 mod strict_mode;
 pub mod typing_request;
+pub use aliases::*;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
@@ -49,58 +53,12 @@ use tsz_binder::{BinderState, ModuleAugmentation};
 pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
-
-/// Global cross-binder index: identifier name → list of `(file_idx, SymbolId)`
-/// where the name appears in a binder's `file_locals`.
-pub type GlobalFileLocalsIndex = Arc<FxHashMap<String, Vec<(usize, SymbolId)>>>;
-
-/// Per-module export map: export name → list of `(file_idx, SymbolId)` where
-/// the export is declared. The value shape inside a `GlobalModuleExportsIndex`.
-pub type ModuleExportsByName = FxHashMap<String, Vec<(usize, SymbolId)>>;
-
-/// Owned (non-`Arc`) form of the cross-binder module exports index.
-/// Used while the index is being built before it is wrapped in `Arc`.
-pub type ModuleExportsIndexMap = FxHashMap<String, ModuleExportsByName>;
-
-/// Global cross-binder index: module specifier → export name → list of
-/// `(file_idx, SymbolId)` where the export is declared.
-pub type GlobalModuleExportsIndex = Arc<ModuleExportsIndexMap>;
-
-/// Global cross-binder index: module specifier → list of `(file_idx, augmentation)`
-/// entries that contribute to that module's merged type.
-pub type GlobalModuleAugmentationsIndex = Arc<FxHashMap<String, Vec<(usize, ModuleAugmentation)>>>;
-
-/// Global cross-binder index: module specifier → list of `(symbol, file_idx)`
-/// identifying the symbols targeted by each augmentation of that module.
-pub type GlobalAugmentationTargetsIndex = Arc<FxHashMap<String, Vec<(SymbolId, usize)>>>;
-
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
 /// symbol references (e.g., mutually referencing type aliases, deeply
 /// nested namespace exports). Matches `MAX_INSTANTIATION_DEPTH` (50).
 pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
-
-pub type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
-pub type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
-pub type ResolvedModuleRequestPathMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), usize>;
-pub type ResolvedModuleRequestErrorMap =
-    FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
-
-/// Represents a failed module resolution with specific error details.
-#[derive(Clone, Debug)]
-pub struct ResolutionError {
-    pub code: u32,
-    pub message: String,
-}
-
-/// Explicit module-resolution override carried by import attributes / import types.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ResolutionModeOverride {
-    Import,
-    Require,
-}
 
 /// Pre-built global index of all declared/ambient module names across all binders.
 ///
@@ -191,355 +149,6 @@ pub struct PendingImplicitAnyVar {
     pub name_node: NodeIndex,
     /// Which deferred implicit-any behavior applies to this declaration.
     pub kind: PendingImplicitAnyKind,
-}
-
-/// Dense flat-vec cache for node-index-keyed `TypeId` lookups.
-///
-/// Replaces `FxHashMap<u32, TypeId>` with a `Vec<TypeId>` indexed directly by
-/// `NodeIndex.0`. Since node indices are densely allocated from a `NodeArena`,
-/// this gives O(1) get/insert with zero hashing overhead. Uses `TypeId::NONE`
-/// (0) as the sentinel for "not cached".
-///
-/// Memory: 4 bytes per arena node (one `u32`). For a 50k-node file this is
-/// only 200KB, far less than the `HashMap` overhead for the same entry count.
-#[derive(Clone, Debug)]
-pub struct NodeTypeCache {
-    data: Vec<TypeId>,
-}
-
-impl NodeTypeCache {
-    /// Create a cache pre-sized for `capacity` node indices.
-    #[inline]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            data: vec![TypeId::NONE; capacity],
-        }
-    }
-
-    /// Create an empty cache (zero capacity).
-    #[inline]
-    pub const fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-
-    /// Look up a cached type by raw node index.
-    #[inline]
-    pub fn get(&self, key: &u32) -> Option<&TypeId> {
-        let idx = *key as usize;
-        self.data.get(idx).filter(|t| **t != TypeId::NONE)
-    }
-
-    /// Insert a type for a raw node index.
-    ///
-    /// Rejects sentinel values (`u32::MAX` / `NodeIndex::NONE`) to prevent
-    /// multi-GB allocations from bogus indices.
-    #[inline]
-    pub fn insert(&mut self, key: u32, value: TypeId) {
-        // NodeIndex::NONE == u32::MAX; resizing to that would OOM.
-        if key == u32::MAX {
-            return;
-        }
-        let idx = key as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
-        }
-        self.data[idx] = value;
-    }
-
-    /// Check if a type is cached for this node index.
-    #[inline]
-    pub fn contains_key(&self, key: &u32) -> bool {
-        let idx = *key as usize;
-        self.data.get(idx).is_some_and(|t| *t != TypeId::NONE)
-    }
-
-    /// Remove a cached type, returning the old value if present.
-    #[inline]
-    pub fn remove(&mut self, key: &u32) -> Option<TypeId> {
-        let idx = *key as usize;
-        if let Some(slot) = self.data.get_mut(idx)
-            && *slot != TypeId::NONE
-        {
-            let old = *slot;
-            *slot = TypeId::NONE;
-            return Some(old);
-        }
-        None
-    }
-
-    /// Insert `value` only if the slot is currently empty (NONE).
-    /// Returns a mutable reference to the (possibly pre-existing) value.
-    #[inline]
-    pub fn or_insert(&mut self, key: u32, value: TypeId) -> TypeId {
-        let idx = key as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
-        }
-        if self.data[idx] == TypeId::NONE {
-            self.data[idx] = value;
-        }
-        self.data[idx]
-    }
-
-    /// Iterate over all cached (key, value) pairs.
-    /// Used by `TypeCache` merge and emitter export.
-    pub fn iter(&self) -> impl Iterator<Item = (u32, TypeId)> + '_ {
-        self.data
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| **t != TypeId::NONE)
-            .map(|(i, t)| (i as u32, *t))
-    }
-
-    /// Clear all entries (resets to NONE without deallocating).
-    pub fn clear(&mut self) {
-        self.data.fill(TypeId::NONE);
-    }
-
-    /// Merge all non-NONE entries from `other` into `self`.
-    /// More efficient than `.extend(other.iter())` because it avoids iterator overhead.
-    pub fn merge(&mut self, other: &NodeTypeCache) {
-        if other.data.len() > self.data.len() {
-            self.data.resize(other.data.len(), TypeId::NONE);
-        }
-        for (i, &t) in other.data.iter().enumerate() {
-            if t != TypeId::NONE {
-                self.data[i] = t;
-            }
-        }
-    }
-
-    /// Merge all entries from a consumed `NodeTypeCache` into `self`.
-    /// Takes ownership to allow optimized bulk transfer.
-    pub fn merge_owned(&mut self, other: NodeTypeCache) {
-        if other.data.len() > self.data.len() {
-            self.data.resize(other.data.len(), TypeId::NONE);
-        }
-        for (i, t) in other.data.into_iter().enumerate() {
-            if t != TypeId::NONE {
-                self.data[i] = t;
-            }
-        }
-    }
-
-    /// Extend from an iterator of (key, value) pairs.
-    pub fn extend<I: IntoIterator<Item = (u32, TypeId)>>(&mut self, iter: I) {
-        for (key, value) in iter {
-            self.insert(key, value);
-        }
-    }
-
-    /// Number of cached entries (non-NONE slots).
-    pub fn len(&self) -> usize {
-        self.data.iter().filter(|t| **t != TypeId::NONE).count()
-    }
-
-    /// Returns true if the cache has no entries.
-    pub fn is_empty(&self) -> bool {
-        self.data.iter().all(|t| *t == TypeId::NONE)
-    }
-
-    /// Convert to a `FxHashMap<u32, TypeId>` for interop with emitter.
-    pub fn to_hash_map(&self) -> FxHashMap<u32, TypeId> {
-        self.iter().collect()
-    }
-}
-
-impl Default for NodeTypeCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Dense tristate cache for `is_narrowable_identifier` results.
-///
-/// Indexed directly by `NodeIndex.0` (dense u32). Uses `u8` tristate:
-/// - `0` = not cached (unknown)
-/// - `1` = cached as `false` (not narrowable)
-/// - `2` = cached as `true` (narrowable)
-///
-/// This replaces `RefCell<FxHashMap<u32, bool>>` on the flow analysis hot
-/// path, eliminating `HashMap` hashing/probing overhead and `RefCell` borrow
-/// tracking (~15ns per access saved). Memory: 1 byte per arena node (50KB
-/// for a 50k-node file vs ~200+ bytes of `HashMap` overhead per entry).
-#[derive(Clone, Debug)]
-pub struct NarrowableIdentifierCache {
-    data: Vec<u8>,
-}
-
-impl NarrowableIdentifierCache {
-    const UNKNOWN: u8 = 0;
-    const NOT_NARROWABLE: u8 = 1;
-    const NARROWABLE: u8 = 2;
-
-    /// Create a cache pre-sized for `capacity` node indices.
-    #[inline]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            data: vec![Self::UNKNOWN; capacity],
-        }
-    }
-
-    /// Create an empty cache.
-    #[inline]
-    pub const fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-
-    /// Look up a cached result by raw node index.
-    #[inline]
-    pub fn get(&self, key: u32) -> Option<bool> {
-        let idx = key as usize;
-        match self.data.get(idx).copied().unwrap_or(Self::UNKNOWN) {
-            Self::NARROWABLE => Some(true),
-            Self::NOT_NARROWABLE => Some(false),
-            _ => None,
-        }
-    }
-
-    /// Insert a result for a raw node index.
-    #[inline]
-    pub fn insert(&mut self, key: u32, value: bool) {
-        let idx = key as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, Self::UNKNOWN);
-        }
-        self.data[idx] = if value {
-            Self::NARROWABLE
-        } else {
-            Self::NOT_NARROWABLE
-        };
-    }
-}
-
-impl Default for NarrowableIdentifierCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Dense flat-vec cache for `SymbolId -> TypeId` lookups.
-///
-/// Indexed directly by `SymbolId.0` (dense u32). Uses `TypeId::NONE`
-/// (0) as the sentinel for "not cached".
-///
-/// Memory: 4 bytes per symbol. For a file with 5000 symbols this is
-/// only 20KB, far less than the `HashMap` overhead for the same entry count.
-/// Eliminates `FxHashMap` hashing/probing on the hottest checker path
-/// (`get_type_of_symbol`).
-#[derive(Clone, Debug)]
-pub struct SymbolTypeCache {
-    data: Vec<TypeId>,
-}
-
-impl SymbolTypeCache {
-    /// Create a cache pre-sized for `capacity` symbol indices.
-    #[inline]
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            data: vec![TypeId::NONE; capacity],
-        }
-    }
-
-    /// Create an empty cache (zero capacity).
-    #[inline]
-    pub const fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-
-    /// Look up a cached type by `SymbolId`.
-    #[inline]
-    pub fn get(&self, key: &SymbolId) -> Option<&TypeId> {
-        let idx = key.0 as usize;
-        self.data.get(idx).filter(|t| **t != TypeId::NONE)
-    }
-
-    /// Insert a type for a `SymbolId`.
-    #[inline]
-    pub fn insert(&mut self, key: SymbolId, value: TypeId) {
-        let idx = key.0 as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
-        }
-        self.data[idx] = value;
-    }
-
-    /// Check if a type is cached for this symbol.
-    #[inline]
-    pub fn contains_key(&self, key: &SymbolId) -> bool {
-        let idx = key.0 as usize;
-        self.data.get(idx).is_some_and(|t| *t != TypeId::NONE)
-    }
-
-    /// Remove a cached type, returning the old value if present.
-    #[inline]
-    pub fn remove(&mut self, key: &SymbolId) -> Option<TypeId> {
-        let idx = key.0 as usize;
-        if let Some(slot) = self.data.get_mut(idx)
-            && *slot != TypeId::NONE
-        {
-            let old = *slot;
-            *slot = TypeId::NONE;
-            return Some(old);
-        }
-        None
-    }
-
-    /// Insert `value` only if the slot is currently empty (NONE).
-    /// Returns a mutable reference to the (possibly pre-existing) value.
-    #[inline]
-    pub fn entry_or_insert(&mut self, key: SymbolId, value: TypeId) -> TypeId {
-        let idx = key.0 as usize;
-        if idx >= self.data.len() {
-            self.data.resize(idx + 1, TypeId::NONE);
-        }
-        if self.data[idx] == TypeId::NONE {
-            self.data[idx] = value;
-        }
-        self.data[idx]
-    }
-
-    /// Number of cached entries (non-NONE slots).
-    pub fn len(&self) -> usize {
-        self.data.iter().filter(|t| **t != TypeId::NONE).count()
-    }
-
-    /// Returns true if the cache has no entries.
-    pub fn is_empty(&self) -> bool {
-        self.data.iter().all(|t| *t == TypeId::NONE)
-    }
-
-    /// Iterate over all cached (SymbolId, TypeId) pairs.
-    pub fn iter(&self) -> impl Iterator<Item = (SymbolId, TypeId)> + '_ {
-        self.data
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| **t != TypeId::NONE)
-            .map(|(i, t)| (SymbolId(i as u32), *t))
-    }
-
-    /// Convert to a `FxHashMap<SymbolId, TypeId>` for interop with emitter.
-    pub fn to_hash_map(&self) -> FxHashMap<SymbolId, TypeId> {
-        self.iter().collect()
-    }
-
-    /// Merge all non-NONE entries from `other` into `self`.
-    pub fn extend(&mut self, other: SymbolTypeCache) {
-        if other.data.len() > self.data.len() {
-            self.data.resize(other.data.len(), TypeId::NONE);
-        }
-        for (i, t) in other.data.into_iter().enumerate() {
-            if t != TypeId::NONE {
-                self.data[i] = t;
-            }
-        }
-    }
-}
-
-impl Default for SymbolTypeCache {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Persistent cache for type checking results across LSP queries.
@@ -1424,13 +1033,19 @@ pub struct CheckerContext<'a> {
     /// Program-wide wildcard re-exports map; see `program_reexports`.
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
     /// Program-wide type-only wildcard re-exports map; see `program_reexports`.
-    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
     /// Program-wide module-exports index keyed by file name (or ambient
     /// module specifier). Consulted by `ctx.module_exports_for_module`
     /// in preference to per-binder `module_exports`. Driver wraps
     /// `program.module_exports` in a single `Arc` so N cross-file lookup
     /// binders don't each deep-clone the merged map.
     pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
+    /// Program-wide cross-file node-symbol map keyed by arena pointer.
+    /// Consulted by `ctx.cross_file_node_symbols_for_arena` in preference
+    /// to per-binder `cross_file_node_symbols`. Driver wraps
+    /// `program.cross_file_node_symbols` in a single `Arc` so N per-file
+    /// binders don't each deep-clone the outer `FxHashMap<usize, Arc<…>>`.
+    pub program_cross_file_node_symbols: Option<Arc<tsz_binder::CrossFileNodeSymbols>>,
 
     /// Resolved module paths map: (`source_file_idx`, specifier) -> `target_file_idx`.
     /// Used by `get_type_of_symbol` to resolve imports to their target file and symbol.
@@ -1695,9 +1310,12 @@ pub struct ProjectEnv {
     /// see `CheckerContext::program_reexports`.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
     pub program_wildcard_reexports: Option<Arc<FxHashMap<String, Vec<String>>>>,
-    pub program_wildcard_reexports_type_only: Option<Arc<FxHashMap<String, Vec<(String, bool)>>>>,
+    pub program_wildcard_reexports_type_only: Option<ProgramWildcardReexportsTypeOnly>,
     /// Program-wide module-exports index; see `CheckerContext::program_module_exports`.
     pub program_module_exports: Option<Arc<FxHashMap<String, tsz_binder::SymbolTable>>>,
+    /// Program-wide cross-file node-symbol map; see
+    /// `CheckerContext::program_cross_file_node_symbols`.
+    pub program_cross_file_node_symbols: Option<Arc<tsz_binder::CrossFileNodeSymbols>>,
     /// Resolved module paths: (`source_file_idx`, specifier) -> `target_file_idx`.
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module paths keyed by (`source_file_idx`, specifier, resolution-mode override).
@@ -1746,6 +1364,7 @@ impl Default for ProjectEnv {
             program_wildcard_reexports: None,
             program_wildcard_reexports_type_only: None,
             program_module_exports: None,
+            program_cross_file_node_symbols: None,
             resolved_module_paths: Arc::new(FxHashMap::default()),
             resolved_module_request_paths: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
@@ -1819,6 +1438,9 @@ impl ProjectEnv {
         }
         if let Some(ref m) = self.program_module_exports {
             ctx.program_module_exports = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = self.program_cross_file_node_symbols {
+            ctx.program_cross_file_node_symbols = Some(Arc::clone(m));
         }
         // Install the shared DefinitionStore before gating expensive semantic-def
         // prepopulation so `is_fully_populated()` reflects project-wide state.

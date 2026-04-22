@@ -571,12 +571,12 @@ impl<'a> TypeInstantiator<'a> {
             }
 
             // Intrinsics don't change
-            TypeData::Intrinsic(_) | TypeData::Literal(_) | TypeData::Error => {
-                self.interner.intern(*key)
-            }
-
+            TypeData::Intrinsic(_)
+            | TypeData::Literal(_)
+            | TypeData::UnresolvedTypeName(_)
+            | TypeData::Error
             // Lazy types might resolve to something that needs substitution
-            TypeData::Lazy(_)
+            | TypeData::Lazy(_)
             | TypeData::Recursive(_)
             | TypeData::BoundParameter(_)
             | TypeData::TypeQuery(_)

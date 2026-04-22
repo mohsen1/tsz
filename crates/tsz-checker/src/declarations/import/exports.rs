@@ -219,7 +219,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Direct exports from module_exports (populated during binding, pre-merge)
-        if let Some(exports) = binder.module_exports.get(&file_name) {
+        if let Some(exports) = self.ctx.module_exports_for_module(binder, &file_name) {
             for (name, &sym_id) in exports.iter() {
                 // Skip lib/global symbols merged from lib.d.ts.
                 if binder.lib_symbol_ids.contains(&sym_id)

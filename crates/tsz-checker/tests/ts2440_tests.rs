@@ -181,3 +181,99 @@ var X = 1;
         "Should emit TS2440 for export import-equals conflict. Got: {diags:?}"
     );
 }
+
+// =========================================================================
+// `declare global` blocks live in the global scope, not the module scope.
+// Declarations inside them must not conflict with module-scoped imports.
+// =========================================================================
+
+#[test]
+fn test_namespace_import_does_not_conflict_with_declare_global_const() {
+    // Repro for TS2440 false positive from crashDeclareGlobalTypeofExport.
+    // `import * as foo` is in the module scope; `const foo` inside
+    // `declare global { ... }` is in the global scope. They must not conflict.
+    let source = r#"
+import * as foo from './foo'
+export = foo;
+
+declare global {
+    const foo: number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2440),
+        "Must NOT emit TS2440 when local declaration is inside `declare global`. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_namespace_import_does_not_conflict_with_declare_global_var() {
+    let source = r#"
+import * as bar from './bar'
+export = bar;
+
+declare global {
+    var bar: string;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2440),
+        "Must NOT emit TS2440 for var inside `declare global`. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_default_import_does_not_conflict_with_declare_global_function() {
+    let source = r#"
+import baz from './baz'
+export { baz };
+
+declare global {
+    function baz(): void;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2440),
+        "Must NOT emit TS2440 for function inside `declare global`. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+// =========================================================================
+// `export as namespace X` declares a global namespace alias for the module;
+// it does NOT introduce a local binding and must not collide with an
+// `import * as X` of the same name.
+// =========================================================================
+
+#[test]
+fn test_namespace_import_does_not_conflict_with_export_as_namespace() {
+    // Repro for TS2440 false positive from crashDeclareGlobalTypeofExport.
+    // `import * as foo` is a module-scope binding; `export as namespace foo`
+    // declares a GLOBAL namespace alias for the module. They don't clash.
+    let source = r#"
+import * as foo from './foo'
+export as namespace foo
+export = foo;
+"#;
+    assert!(
+        !has_error_with_code(source, 2440),
+        "Must NOT emit TS2440 when the same name appears in `export as namespace`. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn test_default_import_does_not_conflict_with_export_as_namespace() {
+    let source = r#"
+import qux from './qux'
+export as namespace qux
+export = qux;
+"#;
+    assert!(
+        !has_error_with_code(source, 2440),
+        "Must NOT emit TS2440 for default import vs `export as namespace` of the same name. Got: {:?}",
+        get_diagnostics(source)
+    );
+}

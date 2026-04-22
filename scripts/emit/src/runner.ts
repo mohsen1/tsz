@@ -14,6 +14,7 @@ import pc from 'picocolors';
 import pLimit from 'p-limit';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 import { CliTranspiler } from './cli-transpiler.js';
+import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, '../../..');
@@ -226,60 +227,6 @@ function saveCache(): void {
 // ============================================================================
 // Test Discovery
 // ============================================================================
-
-function parseTarget(targetStr: string): number {
-  const lower = targetStr.toLowerCase();
-  if (lower.includes('es3')) return 0;
-  if (lower.includes('es5')) return 1;
-  if (lower.includes('es2015') || lower === 'es6') return 2;
-  if (lower.includes('es2016')) return 3;
-  if (lower.includes('es2017')) return 4;
-  if (lower.includes('es2018')) return 5;
-  if (lower.includes('es2019')) return 6;
-  if (lower.includes('es2020')) return 7;
-  if (lower.includes('es2021')) return 8;
-  if (lower.includes('es2022')) return 9;
-  if (lower.includes('es2023')) return 10;
-  if (lower.includes('es2024')) return 11;
-  if (lower.includes('es2025')) return 12;
-  if (lower.includes('esnext')) return 99;
-  return 12;  // TS6 default: ES2025
-}
-
-function parseModule(moduleStr: string): number {
-  const lower = moduleStr.toLowerCase();
-  if (lower === 'none') return 0;
-  if (lower === 'commonjs') return 1;
-  if (lower === 'amd') return 2;
-  if (lower === 'umd') return 3;
-  if (lower === 'system') return 4;
-  if (lower === 'es2015' || lower === 'es6') return 5;
-  if (lower === 'es2020') return 6;
-  if (lower === 'es2022') return 7;
-  if (lower === 'esnext') return 99;
-  if (lower === 'node16') return 100;
-  if (lower === 'node18') return 101;
-  if (lower === 'node20') return 102;
-  if (lower === 'nodenext') return 199;
-  if (lower === 'preserve') return 200;
-  return 0;
-}
-
-/**
- * Infer default module kind from target, matching TS6's computed module defaults:
- * - ESNext (99) → ESNext module (99)
- * - >= ES2022 (9) → ES2022 module (7)
- * - >= ES2020 (7) → ES2020 module (6)
- * - >= ES2015 (2) → ES2015 module (5)
- * - else → CommonJS (1)
- */
-function inferDefaultModule(target: number): number {
-  if (target === 99) return 99;  // ESNext → ESNext module
-  if (target >= 9) return 7;     // >= ES2022 → ES2022 module
-  if (target >= 7) return 6;     // >= ES2020 → ES2020 module
-  if (target >= 2) return 5;     // >= ES2015 → ES2015 module
-  return 1;                      // ES3/ES5 → CommonJS
-}
 
 function extractVariantFromFilename(
   filename: string,

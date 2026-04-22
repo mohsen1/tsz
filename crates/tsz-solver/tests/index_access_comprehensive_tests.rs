@@ -624,3 +624,171 @@ fn test_large_union_literal_property_access_uses_fast_path() {
         "large unions indexed by a literal property key should evaluate instead of falling back to error"
     );
 }
+
+// =============================================================================
+// Index access on conditional-type results
+// =============================================================================
+// Repro of conformance failure in excessPropertyCheckIntersectionWithRecursiveType:
+// `Prepend<any, []>["length"]` should resolve to a literal number when the
+// conditional produces a concrete tuple via infer matching. When the conditional
+// result is used directly (without prior alias expansion), the IndexAccess
+// evaluator must walk through the Conditional shape to reach the tuple inside.
+
+#[test]
+fn test_index_access_literal_on_concrete_conditional_tuple() {
+    // (T extends [infer A, infer B] ? [A, B] : never)[0] with T = [string, number]
+    // should evaluate to string.
+    let interner = TypeInterner::new();
+
+    let tuple_sn = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_a,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: infer_b,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let true_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: infer_a,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: infer_b,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let cond_id = interner.conditional(ConditionalType {
+        check_type: tuple_sn,
+        extends_type: extends_tuple,
+        true_type: true_tuple,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let index = interner.index_access(cond_id, interner.literal_number(0.0));
+    let result = evaluate_type(&interner, index);
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "(Tuple extends [infer A, infer B] ? [A, B] : never)[0] should resolve to string"
+    );
+}
+
+#[test]
+fn test_index_access_length_on_concrete_conditional_tuple() {
+    // (((...args: T) => void) extends (...args: infer R) => void ? R : any)["length"]
+    // with T = [string, number] should resolve to the literal number 2.
+    // This mirrors the `Length<T>` pattern used by recursive type builders.
+    use crate::types::{FunctionShape, ParamInfo};
+
+    let interner = TypeInterner::new();
+
+    let tuple_sn = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    let check_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: tuple_sn,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("R"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let extends_fn = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("args")),
+            type_id: infer_r,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let cond_id = interner.conditional(ConditionalType {
+        check_type: check_fn,
+        extends_type: extends_fn,
+        true_type: infer_r,
+        false_type: TypeId::ANY,
+        is_distributive: false,
+    });
+
+    let index = interner.index_access(cond_id, interner.literal_string("length"));
+    let result = evaluate_type(&interner, index);
+    assert_eq!(
+        result,
+        interner.literal_number(2.0),
+        "infer-result tuple length should resolve to its literal fixed size"
+    );
+}

@@ -430,7 +430,9 @@ impl<'a> CheckerState<'a> {
         }
 
         for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
-            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, &candidate)
                 && import_names
                     .iter()
                     .filter_map(|name| exports.get(name))
@@ -444,7 +446,7 @@ impl<'a> CheckerState<'a> {
             for binder in all_binders.iter() {
                 for candidate in crate::module_resolution::module_specifier_candidates(module_name)
                 {
-                    if let Some(exports) = binder.module_exports.get(&candidate)
+                    if let Some(exports) = self.ctx.module_exports_for_module(binder, &candidate)
                         && import_names
                             .iter()
                             .filter_map(|name| exports.get(name))
@@ -489,7 +491,9 @@ impl<'a> CheckerState<'a> {
 
         // Fallback: check module_exports (single-pass mode)
         for candidate in crate::module_resolution::module_specifier_candidates(module_name) {
-            if let Some(exports) = self.ctx.binder.module_exports.get(&candidate)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, &candidate)
                 && let Some(sym_id) = exports.get(import_name)
                 && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
             {

@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
             if inside_namespace {
                 let module_is_ambient = require_module_specifier.as_deref().is_some_and(|spec| {
                     // Check current file's declared ambient modules
-                    self.ctx.binder.declared_modules.contains(spec)
+                    self.ctx.declared_modules_contains(self.ctx.binder, spec)
                             // Check cross-file ambient modules via global index
                             || self
                                 .ctx
@@ -859,7 +859,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.binder.module_exports.contains_key(module_name) {
+        if self
+            .ctx
+            .module_exports_contains_module(self.ctx.binder, module_name)
+        {
             return;
         }
 
@@ -872,7 +875,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.binder.declared_modules.contains(module_name) {
+        if self
+            .ctx
+            .declared_modules_contains(self.ctx.binder, module_name)
+        {
             return;
         }
 
