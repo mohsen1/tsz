@@ -76,6 +76,15 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .definition_store
                         .register_type_to_def(instance_type, def_id);
+                    if let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id) {
+                        self.ctx
+                            .class_decl_miss_cache
+                            .borrow_mut()
+                            .remove(&instance_type);
+                        self.ctx
+                            .class_instance_type_to_decl
+                            .insert(instance_type, class_idx);
+                    }
                     self.ctx
                         .register_class_instance_in_envs(def_id, instance_type);
 
@@ -634,6 +643,15 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .definition_store
                     .register_type_to_def(instance_type, def_id);
+                if let Some(class_idx) = self.get_class_declaration_from_symbol(member_sym_id) {
+                    self.ctx
+                        .class_decl_miss_cache
+                        .borrow_mut()
+                        .remove(&instance_type);
+                    self.ctx
+                        .class_instance_type_to_decl
+                        .insert(instance_type, class_idx);
+                }
                 self.ctx
                     .register_class_instance_in_envs(def_id, instance_type);
                 return Some(instance_type);

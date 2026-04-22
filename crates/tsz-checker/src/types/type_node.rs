@@ -1657,6 +1657,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Get parameter name from a binding name node.
     fn get_param_name(&self, name_idx: NodeIndex) -> String {
+        if self
+            .ctx
+            .arena
+            .get(name_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+        {
+            return "this".to_string();
+        }
         if let Some(ident) = self.ctx.arena.get_identifier_at(name_idx) {
             return ident.escaped_text.to_string();
         }

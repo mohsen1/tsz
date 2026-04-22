@@ -195,12 +195,13 @@ impl<'a> CheckerState<'a> {
                 ctx_type
             } else if type_application(self.ctx.types, ctx_type).is_some() {
                 self.evaluate_application_type(ctx_type)
-            } else if lazy_def_id(self.ctx.types, ctx_type).is_some()
-                || matches!(
-                    classify_for_evaluation(self.ctx.types, ctx_type),
-                    EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
-                )
-            {
+            } else if let Some(def_id) = lazy_def_id(self.ctx.types, ctx_type) {
+                self.resolve_and_insert_def_type(def_id)
+                    .unwrap_or_else(|| self.judge_evaluate(ctx_type))
+            } else if matches!(
+                classify_for_evaluation(self.ctx.types, ctx_type),
+                EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
+            ) {
                 self.judge_evaluate(ctx_type)
             } else {
                 self.evaluate_contextual_type(ctx_type)
@@ -1418,6 +1419,8 @@ impl<'a> CheckerState<'a> {
                     })
             }
         });
+
+        let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
 
         let mut pushed_this_type_early = false;
         if let Some(tt) = implicit_this {
