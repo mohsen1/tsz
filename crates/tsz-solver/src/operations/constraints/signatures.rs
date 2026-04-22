@@ -183,6 +183,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Shared body for `constrain_{function,call_signature}_to_{call_signature,function}`.
+    /// Applies the four-step inference constraint: params → optional `this` → return →
+    /// type predicates. The three public wrappers differ only in their source/target
+    /// struct types; those structs expose the same inference-relevant fields.
+    #[allow(clippy::too_many_arguments)]
+    fn constrain_signature_bodies(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_params: &[ParamInfo],
+        target_params: &[ParamInfo],
+        source_this: Option<TypeId>,
+        target_this: Option<TypeId>,
+        source_return: TypeId,
+        target_return: TypeId,
+        source_pred: Option<&TypePredicate>,
+        target_pred: Option<&TypePredicate>,
+        priority: crate::types::InferencePriority,
+    ) {
+        self.constrain_params_with_rest(ctx, var_map, source_params, target_params, priority);
+        if let (Some(s_this), Some(t_this)) = (source_this, target_this) {
+            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
+        }
+        self.constrain_types(ctx, var_map, source_return, target_return, priority);
+        // Constrain type predicates if both have them.
+        // Predicates are marked as a type-annotation source so literal predicate
+        // types (e.g. `x is 'B'`) are not marked fresh and won't be widened.
+        self.constrain_type_predicates(ctx, var_map, source_pred, target_pred, priority);
+    }
+
     pub(super) fn constrain_function_to_call_signature(
         &mut self,
         ctx: &mut InferenceContext,
@@ -191,26 +221,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: &CallSignature,
         priority: crate::types::InferencePriority,
     ) {
-        self.constrain_params_with_rest(ctx, var_map, &source.params, &target.params, priority);
-        if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
-        }
-        self.constrain_types(
-            ctx,
-            var_map,
-            source.return_type,
-            target.return_type,
-            priority,
-        );
-        // Constrain type predicates if both have them
         trace!(
             source_has_predicate = source.type_predicate.is_some(),
             target_has_predicate = target.type_predicate.is_some(),
             "constrain_function_to_call_signature: checking type predicates"
         );
-        self.constrain_type_predicates(
+        self.constrain_signature_bodies(
             ctx,
             var_map,
+            &source.params,
+            &target.params,
+            source.this_type,
+            target.this_type,
+            source.return_type,
+            target.return_type,
             source.type_predicate.as_ref(),
             target.type_predicate.as_ref(),
             priority,
@@ -225,21 +249,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: &FunctionShape,
         priority: crate::types::InferencePriority,
     ) {
-        self.constrain_params_with_rest(ctx, var_map, &source.params, &target.params, priority);
-        if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
-        }
-        self.constrain_types(
+        self.constrain_signature_bodies(
             ctx,
             var_map,
+            &source.params,
+            &target.params,
+            source.this_type,
+            target.this_type,
             source.return_type,
             target.return_type,
-            priority,
-        );
-        // Constrain type predicates if both have them
-        self.constrain_type_predicates(
-            ctx,
-            var_map,
             source.type_predicate.as_ref(),
             target.type_predicate.as_ref(),
             priority,
@@ -254,23 +272,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: &CallSignature,
         priority: crate::types::InferencePriority,
     ) {
-        self.constrain_params_with_rest(ctx, var_map, &source.params, &target.params, priority);
-        if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
-            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
-        }
-        self.constrain_types(
+        self.constrain_signature_bodies(
             ctx,
             var_map,
+            &source.params,
+            &target.params,
+            source.this_type,
+            target.this_type,
             source.return_type,
             target.return_type,
-            priority,
-        );
-        // Constrain type predicates if both have them.
-        // Mark as type annotation source so literal types from predicates
-        // (e.g., `x is 'B'`) are NOT marked as fresh and won't be widened.
-        self.constrain_type_predicates(
-            ctx,
-            var_map,
             source.type_predicate.as_ref(),
             target.type_predicate.as_ref(),
             priority,
@@ -410,6 +420,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         None
     }
 
+    /// Constrain `source_sig` against `target_sig`, erasing any source type
+    /// parameters first (using defaults/constraints). Shared helper for the
+    /// four overload-matching branches below, which all need to erase
+    /// source-side type params before constraining.
+    fn constrain_signature_erasing_source_type_params(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_sig: &CallSignature,
+        target_sig: &CallSignature,
+        priority: crate::types::InferencePriority,
+    ) {
+        if source_sig.type_params.is_empty() {
+            self.constrain_call_signature_to_call_signature(
+                ctx, var_map, source_sig, target_sig, priority,
+            );
+        } else {
+            let erased = self.erase_signature_type_params(source_sig);
+            self.constrain_call_signature_to_call_signature(
+                ctx, var_map, &erased, target_sig, priority,
+            );
+        }
+    }
+
     pub(super) fn constrain_matching_signatures(
         &mut self,
         ctx: &mut InferenceContext,
@@ -427,18 +461,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let source_sig = &source_signatures[0];
             let target_sig = &target_signatures[0];
             if target_sig.type_params.is_empty() {
-                if source_sig.type_params.is_empty() {
-                    self.constrain_call_signature_to_call_signature(
-                        ctx, var_map, source_sig, target_sig, priority,
-                    );
-                } else {
-                    // Source has type params (e.g., generic class construct sig) but target doesn't.
-                    // Erase source type params using defaults/constraints before constraining.
-                    let erased = self.erase_signature_type_params(source_sig);
-                    self.constrain_call_signature_to_call_signature(
-                        ctx, var_map, &erased, target_sig, priority,
-                    );
-                }
+                // Source may carry type params (e.g. generic class construct sig)
+                // while target does not; the helper erases them first when needed.
+                self.constrain_signature_erasing_source_type_params(
+                    ctx, var_map, source_sig, target_sig, priority,
+                );
             }
             return;
         }
@@ -458,17 +485,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     )
                 };
                 if let Some(idx) = source_idx {
-                    let source_sig = &source_signatures[idx];
-                    if source_sig.type_params.is_empty() {
-                        self.constrain_call_signature_to_call_signature(
-                            ctx, var_map, source_sig, target_sig, priority,
-                        );
-                    } else {
-                        let erased = self.erase_signature_type_params(source_sig);
-                        self.constrain_call_signature_to_call_signature(
-                            ctx, var_map, &erased, target_sig, priority,
-                        );
-                    }
+                    self.constrain_signature_erasing_source_type_params(
+                        ctx,
+                        var_map,
+                        &source_signatures[idx],
+                        target_sig,
+                        priority,
+                    );
                 }
             }
             return;
@@ -506,17 +529,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     var_map,
                     is_constructor,
                 ) {
-                    let source_sig = &source_signatures[index];
-                    if source_sig.type_params.is_empty() {
-                        self.constrain_call_signature_to_call_signature(
-                            ctx, var_map, source_sig, target_sig, priority,
-                        );
-                    } else {
-                        let erased = self.erase_signature_type_params(source_sig);
-                        self.constrain_call_signature_to_call_signature(
-                            ctx, var_map, &erased, target_sig, priority,
-                        );
-                    }
+                    self.constrain_signature_erasing_source_type_params(
+                        ctx,
+                        var_map,
+                        &source_signatures[index],
+                        target_sig,
+                        priority,
+                    );
                 }
             }
         }
