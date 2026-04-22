@@ -1279,7 +1279,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
+            if symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
                 && let Some(member_sym) = self.resolve_namespace_member_from_all_binders(
                     symbol.escaped_name.as_str(),
                     segment,
@@ -1412,7 +1412,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
-        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+        if symbol.has_any_flags(symbol_flags::ALIAS) {
             let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
                 if target == sym_id {
@@ -1425,28 +1425,27 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0 {
+        if symbol.has_any_flags(symbol_flags::TYPE_PARAMETER) {
             return self.type_reference_symbol_type(sym_id);
         }
 
-        if (symbol.flags
-            & (symbol_flags::TYPE_ALIAS
+        if symbol.has_any_flags(
+            symbol_flags::TYPE_ALIAS
                 | symbol_flags::CLASS
                 | symbol_flags::INTERFACE
-                | symbol_flags::ENUM))
-            != 0
-        {
+                | symbol_flags::ENUM,
+        ) {
             return self.type_reference_symbol_type(sym_id);
         }
 
-        if (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0 {
+        if symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) {
             let namespace_type = self.get_type_of_symbol(sym_id);
             if namespace_type != TypeId::ERROR && namespace_type != TypeId::UNKNOWN {
                 return namespace_type;
             }
         }
 
-        if (symbol.flags & symbol_flags::FUNCTION) != 0 && symbol.value_declaration.is_some() {
+        if symbol.has_any_flags(symbol_flags::FUNCTION) && symbol.value_declaration.is_some() {
             let constructor_type = self.get_type_of_symbol(sym_id);
             if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
                 symbol.value_declaration,
@@ -1457,10 +1456,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if (symbol.flags
-            & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE))
-            != 0
-        {
+        if symbol.has_any_flags(
+            symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE,
+        ) {
             if let Some(enum_type) = symbol
                 .declarations
                 .iter()
