@@ -2700,7 +2700,8 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "declarationmap" => Some("declarationMap"),
         "diagnostics" => Some("diagnostics"),
         "disablereferencedprojectload" => Some("disableReferencedProjectLoad"),
-        "disablesizelimt" => Some("disableSizeLimit"),
+        // Keep the historical typo alias for compatibility, but accept the real key too.
+        "disablesizelimit" | "disablesizelimt" => Some("disableSizeLimit"),
         "disablesolutiontypecheck" => Some("disableSolutionTypeCheck"),
         "disablesolutioncaching" => Some("disableSolutionCaching"),
         "disablesolutiontypechecking" => Some("disableSolutionTypeChecking"),
@@ -4388,6 +4389,40 @@ mod tests {
                 .contains("'my-React-Lib' is not a valid identifier"),
             "Unexpected TS5059 message: {}",
             ts5059.message_text
+        );
+    }
+
+    #[test]
+    fn test_disable_size_limit_option_is_recognized() {
+        let source = r#"{
+  "compilerOptions": {
+    "disableSizeLimit": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+            "disableSizeLimit should not report unknown compiler option, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
+            "disableSizeLimit should not report did-you-mean diagnostic, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_disable_size_limit_miscase_reports_did_you_mean() {
+        let source = r#"{
+  "compilerOptions": {
+    "disableSizelimit": true
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN),
+            "Expected TS5025-style did-you-mean for mis-cased disableSizeLimit, got: {codes:?}"
         );
     }
 
