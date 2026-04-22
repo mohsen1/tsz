@@ -10,7 +10,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     pub fn check_module_declaration(&mut self, module_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_binder::symbol_flags;
-        use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
@@ -123,7 +122,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Only check the GLOBAL_AUGMENTATION flag set by the parser — a plain
         // `namespace global {}` in a non-module file is a regular namespace, not
         // a global augmentation.
-        let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0;
+        let is_global_augmentation = node.is_global_augmentation();
         // TS1280: Namespaces are not allowed in global script files when
         // isolatedModules is enabled. tsc emits a single diagnostic per file,
         // anchored on the first top-level namespace declaration.

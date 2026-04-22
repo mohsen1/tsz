@@ -1664,7 +1664,7 @@ impl BinderState {
                 }
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                if (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0 {
+                if node.is_optional_chain() {
                     return true;
                 }
                 if let Some(call) = arena.get_call_expr(node) {
@@ -2084,8 +2084,7 @@ impl BinderState {
                 if let Some(call) = arena.get_call_expr(node) {
                     self.bind_expression(arena, call.expression);
 
-                    let is_optional_call =
-                        (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0;
+                    let is_optional_call = node.is_optional_chain();
                     if is_optional_call {
                         let after_callee = if self.continues_optional_chain(arena, idx)
                             || Self::is_optional_chain_access(arena, call.expression)

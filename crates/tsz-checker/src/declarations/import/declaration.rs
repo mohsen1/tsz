@@ -11,7 +11,6 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -165,7 +164,7 @@ impl<'a> CheckerState<'a> {
             if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
                 continue;
             }
-            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION == 0 {
+            if !stmt.is_global_augmentation() {
                 continue;
             }
             let Some(module) = arena.get_module(stmt) else {
@@ -204,7 +203,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Must NOT be a global augmentation
-            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0 {
+            if stmt.is_global_augmentation() {
                 continue;
             }
             let Some(module) = arena.get_module(stmt) else {
@@ -245,7 +244,7 @@ impl<'a> CheckerState<'a> {
             if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
                 continue;
             }
-            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION == 0 {
+            if !stmt.is_global_augmentation() {
                 continue;
             }
             let Some(module) = arena.get_module(stmt) else {
@@ -721,10 +720,7 @@ impl<'a> CheckerState<'a> {
 
         // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
         // statement has parse errors. Matches TSC: syntax errors take priority.
-        use tsz_parser::parser::node_flags;
-        let has_parse_errors =
-            (node.flags as u32 & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                || self.ctx.has_real_syntax_errors;
+        let has_parse_errors = node.this_or_subtree_has_error() || self.ctx.has_real_syntax_errors;
 
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`

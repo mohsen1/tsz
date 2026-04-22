@@ -525,8 +525,6 @@ impl<'a> CheckerState<'a> {
     /// Emits on every module declaration that uses the `module` keyword (i.e., lacks the
     /// NAMESPACE node flag) and has an identifier name (not a string literal).
     pub(crate) fn check_module_keyword_deprecated(&mut self, module_idx: NodeIndex) {
-        use tsz_parser::parser::node_flags;
-
         // Suppress when file has parse errors (tsc's grammarErrorOnNode pattern).
         if self.has_syntax_parse_errors() {
             return;
@@ -536,9 +534,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let has_namespace_flag = (node.flags as u32) & node_flags::NAMESPACE != 0;
-        let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0;
-        if has_namespace_flag || is_global_augmentation {
+        if node.has_namespace_flag() || node.is_global_augmentation() {
             return;
         }
 

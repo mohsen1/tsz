@@ -12,7 +12,6 @@
 //!   computed property names
 
 use tsz_binder::flow_flags;
-use tsz_parser::parser::flags::node_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -36,7 +35,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 }
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                if node.is_optional_chain() {
                     return true;
                 }
                 if let Some(call) = self.arena.get_call_expr(node) {
@@ -349,7 +348,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 if let Some(call) = self.arena.get_call_expr(node) {
                     self.handle_expression_for_assignments(call.expression);
                     let after_callee_flow = self.current_flow;
-                    let is_optional_call = (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0;
+                    let is_optional_call = node.is_optional_chain();
 
                     if is_optional_call {
                         let after_callee_flow = if self.continues_optional_chain(expr_idx)

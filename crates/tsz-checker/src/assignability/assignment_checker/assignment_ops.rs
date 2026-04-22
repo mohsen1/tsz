@@ -6,7 +6,6 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::flags::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -140,7 +139,7 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 // Call expressions get the OPTIONAL_CHAIN flag from the parser
-                if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                if node.is_optional_chain() {
                     return true;
                 }
                 // Check if the callee is part of an optional chain

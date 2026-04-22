@@ -1969,9 +1969,7 @@ impl<'a> CheckerState<'a> {
                         {
                             saw_namespace_declaration = true;
                             if let Some(module) = self.ctx.arena.get_module(parent_node) {
-                                let is_global_augmentation = (u32::from(parent_node.flags)
-                                    & tsz_parser::parser::node_flags::GLOBAL_AUGMENTATION)
-                                    != 0
+                                let is_global_augmentation = parent_node.is_global_augmentation()
                                     || self
                                         .ctx
                                         .arena
