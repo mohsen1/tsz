@@ -1326,8 +1326,9 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or_default();
 
                     // Check if the member exists in the source module's exports
-                    if let Some(exports) =
-                        self.module_exports_for_file(source_binder, &source_file_name)
+                    if let Some(exports) = self
+                        .ctx
+                        .module_exports_for_module(source_binder, &source_file_name)
                         && exports.get(member_name).is_some()
                     {
                         return true;

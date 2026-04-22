@@ -126,7 +126,9 @@ impl<'a> CheckerState<'a> {
         ];
 
         for candidate in candidates {
-            if let Some(exports) = self.ctx.binder.module_exports.get(candidate)
+            if let Some(exports) = self
+                .ctx
+                .module_exports_for_module(self.ctx.binder, candidate)
                 && let Some(sym_id) = exports.get("export=")
             {
                 return Some((self.ctx.binder, sym_id));
@@ -148,7 +150,7 @@ impl<'a> CheckerState<'a> {
         } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
             for binder in all_binders.iter() {
                 for candidate in candidates {
-                    if let Some(exports) = binder.module_exports.get(candidate)
+                    if let Some(exports) = self.ctx.module_exports_for_module(binder, candidate)
                         && let Some(sym_id) = exports.get("export=")
                     {
                         return Some((binder, sym_id));

@@ -42,7 +42,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         // Check if the module exists in the module_exports map (cross-file module resolution)
-        if self.ctx.binder.module_exports.contains_key(module_name) {
+        if self
+            .ctx
+            .module_exports_contains_module(self.ctx.binder, module_name)
+        {
             return true;
         }
 

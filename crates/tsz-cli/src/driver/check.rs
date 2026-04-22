@@ -1202,6 +1202,7 @@ pub(super) fn collect_diagnostics(
         // all see the same shared store, so summing per-file was both
         // wasted work and N× inflated).
         let mut parallel_qc_stats = tsz_solver::QueryCacheStatistics::default();
+        let parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
@@ -1247,7 +1248,7 @@ pub(super) fn collect_diagnostics(
             .shared_definition_store
             .as_ref()
             .map(|store| store.statistics())
-            .or_else(|| Some(tsz_solver::StoreStatistics::default()));
+            .or(Some(parallel_ds_stats));
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         let mut sequential_ds_stats = tsz_solver::StoreStatistics::default();
