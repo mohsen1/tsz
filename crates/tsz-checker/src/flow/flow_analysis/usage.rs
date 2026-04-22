@@ -188,7 +188,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .binder
             .get_symbol(sym_id)
-            .is_some_and(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VARIABLE))
     }
 
     fn should_skip_flow_narrowing_for_const_literal_binding(&self, sym_id: SymbolId) -> bool {
@@ -599,7 +599,7 @@ impl<'a> CheckerState<'a> {
 
         // Check both block-scoped (let/const) and function-scoped (var) variables.
         // Parameters are excluded downstream (PARAMETER nodes ≠ VARIABLE_DECLARATION).
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
             return false;
         }
 
@@ -740,7 +740,7 @@ impl<'a> CheckerState<'a> {
                 //     through so flow analysis emits TS2454
                 if self.is_usage_in_deferred_function_relative_to_scope(idx, decl_scope) {
                     let is_function_scoped_var =
-                        symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+                        symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE);
                     if is_function_scoped_var {
                         return false;
                     }
@@ -772,7 +772,7 @@ impl<'a> CheckerState<'a> {
                 // suppressed — module consumers or initialization code could
                 // assign them before the deferred function is called.
                 let is_function_scoped_var =
-                    symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+                    symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE);
                 let is_exported = symbol.is_exported;
                 if self.ctx.binder.is_external_module()
                     && !has_initializer
@@ -796,7 +796,7 @@ impl<'a> CheckerState<'a> {
         // initializer in the AST but ARE assigned by the loop — don't suppress for those.
         if !has_initializer {
             let is_function_scoped =
-                symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+                symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE);
             if is_function_scoped {
                 // Check if this var is a for-in/for-of loop variable
                 let is_for_in_of_var = self
@@ -850,7 +850,7 @@ impl<'a> CheckerState<'a> {
         // need this: TDZ checks handle pre-declaration use separately.
         if has_initializer {
             let is_function_scoped =
-                symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+                symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE);
 
             if is_function_scoped {
                 // For `var` with initializer, skip DAA when usage is at or after the
