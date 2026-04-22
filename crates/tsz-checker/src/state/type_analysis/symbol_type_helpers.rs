@@ -200,7 +200,8 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::{CallableShape, FunctionShape};
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::FUNCTION == 0 || symbol.flags & symbol_flags::INTERFACE != 0
+        if !symbol.has_any_flags(symbol_flags::FUNCTION)
+            || symbol.has_any_flags(symbol_flags::INTERFACE)
         {
             return None;
         }
@@ -302,7 +303,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
         };
-        if symbol.flags & symbol_flags::ENUM == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM) {
             return;
         }
 
