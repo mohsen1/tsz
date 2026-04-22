@@ -99,8 +99,8 @@ impl<'a> CheckerState<'a> {
                             .get_symbol_with_libs(sid, &lib_binders)
                             .is_some_and(|s| {
                                 Some(sid) != current_alias
-                                    && ((s.flags & symbol_flags::VALUE) != 0
-                                        || ((s.flags & symbol_flags::ALIAS) != 0
+                                    && (s.has_any_flags(symbol_flags::VALUE)
+                                        || (s.has_any_flags(symbol_flags::ALIAS)
                                             && !s.is_type_only
                                             && s.escaped_name == entity_name))
                             })
@@ -200,7 +200,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
 
@@ -244,7 +244,7 @@ impl<'a> CheckerState<'a> {
 
         let resolved_export_equals = if let Some(export_sym) =
             export_equals_binder.get_symbol_with_libs(export_equals_sym, &lib_binders)
-            && (export_sym.flags & symbol_flags::ALIAS) != 0
+            && export_sym.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             match self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases) {
@@ -263,15 +263,12 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .is_some_and(|exports| !exports.is_empty());
             // Pure type: has INTERFACE or TYPE_ALIAS flags but no VALUE or NAMESPACE flags
-            let is_pure_type = (export_symbol.flags
-                & (symbol_flags::INTERFACE
-                    | symbol_flags::TYPE_ALIAS
-                    | symbol_flags::TYPE_PARAMETER))
-                != 0;
-            let is_namespace_or_module = (export_symbol.flags
-                & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                != 0;
-            let has_value = (export_symbol.flags & symbol_flags::VALUE) != 0;
+            let is_pure_type = export_symbol.has_any_flags(
+                symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::TYPE_PARAMETER,
+            );
+            let is_namespace_or_module = export_symbol
+                .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE);
+            let has_value = export_symbol.has_any_flags(symbol_flags::VALUE);
             return is_pure_type && !is_namespace_or_module && !has_namespace_exports && !has_value;
         }
 
@@ -293,7 +290,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
 
@@ -305,7 +302,7 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::FUNCTION
             | symbol_flags::CLASS
             | symbol_flags::ENUM;
-        if (symbol.flags & value_flags) != 0 {
+        if symbol.has_any_flags(value_flags) {
             return false;
         }
 
@@ -349,7 +346,7 @@ impl<'a> CheckerState<'a> {
 
         let resolved_export_equals = if let Some(export_sym) =
             export_equals_binder.get_symbol_with_libs(export_equals_sym, &lib_binders)
-            && (export_sym.flags & symbol_flags::ALIAS) != 0
+            && export_sym.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             match self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases) {
@@ -377,7 +374,7 @@ impl<'a> CheckerState<'a> {
         if let Some(export_symbol) =
             export_equals_binder.get_symbol_with_libs(resolved_export_equals, &lib_binders)
         {
-            if (export_symbol.flags & symbol_flags::VALUE) == 0 {
+            if !export_symbol.has_any_flags(symbol_flags::VALUE) {
                 // For merged class+namespace types, the namespace exports may yield a
                 // TYPE-only symbol (e.g. `interface B`) while the class members table
                 // holds a VALUE symbol with the same name (e.g. `static B: number`).
@@ -393,22 +390,22 @@ impl<'a> CheckerState<'a> {
                         .and_then(|p| p.members.as_ref())
                         .and_then(|m| m.get(&sym_name))
                         .and_then(|mid| export_equals_binder.get_symbol(mid))
-                        .is_some_and(|m| (m.flags & symbol_flags::VALUE) != 0);
+                        .is_some_and(|m| m.has_any_flags(symbol_flags::VALUE));
                 if !has_value_companion {
                     return true;
                 }
                 return false; // VALUE companion exists — not type-only.
             }
 
-            if (export_symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                != 0
+            if export_symbol
+                .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
             {
                 let mut has_runtime_value_member = false;
 
                 // If the symbol also has non-namespace VALUE flags (CLASS, FUNCTION, etc.),
                 // it's clearly a value and we don't need to check namespace members
                 let non_namespace_value_flags = symbol_flags::VALUE & !(symbol_flags::VALUE_MODULE);
-                if (export_symbol.flags & non_namespace_value_flags) != 0 {
+                if export_symbol.has_any_flags(non_namespace_value_flags) {
                     has_runtime_value_member = true;
                 }
 
@@ -416,7 +413,7 @@ impl<'a> CheckerState<'a> {
                     for (_, member_id) in exports.iter() {
                         if let Some(member_symbol) =
                             export_equals_binder.get_symbol_with_libs(*member_id, &lib_binders)
-                            && (member_symbol.flags & symbol_flags::VALUE) != 0
+                            && member_symbol.has_any_flags(symbol_flags::VALUE)
                             && !self.symbol_member_is_type_only(*member_id, None)
                         {
                             has_runtime_value_member = true;
@@ -429,7 +426,7 @@ impl<'a> CheckerState<'a> {
                     for (_, member_id) in members.iter() {
                         if let Some(member_symbol) =
                             export_equals_binder.get_symbol_with_libs(*member_id, &lib_binders)
-                            && (member_symbol.flags & symbol_flags::VALUE) != 0
+                            && member_symbol.has_any_flags(symbol_flags::VALUE)
                             && !self.symbol_member_is_type_only(*member_id, None)
                         {
                             has_runtime_value_member = true;
@@ -587,7 +584,7 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
 
-                if symbol.flags & symbol_flags::MODULE == 0 {
+                if !symbol.has_any_flags(symbol_flags::MODULE) {
                     return false;
                 }
 
@@ -608,7 +605,7 @@ impl<'a> CheckerState<'a> {
                 // Follow alias chains to determine if the ultimate target is type-only
                 let resolved_member_id = if let Some(member_symbol) =
                     self.ctx.binder.get_symbol(member_id)
-                    && member_symbol.flags & symbol_flags::ALIAS != 0
+                    && member_symbol.has_any_flags(symbol_flags::ALIAS)
                 {
                     let mut visited_aliases = AliasCycleTracker::new();
                     self.resolve_alias_symbol(member_id, &mut visited_aliases)
@@ -627,8 +624,8 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let has_value =
-                    (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
-                let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+                    member_symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS);
+                let has_type = member_symbol.has_any_flags(symbol_flags::TYPE);
                 has_type && !has_value
             }
 
@@ -667,7 +664,7 @@ impl<'a> CheckerState<'a> {
                 let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                     return false;
                 };
-                if symbol.flags & symbol_flags::MODULE == 0 {
+                if !symbol.has_any_flags(symbol_flags::MODULE) {
                     return false;
                 }
                 let member_id = symbol
@@ -690,8 +687,8 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 let has_value =
-                    (member_symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0;
-                let has_type = (member_symbol.flags & symbol_flags::TYPE) != 0;
+                    member_symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS);
+                let has_type = member_symbol.has_any_flags(symbol_flags::TYPE);
                 has_type && !has_value
             }
 
@@ -710,14 +707,14 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
         // If the symbol has a VALUE binding (e.g., `import { X }` merged with
         // `const X = 42`), the value binding provides a runtime value and the
         // identifier should not be treated as type-only — regardless of whether
         // the import target is type-only.
-        if (symbol.flags & symbol_flags::VALUE) != 0 {
+        if symbol.has_any_flags(symbol_flags::VALUE) {
             return false;
         }
         if symbol.is_type_only {
@@ -781,8 +778,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
-        let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
+        let has_value = target_symbol.has_any_flags(symbol_flags::VALUE);
+        let has_type = target_symbol.has_any_flags(symbol_flags::TYPE);
         has_type && !has_value
     }
 
@@ -794,7 +791,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
 
@@ -825,8 +822,8 @@ impl<'a> CheckerState<'a> {
         // synthetic `default` symbol whose declaration is identifier `X`.
         // Follow that identifier to classify whether `X` is an uninstantiated
         // namespace.
-        if (target_sym.flags & symbol_flags::NAMESPACE_MODULE) == 0
-            && (target_sym.flags & symbol_flags::ALIAS) != 0
+        if !target_sym.has_any_flags(symbol_flags::NAMESPACE_MODULE)
+            && target_sym.has_any_flags(symbol_flags::ALIAS)
             && target_sym.import_module.is_none()
             && let Some(file_idx) = target_file_idx
         {
@@ -878,9 +875,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let is_namespace = (target_sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let is_namespace = target_sym.has_any_flags(symbol_flags::NAMESPACE_MODULE);
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        let has_other_value = (target_sym.flags & value_flags_except_module) != 0;
+        let has_other_value = target_sym.has_any_flags(value_flags_except_module);
 
         is_namespace
             && !has_other_value
@@ -974,8 +971,8 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
-            let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-            let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+            let has_value = symbol.has_any_flags(symbol_flags::VALUE);
+            let has_type = symbol.has_any_flags(symbol_flags::TYPE);
             return has_type && !has_value;
         }
 
@@ -989,8 +986,8 @@ impl<'a> CheckerState<'a> {
         // Class+namespace merges should be treated as class constructors, not namespaces,
         // so that property access (e.g., `.prototype`) goes through the solver path.
         const fn is_pure_namespace_or_enum(symbol: &tsz_binder::Symbol) -> bool {
-            let is_namespace = (symbol.flags & symbol_flags::NAMESPACE) != 0;
-            let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
+            let is_namespace = symbol.has_any_flags(symbol_flags::NAMESPACE);
+            let is_class = symbol.has_any_flags(symbol_flags::CLASS);
             is_namespace && !is_class
         }
 
@@ -1073,7 +1070,7 @@ impl<'a> CheckerState<'a> {
             | symbol_flags::VALUE_MODULE
             | symbol_flags::NAMESPACE_MODULE;
 
-        if (member_sym.flags & concrete_value) == 0
+        if !member_sym.has_any_flags(concrete_value)
             && self
                 .ctx
                 .resolve_symbol_file_index(member_sym_id)
@@ -1084,13 +1081,13 @@ impl<'a> CheckerState<'a> {
 
         // Only resolve value-side members. Type-only members (interfaces,
         // type aliases) should fall through to TS2693/TS2339 handling.
-        if member_sym.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) == 0 {
+        if !member_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS) {
             return None;
         }
 
-        let is_pure_namespace =
-            (member_sym.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)) != 0
-                && (member_sym.flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0;
+        let is_pure_namespace = member_sym
+            .has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)
+            && !member_sym.has_any_flags(symbol_flags::CLASS | symbol_flags::FUNCTION);
         if is_pure_namespace {
             return Some(
                 self.ctx
@@ -1102,8 +1099,8 @@ impl<'a> CheckerState<'a> {
 
         // For enum members, return the runtime enum object type so that
         // property access on enum members (e.g., `m.Color.Blue`) works correctly.
-        if member_sym.flags & symbol_flags::ENUM != 0
-            && (member_sym.flags & symbol_flags::ENUM_MEMBER) == 0
+        if member_sym.has_any_flags(symbol_flags::ENUM)
+            && !member_sym.has_any_flags(symbol_flags::ENUM_MEMBER)
         {
             let member_type = self
                 .enum_object_type(member_sym_id)
@@ -1116,8 +1113,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // For merged interface+variable symbols, prefer the value declaration's type.
-        let member_type = if member_sym.flags & symbol_flags::INTERFACE != 0
-            && member_sym.flags & symbol_flags::VARIABLE != 0
+        let member_type = if member_sym.has_any_flags(symbol_flags::INTERFACE)
+            && member_sym.has_any_flags(symbol_flags::VARIABLE)
             && member_sym.value_declaration.is_some()
         {
             self.type_of_value_declaration_for_symbol(member_sym_id, member_sym.value_declaration)
@@ -1147,9 +1144,9 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier(self.ctx.arena, expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
-        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let is_namespace = symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE);
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+        let has_other_value = symbol.has_any_flags(value_flags_except_module);
 
         if !is_namespace || has_other_value {
             return None;
@@ -1203,7 +1200,7 @@ impl<'a> CheckerState<'a> {
         // Check if the expression is a direct reference to an enum declaration
         if let Some(sym_id) = self.resolve_identifier_symbol(expression)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && (symbol.flags & symbol_flags::ENUM) != 0
+            && symbol.has_any_flags(symbol_flags::ENUM)
         {
             // Direct enum reference (e.g., `Foo.toString()`) - NOT an instance access
             return false;
@@ -1326,7 +1323,7 @@ impl<'a> CheckerState<'a> {
         // Before returning true, verify there is no VALUE companion in the parent's
         // members table (handles `export = C.B` where C is a merged class+namespace
         // and B exists as both a static property (VALUE) and an interface (TYPE)).
-        if (eq_sym.flags & PURE_TYPE) != 0 && (eq_sym.flags & VALUE) == 0 {
+        if eq_sym.has_any_flags(PURE_TYPE) && !eq_sym.has_any_flags(VALUE) {
             let sym_name = eq_sym.escaped_name.clone();
             let parent_id = eq_sym.parent;
             let has_value_companion = parent_id.is_some()
@@ -1335,7 +1332,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|p| p.members.as_ref())
                     .and_then(|m| m.get(&sym_name))
                     .and_then(|mid| target_binder.get_symbol(mid))
-                    .is_some_and(|m| (m.flags & symbol_flags::VALUE) != 0);
+                    .is_some_and(|m| m.has_any_flags(symbol_flags::VALUE));
             if !has_value_companion {
                 return true;
             }
@@ -1343,7 +1340,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Follow the alias: if export= points to a type-only import, propagate.
-        if eq_sym.flags & symbol_flags::ALIAS != 0 {
+        if eq_sym.has_any_flags(symbol_flags::ALIAS) {
             let mut visited = AliasCycleTracker::new();
             if let Some(resolved) = self.resolve_alias_symbol(export_eq_sym_id, &mut visited) {
                 // Check any intermediate alias in the chain
@@ -1361,7 +1358,7 @@ impl<'a> CheckerState<'a> {
                     if target_sym.is_type_only {
                         return true;
                     }
-                    if (target_sym.flags & PURE_TYPE) != 0 && (target_sym.flags & VALUE) == 0 {
+                    if target_sym.has_any_flags(PURE_TYPE) && !target_sym.has_any_flags(VALUE) {
                         return true;
                     }
                 }
@@ -1440,8 +1437,8 @@ impl<'a> CheckerState<'a> {
                     // type-only status. But cloned `export type { A as default }`
                     // symbols copy the source's value flags (e.g., CLASS) without
                     // ALIAS, so we only skip when ALIAS+VALUE are both present.
-                    let has_value_flags = sym.flags & symbol_flags::ALIAS != 0
-                        && sym.flags & symbol_flags::VALUE != 0;
+                    let has_value_flags = sym.has_any_flags(symbol_flags::ALIAS)
+                        && sym.has_any_flags(symbol_flags::VALUE);
                     let has_value_partner =
                         self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
                     if !has_value_flags && !has_value_partner {
@@ -1460,7 +1457,7 @@ impl<'a> CheckerState<'a> {
                         target_binder
                             .get_symbol(partner_id)
                             .is_some_and(|partner_sym| {
-                                partner_sym.flags & symbol_flags::ALIAS != 0
+                                partner_sym.has_any_flags(symbol_flags::ALIAS)
                                     && self.symbol_has_runtime_value_in_binder(
                                         target_binder,
                                         partner_id,
@@ -1470,7 +1467,7 @@ impl<'a> CheckerState<'a> {
                 if has_namespace_alias_partner {
                     return false;
                 }
-                if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                if sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE) {
                     // When `export type X = ...` merges with `export * as X from "..."`,
                     // the module_exports entry holds the TYPE_ALIAS but the binder records
                     // the value-providing ALIAS as an alias_partner. If such a partner
@@ -1482,19 +1479,19 @@ impl<'a> CheckerState<'a> {
                     // declare type-only here — let the alias-chain-following logic below
                     // determine whether the alias target is actually type-only.
                     let alias_may_provide_value =
-                        sym.flags & symbol_flags::ALIAS != 0 && !sym.is_type_only;
+                        sym.has_any_flags(symbol_flags::ALIAS) && !sym.is_type_only;
                     if !has_value_partner && !alias_may_provide_value {
                         return true;
                     }
                 }
-                if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+                if sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
                     && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id)
                 {
                     // When the symbol also has ALIAS flag (e.g., `import { Enum }` merged
                     // with `namespace Enum { type Foo = ... }`), the alias may resolve to
                     // a value-providing target even though the namespace itself has no
                     // runtime value exports. Don't return type-only here.
-                    if sym.flags & symbol_flags::ALIAS == 0 || sym.is_type_only {
+                    if !sym.has_any_flags(symbol_flags::ALIAS) || sym.is_type_only {
                         return true;
                     }
                 }
@@ -1504,7 +1501,7 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::ENUM
                     | symbol_flags::VALUE_MODULE
                     | symbol_flags::NAMESPACE_MODULE;
-                if (sym.flags & concrete_value) == 0
+                if !sym.has_any_flags(concrete_value)
                     && self.file_has_jsdoc_typedef_named(target_file_idx, export_name)
                 {
                     return true;
@@ -1518,7 +1515,7 @@ impl<'a> CheckerState<'a> {
                     | symbol_flags::FUNCTION
                     | symbol_flags::CLASS
                     | symbol_flags::ENUM;
-                if sym.flags & symbol_flags::ALIAS != 0 && sym.flags & concrete_value == 0 {
+                if sym.has_any_flags(symbol_flags::ALIAS) && !sym.has_any_flags(concrete_value) {
                     let mut visited_aliases = AliasCycleTracker::new();
                     if let Some(resolved_sym_id) =
                         self.resolve_alias_symbol(sym_id, &mut visited_aliases)
@@ -1536,15 +1533,15 @@ impl<'a> CheckerState<'a> {
                         if let Some(resolved_sym) = target_binder
                             .get_symbol(resolved_sym_id)
                             .or_else(|| self.ctx.binder.get_symbol(resolved_sym_id))
-                            && (resolved_sym.flags & PURE_TYPE) != 0
-                            && (resolved_sym.flags & concrete_value) == 0
+                            && resolved_sym.has_any_flags(PURE_TYPE)
+                            && !resolved_sym.has_any_flags(concrete_value)
                             // When the resolved symbol still has ALIAS flag (e.g.,
                             // `import * as B` merged with `interface B`), the alias
                             // side resolves to a namespace object that IS a value.
                             // Don't conclude type-only here — let the recursive
                             // is_export_type_only_in_file check below decide based
                             // on the actual import target.
-                            && (resolved_sym.flags & symbol_flags::ALIAS) == 0
+                            && !resolved_sym.has_any_flags(symbol_flags::ALIAS)
                         {
                             return true;
                         }
@@ -1569,7 +1566,7 @@ impl<'a> CheckerState<'a> {
                 // symbols with no runtime value members), treat the default export as
                 // type-only for cross-file import/value checks.
                 if export_name == "default"
-                    && sym.flags & symbol_flags::ALIAS != 0
+                    && sym.has_any_flags(symbol_flags::ALIAS)
                     && sym.import_module.is_none()
                     && let Some(target_decl_idx) = sym.primary_declaration()
                     && let Some(target_decl_node) = target_arena.get(target_decl_idx)
@@ -1597,16 +1594,14 @@ impl<'a> CheckerState<'a> {
                                 | symbol_flags::VALUE_MODULE;
 
                             if target_sym.is_type_only
-                                || ((target_sym.flags & PURE_TYPE) != 0
-                                    && (target_sym.flags & VALUE) == 0)
-                                || ((target_sym.flags
-                                    & (symbol_flags::NAMESPACE_MODULE
-                                        | symbol_flags::VALUE_MODULE))
-                                    != 0
-                                    && !self.symbol_has_runtime_value_in_binder(
-                                        target_binder,
-                                        target_sym_id,
-                                    ))
+                                || (target_sym.has_any_flags(PURE_TYPE)
+                                    && !target_sym.has_any_flags(VALUE))
+                                || (target_sym.has_any_flags(
+                                    symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                                ) && !self.symbol_has_runtime_value_in_binder(
+                                    target_binder,
+                                    target_sym_id,
+                                ))
                             {
                                 return true;
                             }
@@ -1772,8 +1767,8 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.ctx.binder.get_symbol(sym_id));
             if let Some(sym) = sym_opt {
                 if sym.is_type_only {
-                    let has_value_flags = sym.flags & symbol_flags::ALIAS != 0
-                        && sym.flags & symbol_flags::VALUE != 0;
+                    let has_value_flags = sym.has_any_flags(symbol_flags::ALIAS)
+                        && sym.has_any_flags(symbol_flags::VALUE);
                     let has_value_partner =
                         self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
                     if !has_value_flags && !has_value_partner {
@@ -1781,7 +1776,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if sym.flags & symbol_flags::ALIAS != 0
+                if sym.has_any_flags(symbol_flags::ALIAS)
                     && let Some(ref import_module) = sym.import_module
                 {
                     let import_name = sym.import_name.as_deref().unwrap_or(&sym.escaped_name);
