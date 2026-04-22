@@ -63,60 +63,15 @@ pub(crate) struct CompilerOptions {
     sound_mode: Option<bool>,
 }
 
-/// Deserialize a boolean option that can be a boolean, string, or comma-separated string.
-/// TypeScript test files often have boolean options like "true, false" for different test cases.
+/// Deserialize an optional boolean option.
+///
+/// WASM compiler options are user-facing input, so keep this strict:
+/// booleans must be actual JSON booleans, not strings.
 fn deserialize_bool_option<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de::{self, Visitor};
-
-    struct BoolOptionVisitor;
-
-    impl<'de> Visitor<'de> for BoolOptionVisitor {
-        type Value = Option<bool>;
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a boolean, string, or comma-separated list of booleans")
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            Ok(Some(value))
-        }
-
-        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
-        where
-            E: de::Error,
-        {
-            // Handle comma-separated values like "true, false" - take the first value
-            let first_value = value.split(',').next().unwrap_or(value).trim();
-            let result = match first_value.to_lowercase().as_str() {
-                "true" | "1" => Some(true),
-                "false" | "0" => Some(false),
-                _ => None,
-            };
-            Ok(result)
-        }
-    }
-
-    deserializer.deserialize_any(BoolOptionVisitor)
+    Option::<bool>::deserialize(deserializer)
 }
 
 #[derive(Clone, Copy)]
@@ -346,7 +301,7 @@ pub(crate) fn parse_compiler_options_json(options_json: &str) -> Result<Compiler
 
 #[cfg(test)]
 mod tests {
-    use super::parse_compiler_options_json;
+    use super::{CompilerOptions, parse_compiler_options_json};
 
     #[test]
     fn parse_compiler_options_json_accepts_valid_input() {
@@ -373,6 +328,24 @@ mod tests {
         assert!(
             !parsed.to_checker_options().no_types_and_symbols,
             "WASM compiler options should ignore noTypesAndSymbols"
+        );
+    }
+
+    #[test]
+    fn parse_compiler_options_json_rejects_string_boolean() {
+        let parsed = serde_json::from_str::<CompilerOptions>(r#"{"strict":"true"}"#);
+        assert!(
+            parsed.is_err(),
+            "string-typed booleans should be rejected in WASM compiler options"
+        );
+    }
+
+    #[test]
+    fn parse_compiler_options_json_rejects_comma_separated_boolean_string() {
+        let parsed = serde_json::from_str::<CompilerOptions>(r#"{"strict":"true, false"}"#);
+        assert!(
+            parsed.is_err(),
+            "comma-separated boolean strings should be rejected in WASM compiler options"
         );
     }
 }
