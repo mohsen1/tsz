@@ -1225,21 +1225,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // Constrain type predicates if both functions have them
                     // Example: source `(x: any) => x is number` vs target `(value: T) => value is S`
                     // Should infer S = number from the predicates
-                    if let (Some(s_pred), Some(t_pred)) =
-                        (&s_fn.type_predicate, &t_fn.type_predicate)
-                    {
-                        // Only constrain if both predicates have type annotations
-                        if let (Some(s_pred_type), Some(t_pred_type)) =
-                            (s_pred.type_id, t_pred.type_id)
-                        {
-                            // Type predicates are covariant: source_pred_type <: target_pred_type
-                            // Mark as type annotation source to prevent literal widening.
-                            let was = ctx.source_is_type_annotation;
-                            ctx.source_is_type_annotation = true;
-                            self.constrain_types(ctx, var_map, s_pred_type, t_pred_type, priority);
-                            ctx.source_is_type_annotation = was;
-                        }
-                    }
+                    self.constrain_type_predicates(
+                        ctx,
+                        var_map,
+                        s_fn.type_predicate.as_ref(),
+                        t_fn.type_predicate.as_ref(),
+                        priority,
+                    );
                 } else {
                     // Generic source function - instantiate with fresh inference variables
                     // This allows inferring the source function's type parameters from the target
@@ -1425,24 +1417,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
 
                     // Constrain type predicates if both functions have them
-                    if let (Some(s_pred), Some(t_pred)) =
-                        (&instantiated_predicate, &t_fn.type_predicate)
-                        && let (Some(s_pred_type), Some(t_pred_type)) =
-                            (s_pred.type_id, t_pred.type_id)
-                    {
-                        // Type predicates are covariant: source_pred_type <: target_pred_type
-                        // Mark as type annotation source to prevent literal widening.
-                        let was = ctx.source_is_type_annotation;
-                        ctx.source_is_type_annotation = true;
-                        self.constrain_types(
-                            ctx,
-                            &combined_var_map,
-                            s_pred_type,
-                            t_pred_type,
-                            priority,
-                        );
-                        ctx.source_is_type_annotation = was;
-                    }
+                    self.constrain_type_predicates(
+                        ctx,
+                        &combined_var_map,
+                        instantiated_predicate.as_ref(),
+                        t_fn.type_predicate.as_ref(),
+                        priority,
+                    );
                 }
             }
             (Some(TypeData::Function(s_fn_id)), Some(TypeData::Callable(t_callable_id))) => {
