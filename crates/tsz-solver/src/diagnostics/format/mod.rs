@@ -383,6 +383,25 @@ impl<'a> TypeFormatter<'a> {
             None => return format!("Type({})", type_id.0).into(),
         };
 
+        // Detect the empty object shape `{}`. It is a universally-shared
+        // interning target: many generic reductions (e.g., `T50<unknown>`
+        // where `T50<T> = { [P in keyof T]: number }` reduces to `{}`
+        // because `keyof unknown = never`) evaluate to the same TypeId as a
+        // literal `{}` annotation. For such types, we must not follow a
+        // type-alias def-name redirect, because tsc shows the literal `{}`
+        // (not the alias name) when the alias body reduces to `{}`. This
+        // flag is consumed by the `skip_alias` heuristic below.
+        let is_empty_object = matches!(
+            &key,
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)
+                if {
+                    let shape = self.interner.object_shape(*shape_id);
+                    shape.properties.is_empty()
+                        && shape.string_index.is_none()
+                        && shape.number_index.is_none()
+                }
+        );
+
         // For composite types that might be named (interfaces, type aliases, classes),
         // check if this TypeId maps to a definition name. This handles:
         // - Interfaces: `interface Foo { a: string }` displays as "Foo"
@@ -424,6 +443,15 @@ impl<'a> TypeFormatter<'a> {
                         || (self.skip_application_alias_names
                             && def.type_params.is_empty()
                             && self.interner.get_display_alias(type_id).is_some())
+                        // A type alias whose body reduces to the empty object
+                        // `{}` shares its TypeId with every literal `{}` in the
+                        // program (`{}` is the universal empty-shape target of
+                        // interning). Following the alias name here would
+                        // repaint user-written `{}` annotations; tsc shows `{}`
+                        // structurally in that case, so we do too. Classes and
+                        // interfaces are unaffected: they keep their name and
+                        // remain distinguishable via `shape.symbol`.
+                        || is_empty_object
                 } else {
                     false
                 };
@@ -588,8 +616,14 @@ impl<'a> TypeFormatter<'a> {
                 )
                 && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
 
+            // For empty `{}`, never follow the alias — the empty object is
+            // a universally-shared shape and many generic reductions (e.g.,
+            // `T50<unknown>` → `{}`) point to it. Following the alias would
+            // repaint user-written `{}` annotations with the originating
+            // application form; tsc renders `{}` structurally in that case.
             if (!is_simple_type || use_keyof_alias || use_application_alias)
                 && !skip_intersection_alias
+                && !is_empty_object
                 && self.display_alias_visiting.insert(alias_origin)
             {
                 let result = self.format(alias_origin);
