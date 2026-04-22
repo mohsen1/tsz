@@ -50,10 +50,6 @@ pub(crate) struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_option")]
     no_lib: Option<bool>,
 
-    /// When true, do not load default types and symbols (test harness directive).
-    #[serde(default, deserialize_with = "deserialize_bool_option")]
-    no_types_and_symbols: Option<bool>,
-
     /// Add 'undefined' to a type when accessed using an index.
     #[serde(
         default,
@@ -297,7 +293,7 @@ impl CompilerOptions {
             strict_bind_call_apply: false,
             exact_optional_property_types: self.exact_optional_property_types.unwrap_or(false),
             no_lib: self.no_lib.unwrap_or(false),
-            no_types_and_symbols: self.no_types_and_symbols.unwrap_or(false),
+            no_types_and_symbols: false,
             target: self.resolve_target(),
             module: self.resolve_module(),
             jsx_factory: "React.createElement".to_string(),
@@ -368,6 +364,15 @@ mod tests {
         assert_eq!(
             parsed.to_checker_options().module,
             crate::common::ModuleKind::ES2015
+        );
+    }
+
+    #[test]
+    fn parse_compiler_options_json_ignores_no_types_and_symbols() {
+        let parsed = parse_compiler_options_json(r#"{"noTypesAndSymbols":true}"#).unwrap();
+        assert!(
+            !parsed.to_checker_options().no_types_and_symbols,
+            "WASM compiler options should ignore noTypesAndSymbols"
         );
     }
 }
