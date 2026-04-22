@@ -596,22 +596,15 @@ impl<'a> Printer<'a> {
         best.map(|e| &e.values)
     }
     fn build_access_chain_path(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return Some(self.arena.get_identifier(node)?.escaped_text.clone());
+        if let Some(text) = self.arena.identifier_text_owned(idx) {
+            return Some(text);
         }
+        let node = self.arena.get(idx)?;
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(node)?;
             let left = self.build_access_chain_path(access.expression)?;
-            let nm = self.arena.get(access.name_or_argument)?;
-            if nm.kind != SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            return Some(format!(
-                "{}.{}",
-                left,
-                &self.arena.get_identifier(nm)?.escaped_text
-            ));
+            let right = self.arena.identifier_text_owned(access.name_or_argument)?;
+            return Some(format!("{left}.{right}"));
         }
         None
     }

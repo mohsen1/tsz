@@ -2267,15 +2267,14 @@ impl BinderState {
         }
 
         fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            if let Some(text) = arena.identifier_text_owned(idx) {
+                return Some(text);
             }
+            let node = arena.get(idx)?;
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = arena.get_access_expr(node)?;
                 let left = property_access_chain(arena, access.expression)?;
-                let right_node = arena.get(access.name_or_argument)?;
-                let right = arena.get_identifier(right_node)?.escaped_text.clone();
+                let right = arena.identifier_text_owned(access.name_or_argument)?;
                 return Some(format!("{left}.{right}"));
             }
             None
@@ -2346,7 +2345,7 @@ impl BinderState {
                     }
                 }
                 k if k == SyntaxKind::Identifier as u16 => {
-                    let name = arena.get_identifier(init_node)?.escaped_text.clone();
+                    let name = arena.identifier_text_owned(init_idx)?;
                     let next_sym = binder.file_locals.get(&name)?;
                     resolved_const_expando_key(binder, arena, next_sym, depth + 1)
                 }

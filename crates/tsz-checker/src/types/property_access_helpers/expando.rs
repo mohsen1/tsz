@@ -16,10 +16,10 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn property_access_chain_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-        let node = arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+        if let Some(text) = arena.identifier_text_owned(idx) {
+            return Some(text);
         }
+        let node = arena.get(idx)?;
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = arena.get_access_expr(node)?;
             let left = Self::property_access_chain_in_arena(arena, access.expression)?;
@@ -792,10 +792,10 @@ impl<'a> CheckerState<'a> {
             arena: &tsz_parser::parser::node::NodeArena,
             idx: NodeIndex,
         ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            if let Some(text) = arena.identifier_text_owned(idx) {
+                return Some(text);
             }
+            let node = arena.get(idx)?;
             if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = arena.get_access_expr(node)?;
                 return root_identifier(arena, access.expression);
