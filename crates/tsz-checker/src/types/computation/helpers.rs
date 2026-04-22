@@ -1185,7 +1185,7 @@ impl<'a> CheckerState<'a> {
 
             if self.ctx.in_destructuring_target
                 && self.resolve_identifier_symbol_for_write(idx).is_none()
-                && let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent)
+                && let Some(parent_idx) = self.ctx.arena.parent_of(idx)
                 && let Some(parent_node) = self.ctx.arena.get(parent_idx)
                 && parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
                 && self

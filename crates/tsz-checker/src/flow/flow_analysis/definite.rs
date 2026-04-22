@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
             // Some nodes in type positions (e.g. `typeof x` inside a type alias)
             // don't carry direct flow links. Fall back to the nearest parent that
             // has flow information so narrowing can still apply at that site.
-            let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            let mut current = self.ctx.arena.parent_of(idx);
             let mut found = None;
             while let Some(parent) = current {
                 if parent.is_none() {
@@ -128,7 +128,7 @@ impl<'a> CheckerState<'a> {
                     found = Some(flow);
                     break;
                 }
-                current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+                current = self.ctx.arena.parent_of(parent);
             }
             match found {
                 Some(flow) => flow,

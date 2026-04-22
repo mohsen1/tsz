@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
         if body_idx.is_none() {
             return None;
         }
-        let func_node_idx = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent);
+        let func_node_idx = self.ctx.arena.parent_of(body_idx);
 
         // Build effective template/parameter data for JS generic constructors.
         let func_shape = crate::query_boundaries::common::function_shape_for_type(

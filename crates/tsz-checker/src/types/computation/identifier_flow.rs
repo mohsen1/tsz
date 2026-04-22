@@ -540,7 +540,7 @@ impl<'a> CheckerState<'a> {
             return Some(flow);
         }
 
-        let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(idx);
         while let Some(parent) = current {
             if parent.is_none() {
                 break;
@@ -548,7 +548,7 @@ impl<'a> CheckerState<'a> {
             if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
                 return Some(flow);
             }
-            current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+            current = self.ctx.arena.parent_of(parent);
         }
 
         None

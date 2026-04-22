@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(node_idx);
         while current.is_some() {
             let parent_idx = current.expect("loop guard ensures current.is_some()");
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
@@ -451,7 +451,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(NodeIndex::NONE),
         );
 
-        let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(node_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
@@ -657,7 +657,7 @@ impl<'a> CheckerState<'a> {
             if idx == node_b {
                 return true;
             }
-            current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            current = self.ctx.arena.parent_of(idx);
         }
         false
     }

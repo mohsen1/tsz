@@ -2426,7 +2426,7 @@ impl<'a> CheckerState<'a> {
                 export_idx = Some(current);
                 break;
             }
-            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+            let Some(parent) = self.ctx.arena.parent_of(current) else {
                 break;
             };
             if parent.is_none() {

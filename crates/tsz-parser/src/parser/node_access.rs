@@ -111,6 +111,20 @@ impl NodeArena {
         }
     }
 
+    /// Get the parent index of a node via its extended info. Returns `None`
+    /// if the index is `NodeIndex::NONE` or out of bounds. Inherent helper
+    /// for the very common `arena.get_extended(idx).map(|ext| ext.parent)`
+    /// pattern used by ~140 parent-walk call sites across checker/emitter.
+    ///
+    /// A root node returns `Some(NodeIndex::NONE)`; callers that want to
+    /// distinguish "root" from "unknown" should check `is_none()` on the
+    /// inner index.
+    #[inline]
+    #[must_use]
+    pub fn parent_of(&self, index: NodeIndex) -> Option<NodeIndex> {
+        self.get_extended(index).map(|ext| ext.parent)
+    }
+
     /// Get identifier data for a node.
     /// Returns None if node is not an identifier or has no data.
     #[inline]

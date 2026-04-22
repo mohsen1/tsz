@@ -19,7 +19,7 @@ impl<'a> CheckerState<'a> {
     fn is_object_define_property_descriptor_literal(&self, idx: NodeIndex) -> bool {
         use tsz_scanner::SyntaxKind;
 
-        let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent) else {
+        let Some(parent_idx) = self.ctx.arena.parent_of(idx) else {
             return false;
         };
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {

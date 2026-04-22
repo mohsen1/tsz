@@ -5,7 +5,7 @@ use tsz_parser::parser::syntax_kind_ext;
 impl<'a> CheckerState<'a> {
     pub(super) fn is_jsx_body_child_closure(&self, func_idx: NodeIndex) -> bool {
         let mut current = func_idx;
-        while let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) {
+        while let Some(parent) = self.ctx.arena.parent_of(current) {
             let Some(parent_node) = self.ctx.arena.get(parent) else {
                 break;
             };

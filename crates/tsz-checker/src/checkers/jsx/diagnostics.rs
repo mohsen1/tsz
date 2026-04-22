@@ -234,7 +234,7 @@ impl<'a> CheckerState<'a> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
             && parent.is_some()
         {
             decl_idx = parent;
@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
             && parent.is_some()
         {
             decl_idx = parent;
@@ -366,7 +366,7 @@ impl<'a> CheckerState<'a> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
             && parent.is_some()
         {
             decl_idx = parent;

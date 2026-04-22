@@ -721,7 +721,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
                                 return Some(flow);
                             }
-                            current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+                            current = self.ctx.arena.parent_of(parent);
                         }
                         None
                     });
