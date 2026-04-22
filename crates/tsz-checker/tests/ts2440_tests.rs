@@ -114,6 +114,30 @@ namespace Outer {
     );
 }
 
+#[test]
+fn test_import_equals_conflict_when_export_alias_is_shadowed_by_export_type() {
+    // r.Q has value semantics through the export import alias even though the
+    // namespace also exports a same-named type alias.
+    let source = r#"
+namespace q {
+    export const Q = {};
+}
+namespace r {
+    export import Q = q.Q;
+    export type Q = number;
+}
+namespace s {
+    import Q = r.Q;
+    const Q = 0;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2440),
+        "Should emit TS2440 when a value-bearing export alias is shadowed by an export type. Got: {:?}",
+        get_diagnostics(source)
+    );
+}
+
 // =========================================================================
 // No false positive: module augmentation declarations
 // =========================================================================
