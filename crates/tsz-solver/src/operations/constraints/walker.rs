@@ -10,8 +10,8 @@ use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::{AssignabilityChecker, CallEvaluator, MAX_CONSTRAINT_RECURSION_DEPTH};
 use crate::relations::variance::compute_type_param_variances_with_resolver;
 use crate::types::{
-    FunctionShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId,
-    TypeParamInfo, TypePredicate, Variance,
+    FunctionShape, MappedType, ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData,
+    TypeId, TypeParamInfo, TypePredicate, Variance,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
@@ -616,21 +616,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Constrain those by matching source properties against the
                             // instantiated template for each key.
                             if has_properties {
-                                let iter_param_name = mapped.type_param.name;
-                                for prop in &source_obj.properties {
-                                    let key_literal = self.interner.literal_string_atom(prop.name);
-                                    let mut subst = TypeSubstitution::new();
-                                    subst.insert(iter_param_name, key_literal);
-                                    let instantiated_template =
-                                        instantiate_type(self.interner, mapped.template, &subst);
-                                    self.constrain_types(
-                                        ctx,
-                                        var_map,
-                                        prop.type_id,
-                                        instantiated_template,
-                                        priority,
-                                    );
-                                }
+                                self.constrain_template_against_properties(
+                                    ctx,
+                                    var_map,
+                                    &source_obj.properties,
+                                    &mapped,
+                                    priority,
+                                );
                             }
                             return;
                         }
@@ -665,22 +657,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // Use MappedType priority so candidates from different properties
                             // combine via union (matches tsc PriorityImpliesCombination for
                             // MappedTypeConstraint).
-                            let iter_param_name = mapped.type_param.name;
-                            let template_priority = crate::types::InferencePriority::MappedType;
-                            for prop in &source_obj.properties {
-                                let key_literal = self.interner.literal_string_atom(prop.name);
-                                let mut subst = TypeSubstitution::new();
-                                subst.insert(iter_param_name, key_literal);
-                                let instantiated_template =
-                                    instantiate_type(self.interner, mapped.template, &subst);
-                                self.constrain_types(
-                                    ctx,
-                                    var_map,
-                                    prop.type_id,
-                                    instantiated_template,
-                                    template_priority,
-                                );
-                            }
+                            self.constrain_template_against_properties(
+                                ctx,
+                                var_map,
+                                &source_obj.properties,
+                                &mapped,
+                                crate::types::InferencePriority::MappedType,
+                            );
                             return;
                         }
                     }
@@ -2130,6 +2113,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 source_tuple,
                 crate::types::InferencePriority::NakedTypeVariable,
             );
+        }
+    }
+
+    /// For each source property, instantiate the mapped type's template by
+    /// substituting the iteration variable with the property's key literal,
+    /// then constrain the property's value type against that instantiated
+    /// template. Used by both reverse-mapped inference (post-`keyof T`
+    /// reconstruction) and simple mapped-type inference.
+    fn constrain_template_against_properties(
+        &mut self,
+        ctx: &mut InferenceContext,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        properties: &[PropertyInfo],
+        mapped: &MappedType,
+        priority: crate::types::InferencePriority,
+    ) {
+        let iter_param_name = mapped.type_param.name;
+        for prop in properties {
+            let key_literal = self.interner.literal_string_atom(prop.name);
+            let mut subst = TypeSubstitution::new();
+            subst.insert(iter_param_name, key_literal);
+            let instantiated_template = instantiate_type(self.interner, mapped.template, &subst);
+            self.constrain_types(ctx, var_map, prop.type_id, instantiated_template, priority);
         }
     }
 }
