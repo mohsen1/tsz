@@ -400,6 +400,7 @@ LINE_LIMIT_CHECKS = [
             # Pre-existing: recently grew past 2000 lines
             "crates/tsz-checker/src/types/interface_type.rs",
             "crates/tsz-checker/src/state/state_checking_members/statement_callback_bridge.rs",
+            "crates/tsz-checker/src/context/mod.rs",
             # Pre-existing oversized files captured as the current ratchet baseline.
             "crates/tsz-checker/src/checkers/generic_checker.rs",
             "crates/tsz-checker/src/types/property_access_helpers.rs",

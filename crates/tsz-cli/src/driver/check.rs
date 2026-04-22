@@ -1229,7 +1229,7 @@ pub(super) fn collect_diagnostics(
                 } else {
                     QueryCache::new(&program.type_interner)
                 };
-                let (lib_diags, lib_counters, lib_ds_stats) = check_checker_lib_file(
+                let (lib_diags, lib_counters, _lib_ds_stats) = check_checker_lib_file(
                     &checker_lib_file_env,
                     lib_idx,
                     &query_cache,
@@ -1240,7 +1240,6 @@ pub(super) fn collect_diagnostics(
                 diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
                 parallel_qc_stats.merge(&query_cache.statistics());
-                let _ = lib_ds_stats;
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
