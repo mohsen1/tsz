@@ -493,7 +493,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check declared modules (regular ambient modules with body)
-        if self.ctx.binder.declared_modules.contains(module_name) {
+        if self.ctx.declared_modules_contains(self.ctx.binder, module_name) {
             return; // Declared module exists
         }
 

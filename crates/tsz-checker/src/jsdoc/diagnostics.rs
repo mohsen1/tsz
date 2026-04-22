@@ -1829,7 +1829,7 @@ impl<'a> CheckerState<'a> {
                     Self::parse_jsdoc_typeof_import_query(expr)
                 {
                     let has_ambient_module =
-                        self.ctx.binder.declared_modules.contains(&module_specifier)
+                        self.ctx.declared_modules_contains(self.ctx.binder, &module_specifier)
                             || self
                                 .ctx
                                 .binder

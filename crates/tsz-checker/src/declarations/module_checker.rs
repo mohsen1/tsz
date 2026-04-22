@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.binder.declared_modules.contains(module_name) {
+        if self.ctx.declared_modules_contains(self.ctx.binder, module_name) {
             self.ctx.import_resolution_stack.pop();
             return;
         }
