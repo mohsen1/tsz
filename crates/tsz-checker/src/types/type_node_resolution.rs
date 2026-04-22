@@ -62,7 +62,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .copied()
                         .or_else(|| {
                             let resolved = self.ctx.binder.resolve_import_symbol(current_sym)?;
-                            self.ctx.binder.alias_partners.get(&resolved).copied()
+                            self.ctx.alias_partner_for(self.ctx.binder, resolved)
                         })?;
                     let alias_sym = self
                         .ctx
@@ -940,7 +940,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
 
             // TYPE_ALIAS+ALIAS merge: resolve member through ALIAS partner
-            if let Some(&alias_id) = self.ctx.binder.alias_partners.get(&resolved_sym_id)
+            if let Some(alias_id) = self.ctx.alias_partner_for(self.ctx.binder, resolved_sym_id)
                 && let Some(alias_sym) =
                     self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)
             {

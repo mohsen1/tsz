@@ -410,10 +410,10 @@ impl<'a> CheckerState<'a> {
                         // errors exist, as the qualified name may be malformed.
                         let is_alias = (symbol.flags & symbol_flags::ALIAS) != 0;
                         let has_alias_partner =
-                            self.ctx.binder.alias_partners.contains_key(&sym_id)
+                            self.ctx.alias_partners_contains(self.ctx.binder, sym_id)
                                 || self.ctx.binder.resolve_import_symbol(sym_id).is_some_and(
                                     |resolved| {
-                                        self.ctx.binder.alias_partners.contains_key(&resolved)
+                                        self.ctx.alias_partners_contains(self.ctx.binder, resolved)
                                     },
                                 );
                         if (symbol.flags & valid_namespace_flags) == 0
@@ -549,16 +549,13 @@ impl<'a> CheckerState<'a> {
                     // TYPE_ALIAS+ALIAS merge: look up alias_partner and
                     // resolve the member through the ALIAS symbol's namespace
                     if result.is_none() {
-                        let alias_id = self
-                            .ctx
-                            .binder
-                            .alias_partners
-                            .get(&sym_id)
-                            .copied()
-                            .or_else(|| {
-                                let resolved = self.ctx.binder.resolve_import_symbol(sym_id)?;
-                                self.ctx.binder.alias_partners.get(&resolved).copied()
-                            });
+                        let alias_id =
+                            self.ctx
+                                .alias_partner_for(self.ctx.binder, sym_id)
+                                .or_else(|| {
+                                    let resolved = self.ctx.binder.resolve_import_symbol(sym_id)?;
+                                    self.ctx.alias_partner_for(self.ctx.binder, resolved)
+                                });
                         if let Some(alias_id) = alias_id
                             && let Some(alias_sym) =
                                 self.ctx.binder.get_symbol_with_libs(alias_id, &lib_binders)

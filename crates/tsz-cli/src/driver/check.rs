@@ -922,6 +922,9 @@ pub(super) fn collect_diagnostics(
     // binders scales outer-map allocation with N². Wrap once here and
     // route consumers through `ctx.cross_file_node_symbols_for_arena`.
     let program_cross_file_node_symbols = Arc::new(program.cross_file_node_symbols.clone());
+    // Same rationale for `program.alias_partners`: a single shared
+    // FxHashMap<SymbolId, SymbolId> beats N per-binder deep-clones.
+    let program_alias_partners = Arc::new(program.alias_partners.clone());
 
     let mut project_env = tsz::checker::context::ProjectEnv {
         lib_contexts: std::sync::Arc::new(checker_libs.contexts.clone()),
@@ -943,6 +946,7 @@ pub(super) fn collect_diagnostics(
         program_wildcard_reexports_type_only: Some(program_wildcard_reexports_type_only),
         program_module_exports: Some(program_module_exports),
         program_cross_file_node_symbols: Some(program_cross_file_node_symbols),
+        program_alias_partners: Some(program_alias_partners),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.
