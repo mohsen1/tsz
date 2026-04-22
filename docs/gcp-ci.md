@@ -6,12 +6,13 @@ The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
 save updated caches, then report the original suite status. Conformance uses
 224-vCPU N2D workers, while the other suites stay smaller so one full PR run
-fits under the current private-pool CPU quota. PR conformance uses the warm
-224-vCPU pool until the requested private-pool CPU quota increase is granted:
+fits under the current private-pool CPU quota. PR conformance uses a separate
+224-vCPU pool so main conformance and PR conformance do not contend on the same
+pool:
 
 ```text
 main conformance  tsz-ci-n2d-224     n2d-highcpu-224
-PR conformance    tsz-ci-n2d-224     n2d-highcpu-224
+PR conformance    tsz-ci-n2d-224-pr  n2d-highcpu-224
 emit              tsz-ci-n2d-96      n2d-highcpu-96
 fourslash         tsz-ci-n2d-96      n2d-highcpu-96
 unit              tsz-ci-n2d-64      n2d-highcpu-64
@@ -23,16 +24,18 @@ The script
 keeps the old CI gates: Rust formatting, metadata guardrails,
 clippy, nextest, WASM build, conformance, emit, fourslash, and snapshot
 regression checks. Conformance defaults to up to 216 workers on the current
-224-vCPU pool. Emit and fourslash default to 4 shards and compute workers per
-shard from the detected CPU count, leaving a small reserve for system overhead.
+224-vCPU pool. Emit and fourslash default to 4 shards. Emit uses up to 32
+workers per shard, while fourslash uses up to 16 workers per shard to avoid
+crashing the Node worker pool before it can record shard results.
 
 Triggers set `_TSZ_CI_SUITE` so GitHub shows one check per category:
 `lint`, `unit`, `wasm`, `conformance`, `emit`, and `fourslash`. Running without
 that substitution keeps the `all` default for ad hoc full builds.
 
-Builds use `queueTtl: 900s`, so a build can survive Cloud Build private-pool
-cold starts and quota scheduling without waiting indefinitely behind newer
-commits.
+Builds use `queueTtl: 7200s`, so a build can survive Cloud Build private-pool
+cold starts and quota scheduling. Each build also best-effort cancels older
+queued or running builds for the same trigger and branch before restoring cache,
+which keeps rapid pushes from leaving the newest commit behind obsolete work.
 
 Cloud Build source archives do not preserve git submodule metadata, so
 `scripts/ci/typescript-submodule-ref` records the TypeScript submodule commit
@@ -190,5 +193,10 @@ gcloud storage buckets add-iam-policy-binding gs://thirdface-ai-oauth_cloudbuild
 gcloud projects add-iam-policy-binding thirdface-ai-oauth \
   --member=serviceAccount:135226528921-compute@developer.gserviceaccount.com \
   --role=roles/logging.logWriter \
+  --condition=None
+
+gcloud projects add-iam-policy-binding thirdface-ai-oauth \
+  --member=serviceAccount:135226528921-compute@developer.gserviceaccount.com \
+  --role=roles/cloudbuild.builds.editor \
   --condition=None
 ```
