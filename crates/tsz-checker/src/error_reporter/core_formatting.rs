@@ -870,7 +870,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|shape| shape.symbol)
                         })?;
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                let is_class_symbol = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
+                let is_class_symbol = symbol.has_any_flags(tsz_binder::symbol_flags::CLASS);
                 let is_value_type = crate::query_boundaries::common::function_shape_for_type(
                     self.ctx.types,
                     candidate,
@@ -1015,7 +1015,7 @@ impl<'a> CheckerState<'a> {
         let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0 {
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
             let parent = self.ctx.binder.get_symbol(symbol.parent)?;
             return Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name));
         }
@@ -1039,12 +1039,11 @@ impl<'a> CheckerState<'a> {
             let mut current = symbol.parent;
             while current != tsz_binder::SymbolId::NONE {
                 let parent = self.ctx.binder.get_symbol(current)?;
-                if (parent.flags
-                    & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+                if !parent.has_any_flags(
+                    tsz_binder::symbol_flags::NAMESPACE_MODULE
                         | tsz_binder::symbol_flags::VALUE_MODULE
-                        | tsz_binder::symbol_flags::ENUM))
-                    == 0
-                {
+                        | tsz_binder::symbol_flags::ENUM,
+                ) {
                     break;
                 }
                 parts.push(parent.escaped_name.clone());
@@ -1131,12 +1130,11 @@ impl<'a> CheckerState<'a> {
         let mut current = symbol.parent;
         while current != tsz_binder::SymbolId::NONE {
             let parent = self.ctx.binder.get_symbol(current)?;
-            if (parent.flags
-                & (tsz_binder::symbol_flags::NAMESPACE_MODULE
+            if !parent.has_any_flags(
+                tsz_binder::symbol_flags::NAMESPACE_MODULE
                     | tsz_binder::symbol_flags::VALUE_MODULE
-                    | tsz_binder::symbol_flags::ENUM))
-                == 0
-            {
+                    | tsz_binder::symbol_flags::ENUM,
+            ) {
                 break;
             }
             parts.push(parent.escaped_name.clone());
