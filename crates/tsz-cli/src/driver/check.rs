@@ -2698,10 +2698,7 @@ fn affected_lib_interface_names(
                 continue;
             };
             let bases = collect_direct_base_names(lib.arena.as_ref(), interface);
-            inheritance_graph
-                .entry(name)
-                .or_default()
-                .extend(bases.into_iter());
+            inheritance_graph.entry(name).or_default().extend(bases);
         }
     }
 
