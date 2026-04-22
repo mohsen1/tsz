@@ -414,6 +414,15 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_identifier_in_type_position(idx)
+                && self.is_require_call_bound_identifier(idx)
+                && self
+                    .require_call_bound_identifier_type_only_kind(idx)
+                    .is_some()
+            {
+                self.error_type_only_value_at(name, idx);
+            }
+
+            if !self.is_identifier_in_type_position(idx)
                 && self.alias_resolves_to_uninstantiated_namespace(sym_id)
             {
                 self.report_wrong_meaning(

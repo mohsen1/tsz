@@ -169,6 +169,12 @@ fn post_process_checker_diagnostics(
     // Only keep TS1xxx codes that tsc is known to emit for JS files.
     if is_js {
         checker_diagnostics.retain(|diag| {
+            // TS1361/TS1362 are semantic type-only value-use diagnostics, not
+            // parser grammar errors. Keep them for checked JS files even
+            // though their codes live in the TS1xxx range.
+            if !should_filter_type_errors && matches!(diag.code, 1361 | 1362) {
+                return true;
+            }
             if tsz::checker::diagnostics::is_parser_grammar_diagnostic(diag.code) {
                 return is_ts1xxx_allowed_in_js(diag.code);
             }
@@ -4177,6 +4183,63 @@ let x2: string = f;
         assert!(
             f_diags.iter().all(|diag| diag.code != 2339),
             "did not expect follow-on TS2339 once TS1361 fired, got: {f_diags:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_collect_diagnostics_keeps_ts1362_for_checked_js_module_exports_type_only_require() {
+        let dir = std::env::temp_dir().join("tsz_check_js_module_exports_type_only_require");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let importer_path = dir.join("importer.cjs");
+        let exporter_path = dir.join("exporter.mts");
+
+        let importer_source = "const Foo = require(\"./exporter.mjs\");\nnew Foo();\n";
+        let exporter_source =
+            "export default class Foo {}\nexport type { Foo as \"module.exports\" };\n";
+
+        fs::write(&importer_path, importer_source).unwrap();
+        fs::write(&exporter_path, exporter_source).unwrap();
+
+        let options = ResolvedCompilerOptions {
+            allow_js: true,
+            check_js: true,
+            module_resolution: Some(crate::config::ModuleResolutionKind::NodeNext),
+            module_suffixes: vec![String::new()],
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2023,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::Node20,
+                target: tsz_common::common::ScriptTarget::ES2023,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (importer_path.to_str().unwrap(), importer_source),
+                (exporter_path.to_str().unwrap(), exporter_source),
+            ],
+            &options,
+            &dir,
+        );
+
+        let importer_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| Path::new(&diag.file) == importer_path.as_path())
+            .collect();
+
+        assert!(
+            importer_diags.iter().any(|diag| diag.code == 1362),
+            "expected TS1362 for checked CommonJS require() of a type-only \
+             \"module.exports\" binding, got: {importer_diags:?}"
         );
 
         let _ = fs::remove_dir_all(&dir);
