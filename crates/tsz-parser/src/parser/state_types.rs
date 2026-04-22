@@ -2192,7 +2192,7 @@ impl ParserState {
 
         // Check for empty type argument list: <>
         // TypeScript reports TS1099: "Type argument list cannot be empty"
-        if self.is_greater_than_or_compound() {
+        if self.is_plain_greater_than_for_expression_type_arguments() {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
                 less_than_start,
@@ -2233,7 +2233,7 @@ impl ParserState {
                 args.push(type_node);
             }
 
-            if self.is_greater_than_or_compound() {
+            if self.is_plain_greater_than_for_expression_type_arguments() {
                 depth -= 1;
             } else if self.is_token(SyntaxKind::CommaToken) {
                 // Comma indicates another type argument follows.
@@ -2308,6 +2308,13 @@ impl ParserState {
                     || !self.is_expression_start()
             }
         }
+    }
+
+    fn is_plain_greater_than_for_expression_type_arguments(&mut self) -> bool {
+        // tsc's expression disambiguation calls reScanGreaterToken() and accepts
+        // only a plain `>`. Compound tokens like `>=` and `>>` keep the parse in
+        // relational-expression space instead of becoming speculative type args.
+        self.try_rescan_greater_token() == SyntaxKind::GreaterThanToken
     }
 
     /// Parse array type suffix (T[]) or indexed access type (T[K])
