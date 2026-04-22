@@ -4,17 +4,18 @@ CI now runs through Google Cloud Build instead of GitHub Actions.
 
 The repository entrypoints are the `cloudbuild*.yaml` files, which restore
 shared caches with `scripts/ci/gcp-cache.sh`, run `scripts/ci/gcp-full-ci.sh`,
-save updated caches, then report the original suite status. The configured suite
-pools use 576 of the 600 available private-pool CPUs in `us-central1`, so all
-six suite checks can run concurrently without falling back into queueing:
+save updated caches, then report the original suite status. The active suite
+pools use 224-vCPU N2D workers. PR conformance has its own pool so it does not
+wait behind main conformance:
 
 ```text
-conformance  n2d-highcpu-224
-emit         n2d-highcpu-96
-fourslash    n2d-highcpu-96
-unit         n2d-highcpu-64
-lint         n2d-highcpu-48
-wasm         n2d-highcpu-48
+main conformance  tsz-ci-n2d-224     n2d-highcpu-224
+PR conformance    tsz-ci-n2d-224-pr  n2d-highcpu-224
+emit              tsz-ci-n2d-96      n2d-highcpu-224
+fourslash         tsz-ci-n2d-96      n2d-highcpu-224
+unit              tsz-ci-n2d-64      n2d-highcpu-224
+lint              tsz-ci-n2d-48      n2d-highcpu-224
+wasm              tsz-ci-n2d-48      n2d-highcpu-224
 ```
 
 The script
@@ -67,28 +68,28 @@ gcloud builds worker-pools create tsz-ci-n2d-224 \
   --worker-machine-type=n2d-highcpu-224 \
   --worker-disk-size=200GB
 
+gcloud builds worker-pools create tsz-ci-n2d-224-pr \
+  --project=thirdface-ai-oauth \
+  --region=us-central1 \
+  --worker-machine-type=n2d-highcpu-224 \
+  --worker-disk-size=200GB
+
 gcloud builds worker-pools create tsz-ci-n2d-96 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-96 \
+  --worker-machine-type=n2d-highcpu-224 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-48 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-48 \
+  --worker-machine-type=n2d-highcpu-224 \
   --worker-disk-size=200GB
 
 gcloud builds worker-pools create tsz-ci-n2d-64 \
   --project=thirdface-ai-oauth \
   --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-64 \
-  --worker-disk-size=200GB
-
-gcloud builds worker-pools create tsz-ci-n2d-32 \
-  --project=thirdface-ai-oauth \
-  --region=us-central1 \
-  --worker-machine-type=n2d-highcpu-32 \
+  --worker-machine-type=n2d-highcpu-224 \
   --worker-disk-size=200GB
 ```
 
@@ -117,18 +118,18 @@ gcloud builds repositories create tsz \
 Create one pull request trigger per suite in the GCP project:
 
 ```bash
-pool_for_suite() {
+pr_config_for_suite() {
   case "$1" in
     lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
     unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
     emit|fourslash) printf '%s\n' cloudbuild.n2d-96.yaml ;;
-    conformance) printf '%s\n' cloudbuild.yaml ;;
+    conformance) printf '%s\n' cloudbuild.pr-conformance.yaml ;;
     *) printf '%s\n' cloudbuild.yaml ;;
   esac
 }
 
 for suite in lint unit wasm conformance emit fourslash; do
-  config="$(pool_for_suite "$suite")"
+  config="$(pr_config_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
     --region=us-central1 \
@@ -147,8 +148,18 @@ done
 Create one main branch trigger per suite:
 
 ```bash
+main_config_for_suite() {
+  case "$1" in
+    lint|wasm) printf '%s\n' cloudbuild.n2d-48.yaml ;;
+    unit) printf '%s\n' cloudbuild.n2d-64.yaml ;;
+    emit|fourslash) printf '%s\n' cloudbuild.n2d-96.yaml ;;
+    conformance) printf '%s\n' cloudbuild.yaml ;;
+    *) printf '%s\n' cloudbuild.yaml ;;
+  esac
+}
+
 for suite in lint unit wasm conformance emit fourslash; do
-  config="$(pool_for_suite "$suite")"
+  config="$(main_config_for_suite "$suite")"
   gcloud builds triggers create github \
     --project=thirdface-ai-oauth \
     --region=us-central1 \
