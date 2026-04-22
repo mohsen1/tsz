@@ -1592,11 +1592,18 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
-            alias_partners: program.alias_partners.clone(),
+            // Per-binder alias_partners left empty: every checker consumer
+            // routes through `ctx.alias_partner_for` /
+            // `alias_partners_contains`, which prefers the project-wide
+            // `program_alias_partners` Arc installed by ProjectEnv::apply_to.
+            alias_partners: Default::default(),
         },
     );
 
-    binder.declared_modules = program.declared_modules.clone();
+    // Per-binder declared_modules left empty: every checker consumer
+    // routes through `ctx.declared_modules_contains`, which prefers the
+    // project-wide `global_declared_modules` index built from the skeleton.
+    binder.declared_modules = Default::default();
     // Restore is_external_module from BoundFile to preserve per-file state
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
@@ -1697,11 +1704,14 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
-            alias_partners: program.alias_partners.clone(),
+            // See `create_binder_from_bound_file_with_augmentations`:
+            // consumers go through the project-wide accessor.
+            alias_partners: Default::default(),
         },
     );
 
-    binder.declared_modules = program.declared_modules.clone();
+    // See `create_binder_from_bound_file_with_augmentations` for rationale.
+    binder.declared_modules = Default::default();
     binder.is_external_module = file.is_external_module;
     binder.file_features = file.file_features;
     binder.lib_symbol_reverse_remap = file.lib_symbol_reverse_remap.clone();

@@ -1446,8 +1446,8 @@ impl<'a> CheckerState<'a> {
                     // ALIAS, so we only skip when ALIAS+VALUE are both present.
                     let has_value_flags = sym.flags & symbol_flags::ALIAS != 0
                         && sym.flags & symbol_flags::VALUE != 0;
-                    let has_value_partner = target_binder.alias_partners.contains_key(&sym_id)
-                        || self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
+                    let has_value_partner =
+                        self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
                     if !has_value_flags && !has_value_partner {
                         return true;
                     }
@@ -1480,8 +1480,8 @@ impl<'a> CheckerState<'a> {
                     // the module_exports entry holds the TYPE_ALIAS but the binder records
                     // the value-providing ALIAS as an alias_partner. If such a partner
                     // exists, the merged name provides runtime value and is NOT type-only.
-                    let has_value_partner = target_binder.alias_partners.contains_key(&sym_id)
-                        || self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
+                    let has_value_partner =
+                        self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
                     // When the symbol also has ALIAS flag (e.g., `import * as B` merged
                     // with `interface B`), the alias part may provide runtime value. Don't
                     // declare type-only here — let the alias-chain-following logic below
@@ -1783,8 +1783,8 @@ impl<'a> CheckerState<'a> {
                 if sym.is_type_only {
                     let has_value_flags = sym.flags & symbol_flags::ALIAS != 0
                         && sym.flags & symbol_flags::VALUE != 0;
-                    let has_value_partner = target_binder.alias_partners.contains_key(&sym_id)
-                        || self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
+                    let has_value_partner =
+                        self.ctx.alias_partners_contains(self.ctx.binder, sym_id);
                     if !has_value_flags && !has_value_partner {
                         return true;
                     }
