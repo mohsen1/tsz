@@ -118,15 +118,24 @@ jobs:
       - name: Run benchmarks
         # Run the full benchmark suite (no --quick) so the website renders
         # all categories instead of the ~16-entry quick subset.
+        # `continue-on-error` so the upload step still runs when individual
+        # benches OOM the GitHub runner (e.g. `large-ts-repo`); the bench
+        # script's EXIT trap writes whatever rows DID complete to
+        # artifacts/bench-vs-tsgo-*.json before exiting.
         run: ./scripts/bench/bench-vs-tsgo.sh --json
         timeout-minutes: 75
+        continue-on-error: true
 
       - name: Upload benchmark data
+        # `if: always()` so we still upload the partial JSON written by the
+        # bench script's EXIT trap when the runner kills the bench midway.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-data
           path: artifacts/bench-vs-tsgo-*.json
           retention-days: 7
+          if-no-files-found: warn
 
   wasm:
     needs: check
