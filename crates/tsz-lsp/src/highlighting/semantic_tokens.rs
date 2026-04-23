@@ -359,14 +359,14 @@ impl<'a> SemanticTokensProvider<'a> {
         let mut modifiers = 0u32;
 
         // Check for const variable -> READONLY modifier
-        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+        if symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
             && self.is_const_variable(ident_idx)
         {
             modifiers |= semantic_token_modifiers::READONLY;
         }
 
         // Check for exported symbol
-        if symbol.is_exported || symbol.flags & symbol_flags::EXPORT_VALUE != 0 {
+        if symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
             modifiers |= semantic_token_modifiers::DEFAULT_LIBRARY; // Using DEFAULT_LIBRARY as export indicator
         }
 
@@ -392,7 +392,7 @@ impl<'a> SemanticTokensProvider<'a> {
         let mut modifiers = 0u32;
 
         // Check for const variable -> READONLY modifier
-        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+        if symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             // Check the declaration to see if it's const
             if let Some(decl_idx) = symbol.declarations.first()
                 && let Some(decl_node) = self.arena.get(*decl_idx)
