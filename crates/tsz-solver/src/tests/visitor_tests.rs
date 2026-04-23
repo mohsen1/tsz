@@ -381,6 +381,37 @@ fn test_contains_error_type() {
 
     let union_no_error = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert!(!contains_error_type(&interner, union_no_error));
+
+    let name = interner.intern_string("x");
+    let function_with_error_param = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(name, TypeId::ERROR)],
+        TypeId::VOID,
+    ));
+    assert!(contains_error_type(&interner, function_with_error_param));
+
+    let object_with_error_method = interner.object(vec![PropertyInfo {
+        name,
+        type_id: function_with_error_param,
+        write_type: function_with_error_param,
+        optional: false,
+        readonly: false,
+        is_method: true,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+    assert!(contains_error_type(&interner, object_with_error_method));
+
+    let callable_with_error_param = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::required(name, TypeId::ERROR)],
+            TypeId::VOID,
+        )],
+        ..CallableShape::default()
+    });
+    assert!(contains_error_type(&interner, callable_with_error_param));
 }
 
 #[test]
