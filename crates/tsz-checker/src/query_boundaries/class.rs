@@ -459,6 +459,7 @@ pub(crate) fn should_report_property_type_mismatch(
         let (prepared_source, prepared_target) =
             checker.prepare_assignability_inputs(relation_source, relation_target);
         RelationRequest::assign(prepared_source, prepared_target)
+            .with_erased_generic_signature_retry()
     };
     let outcome = checker.execute_relation_request(&request);
 

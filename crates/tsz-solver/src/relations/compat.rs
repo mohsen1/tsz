@@ -675,6 +675,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// - bit 5: `allow_void_return`
     /// - bit 6: `allow_bivariant_rest`
     /// - bit 7: `allow_bivariant_param_count`
+    /// - bit 13: `allow_erased_generic_signature_retry`
     ///
     /// This is used by `QueryCache::is_assignable_to_with_flags` to ensure
     /// cached results respect the compiler configuration.
@@ -702,6 +703,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.allow_void_return = (flags & (1 << 5)) != 0;
         self.subtype.allow_bivariant_rest = (flags & (1 << 6)) != 0;
         self.subtype.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
+        self.subtype.allow_erased_generic_signature_retry =
+            (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
     }
 
     ///
