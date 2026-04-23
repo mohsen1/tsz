@@ -1279,6 +1279,46 @@ impl TypeInterner {
         self.display_alias.insert(evaluated, application);
     }
 
+    /// Prefer a concrete Application display alias over structural provenance
+    /// recorded while evaluating the alias body.
+    pub fn store_display_alias_preferring_application(
+        &self,
+        evaluated: TypeId,
+        application: TypeId,
+    ) {
+        self.store_display_alias(evaluated, application);
+        if self.get_display_alias(evaluated) == Some(application) {
+            return;
+        }
+        if evaluated == application || evaluated.is_intrinsic() {
+            return;
+        }
+        let Some(TypeData::Application(app_id)) = self.lookup(application) else {
+            return;
+        };
+        let app = self.type_application(app_id);
+        if app.args.contains(&evaluated) {
+            return;
+        }
+        let application_has_generic_args = app
+            .args
+            .iter()
+            .any(|&arg| crate::type_queries::contains_generic_type_parameters_db(self, arg));
+        let evaluated_precedes_application = match (
+            self.lookup_alloc_order(evaluated),
+            self.lookup_alloc_order(application),
+        ) {
+            (Some(evaluated_order), Some(application_order)) => {
+                evaluated_order <= application_order
+            }
+            _ => evaluated.0 <= application.0,
+        };
+        if application_has_generic_args && evaluated_precedes_application {
+            return;
+        }
+        self.display_alias.insert(evaluated, application);
+    }
+
     /// Look up the original Application TypeId for a type that was produced
     /// by evaluating an Application.
     ///
