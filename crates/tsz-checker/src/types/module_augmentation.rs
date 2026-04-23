@@ -331,18 +331,47 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
-                // Check if the augmentation target re-exports from source
-                let reexports_from_source =
-                    aug_target_binder
-                        .wildcard_reexports
-                        .values()
-                        .any(|sources| {
-                            sources.iter().any(|src| {
-                                self.ctx
-                                    .resolve_import_target_from_file(aug_target_idx, src)
-                                    == Some(source_idx)
+                let Some(aug_target_file_name) = self
+                    .ctx
+                    .get_arena_for_file(aug_target_idx as u32)
+                    .source_files
+                    .first()
+                    .map(|source_file| source_file.file_name.as_str())
+                else {
+                    continue;
+                };
+                // Check if the augmentation target re-exports from source. Use
+                // context accessors because the real driver stores program-wide
+                // re-export maps on ProjectEnv instead of cloning them into each
+                // per-file binder.
+                let wildcard_reexports_from_source = self
+                    .ctx
+                    .wildcard_reexports_for_file(aug_target_binder, aug_target_file_name)
+                    .is_some_and(|sources| {
+                        sources.iter().any(|src| {
+                            self.ctx
+                                .resolve_import_target_from_file(aug_target_idx, src)
+                                == Some(source_idx)
+                        })
+                    });
+                let named_reexports_from_source = self
+                    .ctx
+                    .reexports_for_file(aug_target_binder, aug_target_file_name)
+                    .is_some_and(|reexports| {
+                        reexports
+                            .iter()
+                            .any(|(exported_name, (source_module, original_name))| {
+                                let reexported_name =
+                                    original_name.as_deref().unwrap_or(exported_name);
+                                reexported_name == interface_name
+                                    && self.ctx.resolve_import_target_from_file(
+                                        aug_target_idx,
+                                        source_module,
+                                    ) == Some(source_idx)
                             })
-                        });
+                    });
+                let reexports_from_source =
+                    wildcard_reexports_from_source || named_reexports_from_source;
                 if reexports_from_source {
                     for (file_idx, aug) in indexed_augs.iter() {
                         if aug.name != interface_name {
