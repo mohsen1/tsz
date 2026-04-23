@@ -377,7 +377,7 @@ impl<'a> CheckerState<'a> {
             // Only applies to alias symbols explicitly marked type-only
             // Check this FIRST — if the local symbol is marked type-only from
             // `import type`, that takes precedence over export-side type-only.
-            if (symbol.flags & symbol_flags::ALIAS) != 0 && symbol.is_type_only {
+            if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.is_type_only {
                 // Walk up from the symbol's declaration to determine if it came from
                 // an import or export statement.
                 for &decl in &symbol.declarations {
@@ -479,7 +479,7 @@ impl<'a> CheckerState<'a> {
                         }
                         // Also check if the export= symbol is an alias that
                         // resolves to a type-only import
-                        if eq_sym.flags & symbol_flags::ALIAS != 0
+                        if eq_sym.has_any_flags(symbol_flags::ALIAS)
                             && let Some(ref eq_import_module) = eq_sym.import_module
                         {
                             let eq_name = eq_sym

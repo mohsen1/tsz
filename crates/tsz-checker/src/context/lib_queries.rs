@@ -25,7 +25,7 @@ impl<'a> CheckerContext<'a> {
         let check_symbol_has_value =
             |sym_id: tsz_binder::SymbolId, binder: &tsz_binder::BinderState| -> bool {
                 if let Some(sym) = binder.symbols.get(sym_id) {
-                    (sym.flags & symbol_flags::VALUE) != 0
+                    sym.has_any_flags(symbol_flags::VALUE)
                 } else {
                     false
                 }

@@ -568,7 +568,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_string_literal_module_symbol_for_display(&self, symbol: &tsz_binder::Symbol) -> bool {
-        if (symbol.flags & symbol_flags::MODULE) == 0 || symbol.declarations.is_empty() {
+        if !symbol.has_any_flags(symbol_flags::MODULE) || symbol.declarations.is_empty() {
             return false;
         }
 
