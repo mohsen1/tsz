@@ -902,9 +902,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             }
 
-            let is_static = self
-                .arena
-                .has_modifier(modifiers, SyntaxKind::StaticKeyword);
+            let is_static = self.arena.is_static(modifiers);
 
             let member_name = get_identifier_text(self.arena, name_idx);
             let Some(member_name) = member_name else {
@@ -1585,10 +1583,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
                 let prop_data = self.arena.get_property_decl(member_node)?;
                 // Skip static properties
-                if self
-                    .arena
-                    .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
-                {
+                if self.arena.is_static(&prop_data.modifiers) {
                     return None;
                 }
                 // Skip abstract properties (they don't exist at runtime)
@@ -2705,7 +2700,7 @@ fn collect_accessor_pairs(
             && let Some(accessor_data) = arena.get_accessor(member_node)
         {
             // Check static modifier matches what we're collecting
-            let is_static = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
+            let is_static = arena.is_static(&accessor_data.modifiers);
             if is_static != collect_static {
                 continue;
             }
@@ -2768,7 +2763,7 @@ fn collect_auto_accessor_fields(
         if is_private_identifier(arena, prop_data.name) {
             continue;
         }
-        if arena.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword) {
+        if arena.is_static(&prop_data.modifiers) {
             continue;
         }
         let has_accessor = arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword);

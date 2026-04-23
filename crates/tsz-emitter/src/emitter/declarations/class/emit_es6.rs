@@ -187,9 +187,7 @@ impl<'a> Printer<'a> {
                 if lower_auto_accessors_to_weakmap && class_name.is_empty() {
                     continue;
                 }
-                let is_static = self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword);
+                let is_static = self.arena.is_static(&prop.modifiers);
                 let Some(name_node) = self.arena.get(prop.name) else {
                     continue;
                 };
@@ -545,8 +543,7 @@ impl<'a> Printer<'a> {
                 self.arena.get(member_idx).is_some_and(|m| {
                     m.kind == syntax_kind_ext::PROPERTY_DECLARATION
                         && self.arena.get_property_decl(m).is_some_and(|p| {
-                            self.arena
-                                .has_modifier(&p.modifiers, SyntaxKind::StaticKeyword)
+                            self.arena.is_static(&p.modifiers)
                                 && !self
                                     .arena
                                     .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
@@ -689,9 +686,7 @@ impl<'a> Printer<'a> {
                             return None;
                         }
                         let prop = self.arena.get_property_decl(member_node)?;
-                        if !self
-                            .arena
-                            .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                        if !self.arena.is_static(&prop.modifiers)
                             || self
                                 .arena
                                 .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
@@ -975,10 +970,7 @@ impl<'a> Printer<'a> {
                         Vec::new()
                     };
 
-                    if self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
-                    {
+                    if self.arena.is_static(&prop.modifiers) {
                         // At ES2022+, static fields are emitted as `static { this.f = v; }`
                         // blocks inside the class body, not as external assignments.
                         if !needs_static_block_lowering {
@@ -1325,15 +1317,13 @@ impl<'a> Printer<'a> {
                 }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
                 // Static fields at ES2022+ are emitted inline as `static { this.f = v; }`
                 // blocks, not deferred to external assignments.
-                && (!self.arena.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                && (!self.arena.is_static(&prop.modifiers)
                     || needs_static_block_lowering)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved
                 // after the class body.
-                let is_static = self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword);
+                let is_static = self.arena.is_static(&prop.modifiers);
                 if is_static {
                     let leading = self.collect_leading_comments(member_node.pos);
                     if let Some(entry) = static_field_inits

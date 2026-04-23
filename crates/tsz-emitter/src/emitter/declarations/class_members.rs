@@ -88,10 +88,7 @@ impl<'a> Printer<'a> {
 
         if needs_async_lowering || needs_async_generator_lowering {
             // Emit static modifier if present
-            if self
-                .arena
-                .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
-            {
+            if self.arena.is_static(&method.modifiers) {
                 self.write("static ");
             }
         } else {
@@ -403,9 +400,7 @@ impl<'a> Printer<'a> {
         // For ES2022+ targets, static fields with initializers are emitted as
         // `static { this.fieldName = value; }` blocks (class static initialization blocks).
         // This preserves the correct `this` and `super` binding inside the class body.
-        let is_static = self
-            .arena
-            .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword);
+        let is_static = self.arena.is_static(&prop.modifiers);
         let target_es2022_plus = (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32);
 
         let is_private_field = self

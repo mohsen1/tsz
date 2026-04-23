@@ -1177,10 +1177,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             if let Some(prop) = self.arena.get_property_decl(member_node) {
-                if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
-                {
+                if self.arena.is_static(&prop.modifiers) {
                     continue;
                 }
                 let Some(prop_name_node) = self.arena.get(prop.name) else {

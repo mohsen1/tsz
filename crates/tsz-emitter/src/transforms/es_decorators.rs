@@ -1130,9 +1130,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
             if node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 && let Some(prop) = self.arena.get_property_decl(node)
-                && self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                && self.arena.is_static(&prop.modifiers)
             {
                 return true;
             }
@@ -1481,9 +1479,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 continue;
             }
 
-            let is_static = self
-                .arena
-                .has_modifier(&modifiers, SyntaxKind::StaticKeyword);
+            let is_static = self.arena.is_static(&modifiers);
             let (name, is_private) = self.resolve_member_name(name_idx);
 
             result.push(DecoratedMember {

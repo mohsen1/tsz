@@ -383,11 +383,7 @@ impl<'a> DeclarationEmitter<'a> {
         method_idx: NodeIndex,
         method: &tsz_parser::parser::node::MethodDeclData,
     ) -> bool {
-        if !self.source_is_js_file
-            || !self
-                .arena
-                .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
-        {
+        if !self.source_is_js_file || !self.arena.is_static(&method.modifiers) {
             return false;
         }
         self.js_augmented_static_method_nodes.contains(&method_idx)

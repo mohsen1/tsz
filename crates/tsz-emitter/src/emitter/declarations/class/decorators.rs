@@ -690,9 +690,7 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            let is_static = self
-                .arena
-                .has_modifier(modifiers, SyntaxKind::StaticKeyword);
+            let is_static = self.arena.is_static(modifiers);
 
             let member_name = self.get_decorator_member_name(name_idx);
             if member_name.is_empty() {
