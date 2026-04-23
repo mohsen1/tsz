@@ -32,6 +32,10 @@ stacker = "0.1.23"
 web-time = { workspace = true }
 
 [[test]]
+name = "generator_annotation_mismatch_display_tests"
+path = "tests/generator_annotation_mismatch_display_tests.rs"
+
+[[test]]
 name = "ts1362_false_positive_tests"
 path = "tests/ts1362_false_positive_tests.rs"
 

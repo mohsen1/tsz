@@ -1476,11 +1476,23 @@ impl<'a> CheckerState<'a> {
         });
         if let Some(base) = lazy_base {
             let yield_t = yield_type.unwrap_or(TypeId::ANY);
+            // TNext defaults to `unknown` when the declared return type has no
+            // extractable TYield (i.e., isn't Generator-like). This matches tsc:
+            // `function* g(): number {}` reports `Generator<any, any, unknown>`.
+            // When the declared return type IS Generator-like (provides TYield),
+            // tsc uses `any` for TNext — e.g. `function* g(): BadGenerator {}`
+            // (heritage Iterator<number>, Iterable<string>) reports
+            // `Generator<string, any, any>`.
+            let next_t = if yield_type.is_some() {
+                TypeId::ANY
+            } else {
+                TypeId::UNKNOWN
+            };
             let inferred_gen = self
                 .ctx
                 .types
                 .factory()
-                .application(base, vec![yield_t, TypeId::ANY, TypeId::ANY]);
+                .application(base, vec![yield_t, TypeId::ANY, next_t]);
             self.ensure_relation_input_ready(inferred_gen);
             self.ensure_relation_input_ready(declared_return_type);
             self.check_assignable_or_report(inferred_gen, declared_return_type, error_node);
