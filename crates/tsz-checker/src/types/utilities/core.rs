@@ -397,7 +397,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(&existing) = self.ctx.symbol_types.get(&sym_id)
                         && existing != TypeId::ERROR
                         && type_id != existing
-                        && matches!(type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                        && type_id.is_any_unknown_or_error()
                     {
                         continue;
                     }

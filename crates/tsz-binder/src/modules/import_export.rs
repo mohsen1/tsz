@@ -618,7 +618,9 @@ impl BinderState {
                             }
 
                             // Now apply the mutable borrow to insert the mappings
-                            let file_reexports = self.reexports.entry(current_file).or_default();
+                            let file_reexports = Arc::make_mut(&mut self.reexports)
+                                .entry(current_file)
+                                .or_default();
                             for (exported, original, _) in export_mappings {
                                 file_reexports.insert(exported, (source_module.clone(), original));
                             }

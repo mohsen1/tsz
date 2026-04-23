@@ -307,7 +307,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // TS1234: An ambient module declaration is only allowed at the top level in a file.
                 // This fires when `declare module "string"` is inside a block or function body.
                 if !self.ctx.has_syntax_parse_errors {
-                    let decl_start = self.ctx.arena.get(module_idx).map(|n| n.pos).unwrap_or(0);
+                    let decl_start = self.ctx.arena.pos_at(module_idx).unwrap_or(0);
                     let start = if let Some(sf) = self.ctx.arena.source_files.first() {
                         let bytes = sf.text.as_bytes();
                         let mut pos = decl_start as usize;
@@ -403,7 +403,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .and_then(|ext| self.ctx.arena.get(ext.parent))
                     .filter(|p| p.kind == syntax_kind_ext::EXPORT_DECLARATION)
                     .map(|p| p.pos)
-                    .or_else(|| self.ctx.arena.get(module_idx).map(|n| n.pos))
+                    .or_else(|| self.ctx.arena.pos_at(module_idx))
                     .unwrap_or(name_node.pos);
                 // Skip leading whitespace/newlines to find actual keyword start
                 let start = if let Some(sf) = self.ctx.arena.source_files.first() {

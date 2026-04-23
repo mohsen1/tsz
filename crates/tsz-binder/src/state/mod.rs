@@ -301,7 +301,11 @@ pub struct BinderState {
     /// self-referential augmentation interfaces (e.g., `interface Foo { self: Foo }` inside
     /// `declare module "./m"` should resolve Foo to the merged interface, not just the
     /// augmentation-local one).
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
 
     /// Lib binders for automatic lib symbol resolution.
     /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
@@ -333,7 +337,7 @@ pub struct BinderState {
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
     /// Example: ("./a.ts", "foo", "./b.ts") means a.ts re-exports "foo" from b.ts
-    pub reexports: FileReexportsMap,
+    pub reexports: Arc<FileReexportsMap>,
 
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
@@ -358,7 +362,7 @@ pub struct BinderState {
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
 
     /// Modules that use `export =` syntax (CommonJS-style exports)
     /// Used by the import checker to validate require-style imports
@@ -801,16 +805,16 @@ pub struct BinderStateScopeInputs {
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
     pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
     pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
-    pub reexports: FileReexportsMap,
+    pub reexports: Arc<FileReexportsMap>,
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     pub declaration_arenas: DeclarationArenaMap,
     pub cross_file_node_symbols: CrossFileNodeSymbols,
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: FlowNodeArena,
     pub node_flow: FxHashMap<u32, FlowNodeId>,

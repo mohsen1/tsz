@@ -846,3 +846,186 @@ namespace N1 {
         "Generic inference should keep the namespace-local ComponentClass<P> construct signature even when unrelated top-level type aliases are present. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn test_jsx_element_constructor_union_assigns_to_function_or_construct_union_parameter() {
+    let source = r#"
+interface ExactProps {
+    value: "A" | "B";
+}
+interface FunctionComponent<P = {}> {
+    (props: P): any;
+}
+interface ComponentClass<P = {}> {
+    new (props: P): any;
+}
+type JSXElementConstructor<P> =
+    | ((props: P) => any)
+    | (new (props: P) => any);
+
+declare let wrapper: JSXElementConstructor<ExactProps>;
+declare let accepts: FunctionComponent<ExactProps> | ComponentClass<ExactProps> | string;
+accepts = wrapper;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+
+    assert!(
+        !has_error(&diagnostics, 2322) && !has_error(&diagnostics, 2345),
+        "JSXElementConstructor<P> should be assignable to FunctionComponent<P> | ComponentClass<P> | string without TS2322/TS2345. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsx_element_constructor_union_assigns_to_function_or_construct_union_parameter_in_strict_mode()
+ {
+    let source = r#"
+interface ExactProps {
+    value: "A" | "B";
+}
+interface FunctionComponent<P = {}> {
+    (props: P): any;
+}
+interface ComponentClass<P = {}> {
+    new (props: P): any;
+}
+type JSXElementConstructor<P> =
+    | ((props: P) => any)
+    | (new (props: P) => any);
+
+declare let wrapper: JSXElementConstructor<ExactProps>;
+declare let accepts: FunctionComponent<ExactProps> | ComponentClass<ExactProps> | string;
+accepts = wrapper;
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2322) && !has_error(&diagnostics, 2345),
+        "JSXElementConstructor<P> should remain assignable in strict mode. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsx_element_constructor_union_infers_props_for_create_element_like_call() {
+    let source = r#"
+// @target: es2015
+// @strict: true
+// @noEmit: true
+
+interface ExactProps {
+  value: "A" | "B";
+}
+interface FunctionComponent<P = {}> {
+  (props: P): ReactElement<any> | null;
+}
+declare class Component<P> {
+  constructor(props: P);
+}
+interface ComponentClass<P = {}> {
+  new (props: P): Component<P>;
+}
+
+interface ReactElement<
+  T extends string | JSXElementConstructor<any> =
+    | string
+    | JSXElementConstructor<any>,
+> {
+  type: T;
+}
+
+type JSXElementConstructor<P> =
+  | ((props: P) => ReactElement<any> | null)
+  | (new (props: P) => Component<any>);
+
+declare function createElementIsolated<P extends {}>(
+  type: FunctionComponent<P> | ComponentClass<P> | string,
+  props?: P | null,
+): void;
+
+declare let WrapperIsolated: JSXElementConstructor<ExactProps>;
+createElementIsolated(WrapperIsolated, { value: "C" });
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_count = diagnostics.iter().filter(|(code, _)| *code == 2322).count();
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+
+    assert_eq!(
+        ts2345_count, 0,
+        "createElement-like inference should accept JSXElementConstructor<P> as the first argument. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected the prop value mismatch to surface as one TS2322 after first-argument inference succeeds. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_jsx_element_constructor_union_with_explicit_type_argument_accepts_valid_props() {
+    let source = r#"
+// @target: es2015
+// @strict: true
+// @noEmit: true
+
+interface ExactProps {
+  value: "A" | "B";
+}
+interface FunctionComponent<P = {}> {
+  (props: P): ReactElement<any> | null;
+}
+declare class Component<P> {
+  constructor(props: P);
+}
+interface ComponentClass<P = {}> {
+  new (props: P): Component<P>;
+}
+
+interface ReactElement<
+  T extends string | JSXElementConstructor<any> =
+    | string
+    | JSXElementConstructor<any>,
+> {
+  type: T;
+}
+
+type JSXElementConstructor<P> =
+  | ((props: P) => ReactElement<any> | null)
+  | (new (props: P) => Component<any>);
+
+declare function createElementIsolated<P extends {}>(
+  type: FunctionComponent<P> | ComponentClass<P> | string,
+  props?: P | null,
+): void;
+
+declare let WrapperIsolated: JSXElementConstructor<ExactProps>;
+createElementIsolated<ExactProps>(WrapperIsolated, { value: "A" });
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Explicit type arguments should bypass inference and accept JSXElementConstructor<ExactProps>. Actual diagnostics: {diagnostics:#?}"
+    );
+}
