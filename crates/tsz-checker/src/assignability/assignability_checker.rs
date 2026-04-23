@@ -16,7 +16,6 @@ use tracing::trace;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
@@ -1239,10 +1238,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(current_node) = self.ctx.arena.get(current) {
-                let flags = current_node.flags as u32;
-                if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                {
+                if current_node.this_node_has_error() || current_node.this_or_subtree_has_error() {
                     return true;
                 }
             } else {

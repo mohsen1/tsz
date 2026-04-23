@@ -2017,7 +2017,6 @@ impl<'a> CheckerState<'a> {
     /// has no parse diagnostics.
     pub(crate) fn check_grammar_decorator(&mut self, expression_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_parser::parser::flags::node_flags;
 
         // Skip if the source file has parse diagnostics (matches tsc's hasParseDiagnostics gate)
         if self.ctx.has_parse_errors {
@@ -2060,8 +2059,7 @@ impl<'a> CheckerState<'a> {
                     error_node = Some(current);
                 }
                 // Check for optional chaining on call: x?.()
-                let flags_u32 = u32::from(node.flags);
-                if (flags_u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+                if node.is_optional_chain() {
                     // Optional chaining — always an error, even if we already have one
                     error_node = Some(current);
                 }

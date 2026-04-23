@@ -7,7 +7,6 @@ use crate::state::BinderState;
 use crate::{ContainerKind, Symbol, SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeArena};
-use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -93,8 +92,7 @@ impl BinderState {
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
             }
 
-            let is_global_augmentation = u32::from(node.flags) & node_flags::GLOBAL_AUGMENTATION
-                != 0
+            let is_global_augmentation = node.is_global_augmentation()
                 || arena
                     .get(module.name)
                     .and_then(|name_node| {

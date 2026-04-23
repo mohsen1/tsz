@@ -107,6 +107,52 @@ impl Node {
     pub const fn has_data(&self) -> bool {
         self.data_index != Self::NO_DATA
     }
+
+    /// Return `true` if any of the given `NodeFlags` bits are set.
+    ///
+    /// Only flags whose bit fits in the u16 `flags` field are observable via
+    /// this method; higher-bit `NodeFlags` values are stored elsewhere and
+    /// will always return `false` here.
+    #[inline]
+    #[must_use]
+    pub const fn has_any_node_flags(&self, mask: u32) -> bool {
+        (self.flags as u32 & mask) != 0
+    }
+
+    /// `true` if this node carries the `OPTIONAL_CHAIN` flag.
+    #[inline]
+    #[must_use]
+    pub const fn is_optional_chain(&self) -> bool {
+        self.has_any_node_flags(super::flags::node_flags::OPTIONAL_CHAIN)
+    }
+
+    /// `true` if this node carries the `GLOBAL_AUGMENTATION` flag.
+    #[inline]
+    #[must_use]
+    pub const fn is_global_augmentation(&self) -> bool {
+        self.has_any_node_flags(super::flags::node_flags::GLOBAL_AUGMENTATION)
+    }
+
+    /// `true` if this node carries the `NAMESPACE` flag.
+    #[inline]
+    #[must_use]
+    pub const fn has_namespace_flag(&self) -> bool {
+        self.has_any_node_flags(super::flags::node_flags::NAMESPACE)
+    }
+
+    /// `true` if this node carries the `THIS_NODE_HAS_ERROR` flag.
+    #[inline]
+    #[must_use]
+    pub const fn this_node_has_error(&self) -> bool {
+        self.has_any_node_flags(super::flags::node_flags::THIS_NODE_HAS_ERROR)
+    }
+
+    /// `true` if this node or any of its sub-nodes has an error.
+    #[inline]
+    #[must_use]
+    pub const fn this_or_subtree_has_error(&self) -> bool {
+        self.has_any_node_flags(super::flags::node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR)
+    }
 }
 
 // =============================================================================

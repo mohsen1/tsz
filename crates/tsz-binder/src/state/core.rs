@@ -774,7 +774,7 @@ impl BinderState {
             if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
                 continue;
             }
-            if (stmt.flags as u32) & tsz_parser::parser::node_flags::GLOBAL_AUGMENTATION != 0 {
+            if stmt.is_global_augmentation() {
                 return true;
             }
             let Some(module) = arena.get_module(stmt) else {

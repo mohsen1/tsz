@@ -3,7 +3,7 @@
 
 use crate::query_boundaries::common::TypeResolver;
 use tsz_parser::parser::node::CallExprData;
-use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TypeGuard, TypeId, TypeofKind};
 
@@ -824,7 +824,7 @@ impl<'a> FlowAnalyzer<'a> {
     fn is_optional_call(&self, call_node_idx: NodeIndex, call: &CallExprData) -> bool {
         // 1. Check if the call node itself has OptionalChain flag (e.g., func?.())
         if let Some(node) = self.arena.get(call_node_idx)
-            && (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0
+            && node.is_optional_chain()
         {
             return true;
         }
