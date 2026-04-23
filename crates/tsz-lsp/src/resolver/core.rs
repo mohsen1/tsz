@@ -329,7 +329,7 @@ impl<'a> ScopeWalker<'a> {
     }
 
     const fn is_var_declaration_list(&self, node: &Node) -> bool {
-        (node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0
+        !node_flags::is_let_or_const(node.flags as u32)
     }
 
     fn is_var_declaration(&self, decl_idx: NodeIndex) -> bool {

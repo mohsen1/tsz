@@ -95,7 +95,7 @@ impl<'a> Printer<'a> {
         decl_list: &tsz_parser::parser::node::VariableData,
         flags: u32,
     ) {
-        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let using_async = node_flags::is_await_using(flags);
 
         // When a block-level using wrapper is already active (block_using_env is set),
         // just emit the __addDisposableResource calls inline as `var d1 = ..., d2 = ...;`.

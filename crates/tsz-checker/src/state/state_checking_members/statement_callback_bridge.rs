@@ -1124,7 +1124,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     if let Some(list_node) = self.ctx.arena.get(list_idx) {
                         let flags = list_node.flags as u32;
                         // Check USING first — AWAIT_USING (6) includes CONST bit
-                        if (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING {
+                        if node_flags::is_await_using(flags) {
                             Some("await using")
                         } else if flags & node_flags::USING != 0 {
                             Some("using")

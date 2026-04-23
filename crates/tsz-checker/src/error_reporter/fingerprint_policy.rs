@@ -1012,7 +1012,7 @@ impl<'a> CheckerState<'a> {
         {
             let flags = self.ctx.arena.get_variable_declaration_flags(list_idx);
             use tsz_parser::parser::flags::node_flags;
-            (flags & (node_flags::LET | node_flags::CONST)) != 0
+            node_flags::is_let_or_const(flags)
         } else {
             false
         };

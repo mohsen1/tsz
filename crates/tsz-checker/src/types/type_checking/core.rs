@@ -1460,8 +1460,7 @@ impl<'a> CheckerState<'a> {
             // TS2492: Check if let/const declarations inside a catch block shadow
             // the catch clause variable. `var` is allowed (different scoping), but
             // `let`/`const` are not.
-            let is_let_or_const =
-                (flags_u32 & (node_flags::LET | node_flags::CONST)) != 0 && !is_using;
+            let is_let_or_const = node_flags::is_let_or_const(flags_u32) && !is_using;
             if is_let_or_const {
                 self.check_catch_clause_variable_redeclaration(
                     list_idx,
