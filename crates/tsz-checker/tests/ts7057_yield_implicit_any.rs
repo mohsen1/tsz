@@ -42,10 +42,25 @@ fn no_implicit_any_options() -> CheckerOptions {
     }
 }
 
+fn non_strict_no_implicit_any_options() -> CheckerOptions {
+    CheckerOptions {
+        no_implicit_any: true,
+        strict_null_checks: false,
+        ..CheckerOptions::default()
+    }
+}
+
 fn count_ts7057(source: &str) -> usize {
     get_diagnostics_with_options(source, no_implicit_any_options())
         .iter()
         .filter(|(code, _)| *code == 7057)
+        .count()
+}
+
+fn count_ts7055(source: &str, options: CheckerOptions) -> usize {
+    get_diagnostics_with_options(source, options)
+        .iter()
+        .filter(|(code, _)| *code == 7055)
         .count()
 }
 
@@ -347,5 +362,69 @@ async function* g() {
         count_ts7057(source),
         0,
         "yield inside nested dynamic import argument should not trigger TS7057"
+    );
+}
+
+// =========================================================================
+// TS7055: Generator function implicitly has 'any' yield type
+// =========================================================================
+
+#[test]
+fn ts7055_fires_for_yield_star_empty_array_nonstrict() {
+    // In non-strict mode (strictNullChecks: false), `[]` produces `undefined[]`.
+    // The element type `undefined` is widened to `any` for the generator yield type,
+    // which triggers TS7055 ("g003 implicitly has any yield type").
+    //
+    // This matches tsc's behavior:
+    //   function* g003() { yield* []; }  →  TS7055
+    //   "In non-strict mode, `[]` produces the type `undefined[]` which is implicitly any."
+    let source = r#"
+function* g003() {
+    yield* [];
+}
+"#;
+    assert_eq!(
+        count_ts7055(source, non_strict_no_implicit_any_options()),
+        1,
+        "yield* [] in non-strict mode should emit TS7055 (implicit any yield type)"
+    );
+}
+
+#[test]
+fn ts7055_fires_for_bare_yield_nonstrict() {
+    // `yield;` in non-strict mode: the bare yield produces `undefined`, which is
+    // widened to `any` → TS7055 fires.
+    let source = r#"
+function* g001() {
+    yield;
+}
+"#;
+    assert_eq!(
+        count_ts7055(source, non_strict_no_implicit_any_options()),
+        1,
+        "bare yield in non-strict mode should emit TS7055 (implicit any yield type)"
+    );
+}
+
+#[test]
+fn no_ts7055_for_yield_star_empty_array_strict() {
+    // In strict mode, `[]` produces `never[]`. Iterating never[] gives never.
+    // never is NOT widened to any → no TS7055.
+    let source = r#"
+function* g003() {
+    yield* [];
+}
+"#;
+    assert_eq!(
+        count_ts7055(
+            source,
+            CheckerOptions {
+                no_implicit_any: true,
+                strict_null_checks: true,
+                ..CheckerOptions::default()
+            }
+        ),
+        0,
+        "yield* [] in strict mode should NOT emit TS7055 (yield type is never, not any)"
     );
 }
