@@ -714,12 +714,31 @@ impl ModuleResolver {
                 // 6. Build final error from the failure
                 let mut diag = failure.to_diagnostic();
 
-                // Classic resolution override: TS2307 → TS2792
+                // Classic resolution override: TS2307 → TS2792.
+                //
+                // tsc only promotes "cannot find module" to the `moduleResolution`
+                // hint when a node-style resolution *would* have succeeded —
+                // i.e., when there's an ancestor `node_modules/<package>`
+                // directory that the current classic resolver can't reach. For
+                // bare specifiers with no matching node_modules entry, switching
+                // to `nodenext` wouldn't help, so tsc keeps plain TS2307.
+                //
+                // We approximate tsc's check with a filesystem probe: walk up
+                // from the containing file and look for a `node_modules/<pkg>`
+                // directory whose name matches the specifier's package name.
+                // This is the same signal tsc uses to decide the hint is useful.
                 if diag.code == CANNOT_FIND_MODULE && request.implied_classic_resolution {
-                    diag.code = MODULE_RESOLUTION_MODE_MISMATCH;
-                    diag.message = format!(
-                        "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
-                    );
+                    let is_bare = !specifier.starts_with('.')
+                        && !specifier.starts_with('/')
+                        && !specifier.contains(':');
+                    let node_style_would_find =
+                        is_bare && self.has_node_modules_package_match(specifier, containing_file);
+                    if node_style_would_find {
+                        diag.code = MODULE_RESOLUTION_MODE_MISMATCH;
+                        diag.message = format!(
+                            "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
+                        );
+                    }
                 }
 
                 // If the primary resolution found the file but JSX wasn't set,
@@ -731,6 +750,47 @@ impl ModuleResolver {
                 ModuleLookupResult::failed(diag.code, diag.message)
             }
         }
+    }
+
+    /// Walk ancestor directories of `containing_file` looking for a
+    /// `node_modules/<package>` directory whose name matches the bare
+    /// `specifier`'s package segment. Used to gate the TS2307 → TS2792
+    /// override: switching `moduleResolution` to `nodenext` only helps if
+    /// node-style resolution would have a candidate to find.
+    ///
+    /// Handles both plain (`foo` → `node_modules/foo`) and scoped
+    /// (`@scope/bar` → `node_modules/@scope/bar`) package names.
+    fn has_node_modules_package_match(&self, specifier: &str, containing_file: &Path) -> bool {
+        // Extract the package segment of the specifier (stop at the first `/`
+        // after the optional `@scope/` prefix).
+        let pkg_end = if let Some(stripped) = specifier.strip_prefix('@') {
+            // Scoped: need two path segments (`@scope/name`).
+            let rest_start = 1;
+            match stripped.find('/') {
+                Some(first_slash) => {
+                    let after_scope = &stripped[first_slash + 1..];
+                    let name_end = after_scope.find('/').unwrap_or(after_scope.len());
+                    rest_start + first_slash + 1 + name_end
+                }
+                None => return false,
+            }
+        } else {
+            specifier.find('/').unwrap_or(specifier.len())
+        };
+        let package_name = &specifier[..pkg_end];
+        if package_name.is_empty() {
+            return false;
+        }
+
+        let mut cursor = containing_file.parent();
+        while let Some(dir) = cursor {
+            let candidate = dir.join("node_modules").join(package_name);
+            if candidate.is_dir() {
+                return true;
+            }
+            cursor = dir.parent();
+        }
+        false
     }
 
     /// Check whether a fallback-resolved file needs an ESM extension error.
