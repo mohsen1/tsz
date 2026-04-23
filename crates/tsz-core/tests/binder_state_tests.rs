@@ -2891,6 +2891,7 @@ export * from './wildcard2';
 fn test_export_resolution_multiple_wildcards() {
     use crate::binder::{BinderState, SymbolTable, symbol_flags};
     use crate::parser::ParserState;
+    use std::sync::Arc;
 
     // Setup: We'll create module_exports and wildcard_reexports manually
     // to test the resolution logic without parsing multiple files
@@ -2921,7 +2922,7 @@ fn test_export_resolution_multiple_wildcards() {
         .insert("./moduleB".to_string(), module_b_exports);
 
     // Setup index.ts to re-export from both
-    binder.wildcard_reexports.insert(
+    Arc::make_mut(&mut binder.wildcard_reexports).insert(
         "./index".to_string(),
         vec!["./moduleA".to_string(), "./moduleB".to_string()],
     );

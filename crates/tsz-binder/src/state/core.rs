@@ -207,8 +207,8 @@ impl BinderState {
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
-            wildcard_reexports: FxHashMap::default(),
-            wildcard_reexports_type_only: FxHashMap::default(),
+            wildcard_reexports: Arc::new(FxHashMap::default()),
+            wildcard_reexports_type_only: Arc::new(FxHashMap::default()),
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
             shorthand_ambient_modules: Arc::new(FxHashSet::default()),
@@ -271,8 +271,8 @@ impl BinderState {
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
         Arc::make_mut(&mut self.module_exports).clear();
         Arc::make_mut(&mut self.reexports).clear();
-        self.wildcard_reexports.clear();
-        self.wildcard_reexports_type_only.clear();
+        Arc::make_mut(&mut self.wildcard_reexports).clear();
+        Arc::make_mut(&mut self.wildcard_reexports_type_only).clear();
         self.resolved_export_cache
             .write()
             .expect("RwLock not poisoned")
@@ -444,8 +444,8 @@ impl BinderState {
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
-            wildcard_reexports: FxHashMap::default(),
-            wildcard_reexports_type_only: FxHashMap::default(),
+            wildcard_reexports: Arc::new(FxHashMap::default()),
+            wildcard_reexports_type_only: Arc::new(FxHashMap::default()),
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
             shorthand_ambient_modules: Arc::new(FxHashSet::default()),
