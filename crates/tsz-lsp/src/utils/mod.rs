@@ -114,15 +114,7 @@ pub fn node_range(
 
 /// Get the text of an identifier node, or `None` if the node is not an identifier.
 pub fn identifier_text(arena: &NodeArena, node_idx: NodeIndex) -> Option<String> {
-    if node_idx.is_none() {
-        return None;
-    }
-    let node = arena.get(node_idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        arena.get_identifier(node).map(|id| id.escaped_text.clone())
-    } else {
-        None
-    }
+    arena.identifier_text_owned(node_idx)
 }
 
 /// Check whether a node is a valid symbol-query target for LSP symbol-resolution flows.

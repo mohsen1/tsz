@@ -127,6 +127,22 @@ impl NodeArena {
         }
     }
 
+    /// Get the owned text of an `Identifier` node. Returns `None` for any
+    /// other kind, including `PrivateIdentifier` — mirrors the common
+    /// caller-side pattern that pre-filters on `SyntaxKind::Identifier`
+    /// before extracting `escaped_text`.
+    #[inline]
+    #[must_use]
+    pub fn identifier_text_owned(&self, index: NodeIndex) -> Option<String> {
+        use tsz_scanner::SyntaxKind;
+        let node = self.get(index)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            self.get_identifier(node).map(|id| id.escaped_text.clone())
+        } else {
+            None
+        }
+    }
+
     /// Get literal data for a node.
     /// Returns None if node is not a literal or has no data.
     #[inline]
