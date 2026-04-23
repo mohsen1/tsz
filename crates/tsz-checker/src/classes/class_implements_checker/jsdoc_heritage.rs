@@ -207,7 +207,9 @@ impl<'a> CheckerState<'a> {
                 }
                 continue;
             };
-            if !self.is_assignable_to(arg_prop.type_id, constraint_prop.type_id) {
+            let arg_eval = self.evaluate_type_for_assignability(arg_prop.type_id);
+            let constraint_eval = self.evaluate_type_for_assignability(constraint_prop.type_id);
+            if !self.is_assignable_to(arg_eval, constraint_eval) {
                 return true;
             }
         }
