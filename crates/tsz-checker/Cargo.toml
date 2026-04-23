@@ -120,6 +120,10 @@ name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
 [[test]]
+name = "ts2322_property_decl_annotation_tests"
+path = "tests/ts2322_property_decl_annotation_tests.rs"
+
+[[test]]
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
