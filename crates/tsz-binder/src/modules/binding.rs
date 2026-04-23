@@ -218,7 +218,7 @@ impl BinderState {
                     .insert(idx.0, is_exported);
 
                 if self.in_global_augmentation {
-                    self.global_augmentations
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.clone())
                         .or_default()
                         .push(crate::state::GlobalAugmentation::new(idx));

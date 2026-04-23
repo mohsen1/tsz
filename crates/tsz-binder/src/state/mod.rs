@@ -280,7 +280,11 @@ pub struct BinderState {
     // ===== Global Augmentations =====
     /// Tracks interface/type declarations inside `declare global` blocks that should
     /// merge with lib.d.ts symbols. Maps interface name to augmentation declarations.
-    pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
+    pub global_augmentations: Arc<FxHashMap<String, Vec<GlobalAugmentation>>>,
 
     /// Flag indicating we're currently binding inside a `declare global` block
     pub(crate) in_global_augmentation: bool,
@@ -808,7 +812,7 @@ pub struct ResolutionStats {
 pub struct BinderStateScopeInputs {
     pub scopes: Vec<Scope>,
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
-    pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
+    pub global_augmentations: Arc<FxHashMap<String, Vec<GlobalAugmentation>>>,
     pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
