@@ -329,23 +329,19 @@ impl<'a> CheckerState<'a> {
             return Some(awaited);
         }
 
-        // Fallback for generic applications where complex unwrapping failed.
-        // This preserves type parameters from generic applications even when we can't
-        // verify Promise-likeness. For cases like `Task<T>` where unwrapping
-        // fails, we return `T` instead of falling back to None/full type.
-        if let query::PromiseTypeKind::Application { args, .. } =
-            query::classify_promise_type(self.ctx.types, return_type)
-        {
-            // If we have type arguments, return the first one as a fallback.
-            // This preserves generic type parameters even when Promise verification fails.
-            if let Some(&first_arg) = args.first() {
-                return Some(first_arg);
-            }
-        }
-
         // If we can't extract the type argument from a Promise-like type,
         // return None instead of ANY/UNKNOWN (consistent with Task 4-6 changes)
-        // This allows the caller (await expressions) to use UNKNOWN as fallback
+        // This allows the caller (await expressions) to use UNKNOWN as fallback.
+        //
+        // A previous "fallback for generic applications" path unconditionally
+        // returned `args.first()` for *any* generic Application whose base
+        // wasn't identified as Promise-like. That caused `await
+        // Promise<Box<T>>` to unwrap to `T` (via a second fallback on
+        // `Box<T>`) instead of stopping at `Box<T>` — producing false TS2339s
+        // like `Property 'data' does not exist on type 'number'` for
+        // `interface Box<T> { data: T }`. Removed: if a type isn't recognized
+        // as Promise-like, the await loop must stop rather than assume the
+        // first type argument is the awaited payload.
         None
     }
 

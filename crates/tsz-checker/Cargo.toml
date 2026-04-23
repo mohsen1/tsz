@@ -40,6 +40,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "await_generic_non_promise_no_false_ts2339_tests"
+path = "tests/await_generic_non_promise_no_false_ts2339_tests.rs"
+
+[[test]]
 name = "ts1210_arguments_param_in_class_tests"
 path = "tests/ts1210_arguments_param_in_class_tests.rs"
 
