@@ -471,6 +471,12 @@ impl<'a> CheckerState<'a> {
 
         let type_str = self.format_type_diagnostic(type_arg);
         let constraint_str = self.format_type_diagnostic(constraint);
+        let (type_str, constraint_str) = self.finalize_pair_display_for_diagnostic(
+            type_arg,
+            constraint,
+            type_str,
+            constraint_str,
+        );
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,

@@ -490,6 +490,8 @@ impl<'a> CheckerState<'a> {
                 {
                     source_str = Self::widen_member_literals_in_display_text(&source_str);
                 }
+                let (source_str, target_str) = self
+                    .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = format_message(msg_template, &[&source_str, &target_str]);
                 Diagnostic::error(file_name, start, length, message, code)
             }
