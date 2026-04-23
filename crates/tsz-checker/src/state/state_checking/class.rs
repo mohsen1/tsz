@@ -131,8 +131,14 @@ impl<'a> CheckerState<'a> {
                             class,
                         );
                     } else {
-                        // ES decorators: tsc anchors TS1238 at the decorator node (including @).
-                        self.check_es_class_decorator_arity(mod_idx, decorator_type);
+                        // ES decorators: tsc anchors TS1238 at the whole decorator
+                        // (including `@`) when the factory requires too many args, but
+                        // at the expression alone when the factory has zero parameters.
+                        self.check_es_class_decorator_arity(
+                            mod_idx,
+                            decorator.expression,
+                            decorator_type,
+                        );
                     }
                 }
             }
@@ -1521,6 +1527,7 @@ impl<'a> CheckerState<'a> {
     fn check_es_class_decorator_arity(
         &mut self,
         decorator_node: NodeIndex,
+        decorator_expression: NodeIndex,
         decorator_type: TypeId,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -1546,8 +1553,21 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .filter(|p| !p.optional && !p.rest)
                 .count();
-            // ES decorators receive (value, context) — max 2 args
-            if required_params > 2 {
+            // ES decorators are invoked with `(value, context)`.
+            //
+            // * When the factory has no parameters at all, the runtime call
+            //   `f(value, context)` passes extra args; tsc anchors the error
+            //   at the decorator expression (excluding `@`).
+            // * When the factory requires more than two parameters, the call
+            //   cannot supply them; tsc anchors the error at the whole
+            //   decorator (including `@`).
+            if shape.params.is_empty() {
+                self.error_at_node(
+                    decorator_expression,
+                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                );
+            } else if required_params > 2 {
                 self.error_at_node(
                     decorator_node,
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_CLASS_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
