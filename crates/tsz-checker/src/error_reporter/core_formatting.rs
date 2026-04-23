@@ -13,8 +13,17 @@ use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     pub(crate) fn truncate_property_receiver_display(display: String) -> String {
         const MAX_PROPERTY_RECEIVER_DISPLAY_CHARS: usize = 320;
-        if display.len() <= MAX_PROPERTY_RECEIVER_DISPLAY_CHARS || !display.starts_with("Omit<") {
+        let should_truncate = display.starts_with("Omit<") || display.starts_with("merge<");
+        if display.len() <= MAX_PROPERTY_RECEIVER_DISPLAY_CHARS || !should_truncate {
             return display;
+        }
+        if display.starts_with("merge<") {
+            let mut truncated: String = display
+                .chars()
+                .take(MAX_PROPERTY_RECEIVER_DISPLAY_CHARS - 2)
+                .collect();
+            truncated.push_str("..");
+            return truncated;
         }
         display
             .chars()
