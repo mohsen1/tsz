@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(all_binders) = self.ctx.all_binders.as_ref() {
             for (augmenting_file_idx, binder) in all_binders.iter().enumerate() {
-                for (module_spec, augmentations) in &binder.module_augmentations {
+                for (module_spec, augmentations) in binder.module_augmentations.iter() {
                     for aug in augmentations {
                         consider_augmentation(module_spec, augmenting_file_idx, aug);
                     }
@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
             return resolved;
         }
 
-        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
+        for (module_spec, augmentations) in self.ctx.binder.module_augmentations.iter() {
             for aug in augmentations {
                 consider_augmentation(module_spec, augmentation_owner_file_idx(aug), aug);
             }

@@ -288,7 +288,12 @@ pub struct BinderState {
     // ===== Module Augmentations (Rule #44) =====
     /// Tracks interface/type declarations inside `declare module 'x'` blocks that should
     /// merge with the target module's symbols. Maps module specifier to augmentations.
-    pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file augmentation map can be shared
+    /// across N per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when the refcount is 1, which is always
+    /// during binding).
+    pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
 
     /// Flag indicating we're currently binding inside a module augmentation block
     pub(crate) in_module_augmentation: bool,
@@ -804,7 +809,7 @@ pub struct BinderStateScopeInputs {
     pub scopes: Vec<Scope>,
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
     pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
-    pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
+    pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
