@@ -204,8 +204,28 @@ impl<'a> CheckerState<'a> {
 
                 let rest_offset = rest.as_ptr() as usize - comment_text.as_ptr() as usize;
                 if rest.starts_with('{') {
-                    let close = rest.find('}')?;
-                    let raw = &rest[1..close];
+                    // Walk brace-balanced so nested `{...}` inside the
+                    // annotation (e.g. `@extends {A<{x:number}>}`) are kept
+                    // intact. The previous `rest.find('}')` truncated at the
+                    // inner closing `}` and silently dropped the remainder.
+                    let inner = &rest[1..];
+                    let mut depth = 1usize;
+                    let mut close = None;
+                    for (idx, ch) in inner.char_indices() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    close = Some(idx);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let close = close?;
+                    let raw = &inner[..close];
                     let type_expr = raw.trim();
                     if type_expr.is_empty() {
                         continue;
