@@ -265,9 +265,7 @@ impl<'a> InlayHintsProvider<'a> {
             Some(&method.parameters)
         } else if let Some(ctor) = self.arena.get_constructor(node) {
             Some(&ctor.parameters)
-        } else if node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
+        } else if node.is_class_like() {
             // For class declarations (from new expressions), find the constructor
             return self.get_constructor_param_names(node);
         } else {

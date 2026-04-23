@@ -656,9 +656,7 @@ impl<'a> GoToDefinition<'a> {
         }
 
         // Class declaration: walk class members (backup for non-binder-tracked members)
-        if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
+        if decl_node.is_class_like() {
             let class = self.arena.get_class(decl_node)?;
             for &member_idx in &class.members.nodes {
                 let member_node = self.arena.get(member_idx)?;
@@ -736,9 +734,7 @@ impl<'a> GoToDefinition<'a> {
         for &decl_idx in &class_symbol.declarations {
             let decl_node = self.arena.get(decl_idx)?;
             // Get heritage clauses from class or interface declarations
-            let heritage_clauses = if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            let heritage_clauses = if decl_node.is_class_like() {
                 self.arena
                     .get_class(decl_node)
                     .and_then(|c| c.heritage_clauses.as_ref())
@@ -921,9 +917,7 @@ impl<'a> GoToDefinition<'a> {
                 self.arena
                     .get_interface(decl_node)
                     .and_then(|i| i.heritage_clauses.as_ref())
-            } else if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            } else if decl_node.is_class_like() {
                 self.arena
                     .get_class(decl_node)
                     .and_then(|c| c.heritage_clauses.as_ref())
@@ -988,9 +982,7 @@ impl<'a> GoToDefinition<'a> {
 
         let members_list = if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
             Some(self.arena.get_interface(decl_node)?.members.nodes.clone())
-        } else if decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
+        } else if decl_node.is_class_like() {
             Some(self.arena.get_class(decl_node)?.members.nodes.clone())
         } else {
             None
@@ -1081,9 +1073,7 @@ impl<'a> GoToDefinition<'a> {
                 return None;
             }
             let parent = self.arena.get(ext.parent)?;
-            if parent.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent.is_class_like() {
                 let class = self.arena.get_class(parent)?;
                 let heritage = class.heritage_clauses.as_ref()?;
                 for &clause_idx in &heritage.nodes {

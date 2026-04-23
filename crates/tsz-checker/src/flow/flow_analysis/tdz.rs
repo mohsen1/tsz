@@ -427,9 +427,7 @@ impl<'a> CheckerState<'a> {
             let is_class = symbol.has_any_flags(symbol_flags::CLASS);
             let is_enum = symbol.has_any_flags(symbol_flags::ENUM);
             let is_var = symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE);
-            let kind_ok = (is_class
-                && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION))
+            let kind_ok = (is_class && (decl_node.is_class_like()))
                 || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION)
                 || (is_var
                     && (decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION

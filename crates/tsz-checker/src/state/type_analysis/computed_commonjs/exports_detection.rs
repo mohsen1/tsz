@@ -726,8 +726,7 @@ impl<'a> CheckerState<'a> {
             // Don't cross function/class boundaries
             if child_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || child_node.is_function_expression_or_arrow()
-                || child_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || child_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || child_node.is_class_like()
             {
                 continue;
             }

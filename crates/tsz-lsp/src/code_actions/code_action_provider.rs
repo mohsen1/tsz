@@ -1006,9 +1006,7 @@ impl<'a> CodeActionProvider<'a> {
         let mut current = node_idx;
         while current.is_some() {
             let node = self.arena.get(current)?;
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if node.is_class_like() {
                 return Some(current);
             }
             current = self.arena.get_extended(current)?.parent;

@@ -313,8 +313,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
 
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            if parent_node.is_class_like()
                 || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
                 || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || parent_node.kind == syntax_kind_ext::SET_ACCESSOR
