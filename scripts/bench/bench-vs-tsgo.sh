@@ -746,9 +746,15 @@ run_project_benchmark() {
     rm -f "$json_file"
 }
 
+JSON_EXPORTED=false
 export_results_json() {
     [ "$JSON_OUTPUT" != true ] && return
     [ -z "$RESULTS_CSV" ] && return
+    # Idempotent: the EXIT trap may also call this after the in-band
+    # invocation; only one write is needed (and the second would just
+    # produce a duplicate timestamped file under artifacts/).
+    [ "$JSON_EXPORTED" = true ] && return
+    JSON_EXPORTED=true
 
     local default_file="$PROJECT_ROOT/artifacts/bench-vs-tsgo-$(date +%Y%m%d-%H%M%S).json"
     local out_file="${JSON_FILE:-$default_file}"
@@ -2373,11 +2379,19 @@ HEADER
 
 main() {
     check_prerequisites
-    
+
     # Create temp directory for synthetic files
     TEMP_DIR=$(mktemp -d)
-    trap "rm -rf $TEMP_DIR" EXIT
-    
+    # Always export the partial JSON on exit (including SIGTERM/SIGINT/OOM
+    # kills) so a long bench that gets cut off — e.g. by the GitHub Actions
+    # job timeout or the runner OOM killer on `large-ts-repo` — still
+    # surfaces the rows that DID complete. Without this, an exit at any
+    # point past the first benchmark would lose the entire dataset, leaving
+    # the gh-pages deploy with no fresh artifact.
+    trap "rm -rf $TEMP_DIR; export_results_json" EXIT
+    trap "exit 130" INT
+    trap "exit 143" TERM
+
     print_header "TypeScript Compiler Test Files"
     
     # ═══════════════════════════════════════════════════════════════════════════
