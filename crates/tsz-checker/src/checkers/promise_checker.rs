@@ -56,7 +56,7 @@ impl<'a> CheckerState<'a> {
                             // if the alias body references Promise. This handles cases
                             // like `type MyPromise<T> = Promise<T>` where the Application
                             // base is the alias, not the underlying Promise interface.
-                            if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                            if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                                 return self.type_alias_resolves_to_promise(sym_id, symbol);
                             }
                         }
@@ -455,11 +455,11 @@ impl<'a> CheckerState<'a> {
             return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
         }
 
-        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return self.promise_like_type_argument_from_alias(sym_id, args, visited_aliases);
         }
 
-        if symbol.flags & symbol_flags::CLASS != 0 {
+        if symbol.has_any_flags(symbol_flags::CLASS) {
             return self.promise_like_type_argument_from_class_in_arena(
                 sym_id,
                 args,
@@ -911,7 +911,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                             return false; // Type alias — uncertain, use syntactic fallback
                         }
                         return true; // Class/interface — definitively not Promise
@@ -977,7 +977,7 @@ impl<'a> CheckerState<'a> {
                 {
                     // Avoid infinite loops
                     if let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
-                        && body_symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                        && body_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
                     {
                         return self.type_alias_resolves_to_promise(body_sym_id, body_symbol);
                     }

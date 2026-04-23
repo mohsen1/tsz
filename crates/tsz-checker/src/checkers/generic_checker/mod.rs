@@ -595,7 +595,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         let mut sym_id = sym_id;
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::ALIAS != 0
+            && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {

@@ -1078,7 +1078,7 @@ impl<'a> CheckerState<'a> {
 
         let (import_module, import_name, escaped_name, decl_idx) =
             if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
-                if (symbol.flags & symbol_flags::ALIAS) == 0 {
+                if !symbol.has_any_flags(symbol_flags::ALIAS) {
                     return Some(sym_id);
                 }
                 (
@@ -1090,7 +1090,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 let lib_binders = self.get_lib_binders();
                 let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                if (symbol.flags & symbol_flags::ALIAS) == 0 {
+                if !symbol.has_any_flags(symbol_flags::ALIAS) {
                     return Some(sym_id);
                 }
                 (

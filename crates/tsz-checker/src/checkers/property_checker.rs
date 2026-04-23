@@ -1017,8 +1017,8 @@ impl<'a> CheckerState<'a> {
             })
             .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
             .is_some_and(|symbol| {
-                (symbol.flags & tsz_binder::symbol_flags::ENUM) != 0
-                    && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) == 0
+                symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
+                    && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
             });
 
         // TS2464: type must be string, number, symbol, or any (including literals).
