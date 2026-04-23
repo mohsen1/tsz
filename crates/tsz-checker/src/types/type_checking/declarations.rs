@@ -1138,7 +1138,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_class_symbol(&self, symbol_id: tsz_binder::SymbolId) -> bool {
         use tsz_binder::symbol_flags;
         if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
-            (symbol.flags & symbol_flags::CLASS) != 0
+            symbol.has_any_flags(symbol_flags::CLASS)
         } else {
             false
         }
@@ -1298,7 +1298,7 @@ impl<'a> CheckerState<'a> {
                 let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                     return false;
                 };
-                if symbol.flags & symbol_flags::ENUM == 0 {
+                if !symbol.has_any_flags(symbol_flags::ENUM) {
                     return false;
                 }
                 if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {

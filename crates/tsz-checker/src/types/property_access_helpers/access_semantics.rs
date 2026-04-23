@@ -320,7 +320,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Only check class declarations
-        if (symbol.flags & symbol_flags::CLASS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return false;
         }
 
@@ -407,7 +407,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
             return false;
         }
 

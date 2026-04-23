@@ -255,9 +255,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .get(key.as_str())
                         .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                         .is_some_and(|symbol| {
-                            symbol.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
-                                && symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE
-                                    == 0
+                            symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                                && !symbol.has_any_flags(
+                                    tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE,
+                                )
                         });
                     if not_in_locals || is_block_scoped {
                         if let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type) {
