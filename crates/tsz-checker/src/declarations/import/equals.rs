@@ -131,7 +131,7 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
             // TYPE includes: Interface, TypeLiteral, TypeParameter, TypeAlias, Class, Enum, EnumMember
-            return (symbol.flags & symbol_flags::TYPE) != 0;
+            return symbol.has_any_flags(symbol_flags::TYPE);
         }
         false
     }
@@ -576,8 +576,8 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
                     // Check if this symbol has value semantics
-                    let is_value = (sym.flags & symbol_flags::VALUE) != 0;
-                    let is_namespace = (sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+                    let is_value = sym.has_any_flags(symbol_flags::VALUE);
+                    let is_namespace = sym.has_any_flags(symbol_flags::NAMESPACE_MODULE);
 
                     // TS2300: duplicate `import =` aliases with the same name in the same scope.
                     // TypeScript reports this as duplicate identifier (not TS2440).
@@ -626,7 +626,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
                     });
 
-                    let is_type_alias = (sym.flags & symbol_flags::TYPE_ALIAS) != 0;
+                    let is_type_alias = sym.has_any_flags(symbol_flags::TYPE_ALIAS);
                     if import_has_value && (is_value || is_type_alias) && has_local_declaration {
                         let message = format_message(
                             diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
@@ -1090,14 +1090,14 @@ impl<'a> CheckerState<'a> {
                     if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     {
                         let is_namespace =
-                            (symbol.flags & tsz_binder::symbol_flags::NAMESPACE) != 0;
-                        let mut has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                            symbol.has_any_flags(tsz_binder::symbol_flags::NAMESPACE);
+                        let mut has_value = symbol.has_any_flags(tsz_binder::symbol_flags::VALUE);
                         if has_value
-                            && (symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
-                            && (symbol.flags
-                                & (tsz_binder::symbol_flags::VALUE
-                                    & !tsz_binder::symbol_flags::VALUE_MODULE))
-                                == 0
+                            && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE_MODULE)
+                            && !symbol.has_any_flags(
+                                tsz_binder::symbol_flags::VALUE
+                                    & !tsz_binder::symbol_flags::VALUE_MODULE,
+                            )
                         {
                             has_value = symbol.declarations.iter().any(|&decl_idx| {
                                 self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
@@ -1297,7 +1297,7 @@ impl<'a> CheckerState<'a> {
         // import_module, so the per-symbol `is_type_only` check alone can't trace
         // through. Check the declaration's RHS for type-only references.
         // Also follow through export alias → local symbol chains.
-        if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             // Collect all symbols to check: the current symbol plus anything it aliases to
             let mut syms_to_check = vec![sym_id];
             let mut visited_resolve = AliasCycleTracker::new();
@@ -1770,12 +1770,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+        let mut has_value = symbol.has_any_flags(tsz_binder::symbol_flags::VALUE);
         if has_value
-            && (symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
-            && (symbol.flags
-                & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
-                == 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE_MODULE)
+            && !symbol.has_any_flags(
+                tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE,
+            )
         {
             has_value = symbol.declarations.iter().any(|&decl_idx| {
                 self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {

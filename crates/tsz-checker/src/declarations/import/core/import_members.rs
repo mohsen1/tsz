@@ -836,15 +836,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if (symbol.flags & symbol_flags::ALIAS) != 0 {
+        if symbol.has_any_flags(symbol_flags::ALIAS) {
             let mut visited = AliasCycleTracker::new();
             if let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut visited) {
                 return self.symbol_member_is_type_only(resolved, None);
             }
         }
 
-        let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
-        let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
+        let has_type = symbol.has_any_flags(symbol_flags::TYPE);
+        let has_value = symbol.has_any_flags(symbol_flags::VALUE);
         has_type && !has_value
     }
 
@@ -996,8 +996,8 @@ impl<'a> CheckerState<'a> {
                                 && let Some(sym_id) = binder.file_locals.get(&ident.escaped_text)
                                 && let Some(sym) = binder.get_symbol(sym_id)
                             {
-                                let has_type = (sym.flags & symbol_flags::TYPE) != 0;
-                                let has_value = (sym.flags & symbol_flags::VALUE) != 0;
+                                let has_type = sym.has_any_flags(symbol_flags::TYPE);
+                                let has_value = sym.has_any_flags(symbol_flags::VALUE);
                                 has_default_type |= has_type && !has_value;
                                 has_default_value |= has_value;
                             }
@@ -1172,7 +1172,7 @@ impl<'a> CheckerState<'a> {
         if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
             return true;
         }
-        if sym.flags & symbol_flags::ALIAS != 0 && sym.import_module.is_none() {
+        if sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_none() {
             let arena = self.ctx.get_arena_for_file(owner_file_idx as u32);
             let mut declarations = sym.declarations.clone();
             if sym.value_declaration.is_some() && !declarations.contains(&sym.value_declaration) {
@@ -1187,7 +1187,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
         }
-        if (sym.flags & symbol_flags::ALIAS) != 0 {
+        if sym.has_any_flags(symbol_flags::ALIAS) {
             let mut visited_aliases = AliasCycleTracker::new();
             if let Some(resolved_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
                 for alias_id in &visited_aliases {
@@ -1238,13 +1238,13 @@ impl<'a> CheckerState<'a> {
         if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
             return true;
         }
-        if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
+        if sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
             && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id)
         {
             return true;
         }
 
-        (sym.flags & symbol_flags::ALIAS) != 0 && self.alias_resolves_to_type_only(sym_id)
+        sym.has_any_flags(symbol_flags::ALIAS) && self.alias_resolves_to_type_only(sym_id)
     }
 
     fn should_report_js_type_only_import_diagnostic(

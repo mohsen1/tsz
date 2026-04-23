@@ -547,8 +547,8 @@ impl<'a> CheckerState<'a> {
                                         | symbol_flags::CLASS
                                         | symbol_flags::ENUM
                                         | symbol_flags::ENUM_MEMBER;
-                                    (sym.flags & value_flags) == 0
-                                        && (sym.flags & symbol_flags::TYPE) != 0
+                                    !sym.has_any_flags(value_flags)
+                                        && sym.has_any_flags(symbol_flags::TYPE)
                                 });
 
                         if is_type_only_ident {
