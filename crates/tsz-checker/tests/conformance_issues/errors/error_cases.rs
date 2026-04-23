@@ -516,6 +516,68 @@ function f<T extends { [key: string]: number }>(c: T, k: keyof T) {
 }
 
 #[test]
+fn test_ts2339_preserves_merge_alias_receiver_for_instantiation_chain() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
+
+const o1 = merge({ p1: 1 }, { p2: 2 });
+const o2 = merge(o1, { p3: 3 });
+o2.p4;
+"#,
+    );
+
+    let ts2339 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2339)
+        .expect("expected TS2339 for missing p4");
+    assert!(
+        ts2339.1.contains("merge<merge<"),
+        "Expected TS2339 receiver to preserve merge alias chain.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2339.1.contains("Omit<"),
+        "Expected TS2339 receiver to avoid the expanded Omit surface.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2339_keeps_conditional_merge_receiver_branch_display() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = keyof base & keyof props extends never
+    ? base & props
+    : Omit<base, keyof props & keyof base> & props;
+declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
+
+const o1 = merge({ p1: 1 }, { p2: 2 });
+const o2 = merge(o1, { p2: 2, p3: 3 });
+o2.p4;
+"#,
+    );
+
+    let ts2339 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2339)
+        .expect("expected TS2339 for missing p4");
+    assert!(
+        ts2339.1.contains("Omit<"),
+        "Expected TS2339 receiver to preserve the conditional Omit branch.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2339.1.contains("merge<"),
+        "Expected TS2339 receiver not to repaint a resolved conditional branch as merge.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_object_literal_source_display_preserves_quoted_numeric_property_names() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
