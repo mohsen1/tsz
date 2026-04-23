@@ -543,6 +543,12 @@ o2.p4;
         !ts2339.1.contains("Omit<"),
         "Expected TS2339 receiver to avoid the expanded Omit surface.\nActual diagnostics: {diagnostics:#?}"
     );
+    assert!(
+        ts2339
+            .1
+            .contains("merge<merge<{ p1: number; }, { p2: number; }>, { p3: number; }>"),
+        "Expected TS2339 receiver to widen inferred merge literal arguments.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 #[test]
