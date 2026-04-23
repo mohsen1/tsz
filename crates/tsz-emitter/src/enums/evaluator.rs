@@ -673,18 +673,14 @@ impl<'a> EnumEvaluator<'a> {
 
     /// Build a dotted path string from a chain of property access expressions.
     fn build_property_chain(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return Some(self.arena.get_identifier(node)?.escaped_text.clone());
+        if let Some(text) = self.arena.identifier_text_owned(idx) {
+            return Some(text);
         }
+        let node = self.arena.get(idx)?;
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(node)?;
             let left = self.build_property_chain(access.expression)?;
-            let right_node = self.arena.get(access.name_or_argument)?;
-            if right_node.kind != SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let right = &self.arena.get_identifier(right_node)?.escaped_text;
+            let right = self.arena.identifier_text_owned(access.name_or_argument)?;
             return Some(format!("{left}.{right}"));
         }
         None

@@ -4,12 +4,10 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 pub(crate) fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        return arena
-            .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone());
+    if let Some(text) = arena.identifier_text_owned(idx) {
+        return Some(text);
     }
+    let node = arena.get(idx)?;
 
     if node.kind == syntax_kind_ext::QUALIFIED_NAME {
         let qn = arena.get_qualified_name(node)?;
@@ -53,13 +51,10 @@ pub(crate) fn property_access_chain_text_in_arena(
     arena: &NodeArena,
     idx: NodeIndex,
 ) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        return arena
-            .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone());
+    if let Some(text) = arena.identifier_text_owned(idx) {
+        return Some(text);
     }
-
+    let node = arena.get(idx)?;
     if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
         return None;
     }
@@ -76,9 +71,7 @@ pub(crate) fn simple_computed_name_expr_text_in_arena(
 ) -> Option<String> {
     let node = arena.get(idx)?;
     match node.kind {
-        k if k == SyntaxKind::Identifier as u16 => arena
-            .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone()),
+        k if k == SyntaxKind::Identifier as u16 => arena.identifier_text_owned(idx),
         k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
             let access = arena.get_access_expr(node)?;
             let left = simple_computed_name_expr_text_in_arena(arena, access.expression)?;
