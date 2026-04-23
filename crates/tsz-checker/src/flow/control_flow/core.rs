@@ -2348,9 +2348,7 @@ impl<'a> FlowAnalyzer<'a> {
             }
             current = ext.parent;
             let node = self.arena.get(current)?;
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if node.is_class_like() {
                 return self.binder.get_node_symbol(current);
             }
         }

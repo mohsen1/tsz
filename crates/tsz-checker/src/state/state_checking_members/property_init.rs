@@ -571,8 +571,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Don't recurse into nested class definitions
-        if node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        if node.is_class_like()
         {
             return;
         }

@@ -547,9 +547,7 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                     if let Some(n) = self.ctx.arena.get(cur) {
-                        if n.kind == syntax_kind_ext::CLASS_DECLARATION
-                            || n.kind == syntax_kind_ext::CLASS_EXPRESSION
-                        {
+                        if n.is_class_like() {
                             found = true;
                             break;
                         }
@@ -869,9 +867,7 @@ impl<'a> CheckerState<'a> {
                     let Some(inner_node) = self.ctx.arena.get(current) else {
                         break;
                     };
-                    if inner_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || inner_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    {
+                    if inner_node.is_class_like() {
                         in_class = true;
                     }
                     if inner_node.kind == syntax_kind_ext::CONSTRUCTOR

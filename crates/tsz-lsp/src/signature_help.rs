@@ -1561,9 +1561,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut depth = 0;
         while current.is_some() && depth < 100 {
             let node = self.arena.get(current)?;
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if node.is_class_like() {
                 let class_data = self.arena.get_class(node)?;
                 let heritage_clauses = class_data.heritage_clauses.as_ref()?;
                 for &clause_idx in &heritage_clauses.nodes {
