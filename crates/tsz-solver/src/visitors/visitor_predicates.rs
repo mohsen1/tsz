@@ -493,6 +493,20 @@ fn contains_error_type_recursive(
                 .iter()
                 .any(|elem| contains_error_type_recursive(types, elem.type_id, memo))
         }
+        TypeData::Array(element_type) => contains_error_type_recursive(types, element_type, memo),
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = types.object_shape(shape_id);
+            shape.properties.iter().any(|prop| {
+                contains_error_type_recursive(types, prop.type_id, memo)
+                    || contains_error_type_recursive(types, prop.write_type, memo)
+            }) || shape.string_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            }) || shape.number_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            })
+        }
         TypeData::Function(shape_id) => {
             let shape = types.function_shape(shape_id);
             contains_error_type_recursive(types, shape.return_type, memo)
@@ -500,6 +514,35 @@ fn contains_error_type_recursive(
                     .params
                     .iter()
                     .any(|p| contains_error_type_recursive(types, p.type_id, memo))
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = types.callable_shape(shape_id);
+            shape.call_signatures.iter().any(|sig| {
+                sig.params
+                    .iter()
+                    .any(|param| contains_error_type_recursive(types, param.type_id, memo))
+                    || contains_error_type_recursive(types, sig.return_type, memo)
+                    || sig.this_type.is_some_and(|this_type| {
+                        contains_error_type_recursive(types, this_type, memo)
+                    })
+            }) || shape.construct_signatures.iter().any(|sig| {
+                sig.params
+                    .iter()
+                    .any(|param| contains_error_type_recursive(types, param.type_id, memo))
+                    || contains_error_type_recursive(types, sig.return_type, memo)
+                    || sig.this_type.is_some_and(|this_type| {
+                        contains_error_type_recursive(types, this_type, memo)
+                    })
+            }) || shape.properties.iter().any(|prop| {
+                contains_error_type_recursive(types, prop.type_id, memo)
+                    || contains_error_type_recursive(types, prop.write_type, memo)
+            }) || shape.string_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            }) || shape.number_index.as_ref().is_some_and(|index| {
+                contains_error_type_recursive(types, index.key_type, memo)
+                    || contains_error_type_recursive(types, index.value_type, memo)
+            })
         }
         _ => false,
     };
