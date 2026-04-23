@@ -106,6 +106,7 @@ pub struct TypeFormatter<'a> {
     /// When true, preserve a longer generic alias prefix while eliding nested
     /// structural object branches. Used for long property receiver diagnostics.
     long_property_receiver_display: bool,
+    long_property_receiver_object_elision_end_depth: u32,
 }
 
 impl<'a> TypeFormatter<'a> {
@@ -131,6 +132,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
             long_property_receiver_display: false,
+            long_property_receiver_object_elision_end_depth: 26,
         }
     }
 
@@ -209,6 +211,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
             long_property_receiver_display: false,
+            long_property_receiver_object_elision_end_depth: 26,
         }
     }
 
@@ -267,6 +270,14 @@ impl<'a> TypeFormatter<'a> {
     pub const fn with_long_property_receiver_display(mut self) -> Self {
         self.max_depth = 64;
         self.long_property_receiver_display = true;
+        self
+    }
+
+    pub const fn with_long_property_receiver_object_elision_end_depth(
+        mut self,
+        end_depth: u32,
+    ) -> Self {
+        self.long_property_receiver_object_elision_end_depth = end_depth;
         self
     }
 
@@ -407,7 +418,8 @@ impl<'a> TypeFormatter<'a> {
         }
         let type_key = self.interner.lookup(type_id);
         if self.long_property_receiver_display
-            && (8..=26).contains(&self.current_depth)
+            && (8..=self.long_property_receiver_object_elision_end_depth)
+                .contains(&self.current_depth)
             && matches!(
                 type_key,
                 Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
