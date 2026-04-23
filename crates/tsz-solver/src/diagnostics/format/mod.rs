@@ -446,7 +446,7 @@ impl<'a> TypeFormatter<'a> {
         }
         let type_key = self.interner.lookup(type_id);
         if self.long_property_receiver_display
-            && (8..=55).contains(&self.current_depth)
+            && (8..=26).contains(&self.current_depth)
             && matches!(
                 type_key,
                 Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
