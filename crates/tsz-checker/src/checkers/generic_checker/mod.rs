@@ -786,8 +786,6 @@ impl<'a> CheckerState<'a> {
             if self.is_assignable_to(type_arg, evaluated_constraint) {
                 continue;
             }
-            let widened_arg =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_arg);
             let error_anchor = type_args_list
                 .nodes
                 .get(i)
@@ -797,7 +795,7 @@ impl<'a> CheckerState<'a> {
                 error_anchor,
                 crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[
-                    &self.format_type_diagnostic(widened_arg),
+                    &self.format_type_diagnostic(type_arg),
                     &self.format_type_diagnostic(constraint),
                 ],
             );

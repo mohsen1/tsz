@@ -404,12 +404,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc widens literal types to their base types in TS2344 messages:
-        // e.g., `42` → `number`, `"hello"` → `string`. This matches
-        // tsc's getBaseTypeOfLiteralType applied before typeToString.
-        let widened_arg =
-            crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_arg);
-        let mut type_str = self.format_type_diagnostic(widened_arg);
+        let mut type_str = self.format_type_diagnostic(type_arg);
         // When the type arg node is a `typeof expr<Args>` (TYPE_QUERY with type args),
         // tsc includes "typeof" in the TS2344 message. The type formatter strips
         // "typeof" from Application(TypeQuery, args), so we prepend it here.
