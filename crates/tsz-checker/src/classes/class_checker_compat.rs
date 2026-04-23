@@ -191,7 +191,7 @@ impl<'a> CheckerState<'a> {
                 .map_or(current_arena, |arena| arena.as_ref())
         }
 
-        let iface_sym_id = self.ctx.binder.node_symbols.get(&_iface_idx.0).copied();
+        let iface_sym_id = self.ctx.binder.get_node_symbol(_iface_idx);
 
         // Get heritage clauses (extends) — must have at least one across all declarations
         if iface_data.heritage_clauses.is_none() {

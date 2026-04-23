@@ -902,7 +902,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_identifier_at(prototype_access.name_or_argument)
                     .is_some_and(|prototype_ident| prototype_ident.escaped_text == "prototype")
-                && let Some(read_pos) = self.ctx.arena.get(idx).map(|n| n.pos)
+                && let Some(read_pos) = self.ctx.arena.pos_at(idx)
                 && self
                     .prior_js_prototype_object_literal_declares_property(
                         prototype_access.expression,

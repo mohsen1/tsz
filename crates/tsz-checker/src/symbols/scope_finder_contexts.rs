@@ -1143,8 +1143,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_this_in_class_member_computed_property_name(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, COMPUTED_PROPERTY_NAME,
-            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, METHOD_DECLARATION,
         };
         let mut current = idx;
         loop {
@@ -1164,8 +1163,7 @@ impl<'a> CheckerState<'a> {
                 || parent_node.kind == ARROW_FUNCTION
                 || parent_node.kind == METHOD_DECLARATION
                 || parent_node.kind == CONSTRUCTOR
-                || parent_node.kind == GET_ACCESSOR
-                || parent_node.kind == SET_ACCESSOR
+                || parent_node.is_accessor()
             {
                 return false;
             }
@@ -1220,7 +1218,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CALL_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION,
             COMPUTED_PROPERTY_NAME, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
-            GET_ACCESSOR, METHOD_DECLARATION, PROPERTY_DECLARATION, SET_ACCESSOR,
+            METHOD_DECLARATION, PROPERTY_DECLARATION,
         };
 
         // Determine whether this `super` is used as a call (`super()`).
@@ -1312,8 +1310,7 @@ impl<'a> CheckerState<'a> {
             // super is inside a valid class member body and TS2466 does not apply.
             if parent_node.kind == METHOD_DECLARATION
                 || parent_node.kind == CONSTRUCTOR
-                || parent_node.kind == GET_ACCESSOR
-                || parent_node.kind == SET_ACCESSOR
+                || parent_node.is_accessor()
                 || parent_node.kind == CLASS_STATIC_BLOCK_DECLARATION
                 || parent_node.kind == PROPERTY_DECLARATION
             {

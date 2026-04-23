@@ -81,10 +81,7 @@ impl<'a> CheckerState<'a> {
         // `T[keyof T]["foo"]` in return types. Limited to declare functions to
         // avoid triggering side effects from type evaluation in function bodies.
         if let Some(func) = self.ctx.arena.get_function(node)
-            && self
-                .ctx
-                .arena
-                .has_modifier(&func.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+            && self.ctx.arena.is_declare(&func.modifiers)
             && func.type_annotation != tsz_parser::parser::NodeIndex::NONE
         {
             self.check_type_node(func.type_annotation);

@@ -18,10 +18,7 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare function)
-        if self
-            .arena
-            .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&func.modifiers) {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -318,10 +315,7 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient enums (always erased) and const enums (erased unless preserveConstEnums)
-        if self
-            .arena
-            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&enum_decl.modifiers) {
             self.skip_comments_for_erased_node(node);
             return;
         }

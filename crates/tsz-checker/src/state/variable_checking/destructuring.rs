@@ -215,9 +215,7 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) -> TypeId {
-        if !self.ctx.strict_null_checks()
-            || matches!(parent_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-        {
+        if !self.ctx.strict_null_checks() || parent_type.is_any_unknown_or_error() {
             return parent_type;
         }
 

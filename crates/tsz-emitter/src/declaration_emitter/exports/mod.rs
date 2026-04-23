@@ -1315,11 +1315,7 @@ impl<'a> DeclarationEmitter<'a> {
         if self.should_emit_export_keyword() {
             self.write("export ");
         }
-        if self
-            .arena
-            .has_modifier(&alias.modifiers, SyntaxKind::DeclareKeyword)
-            && !self.inside_declare_namespace
-        {
+        if self.arena.is_declare(&alias.modifiers) && !self.inside_declare_namespace {
             self.write("declare ");
         }
         self.write("type ");

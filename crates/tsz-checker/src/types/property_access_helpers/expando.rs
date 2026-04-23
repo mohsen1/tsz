@@ -587,7 +587,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(prop_name) = prop_name.as_deref()
                 && let Some(prototype_root_expr) = prototype_root_expr
-                && let Some(read_pos) = self.ctx.arena.get(property_access_idx).map(|n| n.pos)
+                && let Some(read_pos) = self.ctx.arena.pos_at(property_access_idx)
                 && self
                     .prior_js_prototype_object_literal_declares_property(
                         prototype_root_expr,

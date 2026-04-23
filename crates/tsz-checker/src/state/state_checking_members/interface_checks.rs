@@ -1761,7 +1761,7 @@ impl<'a> CheckerState<'a> {
                         .iter()
                         .zip(member_info.is_property.iter())
                         .filter(|(_, is_prop)| **is_prop)
-                        .filter_map(|(&idx, _)| self.ctx.arena.get(idx).map(|n| n.pos))
+                        .filter_map(|(&idx, _)| self.ctx.arena.pos_at(idx))
                         .min();
                     let field_strictly_after_accessor = matches!(
                         (first_field_pos, first_accessor_pos),
@@ -1795,7 +1795,7 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(u32::MAX);
                     let last_accessor_pos = accessor_indices
                         .iter()
-                        .filter_map(|&idx| self.ctx.arena.get(idx).map(|n| n.pos))
+                        .filter_map(|&idx| self.ctx.arena.pos_at(idx))
                         .max()
                         .unwrap_or(0);
 

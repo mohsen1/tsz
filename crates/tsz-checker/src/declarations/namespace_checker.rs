@@ -110,11 +110,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if self
-            .ctx
-            .arena
-            .has_modifier_ref(module.modifiers.as_ref(), SyntaxKind::DeclareKeyword)
-        {
+        if self.ctx.arena.is_declare_ref(module.modifiers.as_ref()) {
             return true;
         }
 

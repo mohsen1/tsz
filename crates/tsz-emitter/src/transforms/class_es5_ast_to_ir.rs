@@ -1311,7 +1311,7 @@ impl<'a> AstToIr<'a> {
         } else {
             Vec::new()
         };
-        let body_source_range = self.arena.get(method.body).map(|n| (n.pos, n.end));
+        let body_source_range = self.arena.pos_end_at(method.body);
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: params,
@@ -1343,7 +1343,7 @@ impl<'a> AstToIr<'a> {
         } else {
             Vec::new()
         };
-        let body_source_range = self.arena.get(accessor.body).map(|n| (n.pos, n.end));
+        let body_source_range = self.arena.pos_end_at(accessor.body);
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: params,

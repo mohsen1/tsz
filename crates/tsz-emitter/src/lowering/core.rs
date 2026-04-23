@@ -776,10 +776,7 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Skip ambient declarations (declare class)
-        if self
-            .arena
-            .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&class.modifiers) {
             return;
         }
 
@@ -1144,9 +1141,7 @@ impl<'a> LoweringPass<'a> {
         };
 
         // Skip ambient and const enums (declare/const enums are erased)
-        if self
-            .arena
-            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+        if self.arena.is_declare(&enum_decl.modifiers)
             || self.has_const_modifier(&enum_decl.modifiers)
         {
             return;
@@ -1222,10 +1217,7 @@ impl<'a> LoweringPass<'a> {
         };
 
         // Skip ambient declarations (declare namespace/module)
-        if self
-            .arena
-            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&module_decl.modifiers) {
             return;
         }
 

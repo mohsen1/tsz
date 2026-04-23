@@ -174,8 +174,7 @@ impl<'a> CheckerState<'a> {
     /// defines the `this` context.
     pub(crate) fn find_enclosing_non_arrow_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext::{
-            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, METHOD_DECLARATION,
         };
         let mut current = idx;
         let mut iterations = 0;
@@ -189,8 +188,7 @@ impl<'a> CheckerState<'a> {
                     || node.kind == FUNCTION_EXPRESSION
                     || node.kind == METHOD_DECLARATION
                     || node.kind == CONSTRUCTOR
-                    || node.kind == GET_ACCESSOR
-                    || node.kind == SET_ACCESSOR)
+                    || node.is_accessor())
             {
                 return Some(current);
             }
@@ -420,9 +418,7 @@ impl<'a> CheckerState<'a> {
                         .get_extended(current)
                         .and_then(|ext| self.ctx.arena.get(ext.parent))
                         .is_some_and(|parent| {
-                            parent.kind == METHOD_DECLARATION
-                                || parent.kind == GET_ACCESSOR
-                                || parent.kind == SET_ACCESSOR
+                            parent.kind == METHOD_DECLARATION || parent.is_accessor()
                         });
                     if !parent_is_class_member {
                         return false;
@@ -512,8 +508,7 @@ impl<'a> CheckerState<'a> {
     /// typed and TS2683 ("'this' implicitly has type 'any'") must be suppressed.
     pub(crate) fn enclosing_function_has_explicit_this_parameter(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
-            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, METHOD_DECLARATION,
         };
 
         let enclosing_fn = match self.find_enclosing_non_arrow_function(idx) {
@@ -542,7 +537,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_constructor(fn_node)
                     .and_then(|c| c.parameters.nodes.first().copied())
-            } else if fn_node.kind == GET_ACCESSOR || fn_node.kind == SET_ACCESSOR {
+            } else if fn_node.is_accessor() {
                 self.ctx
                     .arena
                     .get_accessor(fn_node)
