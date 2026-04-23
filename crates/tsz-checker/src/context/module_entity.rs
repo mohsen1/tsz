@@ -246,12 +246,7 @@ impl<'a> CheckerContext<'a> {
 
             let export_assignment_target_name =
                 |sym_binder: &BinderState, sym: &tsz_binder::Symbol| -> Option<String> {
-                    let mut decls = sym.declarations.clone();
-                    if sym.value_declaration.is_some() {
-                        decls.push(sym.value_declaration);
-                    }
-
-                    for decl_idx in decls {
+                    for decl_idx in sym.all_declarations() {
                         if decl_idx.is_none() {
                             continue;
                         }

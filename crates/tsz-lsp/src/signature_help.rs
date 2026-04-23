@@ -3874,10 +3874,7 @@ impl<'a> SignatureHelpProvider<'a> {
         call_kind: CallKind,
     ) -> Option<SignatureDocs> {
         let symbol = self.binder.get_symbol(symbol_id)?;
-        let mut decls = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
-            decls.insert(0, symbol.value_declaration);
-        }
+        let decls = symbol.all_declarations();
 
         let mut candidates = Vec::new();
         let mut fallback = None;
@@ -4147,13 +4144,8 @@ impl<'a> SignatureHelpProvider<'a> {
         let Some(symbol) = self.binder.get_symbol(sym_id) else {
             return Vec::new();
         };
-        let mut decls = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
-            decls.push(symbol.value_declaration);
-        }
-
         let mut class_decls = Vec::new();
-        for decl in decls {
+        for decl in symbol.all_declarations() {
             if decl.is_none() {
                 continue;
             }

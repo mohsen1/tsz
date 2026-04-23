@@ -364,12 +364,7 @@ impl<'a> CheckerState<'a> {
             // compute_type_of_symbol path to see every overload, including
             // the lib-arena ones, via declaration_arenas lookup).
             if !symbol.has_any_flags(symbol_flags::INTERFACE) && !function_has_local_decl {
-                let mut decl_candidates = symbol.declarations.clone();
-                if symbol.value_declaration.is_some() {
-                    decl_candidates.push(symbol.value_declaration);
-                }
-
-                for decl_idx in decl_candidates {
+                for decl_idx in symbol.all_declarations() {
                     if decl_idx.is_none() {
                         continue;
                     }
