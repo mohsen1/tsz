@@ -1801,9 +1801,89 @@ pub(super) fn check_file_for_parallel<'a>(
     checker.ctx.report_unresolved_imports = true;
     checker.ctx.shared_lib_type_cache = Some(shared_lib_cache);
 
-    // Apply all project-level shared state in one call. This installs the
-    // shared DefinitionStore and runs warm_local_caches_from_shared_store().
-    project_env.apply_to(&mut checker.ctx);
+    if program.files.len() == 1 {
+        if !project_env.lib_contexts.is_empty() {
+            checker
+                .ctx
+                .set_lib_contexts_shared(Arc::clone(&project_env.lib_contexts));
+            checker
+                .ctx
+                .set_actual_lib_file_count(project_env.lib_contexts.len());
+        }
+        checker.ctx.set_typescript_dom_replacement_globals(
+            project_env.typescript_dom_replacement_globals.0,
+            project_env.typescript_dom_replacement_globals.1,
+            project_env.typescript_dom_replacement_globals.2,
+        );
+        checker
+            .ctx
+            .set_has_deprecation_diagnostics(project_env.has_deprecation_diagnostics);
+        checker
+            .ctx
+            .set_all_arenas(Arc::clone(&project_env.all_arenas));
+        if let Some(ref dm) = project_env.skeleton_declared_modules {
+            checker
+                .ctx
+                .set_declared_modules_from_skeleton(Arc::clone(dm));
+        }
+        if let Some(ref idx) = project_env.global_module_exports_index {
+            checker.ctx.global_module_exports_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = project_env.global_module_binder_index {
+            checker.ctx.global_module_binder_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref idx) = project_env.global_file_name_index {
+            checker.ctx.global_file_name_index = Some(Arc::clone(idx));
+        }
+        if let Some(ref m) = project_env.program_reexports {
+            checker.ctx.program_reexports = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = project_env.program_wildcard_reexports {
+            checker.ctx.program_wildcard_reexports = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = project_env.program_wildcard_reexports_type_only {
+            checker.ctx.program_wildcard_reexports_type_only = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = project_env.program_module_exports {
+            checker.ctx.program_module_exports = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = project_env.program_cross_file_node_symbols {
+            checker.ctx.program_cross_file_node_symbols = Some(Arc::clone(m));
+        }
+        if let Some(ref m) = project_env.program_alias_partners {
+            checker.ctx.program_alias_partners = Some(Arc::clone(m));
+        }
+        if let Some(ref store) = project_env.shared_definition_store {
+            checker.ctx.definition_store = Arc::clone(store);
+        }
+        if let Some(ref idx) = project_env.global_symbol_file_index {
+            checker.ctx.global_symbol_file_index = Some(Arc::clone(idx));
+        } else if !project_env.symbol_file_targets.is_empty() {
+            let mut targets = checker.ctx.cross_file_symbol_targets.borrow_mut();
+            for &(sym_id, owner_idx) in project_env.symbol_file_targets.iter() {
+                targets.insert(sym_id, owner_idx);
+            }
+        }
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(&project_env.resolved_module_paths));
+        checker.ctx.set_resolved_module_request_paths(Arc::clone(
+            &project_env.resolved_module_request_paths,
+        ));
+        checker
+            .ctx
+            .set_resolved_module_errors(Arc::clone(&project_env.resolved_module_errors));
+        checker.ctx.set_resolved_module_request_errors(Arc::clone(
+            &project_env.resolved_module_request_errors,
+        ));
+        checker.ctx.is_external_module_by_file =
+            Some(Arc::clone(&project_env.is_external_module_by_file));
+        checker.ctx.file_is_esm_map = Some(Arc::clone(&project_env.file_is_esm_map));
+    } else {
+        // Apply all project-level shared state in one call. This installs the
+        // shared DefinitionStore and runs warm_local_caches_from_shared_store().
+        project_env.apply_to(&mut checker.ctx);
+    }
 
     // Per-file state that varies across files:
     checker.ctx.set_current_file_idx(file_idx);
@@ -4493,6 +4573,235 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
         assert!(
             relevant.is_empty(),
             "Expected recursive mapped-type callback repro to keep context in collect_diagnostics, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_collect_diagnostics_preserves_thisless_generic_method_context() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"type LocalPartial<T> = { [P in keyof T]?: T[P] };
+type LocalRequired<T> = { [P in keyof T]-?: T[P] };
+type LocalParameters<T extends (...args: any) => any> = T extends (...args: infer P) => any
+  ? P
+  : never;
+type LocalReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R
+  ? R
+  : any;
+
+declare class Editor {
+  private _editor;
+}
+
+declare class EditorPlugin {
+  private _plugin;
+}
+
+type ParentConfig<T> = LocalPartial<{
+  [P in keyof T]: LocalRequired<T>[P] extends (...args: any) => any
+    ? (...args: LocalParameters<LocalRequired<T>[P]>) => LocalReturnType<LocalRequired<T>[P]>
+    : T[P];
+}>;
+
+interface ExtendableConfig<
+  Options = any,
+  Config extends
+    | ExtensionConfig<Options>
+    | ExtendableConfig<Options> = ExtendableConfig<Options, any>,
+> {
+  name: string;
+  addOptions?: (this: {
+    name: string;
+    parent: ParentConfig<Config>["addOptions"];
+  }) => Options;
+  addProseMirrorPlugins?: (this: {
+    options: Options;
+    editor: Editor;
+  }) => EditorPlugin[];
+}
+
+interface ExtensionConfig<Options = any>
+  extends ExtendableConfig<Options, ExtensionConfig<Options>> {}
+
+declare class Extension<Options = any> {
+  _options: Options;
+  static create<O = any>(config: Partial<ExtensionConfig<O>>): Extension<O>;
+  configure(options?: Partial<Options>): Extension<Options>;
+}
+
+interface SuggestionOptions {
+  editor: Editor;
+  char?: string;
+}
+
+declare function Suggestion(options: SuggestionOptions): EditorPlugin;
+
+Extension.create({
+  name: "slash-command",
+  addOptions() {
+    return {
+      suggestion: {
+        char: "/",
+      } as SuggestionOptions,
+    };
+  },
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+
+Extension.create({
+  name: "slash-command",
+  addOptions: () => {
+    return {
+      suggestion: {
+        char: "/",
+      } as SuggestionOptions,
+    };
+  },
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+
+const parentExtension = Extension.create({
+  name: "parentExtension",
+  addOptions() {
+    return { parent: "exists", overwrite: "parent" };
+  },
+});
+
+const childExtension = parentExtension.configure({
+  child: "exists-too",
+  overwrite: "child",
+});
+
+const parentExtension2 = Extension.create({
+  name: "parentExtension2",
+  addOptions: () => {
+    return { parent: "exists", overwrite: "parent" };
+  },
+});
+
+const childExtension2 = parentExtension2.configure({
+  child: "exists-too",
+  overwrite: "child",
+});
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics;
+
+        let ts2339_count = diagnostics
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE)
+            .count();
+        let ts2345_count = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code
+                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            })
+            .count();
+        let ts2353_count = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code
+                    == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+            })
+            .count();
+        let ts2783_count = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code
+                    == diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN
+            })
+            .count();
+
+        assert_eq!(
+            ts2339_count, 0,
+            "Expected no TS2339 for contextual this in collect_diagnostics, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            ts2345_count, 0,
+            "Expected no TS2345 for Suggestion() calls in collect_diagnostics, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            ts2353_count, 2,
+            "Expected two TS2353 configure() excess-property diagnostics, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            ts2783_count, 2,
+            "Expected two TS2783 spread-overwrite diagnostics, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics.len(),
+            4,
+            "Expected only the two TS2783 and two TS2353 diagnostics, got: {diagnostics:?}"
         );
     }
 

@@ -1425,21 +1425,61 @@ impl<'a> CheckerState<'a> {
                                 let spec_len = (specifier.len() + 2) as u32;
 
                                 if let Some(target_idx) = self.ctx.resolve_import_target(&specifier)
-                                    && let Some(target_binder) =
-                                        self.ctx.get_binder_for_file(target_idx)
-                                    && !target_binder.is_external_module
                                 {
-                                    let target_arena =
-                                        self.ctx.get_arena_for_file(target_idx as u32);
-                                    if let Some(target_sf) = target_arena.source_files.first() {
-                                        let display_name = target_sf
-                                            .file_name
+                                    let (is_external_module, display_name) =
+                                        if let Some(target_binder) =
+                                            self.ctx.get_binder_for_file(target_idx)
+                                        {
+                                            let target_arena =
+                                                self.ctx.get_arena_for_file(target_idx as u32);
+                                            let Some(target_sf) = target_arena.source_files.first()
+                                            else {
+                                                continue;
+                                            };
+                                            (
+                                                target_binder.is_external_module,
+                                                target_sf.file_name.clone(),
+                                            )
+                                        } else if target_idx == self.ctx.current_file_idx {
+                                            (
+                                                self.ctx.binder.is_external_module(),
+                                                self.ctx.file_name.clone(),
+                                            )
+                                        } else {
+                                            let Some(target_file_name) = self
+                                                .ctx
+                                                .global_file_name_index
+                                                .as_ref()
+                                                .and_then(|idx| {
+                                                    idx.iter().find_map(|(file_name, &file_idx)| {
+                                                        (file_idx == target_idx)
+                                                            .then(|| file_name.clone())
+                                                    })
+                                                })
+                                            else {
+                                                continue;
+                                            };
+                                            let Some(is_external_module) = self
+                                                .ctx
+                                                .is_external_module_by_file
+                                                .as_ref()
+                                                .and_then(|map| {
+                                                    map.get(&target_file_name).copied()
+                                                })
+                                            else {
+                                                continue;
+                                            };
+                                            (is_external_module, target_file_name)
+                                        };
+
+                                    if !is_external_module {
+                                        let display_name = display_name
                                             .rsplit('/')
                                             .next()
-                                            .unwrap_or(&target_sf.file_name)
+                                            .unwrap_or(&display_name)
                                             .rsplit('\\')
                                             .next()
-                                            .unwrap_or(&target_sf.file_name)
+                                            .unwrap_or(&display_name)
                                             .to_string();
                                         let message = crate::diagnostics::format_message(
                                             crate::diagnostics::diagnostic_messages::FILE_IS_NOT_A_MODULE,

@@ -1023,7 +1023,7 @@ impl<'a> CheckerState<'a> {
         // Lazy(DefId) references become concrete types.  Then attempt property
         // access resolution with the resolved object.
         if let Some((obj, _idx)) = query::index_access_types(self.ctx.types, property_type) {
-            let obj_type = self.evaluate_type_with_resolution(obj);
+            let obj_type = self.evaluate_type_with_env(obj);
 
             let prop_name_arc = self.ctx.types.resolve_atom_ref(key_name);
             let prop_name: &str = &prop_name_arc;

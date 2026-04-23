@@ -339,6 +339,8 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<PropertyInfo> {
         let resolved = self.resolve_type_for_property_access(type_id);
         let resolved = self.resolve_lazy_type(resolved);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let resolved = self.resolve_type_for_property_access(resolved);
         self.ctx
             .types
             .collect_object_spread_properties(resolved)

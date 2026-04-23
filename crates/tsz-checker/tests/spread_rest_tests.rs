@@ -1288,6 +1288,79 @@ create({
     );
 }
 
+#[test]
+fn test_ts2783_spread_overwrites_in_thisless_generic_method_context() {
+    let source = r#"
+declare class Editor {
+  private _editor;
+}
+
+declare class EditorPlugin {
+  private _plugin;
+}
+
+interface SuggestionOptions {
+  editor: Editor;
+  char?: string;
+}
+
+declare function Suggestion(options: SuggestionOptions): EditorPlugin;
+
+type ExtensionConfig<Options> = {
+  addProseMirrorPlugins?: (this: {
+    options: Options;
+    editor: Editor;
+  }) => EditorPlugin[];
+};
+
+declare function createExtension<Options>(config: ExtensionConfig<Options>): void;
+
+createExtension<{ suggestion: SuggestionOptions }>({
+  addProseMirrorPlugins() {
+    return [
+      Suggestion({
+        editor: this.editor,
+        ...this.options.suggestion,
+      }),
+    ];
+  },
+});
+"#;
+
+    let diagnostics = check_source(source);
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+    let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+
+    assert_eq!(
+        ts2339_count,
+        0,
+        "Expected no TS2339 for contextual this in addProseMirrorPlugins, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2345_count,
+        0,
+        "Expected no TS2345 for the Suggestion() call, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2783_count,
+        1,
+        "Expected one spread-overwrite TS2783 diagnostic, got diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Confirm TS2698 still fires in expression context (spreading a non-object).
 #[test]
 fn test_object_spread_of_non_object_in_expression_emits_ts2698() {

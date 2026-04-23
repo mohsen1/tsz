@@ -8,6 +8,7 @@ use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::syntax::transform_utils::contains_this_reference;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -23,6 +24,47 @@ impl<'a> CheckerState<'a> {
         ctx_helper
             .get_property_type(&prop_name)
             .filter(|&ty| ty != TypeId::ANY && !self.type_contains_error(ty))
+    }
+
+    fn cached_object_literal_member_callable_type(&self, member_idx: NodeIndex) -> Option<TypeId> {
+        let member = self.ctx.arena.get(member_idx)?;
+        let parent = self.ctx.arena.get_extended(member_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let needs_contextual_this = match member.kind {
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(member)
+                .is_some_and(|method| contains_this_reference(self.ctx.arena, method.body)),
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(member)
+                .is_some_and(|accessor| contains_this_reference(self.ctx.arena, accessor.body)),
+            _ => false,
+        };
+        if !needs_contextual_this {
+            return None;
+        }
+
+        let cached = *self.ctx.node_types.get(&member_idx.0)?;
+        if crate::query_boundaries::checkers::call::get_contextual_signature(self.ctx.types, cached)
+            .is_none()
+        {
+            return None;
+        }
+
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, cached)
+            || crate::query_boundaries::common::contains_infer_types(self.ctx.types, cached)
+        {
+            return None;
+        }
+
+        Some(cached)
     }
 
     #[allow(dead_code)]
@@ -621,8 +663,14 @@ impl<'a> CheckerState<'a> {
         // Extract parameter types from contextual type (for object literal methods)
         // This enables shorthand method parameter type inference
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
-        let contextual_method_type =
-            self.contextual_class_member_type_from_request(request, method.name);
+        let contextual_method_type = self
+            .contextual_class_member_type_from_request(request, method.name)
+            .or_else(|| {
+                request
+                    .is_empty()
+                    .then(|| self.cached_object_literal_member_callable_type(member_idx))
+                    .flatten()
+            });
         let prototype_owner_this_type = if self.is_js_file() {
             self.js_prototype_owner_expression_for_node(member_idx)
                 .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))

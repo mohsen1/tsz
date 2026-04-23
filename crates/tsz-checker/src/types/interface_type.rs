@@ -776,72 +776,98 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    // Use get_type_params_for_symbol to get the ORIGINAL TypeParam
-                    // TypeIds that match the ones in base_type's member signatures.
-                    // Previously we used push_type_parameters which creates NEW
-                    // TypeIds that don't match, causing substitution to be a no-op.
-                    let base_type_params = self.get_type_params_for_symbol(base_sym_id);
+                    // Prefer the already-lowered heritage type reference when type
+                    // arguments are present. This preserves the clause's explicit
+                    // instantiation (e.g. `Base<T, Foo<T>>`) without rebuilding it
+                    // from symbol metadata, which can lose substitutions for
+                    // inherited generic members.
+                    let direct_instantiated_base = (!type_args.is_empty())
+                        .then(|| self.get_type_from_type_node(type_idx))
+                        .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN);
 
-                    if type_args.len() < base_type_params.len() {
-                        for (param_index, param) in
-                            base_type_params.iter().enumerate().skip(type_args.len())
-                        {
-                            let fallback = param
-                                .default
-                                .or(param.constraint)
-                                .unwrap_or(TypeId::UNKNOWN);
-                            let substitution = TypeSubstitution::from_args(
-                                self.ctx.types,
-                                &base_type_params[..param_index],
-                                &type_args,
-                            );
-                            type_args.push(
-                                crate::query_boundaries::common::instantiate_type_preserving_meta(
+                    if let Some(direct_base) = direct_instantiated_base {
+                        base_type = direct_base;
+                    } else {
+                        // Use get_type_params_for_symbol to get the ORIGINAL TypeParam
+                        // TypeIds that match the ones in base_type's member signatures.
+                        // Previously we used push_type_parameters which creates NEW
+                        // TypeIds that don't match, causing substitution to be a no-op.
+                        let base_type_params = self.get_type_params_for_symbol(base_sym_id);
+
+                        if type_args.len() < base_type_params.len() {
+                            for (param_index, param) in
+                                base_type_params.iter().enumerate().skip(type_args.len())
+                            {
+                                let fallback = param
+                                    .default
+                                    .or(param.constraint)
+                                    .unwrap_or(TypeId::UNKNOWN);
+                                let substitution = TypeSubstitution::from_args(
                                     self.ctx.types,
-                                    fallback,
-                                    &substitution,
-                                ),
-                            );
+                                    &base_type_params[..param_index],
+                                    &type_args,
+                                );
+                                type_args.push(
+                                    crate::query_boundaries::common::instantiate_type_preserving_meta(
+                                        self.ctx.types,
+                                        fallback,
+                                        &substitution,
+                                    ),
+                                );
+                            }
                         }
-                    }
-                    if type_args.len() > base_type_params.len() {
-                        type_args.truncate(base_type_params.len());
-                    }
+                        if type_args.len() > base_type_params.len() {
+                            type_args.truncate(base_type_params.len());
+                        }
 
-                    let has_structural_self_arg = current_sym.is_some_and(|current_sym| {
-                        type_args.iter().copied().any(|arg| {
-                            self.type_requires_structure_of_symbol_for_base_type(arg, current_sym)
-                        })
-                    });
-
-                    let substitution =
-                        TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
-                    base_type = instantiate_type(self.ctx.types, base_type, &substitution);
-                    let is_builtin_array_heritage =
-                        matches!(base_symbol_name.as_str(), "Array" | "ReadonlyArray");
-                    let requires_self = !is_builtin_array_heritage
-                        && current_sym.is_some_and(|current_sym| {
-                            has_structural_self_arg
-                                || self.type_requires_structure_of_symbol_for_base_type(
-                                    base_type,
+                        let has_structural_self_arg = current_sym.is_some_and(|current_sym| {
+                            type_args.iter().copied().any(|arg| {
+                                self.type_requires_structure_of_symbol_for_base_type(
+                                    arg,
                                     current_sym,
                                 )
+                            })
                         });
 
-                    if let Some(current_sym) = current_sym
-                        && requires_self
-                    {
-                        self.report_recursive_base_type_for_symbol(current_sym);
-                        self.report_instantiated_type_alias_mapped_constraint_cycles(
-                            base_sym_id,
+                        let substitution = TypeSubstitution::from_args(
+                            self.ctx.types,
                             &base_type_params,
                             &type_args,
-                            current_sym,
                         );
-                        derived_type = self.merge_interface_types(derived_type, base_type);
-                        continue;
-                    }
+                        base_type = if !type_args.is_empty()
+                            && crate::query_boundaries::common::is_lazy_type(
+                                self.ctx.types,
+                                base_type,
+                            ) {
+                            self.ctx.types.application(base_type, type_args.clone())
+                        } else {
+                            instantiate_type(self.ctx.types, base_type, &substitution)
+                        };
+                        let is_builtin_array_heritage =
+                            matches!(base_symbol_name.as_str(), "Array" | "ReadonlyArray");
+                        let requires_self = !is_builtin_array_heritage
+                            && current_sym.is_some_and(|current_sym| {
+                                has_structural_self_arg
+                                    || self.type_requires_structure_of_symbol_for_base_type(
+                                        base_type,
+                                        current_sym,
+                                    )
+                            });
 
+                        if let Some(current_sym) = current_sym
+                            && requires_self
+                        {
+                            self.report_recursive_base_type_for_symbol(current_sym);
+                            self.report_instantiated_type_alias_mapped_constraint_cycles(
+                                base_sym_id,
+                                &base_type_params,
+                                &type_args,
+                                current_sym,
+                            );
+                            derived_type = self.merge_interface_types(derived_type, base_type);
+                            continue;
+                        }
+                    }
                     derived_type = self.merge_interface_types(derived_type, base_type);
                 }
             }

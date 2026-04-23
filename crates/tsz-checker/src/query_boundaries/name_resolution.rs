@@ -541,9 +541,17 @@ impl<'a> CheckerState<'a> {
 
         let (is_external_module, file_name) = if symbol.decl_file_idx != u32::MAX {
             let file_idx = symbol.decl_file_idx as usize;
-            let binder = self.ctx.get_binder_for_file(file_idx)?;
-            let file_name = arena.source_files.first()?.file_name.clone();
-            (binder.is_external_module(), file_name)
+            if let Some(binder) = self.ctx.get_binder_for_file(file_idx) {
+                let file_name = arena.source_files.first()?.file_name.clone();
+                (binder.is_external_module(), file_name)
+            } else if file_idx == self.ctx.current_file_idx {
+                (
+                    self.ctx.binder.is_external_module(),
+                    self.ctx.file_name.clone(),
+                )
+            } else {
+                return None;
+            }
         } else {
             (
                 self.ctx.binder.is_external_module(),
