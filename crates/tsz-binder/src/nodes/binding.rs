@@ -1348,7 +1348,7 @@ impl BinderState {
                 let container_sym = self
                     .scope_chain
                     .get(self.current_scope_idx)
-                    .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
+                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = Self::declaration_span(arena, declaration);
                     sym.add_declaration(declaration, span);
@@ -1424,7 +1424,7 @@ impl BinderState {
                 let container_sym = self
                     .scope_chain
                     .get(self.current_scope_idx)
-                    .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
+                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = Self::declaration_span(arena, declaration);
                     sym.add_declaration(declaration, span);
@@ -1463,7 +1463,7 @@ impl BinderState {
                 let container_sym = self
                     .scope_chain
                     .get(self.current_scope_idx)
-                    .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
+                    .and_then(|ctx| self.get_node_symbol(ctx.container_node));
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = Self::declaration_span(arena, declaration);
                     sym.add_declaration(declaration, span);
@@ -1570,7 +1570,7 @@ impl BinderState {
         let container_sym = self
             .scope_chain
             .get(self.current_scope_idx)
-            .and_then(|ctx| self.node_symbols.get(&ctx.container_node.0).copied());
+            .and_then(|ctx| self.get_node_symbol(ctx.container_node));
         if let Some(sym) = self.symbols.get_mut(sym_id) {
             let span = Self::declaration_span(arena, declaration);
             sym.add_declaration(declaration, span);

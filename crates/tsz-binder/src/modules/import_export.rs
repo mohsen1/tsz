@@ -429,9 +429,7 @@ impl BinderState {
                                 (ctx.container_kind == ContainerKind::Module)
                                     .then_some(ctx.container_node)
                             })
-                            .and_then(|container_idx| {
-                                self.node_symbols.get(&container_idx.0).copied()
-                            });
+                            .and_then(|container_idx| self.get_node_symbol(container_idx));
 
                         for &spec_idx in &named.elements.nodes {
                             if let Some(spec_node) = arena.get(spec_idx)
