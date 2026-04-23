@@ -3,7 +3,6 @@
 use crate::context::TypingRequest;
 use crate::state::{CheckerState, MemberAccessInfo, MemberAccessLevel, MemberLookup};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -1067,10 +1066,7 @@ impl<'a> CheckerState<'a> {
                 }
                 syntax_kind_ext::METHOD_DECLARATION => {
                     if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                        let flags = u32::from(node.flags);
-                        if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                            || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                        {
+                        if node.this_node_has_error() || node.this_or_subtree_has_error() {
                             continue;
                         }
                         // Abstract methods don't need implementations (they're meant for derived classes).

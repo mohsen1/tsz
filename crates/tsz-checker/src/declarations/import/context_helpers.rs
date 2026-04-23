@@ -153,8 +153,6 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node is inside a `declare global { ... }` augmentation block.
     pub(crate) fn is_inside_global_augmentation(&self, node_idx: NodeIndex) -> bool {
-        use tsz_parser::parser::flags::node_flags;
-
         let mut current = node_idx;
         while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
@@ -167,9 +165,7 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
-            if node.kind == syntax_kind_ext::MODULE_DECLARATION
-                && (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0
-            {
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION && node.is_global_augmentation() {
                 return true;
             }
         }

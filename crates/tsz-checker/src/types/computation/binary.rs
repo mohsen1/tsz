@@ -881,12 +881,11 @@ impl<'a> CheckerState<'a> {
                 // our parser but by tsc's checker, so they set has_parse_errors in our
                 // pipeline but shouldn't suppress TS2695. Only suppress when the binary
                 // expression itself has structural parse errors (e.g., `(a, new)`).
-                let node_has_parse_error = self.ctx.arena.get(node_idx).is_some_and(|n| {
-                    use tsz_parser::parser::node_flags;
-                    let flags = n.flags as u32;
-                    (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                        || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                });
+                let node_has_parse_error = self
+                    .ctx
+                    .arena
+                    .get(node_idx)
+                    .is_some_and(|n| n.this_node_has_error() || n.this_or_subtree_has_error());
                 // Also suppress TS2695 when the comma expression is inside a bare
                 // block statement (not a function/method body).  This matches tsc's
                 // behavior: `{ a, b } = fn()` is parsed as a block followed by `=`,

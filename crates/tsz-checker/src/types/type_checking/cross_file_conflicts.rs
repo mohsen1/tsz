@@ -647,8 +647,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn check_cross_file_global_augmentation_namespace_member_conflicts(&mut self) {
-        use tsz_parser::parser::node_flags;
-
         let Some(all_arenas) = self.ctx.all_arenas.clone() else {
             return;
         };
@@ -676,12 +674,11 @@ impl<'a> CheckerState<'a> {
                 let Some(module_decl) = arena.get_module(stmt_node) else {
                     continue;
                 };
-                let is_global_augmentation =
-                    (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
-                        || arena
-                            .get(module_decl.name)
-                            .and_then(|name_node| arena.get_identifier(name_node))
-                            .is_some_and(|ident| ident.escaped_text == "global");
+                let is_global_augmentation = stmt_node.is_global_augmentation()
+                    || arena
+                        .get(module_decl.name)
+                        .and_then(|name_node| arena.get_identifier(name_node))
+                        .is_some_and(|ident| ident.escaped_text == "global");
                 if is_global_augmentation {
                     let Some(body_node) = arena.get(module_decl.body) else {
                         continue;

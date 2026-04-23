@@ -378,8 +378,6 @@ impl<'a> CheckerState<'a> {
         statements: &[NodeIndex],
         ident_name: &str,
     ) -> Option<NodeIndex> {
-        use tsz_parser::parser::node_flags;
-
         let mut matching_namespace_export = None;
         let mut matching_global_augmentation = None;
 
@@ -406,14 +404,13 @@ impl<'a> CheckerState<'a> {
             let Some(module_decl) = self.ctx.arena.get_module(stmt_node) else {
                 continue;
             };
-            let is_global_augmentation =
-                (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
-                    || self
-                        .ctx
-                        .arena
-                        .get(module_decl.name)
-                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                        .is_some_and(|ident| ident.escaped_text == "global");
+            let is_global_augmentation = stmt_node.is_global_augmentation()
+                || self
+                    .ctx
+                    .arena
+                    .get(module_decl.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text == "global");
             if !is_global_augmentation || !module_decl.body.is_some() {
                 continue;
             }

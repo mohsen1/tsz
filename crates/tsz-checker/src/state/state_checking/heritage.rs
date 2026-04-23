@@ -225,7 +225,6 @@ impl<'a> CheckerState<'a> {
                     let mut is_valid = true;
 
                     let mut current_idx = expr_idx;
-                    use tsz_parser::parser::flags::node_flags;
                     use tsz_parser::parser::syntax_kind_ext::*;
 
                     loop {
@@ -234,7 +233,7 @@ impl<'a> CheckerState<'a> {
                             break;
                         };
 
-                        if node.flags & (node_flags::OPTIONAL_CHAIN as u16) != 0 {
+                        if node.is_optional_chain() {
                             is_valid = false;
                             break;
                         }
@@ -267,7 +266,6 @@ impl<'a> CheckerState<'a> {
                     let mut is_valid = true;
 
                     let mut current_idx = expr_idx;
-                    use tsz_parser::parser::flags::node_flags;
                     use tsz_parser::parser::syntax_kind_ext::*;
 
                     loop {
@@ -276,7 +274,7 @@ impl<'a> CheckerState<'a> {
                             break;
                         };
 
-                        if node.flags & (node_flags::OPTIONAL_CHAIN as u16) != 0 {
+                        if node.is_optional_chain() {
                             is_valid = false;
                             break;
                         }
