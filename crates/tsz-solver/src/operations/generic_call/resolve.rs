@@ -1429,10 +1429,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             } else {
                                 ty
                             };
-                            if direct_param_vars.contains(&var)
-                                && has_usable_contra_candidates
-                                && lower_bounds.len() == 1
-                            {
+                            if direct_param_vars.contains(&var) && has_usable_contra_candidates {
                                 let contra_types = infer_ctx.get_contra_candidate_types(var);
                                 let concrete_contra: Vec<_> = contra_types
                                     .into_iter()
@@ -1445,8 +1442,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     .collect();
                                 if concrete_contra.len() == 1 {
                                     let contra = concrete_contra[0];
+                                    if self
+                                        .should_prefer_single_contra_candidate_for_direct_inference(
+                                            &lower_bounds,
+                                            ty,
+                                            contra,
+                                        )
+                                    {
+                                        ty = self
+                                            .select_single_contra_candidate_direct_inference_type(
+                                                &lower_bounds,
+                                                contra,
+                                            );
+                                        let root = infer_ctx.table.find(var);
+                                        let mut info = infer_ctx.table.probe_value(root);
+                                        info.resolved = Some(ty);
+                                        infer_ctx.table.union_value(root, info);
+                                    }
+
                                     let mut needs_broader_due_dependent_constraint = false;
-                                    if self.checker.is_assignable_to(ty, contra)
+                                    if lower_bounds.len() == 1
+                                        && self.checker.is_assignable_to(ty, contra)
                                         && !self.checker.is_assignable_to(contra, ty)
                                     {
                                         for (other_tp, &other_var) in
@@ -1472,10 +1488,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                             };
                                             for lb in other_constraints.lower_bounds.iter().copied()
                                             {
-                                                if matches!(
-                                                    lb,
-                                                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-                                                ) {
+                                                if lb.is_any_unknown_or_error() {
                                                     continue;
                                                 }
                                                 if !self.checker.is_assignable_to(lb, ty)

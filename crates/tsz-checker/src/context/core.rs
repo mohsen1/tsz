@@ -1871,15 +1871,12 @@ mod index_tests {
     #[test]
     fn global_augmentation_targets_index_maps_module_to_symbols() {
         let mut binder1 = BinderState::new();
-        binder1
-            .augmentation_target_modules
+        std::sync::Arc::make_mut(&mut binder1.augmentation_target_modules)
             .insert(SymbolId(100), "./target".to_string());
         let mut binder2 = BinderState::new();
-        binder2
-            .augmentation_target_modules
+        std::sync::Arc::make_mut(&mut binder2.augmentation_target_modules)
             .insert(SymbolId(200), "./target".to_string());
-        binder2
-            .augmentation_target_modules
+        std::sync::Arc::make_mut(&mut binder2.augmentation_target_modules)
             .insert(SymbolId(201), "./other".to_string());
 
         let binders = vec![Arc::new(binder1), Arc::new(binder2)];

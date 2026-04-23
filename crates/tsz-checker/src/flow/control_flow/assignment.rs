@@ -54,10 +54,7 @@ impl<'a> FlowAnalyzer<'a> {
         else {
             return Some(assigned_type);
         };
-        if matches!(
-            read_target_type,
-            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-        ) {
+        if read_target_type.is_any_unknown_or_error() {
             return Some(assigned_type);
         }
 

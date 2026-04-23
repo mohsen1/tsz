@@ -15,10 +15,7 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare class)
-        if self
-            .arena
-            .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&class.modifiers) {
             self.skip_comments_for_erased_node(node);
             return;
         }

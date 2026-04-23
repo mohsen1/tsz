@@ -493,16 +493,16 @@ pub struct BindResult {
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Shorthand ambient modules (`declare module "foo"` without body)
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
     pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     /// Maps module specifier -> [`ModuleAugmentation`]
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
-    pub reexports: Reexports,
+    pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     /// Wildcard re-export type-only provenance aligned with `wildcard_reexports`.
@@ -625,7 +625,7 @@ impl BindResult {
         }
 
         // shorthand_ambient_modules
-        for s in &self.shorthand_ambient_modules {
+        for s in self.shorthand_ambient_modules.iter() {
             size += s.capacity() + std::mem::size_of::<u64>();
         }
 
@@ -650,7 +650,7 @@ impl BindResult {
         }
 
         // reexports (FxHashMap<String, FxHashMap<String, (String, Option<String>)>>)
-        for (k, inner) in &self.reexports {
+        for (k, inner) in self.reexports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for (ik, (s1, s2)) in inner {
                 size += ik.capacity() + s1.capacity() + 8;
@@ -1568,13 +1568,13 @@ pub struct MergedProgram {
     /// Ambient module declarations across all files
     pub declared_modules: FxHashSet<String>,
     /// Shorthand ambient modules (`declare module "foo"` without body) - imports from these are `any`
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Module exports: maps file name (or module specifier) to its exported symbols
     /// This enables cross-file module resolution: import { X } from './file' can find X's symbol
     pub module_exports: FxHashMap<String, SymbolTable>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
-    pub reexports: Reexports,
+    pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
@@ -2394,7 +2394,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
 
         // Merge reexports from this file
-        for (file_name, file_reexports) in &result.reexports {
+        for (file_name, file_reexports) in result.reexports.iter() {
             let entry = reexports.entry(file_name.clone()).or_default();
             for (export_name, mapping) in file_reexports {
                 entry.insert(export_name.clone(), mapping.clone());
@@ -3268,9 +3268,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         globals,
         file_locals: file_locals_list,
         declared_modules,
-        shorthand_ambient_modules,
+        shorthand_ambient_modules: Arc::new(shorthand_ambient_modules),
         module_exports,
-        reexports,
+        reexports: Arc::new(reexports),
         wildcard_reexports,
         wildcard_reexports_type_only,
         lib_binders,
@@ -4689,7 +4689,7 @@ pub fn create_binder_from_bound_file(
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: file.global_augmentations.clone(),
             module_augmentations: file.module_augmentations.clone(),
-            augmentation_target_modules: file.augmentation_target_modules.clone(),
+            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
@@ -4780,7 +4780,7 @@ pub fn create_binder_from_bound_file_with_shared(
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: file.global_augmentations.clone(),
             module_augmentations: file.module_augmentations.clone(),
-            augmentation_target_modules: file.augmentation_target_modules.clone(),
+            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),

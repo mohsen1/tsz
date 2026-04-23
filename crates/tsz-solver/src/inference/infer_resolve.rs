@@ -257,7 +257,7 @@ impl<'a> InferenceContext<'a> {
         upper_bounds
             .iter()
             .copied()
-            .filter(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
+            .filter(|&upper| !upper.is_any_unknown_or_error())
             .collect()
     }
 
@@ -366,14 +366,14 @@ impl<'a> InferenceContext<'a> {
             // (e.g. Promise/iterable inference with implicit `extends unknown`).
             let has_informative_upper_bound = upper_bounds
                 .iter()
-                .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+                .any(|&upper| !upper.is_any_unknown_or_error());
             // Check if there are concrete (non-top) candidates before filtering.
             // When `any` is the only meaningful candidate, keep it even with
             // informative upper bounds. This matches tsc where passing `any` to
             // `f<T extends X>(v: T)` infers T=any, not T=X.
             let has_concrete_candidate = candidates
                 .iter()
-                .any(|c| !matches!(c.type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+                .any(|c| !c.type_id.is_any_unknown_or_error());
             candidates.retain(|candidate| match candidate.type_id {
                 TypeId::UNKNOWN | TypeId::ERROR => false,
                 TypeId::ANY => !has_informative_upper_bound || !has_concrete_candidate,
@@ -1652,10 +1652,10 @@ impl<'a> InferenceContext<'a> {
                 let has_informative_upper_bound = info
                     .upper_bounds
                     .iter()
-                    .any(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+                    .any(|&upper| !upper.is_any_unknown_or_error());
                 let has_concrete_candidate = candidates
                     .iter()
-                    .any(|c| !matches!(c.type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR));
+                    .any(|c| !c.type_id.is_any_unknown_or_error());
                 candidates.retain(|candidate| match candidate.type_id {
                     TypeId::UNKNOWN | TypeId::ERROR => false,
                     TypeId::ANY => !has_informative_upper_bound || !has_concrete_candidate,

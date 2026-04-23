@@ -1020,3 +1020,32 @@ fn test_accessor_keyword_preserved_on_class_field() {
         "static accessor keyword should be preserved: {output}"
     );
 }
+
+#[test]
+fn test_const_enum_computed_method_name_keeps_method_syntax() {
+    // Regression: a class method with a const-enum-member computed name
+    // (e.g. `[G.A]() {}`) must emit method syntax (`[G.A](): void;`),
+    // not property syntax (`[G.A]: () => void;`). The dts predicate that
+    // chooses syntax was reading the type cache for a `Literal` form;
+    // the binder's `ENUM_MEMBER` symbol flag is now consulted as a
+    // fallback so we keep method syntax even when the type system
+    // shapes the access as the enum-member type rather than the literal.
+    let output = emit_dts_with_binding(
+        r#"
+const enum G { A = 1, B = 2 }
+class C {
+    [G.A]() { }
+    get [G.B]() { return true; }
+    set [G.B](x: number) { }
+}
+"#,
+    );
+    assert!(
+        output.contains("[G.A](): "),
+        "const enum computed method must keep method syntax: {output}"
+    );
+    assert!(
+        !output.contains("[G.A]: () =>"),
+        "must not degrade to property syntax for const enum computed method: {output}"
+    );
+}

@@ -654,30 +654,30 @@ impl<'a> Completions<'a> {
     pub(super) fn get_symbol_detail(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
         use tsz_binder::symbol_flags;
 
-        if symbol.flags & symbol_flags::FUNCTION != 0 {
+        if symbol.has_any_flags(symbol_flags::FUNCTION) {
             Some("function".to_string())
-        } else if symbol.flags & symbol_flags::CLASS != 0 {
+        } else if symbol.has_any_flags(symbol_flags::CLASS) {
             Some("class".to_string())
-        } else if symbol.flags & symbol_flags::INTERFACE != 0 {
+        } else if symbol.has_any_flags(symbol_flags::INTERFACE) {
             Some("interface".to_string())
-        } else if symbol.flags & symbol_flags::REGULAR_ENUM != 0
-            || symbol.flags & symbol_flags::CONST_ENUM != 0
+        } else if symbol.has_any_flags(symbol_flags::REGULAR_ENUM)
+            || symbol.has_any_flags(symbol_flags::CONST_ENUM)
         {
             Some("enum".to_string())
-        } else if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+        } else if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             Some("type".to_string())
-        } else if symbol.flags & symbol_flags::TYPE_PARAMETER != 0 {
+        } else if symbol.has_any_flags(symbol_flags::TYPE_PARAMETER) {
             Some("type parameter".to_string())
-        } else if symbol.flags & symbol_flags::METHOD != 0 {
+        } else if symbol.has_any_flags(symbol_flags::METHOD) {
             Some("method".to_string())
-        } else if symbol.flags & symbol_flags::PROPERTY != 0 {
+        } else if symbol.has_any_flags(symbol_flags::PROPERTY) {
             Some("property".to_string())
-        } else if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+        } else if symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             Some("let/const".to_string())
-        } else if symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
+        } else if symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE) {
             Some("var".to_string())
-        } else if symbol.flags & symbol_flags::VALUE_MODULE != 0
-            || symbol.flags & symbol_flags::NAMESPACE_MODULE != 0
+        } else if symbol.has_any_flags(symbol_flags::VALUE_MODULE)
+            || symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE)
         {
             Some("module".to_string())
         } else {
@@ -693,7 +693,7 @@ impl<'a> Completions<'a> {
         use tsz_parser::parser::flags::node_flags;
 
         let mut mods = Vec::new();
-        if symbol.flags & symbol_flags::EXPORT_VALUE != 0 {
+        if symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
             mods.push("export");
         }
         // Check declaration node for ambient (declare) and deprecated
@@ -710,19 +710,19 @@ impl<'a> Completions<'a> {
                 mods.push("declare");
             }
         }
-        if symbol.flags & symbol_flags::ABSTRACT != 0 {
+        if symbol.has_any_flags(symbol_flags::ABSTRACT) {
             mods.push("abstract");
         }
-        if symbol.flags & symbol_flags::STATIC != 0 {
+        if symbol.has_any_flags(symbol_flags::STATIC) {
             mods.push("static");
         }
-        if symbol.flags & symbol_flags::PRIVATE != 0 {
+        if symbol.has_any_flags(symbol_flags::PRIVATE) {
             mods.push("private");
         }
-        if symbol.flags & symbol_flags::PROTECTED != 0 {
+        if symbol.has_any_flags(symbol_flags::PROTECTED) {
             mods.push("protected");
         }
-        if symbol.flags & symbol_flags::OPTIONAL != 0 {
+        if symbol.has_any_flags(symbol_flags::OPTIONAL) {
             mods.push("optional");
         }
         if mods.is_empty() {

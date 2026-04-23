@@ -125,7 +125,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         contextual: TypeId,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
     ) -> bool {
-        if matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+        if inferred.is_any_unknown_or_error() {
             return true;
         }
 
@@ -195,7 +195,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return true;
         }
 
-        if matches!(inferred, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+        if inferred.is_any_unknown_or_error() {
             return true;
         }
 
