@@ -500,7 +500,7 @@ pub struct BindResult {
     /// Maps module specifier -> [`ModuleAugmentation`]
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     pub reexports: Reexports,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
@@ -4689,7 +4689,7 @@ pub fn create_binder_from_bound_file(
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: file.global_augmentations.clone(),
             module_augmentations: file.module_augmentations.clone(),
-            augmentation_target_modules: file.augmentation_target_modules.clone(),
+            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
@@ -4780,7 +4780,7 @@ pub fn create_binder_from_bound_file_with_shared(
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: file.global_augmentations.clone(),
             module_augmentations: file.module_augmentations.clone(),
-            augmentation_target_modules: file.augmentation_target_modules.clone(),
+            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),

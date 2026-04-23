@@ -301,7 +301,11 @@ pub struct BinderState {
     /// self-referential augmentation interfaces (e.g., `interface Foo { self: Foo }` inside
     /// `declare module "./m"` should resolve Foo to the merged interface, not just the
     /// augmentation-local one).
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
 
     /// Lib binders for automatic lib symbol resolution.
     /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
@@ -801,7 +805,7 @@ pub struct BinderStateScopeInputs {
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
     pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
     pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     pub module_exports: FxHashMap<String, SymbolTable>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     pub reexports: FileReexportsMap,
