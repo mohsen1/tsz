@@ -241,7 +241,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
 
     // Named re-exports
     let mut reexports = Vec::new();
-    for (file_name, file_reexports) in &result.reexports {
+    for (file_name, file_reexports) in result.reexports.iter() {
         // Only include re-exports from this file (the reexport map key is the file name)
         if file_name == &result.file_name {
             for (exported_name, (source_module, original_name)) in file_reexports {

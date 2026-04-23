@@ -206,7 +206,7 @@ impl BinderState {
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
-            reexports: FxHashMap::default(),
+            reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: FxHashMap::default(),
             wildcard_reexports_type_only: FxHashMap::default(),
             resolved_export_cache: Default::default(),
@@ -270,7 +270,7 @@ impl BinderState {
         self.lib_binders.clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
         self.module_exports.clear();
-        self.reexports.clear();
+        Arc::make_mut(&mut self.reexports).clear();
         self.wildcard_reexports.clear();
         self.wildcard_reexports_type_only.clear();
         self.resolved_export_cache
@@ -423,7 +423,7 @@ impl BinderState {
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
-            reexports: FxHashMap::default(),
+            reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: FxHashMap::default(),
             wildcard_reexports_type_only: FxHashMap::default(),
             resolved_export_cache: Default::default(),
