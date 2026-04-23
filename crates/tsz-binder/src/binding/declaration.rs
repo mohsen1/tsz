@@ -1344,7 +1344,7 @@ impl BinderState {
         // If this is a lib symbol ID, check lib binders first to avoid
         // collision with local symbols at the same index
         if self.lib_symbol_ids.contains(&id) {
-            for lib_binder in &self.lib_binders {
+            for lib_binder in self.lib_binders.iter() {
                 if let Some(sym) = lib_binder.symbols.get(id) {
                     return Some(sym);
                 }
@@ -1352,7 +1352,7 @@ impl BinderState {
         }
 
         // Finally try lib binders for any remaining cases
-        for lib_binder in &self.lib_binders {
+        for lib_binder in self.lib_binders.iter() {
             if let Some(sym) = lib_binder.symbols.get(id) {
                 return Some(sym);
             }
@@ -1419,7 +1419,7 @@ impl BinderState {
         }
 
         // Legacy path: check lib binders directly (for backward compatibility)
-        for lib_binder in &self.lib_binders {
+        for lib_binder in self.lib_binders.iter() {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 return Some(sym_id);
             }
@@ -1455,7 +1455,7 @@ impl BinderState {
         }
 
         // Finally check our own lib binders
-        for lib_binder in &self.lib_binders {
+        for lib_binder in self.lib_binders.iter() {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 return Some(sym_id);
             }

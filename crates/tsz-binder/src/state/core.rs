@@ -202,7 +202,7 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: Arc::new(FxHashMap::default()),
-            lib_binders: Vec::new(),
+            lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: Arc::new(FxHashMap::default()),
@@ -267,7 +267,7 @@ impl BinderState {
         self.module_augmentations.clear();
         self.in_module_augmentation = false;
         self.current_augmented_module = None;
-        self.lib_binders.clear();
+        Arc::make_mut(&mut self.lib_binders).clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
         Arc::make_mut(&mut self.module_exports).clear();
         Arc::make_mut(&mut self.reexports).clear();
@@ -439,7 +439,7 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: Arc::new(FxHashMap::default()),
-            lib_binders: Vec::new(),
+            lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: Arc::new(FxHashMap::default()),
@@ -562,7 +562,7 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules,
-            lib_binders: Vec::new(),
+            lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports,
@@ -1587,7 +1587,7 @@ impl BinderState {
         // However, we keep lib_binders populated for backward compatibility
         // with any code that still iterates through them.
         for lib in lib_files {
-            self.lib_binders.push(Arc::clone(&lib.binder));
+            Arc::make_mut(&mut self.lib_binders).push(Arc::clone(&lib.binder));
         }
     }
 
