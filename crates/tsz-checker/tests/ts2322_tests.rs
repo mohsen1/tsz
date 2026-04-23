@@ -4120,6 +4120,52 @@ function foo<T, U>(x: T) {
 }
 
 #[test]
+fn ts2322_optional_property_vs_number_index_preserves_implicit_undefined() {
+    // tsc: `{ 1?: string }` assigned to `{ [k: number]: string }` must error
+    // because the optional `1` contributes `string | undefined` to the check
+    // against the number index value type `string`. Regression test for
+    // `optionalPropertyAssignableToStringIndexSignature.ts`.
+    let source = r#"
+declare let probablyArray: { [key: number]: string };
+declare let numberLiteralKeys: { 1?: string };
+probablyArray = numberLiteralKeys;
+"#;
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for optional numeric property vs number index, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2322_optional_string_property_vs_string_index_still_ok() {
+    // Regression guard: tsc allows `{ k1?: string }` assigned to
+    // `{ [k: string]: string }` because the string index strips the implicit
+    // `| undefined` contributed by the optional flag.
+    let source = r#"
+declare let optionalProperties: { k1?: string };
+let stringDictionary: { [key: string]: string } = optionalProperties;
+"#;
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected no TS2322 for `{{ k1?: string }}` vs string index, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn exact_optional_property_write_uses_ts2412() {
     let source = r#"
 interface U2 {
