@@ -253,23 +253,13 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
-            let use_2792 = self.ctx.compiler_options.implied_classic_resolution
-                || matches!(
-                    self.ctx.compiler_options.module,
-                    ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System | ModuleKind::None
-                );
-            if use_2792
-                && error.code
-                    == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
-            {
-                return (
-                    format_message(
-                        diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                        &[module_name],
-                    ),
-                    diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                );
-            }
+            // The resolver is the single source of truth for the TS2307 vs
+            // TS2792 choice: it probes for a matching `node_modules/<pkg>`
+            // ancestor before suggesting the nodenext hint, matching tsc's
+            // "would switching moduleResolution actually help?" gate. We no
+            // longer re-derive the code here from `implied_classic_resolution`
+            // alone — that produced TS2792 hints even for specifiers (like
+            // ambient-only modules) where nodenext wouldn't resolve them.
             return (error.message.clone(), error.code);
         }
 
