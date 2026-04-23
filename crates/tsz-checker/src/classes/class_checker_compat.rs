@@ -1562,6 +1562,31 @@ impl<'a> CheckerState<'a> {
                                 base_type,
                                 *derived_member_idx,
                             )
+                        } else if *derived_kind == METHOD_SIGNATURE
+                            && base_member_node.kind == METHOD_SIGNATURE
+                        {
+                            let derived_method_type =
+                                crate::query_boundaries::common::find_property_by_str(
+                                    self.ctx.types,
+                                    *member_type,
+                                    member_name,
+                                )
+                                .map(|p| p.type_id)
+                                .unwrap_or(*member_type);
+                            let base_method_type =
+                                crate::query_boundaries::common::find_property_by_str(
+                                    self.ctx.types,
+                                    base_type,
+                                    member_name,
+                                )
+                                .map(|p| p.type_id)
+                                .unwrap_or(base_type);
+                            should_report_member_type_mismatch(
+                                self,
+                                derived_method_type,
+                                base_method_type,
+                                *derived_member_idx,
+                            )
                         } else {
                             should_report_member_type_mismatch(
                                 self,
@@ -1781,6 +1806,12 @@ impl<'a> CheckerState<'a> {
                             .iter()
                             .any(|&(signature, _)| !signature_has_literal_parameter(signature))
                     };
+                let signature_contains_error = |signature: TypeId| {
+                    crate::query_boundaries::common::contains_error_type_in_args(
+                        self.ctx.types,
+                        signature,
+                    )
+                };
 
                 // For overloaded method inheritance, tsc compatibility hinges on
                 // the trailing (implementation) signature.
@@ -1788,6 +1819,18 @@ impl<'a> CheckerState<'a> {
                     let Some(derived_sigs) = derived_method_overloads.get(method_name) else {
                         continue;
                     };
+                    // The overload coverage pass runs after ordinary member
+                    // compatibility, so it must apply the same cascading-error
+                    // suppression. Post-merge lib validation can leave event-map
+                    // overload parameters unresolved; those should not become
+                    // TS2430 diagnostics on unrelated default-lib interfaces.
+                    if base_sigs.iter().copied().any(signature_contains_error)
+                        || derived_sigs
+                            .iter()
+                            .any(|(signature, _)| signature_contains_error(*signature))
+                    {
+                        continue;
+                    }
                     if has_non_specialized_signature(base_sigs)
                         && !has_non_specialized_signature_with_node(derived_sigs)
                     {
