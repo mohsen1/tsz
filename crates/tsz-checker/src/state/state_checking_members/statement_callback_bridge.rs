@@ -289,7 +289,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     && !export_decl.is_type_only
                     && !self.is_inside_namespace_declaration(export_idx)
                 {
-                    let clause_kind = self.ctx.arena.get(clause_idx).map(|n| n.kind);
+                    let clause_kind = self.ctx.arena.kind_at(clause_idx);
                     let clause_is_value_decl = clause_kind.is_some_and(|k| {
                         k == syntax_kind_ext::FUNCTION_DECLARATION
                             || k == syntax_kind_ext::CLASS_DECLARATION

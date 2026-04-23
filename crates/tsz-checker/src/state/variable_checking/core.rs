@@ -27,17 +27,15 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .arena
                 .get(contextual_init)
-                .is_some_and(
-                    |init_node| match self.ctx.arena.get(pattern_idx).map(|n| n.kind) {
-                        Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
-                            init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                        }
-                        Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
-                            init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        }
-                        _ => false,
-                    },
-                );
+                .is_some_and(|init_node| match self.ctx.arena.kind_at(pattern_idx) {
+                    Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    }
+                    Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                        init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    }
+                    _ => false,
+                });
 
         if !supports_pattern_context {
             return TypingRequest::NONE;
@@ -1533,7 +1531,7 @@ impl<'a> CheckerState<'a> {
             // TS7022: Structural circularity — `var a = { f: a }`.
             // TS7023: Return-type circularity — `var f = () => f()` or
             //         `var f = function() { return f(); }`.
-            let init_kind = self.ctx.arena.get(var_decl.initializer).map(|n| n.kind);
+            let init_kind = self.ctx.arena.kind_at(var_decl.initializer);
             let is_direct_deferred_initializer = init_kind.is_some_and(|kind| {
                 matches!(
                     kind,

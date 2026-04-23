@@ -1921,7 +1921,7 @@ fn test_alias_string_literal_navigation_uses_project_wide_resolution() {
         server.debug_resolve_export_alias_definition("/bar.ts", "./foo", "__<alias>");
     let probe_node =
         tsz::lsp::utils::find_node_at_or_before_offset(&arena, probe_off, &source_text);
-    let probe_kind = arena.get(probe_node).map(|n| n.kind).unwrap_or_default();
+    let probe_kind = arena.kind_at(probe_node).unwrap_or_default();
     let mut chain = Vec::new();
     let mut walk = probe_node;
     while walk.is_some() {

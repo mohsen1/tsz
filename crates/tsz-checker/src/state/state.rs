@@ -1357,7 +1357,7 @@ impl<'a> CheckerState<'a> {
         if use_node_cache && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
             // PERF: Single arena lookup for the cached path — all subsequent
             // checks reuse `node_kind` instead of re-fetching from the arena.
-            let node_kind = self.ctx.arena.get(idx).map(|n| n.kind).unwrap_or(0);
+            let node_kind = self.ctx.arena.kind_at(idx).unwrap_or(0);
 
             // PERF: Only Identifier and ThisKeyword can be narrowed by flow
             // analysis, and only property/element access + super are

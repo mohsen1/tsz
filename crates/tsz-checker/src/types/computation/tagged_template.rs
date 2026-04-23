@@ -162,7 +162,7 @@ impl<'a> CheckerState<'a> {
 
         let unwrapped_tag = self.ctx.arena.skip_parenthesized_and_assertions(tagged.tag);
         let force_bivariant_callbacks = matches!(
-            self.ctx.arena.get(unwrapped_tag).map(|n| n.kind),
+            self.ctx.arena.kind_at(unwrapped_tag),
             Some(
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
