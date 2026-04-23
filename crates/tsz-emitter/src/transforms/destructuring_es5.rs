@@ -608,7 +608,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                                     IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                                 }
                             } else if let Some(prop_name_node) = self.arena.get(prop.name)
-                                && prop_name_node.kind == SyntaxKind::StringLiteral as u16
+                                && prop_name_node.is_string_literal()
                                 && let Some(str_lit) = self.arena.get_literal(prop_name_node)
                             {
                                 IRNode::elem(
@@ -638,7 +638,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                                     IRNode::prop(IRNode::id(source.to_string()), prop_name.clone())
                                 }
                             } else if let Some(prop_name_node) = self.arena.get(prop.name)
-                                && prop_name_node.kind == SyntaxKind::StringLiteral as u16
+                                && prop_name_node.is_string_literal()
                                 && let Some(str_lit) = self.arena.get_literal(prop_name_node)
                             {
                                 IRNode::elem(

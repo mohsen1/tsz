@@ -2842,7 +2842,7 @@ impl ParserState {
             // `import { foo as "str" }` is invalid (string can't be a binding).
             // `import { "str" }` is invalid (string without alias can't be a binding).
             if let Some(name_node) = self.arena.get(name)
-                && name_node.kind == SyntaxKind::StringLiteral as u16
+                && name_node.is_string_literal()
             {
                 let name_start = name_node.pos;
                 let name_len = name_node.end.saturating_sub(name_node.pos);

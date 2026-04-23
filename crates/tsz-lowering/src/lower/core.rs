@@ -748,7 +748,7 @@ impl<'a> TypeLowering<'a> {
     pub(super) fn type_name_text(&self, node_idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(node_idx)?;
 
-        if node.kind == SyntaxKind::Identifier as u16 {
+        if node.is_identifier() {
             return self
                 .arena
                 .get_identifier(node)
@@ -779,7 +779,7 @@ impl<'a> TypeLowering<'a> {
     /// `NodeIndex`-based resolver cannot.
     pub(super) fn scoped_identifier_name_text(&self, node_idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(node_idx)?;
-        if node.kind != SyntaxKind::Identifier as u16 {
+        if !node.is_identifier() {
             return None;
         }
 
@@ -795,7 +795,7 @@ impl<'a> TypeLowering<'a> {
             if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                 && let Some(module) = self.arena.get_module(parent_node)
                 && let Some(name_node) = self.arena.get(module.name)
-                && name_node.kind == SyntaxKind::Identifier as u16
+                && name_node.is_identifier()
                 && let Some(name_ident) = self.arena.get_identifier(name_node)
             {
                 prefixes.push(name_ident.escaped_text.clone());
@@ -2135,7 +2135,7 @@ impl<'a> TypeLowering<'a> {
             && !lit_data.text.is_empty()
         {
             // Canonicalize numeric property names (e.g. "1.", "1.0" -> "1")
-            if node.kind == SyntaxKind::NumericLiteral as u16
+            if node.is_numeric_literal()
                 && let Some(canonical) =
                     tsz_solver::utils::canonicalize_numeric_name(&lit_data.text)
             {

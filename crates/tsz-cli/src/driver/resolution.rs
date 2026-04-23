@@ -892,7 +892,6 @@ fn import_attributes_resolution_mode(
 /// e.g., `require('./module')` -> `./module` (without quotes)
 fn extract_require_specifier(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     use tsz::parser::syntax_kind_ext;
-    use tsz::scanner::SyntaxKind;
 
     let node = arena.get(idx)?;
 
@@ -909,7 +908,7 @@ fn extract_require_specifier(arena: &NodeArena, idx: NodeIndex) -> Option<String
 
     // Check that the callee is 'require' (an identifier)
     let callee_node = arena.get(call.expression)?;
-    if callee_node.kind != SyntaxKind::Identifier as u16 {
+    if !callee_node.is_identifier() {
         return None;
     }
     let callee_text = arena.get_identifier_text(call.expression)?;
@@ -1063,7 +1062,7 @@ fn collect_import_local_names(
             if clause.named_bindings.is_some()
                 && let Some(bindings_node) = arena.get(clause.named_bindings)
             {
-                if bindings_node.kind == SyntaxKind::Identifier as u16 {
+                if bindings_node.is_identifier() {
                     if let Some(name) = arena.get_identifier_text(clause.named_bindings) {
                         names.push(name.to_string());
                     }

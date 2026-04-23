@@ -24,7 +24,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 
 /// Information about variables in a loop body for the IIFE transform
 #[derive(Debug, Default)]
@@ -226,7 +225,7 @@ fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, names: &mut Vec
         return;
     };
 
-    if name_node.kind == SyntaxKind::Identifier as u16 {
+    if name_node.is_identifier() {
         if let Some(ident) = arena.get_identifier(name_node) {
             let text = arena.resolve_identifier_text(ident).to_string();
             if !names.contains(&text) {
