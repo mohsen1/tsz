@@ -290,7 +290,33 @@ impl<'a> CheckerContext<'a> {
             .filter_map(|(_, p)| p.starts_with('/').then_some(p.as_str()))
             .collect();
         let common = if absolute.len() >= 2 {
-            Self::longest_common_directory_prefix(&absolute)
+            let common = Self::longest_common_directory_prefix(&absolute);
+            let common_dir = common.trim_end_matches('/');
+            let common_basename = common_dir.rsplit('/').next().unwrap_or(common_dir);
+            if common_basename == "src" {
+                // Conformance virtual projects commonly root files under `/src`;
+                // tsc keeps that segment in `import("src/...")` diagnostics.
+                common_dir
+                    .rsplit_once('/')
+                    .map(|(parent, _)| {
+                        if parent.is_empty() {
+                            "/".to_string()
+                        } else {
+                            format!("{parent}/")
+                        }
+                    })
+                    .unwrap_or_default()
+            } else if common
+                .trim_matches('/')
+                .split('/')
+                .filter(|component| !component.is_empty())
+                .count()
+                > 1
+            {
+                common
+            } else {
+                String::new()
+            }
         } else {
             String::new()
         };
