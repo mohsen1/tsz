@@ -44,6 +44,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "ts2567_augmentation_enum_cross_arena_decl_tests"
+path = "tests/ts2567_augmentation_enum_cross_arena_decl_tests.rs"
+
+[[test]]
 name = "await_generic_non_promise_no_false_ts2339_tests"
 path = "tests/await_generic_non_promise_no_false_ts2339_tests.rs"
 
