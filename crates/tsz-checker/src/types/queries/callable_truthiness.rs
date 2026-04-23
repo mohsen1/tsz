@@ -849,8 +849,7 @@ impl<'a> CheckerState<'a> {
         let children = self.ctx.arena.get_children(subtree);
         for child in children {
             if let Some(child_node) = self.ctx.arena.get(child)
-                && (child_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || child_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                && (child_node.is_function_expression_or_arrow()
                     || child_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
                 && self.func_shadows_symbol(child, sym_id)
             {

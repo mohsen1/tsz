@@ -1879,6 +1879,14 @@ impl Node {
         )
     }
 
+    /// Check if this is an anonymous function-valued expression
+    /// (`function () {}`, `function name() {}`, or `(a) => {}`).
+    #[inline]
+    #[must_use]
+    pub const fn is_function_expression_or_arrow(&self) -> bool {
+        matches!(self.kind, FUNCTION_EXPRESSION | ARROW_FUNCTION)
+    }
+
     /// Check if this is a get or set accessor declaration.
     #[inline]
     #[must_use]

@@ -1016,8 +1016,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Stop at function boundaries (don't consider outer static blocks)
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.is_function_expression_or_arrow()
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
                     || node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -1113,8 +1112,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Stop at function boundaries
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.is_function_expression_or_arrow()
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
                 {
@@ -1342,8 +1340,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Stop at function/class/interface boundaries
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.is_function_expression_or_arrow()
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
                     || node.kind == syntax_kind_ext::CLASS_DECLARATION
@@ -1413,8 +1410,7 @@ impl<'a> CheckerState<'a> {
 
             // Stop at function/class/interface boundaries
             if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.is_function_expression_or_arrow()
                 || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
                 || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
@@ -1503,8 +1499,7 @@ impl<'a> CheckerState<'a> {
 
             // Stop at function/class/interface boundaries
             if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.is_function_expression_or_arrow()
                 || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
                 || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION

@@ -418,8 +418,7 @@ impl<'a> CodeActionProvider<'a> {
         // Skip into function/class bodies -- identifiers there are in a
         // separate scope and do not need to become parameters.
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.is_function_expression_or_arrow()
             || node.kind == syntax_kind_ext::CLASS_EXPRESSION
             || node.kind == syntax_kind_ext::CLASS_DECLARATION
         {
@@ -617,8 +616,7 @@ impl<'a> CodeActionProvider<'a> {
             };
 
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.is_function_expression_or_arrow()
             {
                 // Insert after this function's end
                 return node.end;

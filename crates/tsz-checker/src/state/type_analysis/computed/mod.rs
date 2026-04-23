@@ -714,10 +714,9 @@ impl<'a> CheckerState<'a> {
                             if !self.is_assignment_operator(binary.operator_token) {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                             let Some(ext) = arena.get_extended(decl_idx) else {
@@ -738,10 +737,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::VARIABLE_DECLARATION => {
                             let Some(var_decl) = arena.get_variable_declaration(node) else {
@@ -750,8 +748,7 @@ impl<'a> CheckerState<'a> {
                             let Some(init_node) = arena.get(var_decl.initializer) else {
                                 return false;
                             };
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            init_node.is_function_expression_or_arrow()
                         }
                         _ => false,
                     }
