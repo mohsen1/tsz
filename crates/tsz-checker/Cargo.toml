@@ -40,6 +40,10 @@ name = "ts1362_false_positive_tests"
 path = "tests/ts1362_false_positive_tests.rs"
 
 [[test]]
+name = "ts1361_chain_attribution_tests"
+path = "tests/ts1361_chain_attribution_tests.rs"
+
+[[test]]
 name = "ts1238_tests"
 path = "tests/ts1238_tests.rs"
 
