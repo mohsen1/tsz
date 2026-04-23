@@ -973,7 +973,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .arena
                 .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
-        let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
+        let body_source_range = self.arena.pos_end_at(func_data.body);
 
         // Convert function to IR (stripping type annotations)
         let func_decl = IRNode::FunctionDecl {

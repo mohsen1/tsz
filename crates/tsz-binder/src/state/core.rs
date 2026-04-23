@@ -201,17 +201,17 @@ impl BinderState {
             module_augmentations: FxHashMap::default(),
             in_module_augmentation: false,
             current_augmented_module: None,
-            augmentation_target_modules: FxHashMap::default(),
+            augmentation_target_modules: Arc::new(FxHashMap::default()),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
-            reexports: FxHashMap::default(),
+            reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: FxHashMap::default(),
             wildcard_reexports_type_only: FxHashMap::default(),
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
-            shorthand_ambient_modules: FxHashSet::default(),
+            shorthand_ambient_modules: Arc::new(FxHashSet::default()),
             modules_with_export_equals: FxHashSet::default(),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
@@ -270,7 +270,7 @@ impl BinderState {
         Arc::make_mut(&mut self.lib_binders).clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
         self.module_exports.clear();
-        self.reexports.clear();
+        Arc::make_mut(&mut self.reexports).clear();
         self.wildcard_reexports.clear();
         self.wildcard_reexports_type_only.clear();
         self.resolved_export_cache
@@ -281,7 +281,7 @@ impl BinderState {
             .write()
             .expect("RwLock not poisoned")
             .clear();
-        self.shorthand_ambient_modules.clear();
+        Arc::make_mut(&mut self.shorthand_ambient_modules).clear();
         self.modules_with_export_equals.clear();
         self.module_export_equals_non_module.clear();
         self.lib_symbols_merged = false;
@@ -418,17 +418,17 @@ impl BinderState {
             module_augmentations: FxHashMap::default(),
             in_module_augmentation: false,
             current_augmented_module: None,
-            augmentation_target_modules: FxHashMap::default(),
+            augmentation_target_modules: Arc::new(FxHashMap::default()),
             lib_binders: Arc::new(Vec::new()),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports: FxHashMap::default(),
-            reexports: FxHashMap::default(),
+            reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: FxHashMap::default(),
             wildcard_reexports_type_only: FxHashMap::default(),
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
-            shorthand_ambient_modules: FxHashSet::default(),
+            shorthand_ambient_modules: Arc::new(FxHashSet::default()),
             modules_with_export_equals: FxHashSet::default(),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
@@ -1674,7 +1674,7 @@ impl BinderState {
                     sym.value_declaration =
                         sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
                     sym.value_declaration_span = if sym.value_declaration.is_some() {
-                        arena.get(sym.value_declaration).map(|n| (n.pos, n.end))
+                        arena.pos_end_at(sym.value_declaration)
                     } else {
                         None
                     };

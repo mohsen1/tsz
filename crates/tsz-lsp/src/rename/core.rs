@@ -724,7 +724,7 @@ impl<'a> RenameProvider<'a> {
                 false
             });
         if is_top_level
-            && (symbol.flags & symbol_flags::EXPORT_VALUE != 0 || is_export_specifier_alias)
+            && (symbol.has_any_flags(symbol_flags::EXPORT_VALUE) || is_export_specifier_alias)
         {
             let module_name = self
                 .file_name

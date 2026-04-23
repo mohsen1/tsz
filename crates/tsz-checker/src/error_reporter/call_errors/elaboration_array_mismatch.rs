@@ -35,9 +35,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::SubtypeFailureReason;
         use tsz_parser::parser::syntax_kind_ext;
 
-        if matches!(source_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-            || matches!(target_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-        {
+        if source_type.is_any_unknown_or_error() || target_type.is_any_unknown_or_error() {
             return false;
         }
 
@@ -123,11 +121,8 @@ impl<'a> CheckerState<'a> {
                         };
 
                     let elem_type = self.elaboration_source_expression_type(elem_idx);
-                    if matches!(elem_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-                        || matches!(
-                            target_element_type,
-                            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-                        )
+                    if elem_type.is_any_unknown_or_error()
+                        || target_element_type.is_any_unknown_or_error()
                     {
                         continue;
                     }
@@ -157,7 +152,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let elem_type = self.elaboration_source_expression_type(elem_idx);
-                    if matches!(elem_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                    if elem_type.is_any_unknown_or_error() {
                         continue;
                     }
                     if !self.is_assignable_to(elem_type, target_element) {

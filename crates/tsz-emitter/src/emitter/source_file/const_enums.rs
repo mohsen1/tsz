@@ -193,10 +193,7 @@ impl<'a> Printer<'a> {
         }
 
         // Skip ambient (declare) enums — they may reference values from other files
-        if self
-            .arena
-            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&enum_data.modifiers) {
             return;
         }
 

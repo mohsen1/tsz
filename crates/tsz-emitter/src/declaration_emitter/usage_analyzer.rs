@@ -1410,7 +1410,7 @@ impl<'a> UsageAnalyzer<'a> {
                 });
         }
 
-        self.binder.node_symbols.get(&expr_idx.0).copied()
+        self.binder.get_node_symbol(expr_idx)
     }
 
     /// Walk an inferred type from the type cache.

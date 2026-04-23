@@ -421,7 +421,7 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             // UMD export merged with a variable declaration from `declare global`
-            (sym.flags & symbol_flags::VARIABLE) != 0
+            sym.has_any_flags(symbol_flags::VARIABLE)
         };
 
         // Check lib_contexts (lib files + some user files)
@@ -610,7 +610,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if symbol.escaped_name != name
-                || (symbol.flags & symbol_flags::VALUE) == 0
+                || !symbol.has_any_flags(symbol_flags::VALUE)
                 || symbol.is_umd_export
             {
                 continue;

@@ -868,7 +868,7 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier(self.ctx.arena, expr_idx)
             .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
         if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
@@ -910,7 +910,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
             .or_else(|| self.resolve_qualified_symbol(expr_idx))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
 
@@ -997,7 +997,7 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(sym_id) = callable_shape.symbol
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & symbol_flags::ABSTRACT) != 0
+                && symbol.has_any_flags(symbol_flags::ABSTRACT)
             {
                 return true;
             }
@@ -1006,7 +1006,7 @@ impl<'a> CheckerState<'a> {
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            && symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && let Some(body_type) = def.body
         {
@@ -1016,7 +1016,7 @@ impl<'a> CheckerState<'a> {
         match query::classify_for_abstract_check(self.ctx.types, type_id) {
             query::AbstractClassCheckKind::TypeQuery(sym_ref) => {
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0))
-                    && symbol.flags & symbol_flags::ABSTRACT != 0
+                    && symbol.has_any_flags(symbol_flags::ABSTRACT)
                 {
                     return true;
                 }

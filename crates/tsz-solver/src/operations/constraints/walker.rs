@@ -353,7 +353,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        // If target is an inference placeholder, add lower bound: source <: var
+        // If target is an inference placeholder, add lower bound: source <: var.
+        // `InferenceContext::add_candidate` already routes through contra-candidates
+        // when `in_contra_mode` is active.
         if let Some(&var) = var_map.get(&target) {
             ctx.add_candidate(var, source, priority);
             return;

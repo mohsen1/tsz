@@ -1008,8 +1008,8 @@ fn resolve_concrete_conditional_result(
     }
 
     if contains_type_parameters_db(db, check_type)
-        || matches!(check_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-        || matches!(extends_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+        || check_type.is_any_unknown_or_error()
+        || extends_type.is_any_unknown_or_error()
     {
         return None;
     }
