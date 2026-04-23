@@ -82,10 +82,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let has_declare = self
-                .ctx
-                .arena
-                .has_modifier(modifiers, tsz_scanner::SyntaxKind::DeclareKeyword);
+            let has_declare = self.ctx.arena.is_declare(modifiers);
             let has_export = self
                 .ctx
                 .arena

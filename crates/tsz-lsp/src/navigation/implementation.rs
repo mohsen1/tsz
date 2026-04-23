@@ -126,11 +126,11 @@ impl<'a> GoToImplementationProvider<'a> {
     pub fn determine_target_kind(&self, symbol: &tsz_binder::Symbol) -> Option<TargetKind> {
         use tsz_binder::symbol_flags;
 
-        if symbol.flags & symbol_flags::INTERFACE != 0 {
+        if symbol.has_any_flags(symbol_flags::INTERFACE) {
             return Some(TargetKind::Interface);
         }
 
-        if symbol.flags & symbol_flags::CLASS != 0 {
+        if symbol.has_any_flags(symbol_flags::CLASS) {
             // Check if the class is abstract by examining its declarations
             for &decl_idx in &symbol.declarations {
                 if let Some(ext) = self.arena.get_extended(decl_idx)

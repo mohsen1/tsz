@@ -146,10 +146,7 @@ impl<'a> CheckerState<'a> {
         let contextual_target = raw_call_param_property_target
             .or(object_property_target)
             .or(property_diag_target)?;
-        if matches!(
-            contextual_target,
-            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-        ) {
+        if contextual_target.is_any_unknown_or_error() {
             return None;
         }
 

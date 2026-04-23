@@ -508,7 +508,7 @@ impl<'a> Completions<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<tsz_binder::SymbolId> {
-        if let Some(sym_id) = self.binder.node_symbols.get(&expr_idx.0).copied() {
+        if let Some(sym_id) = self.binder.get_node_symbol(expr_idx) {
             return Some(sym_id);
         }
 

@@ -70,10 +70,7 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient module declarations (declare namespace/module)
-        if self
-            .arena
-            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&module.modifiers) {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -1062,10 +1059,7 @@ impl<'a> Printer<'a> {
         &self,
         module: &tsz_parser::parser::node::ModuleData,
     ) -> bool {
-        if self
-            .arena
-            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&module.modifiers) {
             return self.ambient_module_body_has_runtime_value(module.body);
         }
 
@@ -1279,9 +1273,7 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(class.name) != name {
                     return None;
                 }
-                let runtime = !self
-                    .arena
-                    .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword);
+                let runtime = !self.arena.is_declare(&class.modifiers);
                 Some((runtime, None))
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
@@ -1289,10 +1281,7 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(func.name) != name {
                     return None;
                 }
-                let runtime = !self
-                    .arena
-                    .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
-                    && func.body.is_some();
+                let runtime = !self.arena.is_declare(&func.modifiers) && func.body.is_some();
                 Some((runtime, None))
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
@@ -1300,9 +1289,7 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(enum_decl.name) != name {
                     return None;
                 }
-                let runtime = !self
-                    .arena
-                    .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                let runtime = !self.arena.is_declare(&enum_decl.modifiers)
                     && !self
                         .arena
                         .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
@@ -1327,9 +1314,7 @@ impl<'a> Printer<'a> {
                 // Structure: VariableStatement → declarations: [VariableDeclarationList]
                 //            VariableDeclarationList → declarations: [VariableDeclaration, ...]
                 let var_stmt = self.arena.get_variable(stmt_node)?;
-                let is_declare = self
-                    .arena
-                    .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword);
+                let is_declare = self.arena.is_declare(&var_stmt.modifiers);
                 for &list_or_decl_idx in &var_stmt.declarations.nodes {
                     let Some(list_or_decl_node) = self.arena.get(list_or_decl_idx) else {
                         continue;

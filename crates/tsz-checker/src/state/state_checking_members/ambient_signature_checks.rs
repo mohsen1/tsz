@@ -88,11 +88,7 @@ impl<'a> CheckerState<'a> {
             use crate::diagnostics::{diagnostic_messages, format_message};
 
             // TS8009: Modifiers like 'declare' can only be used in TypeScript files
-            if self
-                .ctx
-                .arena
-                .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
-            {
+            if self.ctx.arena.is_declare(&prop.modifiers) {
                 let message = format_message(
                     diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     &["declare"],

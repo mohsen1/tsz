@@ -242,8 +242,7 @@ impl<'a> CheckerState<'a> {
     fn is_in_object_literal_member(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, FUNCTION_DECLARATION,
-            FUNCTION_EXPRESSION, GET_ACCESSOR, METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION,
-            SET_ACCESSOR,
+            FUNCTION_EXPRESSION, METHOD_DECLARATION, OBJECT_LITERAL_EXPRESSION,
         };
         let mut current = idx;
         let mut saw_object_member = false;
@@ -257,10 +256,7 @@ impl<'a> CheckerState<'a> {
                 break;
             };
 
-            if parent_node.kind == METHOD_DECLARATION
-                || parent_node.kind == GET_ACCESSOR
-                || parent_node.kind == SET_ACCESSOR
-            {
+            if parent_node.kind == METHOD_DECLARATION || parent_node.is_accessor() {
                 saw_object_member = true;
             }
 

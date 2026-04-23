@@ -741,7 +741,8 @@ pub(super) fn collect_diagnostics(
     // cross-file lookup binders can share the single allocation instead of
     // each deep-cloning a copy. Cross-file consumers read these via
     // `ctx.reexports_for_file` / `wildcard_reexports_for_file`.
-    let program_reexports = Arc::new(program.reexports.clone());
+    // `program.reexports` is already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
+    let program_reexports = Arc::clone(&program.reexports);
     let program_wildcard_reexports = Arc::new(program.wildcard_reexports.clone());
     let program_wildcard_reexports_type_only =
         Arc::new(program.wildcard_reexports_type_only.clone());
@@ -1559,9 +1560,7 @@ fn propagate_module_export_maps(
                 .insert(current_specifier.clone(), type_only_flags);
         }
         if let Some(reexports) = program.reexports.get(target_file_name).cloned() {
-            binder
-                .reexports
-                .insert(current_specifier.clone(), reexports);
+            Arc::make_mut(&mut binder.reexports).insert(current_specifier.clone(), reexports);
         }
 
         if let Some(source_modules) = program.wildcard_reexports.get(target_file_name).cloned() {

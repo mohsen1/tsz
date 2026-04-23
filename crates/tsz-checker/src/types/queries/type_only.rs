@@ -1153,7 +1153,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let value_type = self.type_of_value_symbol_by_name(name);
-        if !matches!(value_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if !value_type.is_unknown_or_error() {
             return None;
         }
 

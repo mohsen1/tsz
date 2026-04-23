@@ -643,13 +643,10 @@ impl<'a> GoToDefinition<'a> {
                             !c.is_alphanumeric() && c != '_' && c != '$'
                         });
                         if text == member_name {
-                            if let Some(sym_id) = self.binder.node_symbols.get(&name_idx.0).copied()
-                            {
+                            if let Some(sym_id) = self.binder.get_node_symbol(name_idx) {
                                 return Some(sym_id);
                             }
-                            if let Some(sym_id) =
-                                self.binder.node_symbols.get(&member_idx.0).copied()
-                            {
+                            if let Some(sym_id) = self.binder.get_node_symbol(member_idx) {
                                 return Some(sym_id);
                             }
                         }
@@ -685,13 +682,10 @@ impl<'a> GoToDefinition<'a> {
                             !c.is_alphanumeric() && c != '_' && c != '$'
                         });
                         if text == member_name {
-                            if let Some(sym_id) = self.binder.node_symbols.get(&name_idx.0).copied()
-                            {
+                            if let Some(sym_id) = self.binder.get_node_symbol(name_idx) {
                                 return Some(sym_id);
                             }
-                            if let Some(sym_id) =
-                                self.binder.node_symbols.get(&member_idx.0).copied()
-                            {
+                            if let Some(sym_id) = self.binder.get_node_symbol(member_idx) {
                                 return Some(sym_id);
                             }
                         }
