@@ -265,8 +265,7 @@ impl BinderState {
                     .insert(new_id, (lib_binder_ptr, local_id));
 
                 // Track which arena contains this symbol's declarations (legacy - stores last arena)
-                self.symbol_arenas
-                    .insert(new_id, Arc::clone(&lib_ctx.arena));
+                Arc::make_mut(&mut self.symbol_arenas).insert(new_id, Arc::clone(&lib_ctx.arena));
             }
         }
 

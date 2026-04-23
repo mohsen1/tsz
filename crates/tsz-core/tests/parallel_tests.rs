@@ -8502,7 +8502,7 @@ var e: Date = c.b();
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
-            symbol_arenas: file1_bound.symbol_arenas.clone(),
+            symbol_arenas: std::sync::Arc::new(file1_bound.symbol_arenas.clone()),
             declaration_arenas,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),

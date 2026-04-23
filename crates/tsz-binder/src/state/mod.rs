@@ -248,8 +248,12 @@ pub struct BinderState {
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
-    /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena)
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena).
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
     /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
     /// This is needed when a symbol (like Array) is declared across multiple lib files.
@@ -835,7 +839,7 @@ pub struct BinderStateScopeInputs {
     pub reexports: Arc<FileReexportsMap>,
     pub wildcard_reexports: Arc<WildcardReexportsMap>,
     pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     pub declaration_arenas: DeclarationArenaMap,
     pub cross_file_node_symbols: CrossFileNodeSymbols,
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,

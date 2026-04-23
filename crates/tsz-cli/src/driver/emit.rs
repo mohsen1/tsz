@@ -83,7 +83,7 @@ pub(crate) fn emit_outputs(
     // This enables the declaration emitter's portability check to resolve
     // cross-file symbols (e.g., imported types from node_modules) to their
     // source file paths, which is required for TS2883 diagnostics.
-    let global_symbol_arenas = context.program.symbol_arenas.clone();
+    let global_symbol_arenas = (*context.program.symbol_arenas).clone();
 
     // Collect file paths that contain module augmentations.
     // The declaration emitter uses this to preserve side-effect imports for

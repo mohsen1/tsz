@@ -184,7 +184,7 @@ impl BinderState {
             current_scope_idx: 0,
             node_symbols: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             module_declaration_exports_publicly: FxHashMap::default(),
-            symbol_arenas: FxHashMap::default(),
+            symbol_arenas: Arc::new(FxHashMap::default()),
             declaration_arenas: FxHashMap::default(),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::with_capacity_and_hasher(128, Default::default()),
@@ -250,7 +250,7 @@ impl BinderState {
         self.current_scope_idx = 0;
         self.node_symbols.clear();
         self.module_declaration_exports_publicly.clear();
-        self.symbol_arenas.clear();
+        Arc::make_mut(&mut self.symbol_arenas).clear();
         self.declaration_arenas.clear();
         self.cross_file_node_symbols.clear();
         self.node_flow.clear();
@@ -421,7 +421,7 @@ impl BinderState {
             current_scope_idx: 0,
             node_symbols,
             module_declaration_exports_publicly: FxHashMap::default(),
-            symbol_arenas: FxHashMap::default(),
+            symbol_arenas: Arc::new(FxHashMap::default()),
             declaration_arenas: FxHashMap::default(),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::default(),

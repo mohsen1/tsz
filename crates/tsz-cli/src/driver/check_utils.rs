@@ -1552,16 +1552,15 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             .map(|&(sym_id, _)| sym_id)
             .collect();
 
-    let symbol_arenas: rustc_hash::FxHashMap<tsz::binder::SymbolId, Arc<tsz_parser::NodeArena>> =
-        program
-            .symbol_arenas
-            .iter()
-            .filter_map(|(&sym_id, arena)| {
-                let has_non_local_decl = symbols_with_non_local_declarations.contains(&sym_id);
-                (has_non_local_decl || !Arc::ptr_eq(arena, &file.arena))
-                    .then(|| (sym_id, Arc::clone(arena)))
-            })
-            .collect();
+    // Share the program-wide symbol_arenas via Arc::clone — O(1) instead of
+    // building a per-file filtered map. The previous filter dropped entries
+    // where the symbol was already local (arena pointer equal to file.arena
+    // and no cross-file decl), but keeping them is harmless: consumers do
+    // point lookups (`binder.symbol_arenas.get(&sym_id)`), and the checker
+    // has no iter consumers of this map. Drops ~O(N_files × N_symbols)
+    // iteration on large repos.
+    let _ = symbols_with_non_local_declarations; // kept for declaration_arenas use above
+    let symbol_arenas = Arc::clone(&program.symbol_arenas);
 
     // Pre-size to avoid repeated rehashing when merging globals into the
     // file-local table. The merged map ends up holding (file_locals ∪ globals);
