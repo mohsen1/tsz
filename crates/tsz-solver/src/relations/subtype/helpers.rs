@@ -139,6 +139,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !self.erase_generics {
             flags |= RelationFlags::NO_ERASE_GENERICS;
         }
+        if self.allow_erased_generic_signature_retry {
+            flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
+        }
         if self.assume_related_on_cycle {
             flags |= RelationFlags::ASSUME_RELATED_ON_CYCLE;
         }

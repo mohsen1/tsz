@@ -58,6 +58,10 @@ pub(crate) struct RelationRequest {
     pub missing_property_mode: MissingPropertyMode,
     /// Whether the source is a fresh object literal.
     pub source_is_fresh: bool,
+    /// Whether failed contextual generic-signature inference may retry with
+    /// erased signatures. This is a targeted interface property compatibility
+    /// mode, not the default assignment relation.
+    pub allow_erased_generic_signature_retry: bool,
 }
 
 impl RelationRequest {
@@ -69,6 +73,7 @@ impl RelationRequest {
             excess_property_mode: ExcessPropertyMode::Skip,
             missing_property_mode: MissingPropertyMode::Report,
             source_is_fresh: false,
+            allow_erased_generic_signature_retry: false,
         }
     }
 
@@ -116,6 +121,12 @@ impl RelationRequest {
         self.missing_property_mode = mode;
         self
     }
+
+    /// Allow a failed generic-signature inference to retry with erased signatures.
+    pub(crate) fn with_erased_generic_signature_retry(mut self) -> Self {
+        self.allow_erased_generic_signature_retry = true;
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +148,8 @@ impl RelationFlags {
     pub const NO_UNCHECKED_INDEXED_ACCESS: u16 =
         tsz_solver::RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
     pub const NO_ERASE_GENERICS: u16 = tsz_solver::RelationCacheKey::FLAG_NO_ERASE_GENERICS;
+    pub const ALLOW_ERASED_GENERIC_SIGNATURE_RETRY: u16 =
+        tsz_solver::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
     pub const DISABLE_METHOD_BIVARIANCE: u16 =
         tsz_solver::RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
 }
@@ -572,12 +585,17 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
     )
     .entered();
 
+    let mut relation_flags = flags;
+    if request.allow_erased_generic_signature_retry {
+        relation_flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
+    }
+
     let inputs = AssignabilityQueryInputs {
         db,
         resolver,
         source: request.source,
         target: request.target,
-        flags,
+        flags: relation_flags,
         inheritance_graph,
         sound_mode,
     };
