@@ -616,9 +616,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         if let Some(mods) = modifiers {
-            self.ctx
-                .arena
-                .has_modifier(&mods, SyntaxKind::StaticKeyword)
+            self.ctx.arena.is_static(&mods)
         } else {
             false
         }
