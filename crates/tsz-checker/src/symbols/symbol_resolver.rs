@@ -39,7 +39,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<SymbolId> {
         use tsz_parser::parser::syntax_kind_ext;
 
-        let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(idx);
         // Track whether we've passed through a ComputedPropertyName. If so,
         // the enclosing class member's type parameters must be skipped because
         // computed property names are evaluated in the class scope, not the

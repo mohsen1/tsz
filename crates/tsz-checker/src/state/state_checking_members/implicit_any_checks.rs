@@ -331,7 +331,7 @@ impl<'a> CheckerState<'a> {
                 function_idx = Some(idx);
                 break;
             }
-            current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            current = self.ctx.arena.parent_of(idx);
         }
 
         let Some(function_idx) = function_idx else {

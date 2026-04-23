@@ -23,8 +23,7 @@ impl CheckerState<'_> {
 
         let mut current = node_idx;
         for _ in 0..12 {
-            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
-            else {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
                 break;
             };
             if parent_idx.is_none() {
@@ -82,7 +81,7 @@ impl CheckerState<'_> {
         body_idx: NodeIndex,
     ) -> FxHashMap<String, TypeId> {
         let mut param_type_map = FxHashMap::default();
-        let Some(parent_idx) = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent) else {
+        let Some(parent_idx) = self.ctx.arena.parent_of(body_idx) else {
             return param_type_map;
         };
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
@@ -390,8 +389,7 @@ impl CheckerState<'_> {
 
         let mut current = idx;
         for _ in 0..12 {
-            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
-            else {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
                 break;
             };
             if parent_idx.is_none() {
@@ -595,8 +593,7 @@ impl CheckerState<'_> {
                                     .map(|id| id.escaped_text.as_str());
                                 if let Some(pname) = param_name {
                                     // Walk to enclosing function via extended node parent
-                                    let func_idx =
-                                        self.ctx.arena.get_extended(decl).map(|ext| ext.parent);
+                                    let func_idx = self.ctx.arena.parent_of(decl);
                                     func_idx
                                         .and_then(|fidx| self.get_jsdoc_for_function(fidx))
                                         .is_some_and(|jsdoc| {

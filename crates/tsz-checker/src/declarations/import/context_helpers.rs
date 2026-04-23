@@ -63,7 +63,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a node is NOT in a valid module-element context (`SourceFile` or `ModuleBlock`).
     /// Returns true when the node is inside a block, function body, or other non-module context.
     pub(crate) fn is_in_non_module_element_context(&self, node_idx: NodeIndex) -> bool {
-        let parent_idx = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        let parent_idx = self.ctx.arena.parent_of(node_idx);
         let parent_kind = parent_idx
             .and_then(|p| self.ctx.arena.get(p))
             .map(|p| p.kind);

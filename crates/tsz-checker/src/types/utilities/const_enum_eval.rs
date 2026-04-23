@@ -436,7 +436,7 @@ fn enum_namespace_path(
     mut enum_decl_idx: NodeIndex,
 ) -> Vec<String> {
     let mut path = Vec::new();
-    while let Some(parent_idx) = arena.get_extended(enum_decl_idx).map(|ext| ext.parent) {
+    while let Some(parent_idx) = arena.parent_of(enum_decl_idx) {
         enum_decl_idx = parent_idx;
         let Some(module_decl) = arena.get_module_at(enum_decl_idx) else {
             continue;

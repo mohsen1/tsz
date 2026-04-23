@@ -1216,7 +1216,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check if the parent is a valid module-element context (SourceFile or ModuleBlock).
         // For import-equals inside `export import X = N;`, the direct parent is
         // EXPORT_DECLARATION — look through it to the grandparent.
-        let parent_idx = self.ctx.arena.get_extended(stmt_idx).map(|ext| ext.parent);
+        let parent_idx = self.ctx.arena.parent_of(stmt_idx);
         let parent_kind = parent_idx
             .and_then(|p| self.ctx.arena.get(p))
             .map(|p| p.kind);
@@ -1370,7 +1370,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check if the parent is a valid context for `declare`
         let is_valid_context = {
-            let parent_idx = self.ctx.arena.get_extended(stmt_idx).map(|ext| ext.parent);
+            let parent_idx = self.ctx.arena.parent_of(stmt_idx);
             let parent_kind = parent_idx
                 .and_then(|p| self.ctx.arena.get(p))
                 .map(|p| p.kind);

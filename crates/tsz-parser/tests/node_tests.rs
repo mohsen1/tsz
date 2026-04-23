@@ -248,6 +248,12 @@ fn test_parent_mapping() {
         binary_extended.parent.is_none(),
         "Binary expression should have no parent (it's the root)"
     );
+
+    // `parent_of` inherent helper mirrors `get_extended(..).map(|ext| ext.parent)`
+    assert_eq!(arena.parent_of(left_ident), Some(binary_expr));
+    assert_eq!(arena.parent_of(right_ident), Some(binary_expr));
+    assert_eq!(arena.parent_of(binary_expr), Some(NodeIndex::NONE));
+    assert_eq!(arena.parent_of(NodeIndex::NONE), None);
 }
 
 #[test]
