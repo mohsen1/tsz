@@ -578,6 +578,49 @@ o2.p4;
 }
 
 #[test]
+fn test_ts2339_elides_long_merge_receiver_instantiation_chain() {
+    let mut source = String::from(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
+
+const o1 = merge({ p1: 1 }, { p2: 2 });
+"#,
+    );
+    for i in 2..=30 {
+        source.push_str(&format!(
+            "const o{i} = merge(o{}, {{ p{}: {} }});\n",
+            i - 1,
+            i + 1,
+            i + 1
+        ));
+    }
+    source.push_str("o30.p38;\n");
+
+    let diagnostics = compile_and_get_diagnostics(&source);
+    let ts2339 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2339)
+        .expect("expected TS2339 for missing p38");
+    assert!(
+        ts2339.1.contains("merge<merge<merge<"),
+        "Expected TS2339 receiver to preserve the merge application chain.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.1.contains("{ ...; }"),
+        "Expected TS2339 receiver to elide deep object branches.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339.1.len() < 420,
+        "Expected TS2339 receiver to stay bounded.\nActual len: {}\nActual diagnostics: {diagnostics:#?}",
+        ts2339.1.len()
+    );
+}
+
+#[test]
 fn test_object_literal_source_display_preserves_quoted_numeric_property_names() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
