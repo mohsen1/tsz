@@ -582,7 +582,9 @@ impl<'a> CheckerState<'a> {
                 .with_long_property_receiver_display()
                 .with_display_properties()
                 .with_skip_application_alias_names();
-            return formatter.format(display_ty).into_owned();
+            return Self::truncate_property_receiver_display(
+                formatter.format(display_ty).into_owned(),
+            );
         }
         let has_object_shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();

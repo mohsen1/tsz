@@ -617,15 +617,29 @@ const o1 = merge({ p1: 1 }, { p2: 2 });
             "Expected TS2339 receiver to preserve the long merge application chain.\nActual message: {message}"
         );
         assert!(
+            message.contains("{ p1: number; }")
+                && message.contains("{ p2: number; }")
+                && message.contains("{ p5: number; }"),
+            "Expected TS2339 receiver to preserve the stable merge chain prefix.\nActual message: {message}"
+        );
+        assert!(
             message.contains("{ ...; }"),
-            "Expected TS2339 receiver to elide deep object branches.\nActual message: {message}"
+            "Expected TS2339 receiver to elide the middle merge object arguments.\nActual message: {message}"
+        );
+        assert!(
+            !message.contains("{ p31: number; }"),
+            "Expected TS2339 receiver to truncate before the shallow suffix.\nActual message: {message}"
+        );
+        assert!(
+            message.contains("{ ....."),
+            "Expected TS2339 receiver truncation to match tsc's merge-chain suffix.\nActual message: {message}"
         );
         assert!(
             !message.contains("<...,"),
             "Expected TS2339 receiver not to collapse the older chain to a raw ellipsis.\nActual message: {message}"
         );
         assert!(
-            message.len() < 1400,
+            message.len() < 390,
             "Expected TS2339 receiver to stay bounded.\nActual len: {}\nActual message: {message}",
             message.len()
         );
