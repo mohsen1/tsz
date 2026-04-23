@@ -5,6 +5,7 @@
 
 use crate::state::BinderState;
 use crate::{ContainerKind, Symbol, SymbolId, SymbolTable, symbol_flags};
+use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -86,7 +87,7 @@ impl BinderState {
                 && let Some(ref module_spec) = self.current_augmented_module
                 && let Some(name) = Self::get_identifier_name(arena, module.name)
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));

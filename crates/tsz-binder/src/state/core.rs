@@ -198,7 +198,7 @@ impl BinderState {
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
-            module_augmentations: FxHashMap::default(),
+            module_augmentations: Arc::new(FxHashMap::default()),
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: FxHashMap::default(),
@@ -264,7 +264,7 @@ impl BinderState {
         self.debugger.clear();
         self.global_augmentations.clear();
         self.in_global_augmentation = false;
-        self.module_augmentations.clear();
+        Arc::make_mut(&mut self.module_augmentations).clear();
         self.in_module_augmentation = false;
         self.current_augmented_module = None;
         self.lib_binders.clear();
@@ -415,7 +415,7 @@ impl BinderState {
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations: FxHashMap::default(),
             in_global_augmentation: false,
-            module_augmentations: FxHashMap::default(),
+            module_augmentations: Arc::new(FxHashMap::default()),
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules: FxHashMap::default(),

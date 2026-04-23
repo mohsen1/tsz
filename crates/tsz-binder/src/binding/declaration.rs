@@ -49,7 +49,7 @@ impl BinderState {
                 if self.in_module_augmentation
                     && let Some(ref module_spec) = self.current_augmented_module
                 {
-                    self.module_augmentations
+                    Arc::make_mut(&mut self.module_augmentations)
                         .entry(module_spec.clone())
                         .or_default()
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -154,7 +154,7 @@ impl BinderState {
                 if self.in_module_augmentation
                     && let Some(ref module_spec) = self.current_augmented_module
                 {
-                    self.module_augmentations
+                    Arc::make_mut(&mut self.module_augmentations)
                         .entry(module_spec.clone())
                         .or_default()
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -616,7 +616,7 @@ impl BinderState {
                 if self.in_module_augmentation
                     && let Some(ref module_spec) = self.current_augmented_module
                 {
-                    self.module_augmentations
+                    Arc::make_mut(&mut self.module_augmentations)
                         .entry(module_spec.clone())
                         .or_default()
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -856,7 +856,7 @@ impl BinderState {
             if self.in_module_augmentation
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -950,7 +950,7 @@ impl BinderState {
             if self.in_module_augmentation
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -1058,7 +1058,7 @@ impl BinderState {
             if self.in_module_augmentation
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));

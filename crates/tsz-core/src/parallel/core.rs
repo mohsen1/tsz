@@ -498,7 +498,7 @@ pub struct BindResult {
     pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     /// Maps module specifier -> [`ModuleAugmentation`]
-    pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
+    pub module_augmentations: Arc<FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>>,
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
     pub augmentation_target_modules: FxHashMap<SymbolId, String>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
@@ -636,7 +636,7 @@ impl BindResult {
         }
 
         // module_augmentations
-        for (k, v) in &self.module_augmentations {
+        for (k, v) in self.module_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::ModuleAugmentation>();
             for aug in v {
@@ -1480,7 +1480,7 @@ impl BoundFile {
         }
 
         // module_augmentations
-        for (k, v) in &self.module_augmentations {
+        for (k, v) in self.module_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::ModuleAugmentation>();
             for aug in v {
@@ -4688,7 +4688,7 @@ pub fn create_binder_from_bound_file(
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: file.global_augmentations.clone(),
-            module_augmentations: file.module_augmentations.clone(),
+            module_augmentations: Arc::new(file.module_augmentations.clone()),
             augmentation_target_modules: file.augmentation_target_modules.clone(),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
@@ -4779,7 +4779,7 @@ pub fn create_binder_from_bound_file_with_shared(
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
             global_augmentations: file.global_augmentations.clone(),
-            module_augmentations: file.module_augmentations.clone(),
+            module_augmentations: Arc::new(file.module_augmentations.clone()),
             augmentation_target_modules: file.augmentation_target_modules.clone(),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),

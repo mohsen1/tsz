@@ -8491,7 +8491,7 @@ var e: Date = c.b();
             scopes: file1_bound.scopes.clone(),
             node_scope_ids: file1_bound.node_scope_ids.clone(),
             global_augmentations: file1_bound.global_augmentations.clone(),
-            module_augmentations: file1_bound.module_augmentations.clone(),
+            module_augmentations: std::sync::Arc::new(file1_bound.module_augmentations.clone()),
             augmentation_target_modules: file1_bound.augmentation_target_modules.clone(),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file1_bound

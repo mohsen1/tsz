@@ -1440,7 +1440,12 @@ pub(super) const fn is_checker_grammar_code_suppressed_in_js(code: u32) -> bool 
 /// Pre-computed merged augmentation data shared across all per-file binders.
 /// Computing this once avoids `O(N_files²)` iteration in [`create_binder_from_bound_file`].
 pub(super) struct MergedAugmentations {
-    pub module_augmentations: rustc_hash::FxHashMap<String, Vec<tsz::binder::ModuleAugmentation>>,
+    /// Cross-file merged module augmentations.
+    ///
+    /// Wrapped in `Arc` so per-file binders can share the merged map via
+    /// `Arc::clone` instead of deep-cloning the entire map into each binder.
+    pub module_augmentations:
+        std::sync::Arc<rustc_hash::FxHashMap<String, Vec<tsz::binder::ModuleAugmentation>>>,
     pub augmentation_target_modules: rustc_hash::FxHashMap<tsz::binder::SymbolId, String>,
     pub global_augmentations: rustc_hash::FxHashMap<String, Vec<tsz::binder::GlobalAugmentation>>,
 }
@@ -1489,7 +1494,7 @@ impl MergedAugmentations {
         }
 
         Self {
-            module_augmentations,
+            module_augmentations: std::sync::Arc::new(module_augmentations),
             augmentation_target_modules,
             global_augmentations,
         }
