@@ -743,9 +743,10 @@ pub(super) fn collect_diagnostics(
     // `ctx.reexports_for_file` / `wildcard_reexports_for_file`.
     // `program.reexports` is already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
     let program_reexports = Arc::clone(&program.reexports);
-    let program_wildcard_reexports = Arc::new(program.wildcard_reexports.clone());
-    let program_wildcard_reexports_type_only =
-        Arc::new(program.wildcard_reexports_type_only.clone());
+    // `program.wildcard_reexports` and `program.wildcard_reexports_type_only`
+    // are already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
+    let program_wildcard_reexports = Arc::clone(&program.wildcard_reexports);
+    let program_wildcard_reexports_type_only = Arc::clone(&program.wildcard_reexports_type_only);
     // `program.module_exports` is already `Arc`-wrapped on `MergedProgram`;
     // cheap atomic clone for ProjectEnv install.
     let program_module_exports = Arc::clone(&program.module_exports);
@@ -1543,8 +1544,7 @@ fn propagate_module_export_maps(
             Arc::make_mut(&mut binder.module_exports).insert(current_specifier.clone(), exports);
         }
         if let Some(wildcards) = program.wildcard_reexports.get(target_file_name).cloned() {
-            binder
-                .wildcard_reexports
+            Arc::make_mut(&mut binder.wildcard_reexports)
                 .insert(current_specifier.clone(), wildcards.clone());
         }
         if let Some(type_only_flags) = program
@@ -1552,8 +1552,7 @@ fn propagate_module_export_maps(
             .get(target_file_name)
             .cloned()
         {
-            binder
-                .wildcard_reexports_type_only
+            Arc::make_mut(&mut binder.wildcard_reexports_type_only)
                 .insert(current_specifier.clone(), type_only_flags);
         }
         if let Some(reexports) = program.reexports.get(target_file_name).cloned() {

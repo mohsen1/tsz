@@ -35,6 +35,12 @@ pub(crate) const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 pub type ReexportTarget = (String, Option<String>);
 pub type FileReexports = FxHashMap<String, ReexportTarget>;
 pub type FileReexportsMap = FxHashMap<String, FileReexports>;
+/// Per-file map of `export * from "X"` source modules.
+/// Maps `current_file` -> `Vec<source_module>`.
+pub type WildcardReexportsMap = FxHashMap<String, Vec<String>>;
+/// Type-only provenance aligned with [`WildcardReexportsMap`].
+/// Maps `current_file` -> `Vec<(source_module, is_type_only)>`.
+pub type WildcardReexportsTypeOnlyMap = FxHashMap<String, Vec<(String, bool)>>;
 type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
 type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
 /// Wrapper around `RwLock` that implements `Clone` by cloning the inner data.
@@ -351,11 +357,20 @@ pub struct BinderState {
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
     /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`)
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    ///
+    /// `Arc`-wrapped so the cross-file merge can hand a single shared
+    /// allocation to every per-file `BinderState` via `Arc::clone`
+    /// instead of deep-cloning the underlying `FxHashMap` for each of
+    /// N per-file binders. Mutations during binding go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always
+    /// during binding).
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
     /// Tracks whether wildcard re-export entries are type-only.
     /// Maps `current_file` -> Vec of (`source_module`, `is_type_only`).
     /// This captures `export type * from './module'` chains during import resolution.
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
+    ///
+    /// Same `Arc` rationale as `wildcard_reexports`.
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
 
     /// Cache for resolved exports to avoid repeated lookups through re-export chains.
     /// Key: (`module_specifier`, `export_name`) -> resolved `SymbolId` (or None if not found)
@@ -818,8 +833,8 @@ pub struct BinderStateScopeInputs {
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     pub reexports: Arc<FileReexportsMap>,
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     pub declaration_arenas: DeclarationArenaMap,
     pub cross_file_node_symbols: CrossFileNodeSymbols,

@@ -316,35 +316,29 @@ fn resolves_wildcard_type_only_reexports_with_provenance() {
     a_exports.set("B".to_string(), b_sym);
     Arc::make_mut(&mut binder.module_exports).insert("./a".to_string(), a_exports);
 
-    binder
-        .wildcard_reexports
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./b".to_string())
         .or_default()
         .push("./a".to_string());
-    binder
-        .wildcard_reexports_type_only
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./b".to_string())
         .or_default()
         .push(("./a".to_string(), true));
 
-    binder
-        .wildcard_reexports
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./c".to_string())
         .or_default()
         .push("./b".to_string());
-    binder
-        .wildcard_reexports_type_only
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./c".to_string())
         .or_default()
         .push(("./b".to_string(), false));
 
-    binder
-        .wildcard_reexports
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./d".to_string())
         .or_default()
         .push("./a".to_string());
-    binder
-        .wildcard_reexports_type_only
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./d".to_string())
         .or_default()
         .push(("./a".to_string(), false));
@@ -2805,13 +2799,11 @@ fn wildcard_reexport_resolution() {
     Arc::make_mut(&mut binder.module_exports).insert("./a".to_string(), a_exports);
 
     // ./b re-exports everything from ./a
-    binder
-        .wildcard_reexports
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./b".to_string())
         .or_default()
         .push("./a".to_string());
-    binder
-        .wildcard_reexports_type_only
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./b".to_string())
         .or_default()
         .push(("./a".to_string(), false));
@@ -2830,25 +2822,21 @@ fn reexport_cycle_does_not_hang() {
     let mut binder = BinderState::new();
 
     // ./a re-exports from ./b
-    binder
-        .wildcard_reexports
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./a".to_string())
         .or_default()
         .push("./b".to_string());
-    binder
-        .wildcard_reexports_type_only
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./a".to_string())
         .or_default()
         .push(("./b".to_string(), false));
 
     // ./b re-exports from ./a (cycle!)
-    binder
-        .wildcard_reexports
+    Arc::make_mut(&mut binder.wildcard_reexports)
         .entry("./b".to_string())
         .or_default()
         .push("./a".to_string());
-    binder
-        .wildcard_reexports_type_only
+    Arc::make_mut(&mut binder.wildcard_reexports_type_only)
         .entry("./b".to_string())
         .or_default()
         .push(("./a".to_string(), false));
