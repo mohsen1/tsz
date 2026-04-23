@@ -1072,8 +1072,8 @@ impl<'a> CheckerState<'a> {
                     self.get_type_of_symbol(sym_id)
                 }
             } else if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & symbol_flags::ENUM) != 0
-                && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+                && symbol.has_any_flags(symbol_flags::ENUM)
+                && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
             {
                 self.enum_object_type(sym_id)
                     .inspect(|&enum_obj| {
