@@ -511,6 +511,12 @@ impl<'a> CheckerState<'a> {
                     *target_value_type,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
                 );
+                let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                    *source_value_type,
+                    *target_value_type,
+                    source_str,
+                    target_str,
+                );
                 vec![
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Error,
@@ -546,6 +552,12 @@ impl<'a> CheckerState<'a> {
                 let target_str = self.format_type_for_diagnostic_role(
                     *target_element,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
+                );
+                let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                    *source_element,
+                    *target_element,
+                    source_str,
+                    target_str,
                 );
                 vec![
                     DiagnosticRelatedInformation {
