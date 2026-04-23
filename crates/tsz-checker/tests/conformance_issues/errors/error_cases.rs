@@ -604,26 +604,32 @@ const o1 = merge({ p1: 1 }, { p2: 2 });
             i + 1
         ));
     }
-    source.push_str("o30.p38;\n");
+    source.push_str("o30.p38;\no30.p51;\n");
 
     let diagnostics = compile_and_get_diagnostics(&source);
-    let ts2339 = diagnostics
-        .iter()
-        .find(|(code, _)| *code == 2339)
-        .expect("expected TS2339 for missing p38");
     assert!(
-        ts2339.1.contains("merge<merge<merge<"),
-        "Expected TS2339 receiver to preserve the merge application chain.\nActual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().filter(|(code, _)| *code == 2339).count() == 2,
+        "Expected TS2339 for both missing long-chain properties.\nActual diagnostics: {diagnostics:#?}"
     );
-    assert!(
-        ts2339.1.contains("{ ...; }"),
-        "Expected TS2339 receiver to elide deep object branches.\nActual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2339.1.len() < 420,
-        "Expected TS2339 receiver to stay bounded.\nActual len: {}\nActual diagnostics: {diagnostics:#?}",
-        ts2339.1.len()
-    );
+    for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
+        assert!(
+            message.matches("merge<").count() >= 25,
+            "Expected TS2339 receiver to preserve the long merge application chain.\nActual message: {message}"
+        );
+        assert!(
+            message.contains("{ ...; }"),
+            "Expected TS2339 receiver to elide deep object branches.\nActual message: {message}"
+        );
+        assert!(
+            !message.contains("<...,"),
+            "Expected TS2339 receiver not to collapse the older chain to a raw ellipsis.\nActual message: {message}"
+        );
+        assert!(
+            message.len() < 1400,
+            "Expected TS2339 receiver to stay bounded.\nActual len: {}\nActual message: {message}",
+            message.len()
+        );
+    }
 }
 
 #[test]
