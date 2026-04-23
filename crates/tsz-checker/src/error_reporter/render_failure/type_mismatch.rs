@@ -141,9 +141,11 @@ impl<'a> CheckerState<'a> {
             && let Some((prop_name, owner_name, visibility)) =
                 self.private_or_protected_member_missing_display(source, target, None)
         {
+            let (source_display, target_display) =
+                self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
             let message = self.private_or_protected_assignability_message(
-                &source_str,
-                &target_str,
+                &source_display,
+                &target_display,
                 &prop_name,
                 &owner_name,
                 visibility,
@@ -173,12 +175,14 @@ impl<'a> CheckerState<'a> {
         {
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
             if prop_name.starts_with("__private_brand") {
+                let (source_display, target_display) = self
+                    .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = self
                     .private_or_protected_brand_backing_member_display(target, None)
                     .map(|(display_prop, owner_name, visibility)| {
                         self.private_or_protected_assignability_message(
-                            &source_str,
-                            &target_str,
+                            &source_display,
+                            &target_display,
                             &display_prop,
                             &owner_name,
                             visibility,
@@ -192,7 +196,7 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| {
                         format_message(
                             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                            &[&source_str, &target_str],
+                            &[&source_display, &target_display],
                         )
                     });
                 return Diagnostic::error(
