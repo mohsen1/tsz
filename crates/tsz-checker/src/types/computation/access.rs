@@ -729,12 +729,12 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
-                            && (symbol.flags
-                                & (symbol_flags::CLASS
+                        let is_merged = symbol.has_any_flags(symbol_flags::MODULE)
+                            && symbol.has_any_flags(
+                                symbol_flags::CLASS
                                     | symbol_flags::FUNCTION
-                                    | symbol_flags::REGULAR_ENUM))
-                                != 0;
+                                    | symbol_flags::REGULAR_ENUM,
+                            );
 
                         if is_merged
                             && let Some(exports) = symbol.exports.as_ref()
