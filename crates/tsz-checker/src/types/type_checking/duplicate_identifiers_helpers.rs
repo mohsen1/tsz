@@ -320,7 +320,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(self.ctx.current_file_idx)
         };
 
-        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
+        for (module_spec, augmentations) in self.ctx.binder.module_augmentations.iter() {
             for augmentation in augmentations {
                 consider_augmentation(
                     module_spec,
@@ -344,7 +344,7 @@ impl<'a> CheckerState<'a> {
                 if augmenting_file_idx == self.ctx.current_file_idx {
                     continue;
                 }
-                for (module_spec, augmentations) in &binder.module_augmentations {
+                for (module_spec, augmentations) in binder.module_augmentations.iter() {
                     for augmentation in augmentations {
                         consider_augmentation(module_spec, augmenting_file_idx, augmentation);
                     }

@@ -1821,7 +1821,7 @@ mod index_tests {
     #[test]
     fn global_module_augmentations_index_merges_across_binders() {
         let mut binder1 = BinderState::new();
-        binder1.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder1.module_augmentations).insert(
             "./module-a".to_string(),
             vec![ModuleAugmentation::new(
                 "MyInterface".to_string(),
@@ -1829,7 +1829,7 @@ mod index_tests {
             )],
         );
         let mut binder2 = BinderState::new();
-        binder2.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder2.module_augmentations).insert(
             "./module-a".to_string(),
             vec![ModuleAugmentation::new(
                 "MyOtherInterface".to_string(),
@@ -1851,11 +1851,11 @@ mod index_tests {
     #[test]
     fn global_module_augmentations_index_separates_module_specifiers() {
         let mut binder = BinderState::new();
-        binder.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder.module_augmentations).insert(
             "./module-a".to_string(),
             vec![ModuleAugmentation::new("Foo".to_string(), NodeIndex(10))],
         );
-        binder.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder.module_augmentations).insert(
             "./module-b".to_string(),
             vec![ModuleAugmentation::new("Bar".to_string(), NodeIndex(20))],
         );
