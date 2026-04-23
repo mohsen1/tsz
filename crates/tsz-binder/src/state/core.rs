@@ -205,7 +205,7 @@ impl BinderState {
             lib_binders: Vec::new(),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
-            module_exports: FxHashMap::default(),
+            module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: FxHashMap::default(),
             wildcard_reexports_type_only: FxHashMap::default(),
@@ -269,7 +269,7 @@ impl BinderState {
         self.current_augmented_module = None;
         self.lib_binders.clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
-        self.module_exports.clear();
+        Arc::make_mut(&mut self.module_exports).clear();
         Arc::make_mut(&mut self.reexports).clear();
         self.wildcard_reexports.clear();
         self.wildcard_reexports_type_only.clear();
@@ -422,7 +422,7 @@ impl BinderState {
             lib_binders: Vec::new(),
             lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
-            module_exports: FxHashMap::default(),
+            module_exports: Arc::new(FxHashMap::default()),
             reexports: Arc::new(FxHashMap::default()),
             wildcard_reexports: FxHashMap::default(),
             wildcard_reexports_type_only: FxHashMap::default(),
@@ -1151,7 +1151,9 @@ impl BinderState {
         // Collect all exports from all module-level symbols in this file
         // Start from any exports recorded during binding that intentionally do not create
         // file-local bindings (for example `export * as ns from "./mod"`).
-        let mut file_exports = self.module_exports.remove(file_name).unwrap_or_default();
+        let mut file_exports = Arc::make_mut(&mut self.module_exports)
+            .remove(file_name)
+            .unwrap_or_default();
         let mut export_equals_target: Option<SymbolId> = None;
 
         // Iterate through file_locals to find modules and their exports
@@ -1219,8 +1221,7 @@ impl BinderState {
         }
 
         if !file_exports.is_empty() {
-            self.module_exports
-                .insert(file_name.to_string(), file_exports);
+            Arc::make_mut(&mut self.module_exports).insert(file_name.to_string(), file_exports);
         }
     }
 
@@ -1492,10 +1493,13 @@ impl BinderState {
     /// Recompute `export =` non-module classification for all known module exports.
     pub fn recompute_module_export_equals_non_module(&mut self) {
         self.module_export_equals_non_module.clear();
-        for (module_name, exports) in self.module_exports.clone() {
-            if let Some(non_module) = self.compute_module_export_equals_non_module(&exports) {
+        // `Arc::clone` is cheap; the inner iteration borrows the shared map
+        // while we mutate `self.module_export_equals_non_module`.
+        let module_exports = Arc::clone(&self.module_exports);
+        for (module_name, exports) in module_exports.iter() {
+            if let Some(non_module) = self.compute_module_export_equals_non_module(exports) {
                 self.module_export_equals_non_module
-                    .insert(module_name, non_module);
+                    .insert(module_name.clone(), non_module);
             }
         }
     }

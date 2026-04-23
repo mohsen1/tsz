@@ -2,6 +2,7 @@ use super::{BinderOptions, BinderState};
 use crate::flow::{FlowNodeId, flow_flags};
 use crate::scopes::ContainerKind;
 use crate::{SymbolTable, symbol_flags};
+use std::sync::Arc;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 
@@ -313,7 +314,7 @@ fn resolves_wildcard_type_only_reexports_with_provenance() {
     let mut a_exports = SymbolTable::new();
     a_exports.set("A".to_string(), a_sym);
     a_exports.set("B".to_string(), b_sym);
-    binder.module_exports.insert("./a".to_string(), a_exports);
+    Arc::make_mut(&mut binder.module_exports).insert("./a".to_string(), a_exports);
 
     binder
         .wildcard_reexports
@@ -2782,7 +2783,7 @@ fn direct_module_export_resolution() {
         .alloc(symbol_flags::FUNCTION, "myFunc".to_string());
     let mut exports = SymbolTable::new();
     exports.set("myFunc".to_string(), sym);
-    binder.module_exports.insert("./mod".to_string(), exports);
+    Arc::make_mut(&mut binder.module_exports).insert("./mod".to_string(), exports);
 
     let resolved = binder.resolve_import_if_needed_public("./mod", "myFunc");
     assert_eq!(resolved, Some(sym), "should resolve direct export");
@@ -2801,7 +2802,7 @@ fn wildcard_reexport_resolution() {
         .alloc(symbol_flags::CLASS, "Widget".to_string());
     let mut a_exports = SymbolTable::new();
     a_exports.set("Widget".to_string(), sym);
-    binder.module_exports.insert("./a".to_string(), a_exports);
+    Arc::make_mut(&mut binder.module_exports).insert("./a".to_string(), a_exports);
 
     // ./b re-exports everything from ./a
     binder

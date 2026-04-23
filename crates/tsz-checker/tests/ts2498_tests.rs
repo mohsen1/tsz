@@ -31,7 +31,7 @@ fn check_reexport_of_export_equals(b_source: &str) -> Vec<(u32, String)> {
 
     // Wire up module resolution: make a.ts exports available to b.ts
     if let Some(a_exports) = binder_a.module_exports.get("a.ts").cloned() {
-        binder_b.module_exports.insert("./a".to_string(), a_exports);
+        std::sync::Arc::make_mut(&mut binder_b.module_exports).insert("./a".to_string(), a_exports);
     }
 
     let arena_a = Arc::new(parser_a.get_arena().clone());
@@ -130,7 +130,7 @@ fn check_reexport_of_normal_module(b_source: &str) -> Vec<(u32, String)> {
 
     // Wire up module resolution
     if let Some(a_exports) = binder_a.module_exports.get("a.ts").cloned() {
-        binder_b.module_exports.insert("./a".to_string(), a_exports);
+        std::sync::Arc::make_mut(&mut binder_b.module_exports).insert("./a".to_string(), a_exports);
     }
 
     let arena_a = Arc::new(parser_a.get_arena().clone());

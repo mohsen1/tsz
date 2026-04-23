@@ -2580,14 +2580,12 @@ const y = bar;
     let mut importer_binder = BinderState::new();
 
     // Populate module_exports with the exported symbols from file1
-    importer_binder
-        .module_exports
-        .insert("./file1".to_string(), {
-            let mut table = crate::binder::SymbolTable::new();
-            table.set("foo".to_string(), foo_export_sym_id);
-            table.set("bar".to_string(), bar_export_sym_id);
-            table
-        });
+    std::sync::Arc::make_mut(&mut importer_binder.module_exports).insert("./file1".to_string(), {
+        let mut table = crate::binder::SymbolTable::new();
+        table.set("foo".to_string(), foo_export_sym_id);
+        table.set("bar".to_string(), bar_export_sym_id);
+        table
+    });
 
     importer_binder.bind_source_file(importer_arena, importer_root);
 
@@ -2678,13 +2676,11 @@ const x = aliasedValue;
     let mut importer_binder = BinderState::new();
 
     // Populate module_exports with the exported symbol from file1
-    importer_binder
-        .module_exports
-        .insert("./file1".to_string(), {
-            let mut table = crate::binder::SymbolTable::new();
-            table.set("originalValue".to_string(), export_sym_id);
-            table
-        });
+    std::sync::Arc::make_mut(&mut importer_binder.module_exports).insert("./file1".to_string(), {
+        let mut table = crate::binder::SymbolTable::new();
+        table.set("originalValue".to_string(), export_sym_id);
+        table
+    });
 
     importer_binder.bind_source_file(importer_arena, importer_root);
 
@@ -2913,8 +2909,7 @@ fn test_export_resolution_multiple_wildcards() {
         .symbols
         .alloc(symbol_flags::FUNCTION, "funcA".to_string());
     module_a_exports.set("funcA".to_string(), sym_a);
-    binder
-        .module_exports
+    std::sync::Arc::make_mut(&mut binder.module_exports)
         .insert("./moduleA".to_string(), module_a_exports);
 
     let mut module_b_exports = SymbolTable::new();
@@ -2922,8 +2917,7 @@ fn test_export_resolution_multiple_wildcards() {
         .symbols
         .alloc(symbol_flags::FUNCTION, "funcB".to_string());
     module_b_exports.set("funcB".to_string(), sym_b);
-    binder
-        .module_exports
+    std::sync::Arc::make_mut(&mut binder.module_exports)
         .insert("./moduleB".to_string(), module_b_exports);
 
     // Setup index.ts to re-export from both

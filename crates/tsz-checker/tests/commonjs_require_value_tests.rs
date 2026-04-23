@@ -37,8 +37,7 @@ fn check_js_require_value_diagnostics(
 
     let file_js_exports = binder_js.module_exports.get("js.js").cloned();
     if let Some(exports) = &file_js_exports {
-        binder_user
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_user.module_exports)
             .insert("./js.js".to_string(), exports.clone());
     }
 

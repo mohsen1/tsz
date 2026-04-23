@@ -232,15 +232,13 @@ fn build_global_indices_if_changed_rebuilds_on_first_call() {
 #[test]
 fn build_global_indices_populates_module_binder_index() {
     let mut binder_a = BinderState::new();
-    binder_a
-        .module_exports
+    std::sync::Arc::make_mut(&mut binder_a.module_exports)
         .entry("\"my-lib\"".to_string())
         .or_default()
         .set("foo".to_string(), SymbolId(1));
 
     let mut binder_b = BinderState::new();
-    binder_b
-        .module_exports
+    std::sync::Arc::make_mut(&mut binder_b.module_exports)
         .entry("\"other-lib\"".to_string())
         .or_default()
         .set("bar".to_string(), SymbolId(2));
