@@ -3,6 +3,7 @@
 //! This module contains the implementation of type query functions.
 //! The parent `mod.rs` re-exports everything; callers should use `type_queries::*`.
 
+use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{IntrinsicKind, LiteralValue};
 use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId};
 
@@ -420,12 +421,13 @@ pub fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 /// - Object types, arrays, tuples, functions, callables, mapped types
 /// - `object` intrinsic (non-primitive)
 /// - Type parameters whose constraint is spreadable
+/// - Indexed access types whose evaluated base constraint is spreadable
 /// - Unions where non-falsy members are all spreadable
 /// - Intersections where all members are spreadable
 ///
 /// Returns `false` for primitive types (`number`, `string`, `boolean`, etc.),
-/// literals that aren't definitely-falsy, `unknown`, and types that resolve
-/// to these after constraint resolution.
+/// literals that aren't definitely-falsy, `keyof` types, `unknown`, and types
+/// that resolve to these after constraint resolution.
 pub fn is_valid_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_valid_spread_type_impl(db, type_id, 0)
 }
@@ -537,6 +539,17 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
                 .all(|&m| is_valid_spread_type_impl(db, m, depth + 1))
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_spread_type_impl(db, inner, depth + 1),
+        // tsc applies `getBaseConstraintOrType` before checking spread flags.
+        // For type operators that can evaluate against a concrete constraint
+        // (for example `T["x"]` where `T extends { x: Obj }`), validate the
+        // evaluated constraint. If evaluation cannot reduce the operator, do
+        // not assume it is object-like. For `keyof T`, evaluation yields
+        // property-key primitives, which the recursive primitive handling
+        // rejects.
+        Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_)) => {
+            let evaluated = evaluate_type(db, resolved);
+            evaluated != resolved && is_valid_spread_type_impl(db, evaluated, depth + 1)
+        }
         // Everything else is spreadable: object types, arrays, tuples, functions,
         // callables, mapped types, type parameters (unconstrained ones reach here
         // and are valid per tsc's InstantiableNonPrimitive), lazy refs, applications, etc.
