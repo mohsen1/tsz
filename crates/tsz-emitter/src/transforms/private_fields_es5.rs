@@ -238,9 +238,7 @@ pub fn collect_private_accessors(
         };
 
         // Check for both GET_ACCESSOR and SET_ACCESSOR
-        if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
-        {
+        if member_node.is_accessor() {
             let Some(accessor_data) = arena.get_accessor(member_node) else {
                 continue;
             };
