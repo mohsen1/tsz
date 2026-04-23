@@ -406,7 +406,15 @@ impl<'a> CheckerState<'a> {
         _h_expr_idx: tsz_parser::parser::base::NodeIndex,
         type_arguments: Option<&tsz_parser::parser::base::NodeList>,
     ) -> String {
-        let base_str = self.format_type(instance_type);
+        // tsc applies `getReducedType` when displaying heritage instance types
+        // so conditional utility applications like `InstanceType<typeof Foo>`
+        // render as their concrete form (`Foo`). Mirror that by deeply
+        // evaluating nested meta-type applications inside intersection/object
+        // members — this is what makes `override19.ts` print
+        // `A & { context: Context; }` instead of
+        // `A & { context: InstanceType<typeof Context>; }`.
+        let display_type = self.simplify_heritage_instance_type_for_display(instance_type);
+        let base_str = self.format_type(display_type);
         if let Some(type_arguments) = type_arguments
             && !type_arguments.nodes.is_empty()
         {
@@ -429,6 +437,28 @@ impl<'a> CheckerState<'a> {
             }
         }
         base_str
+    }
+
+    /// Deep-evaluate meta-type applications (e.g. `InstanceType<typeof Foo>`)
+    /// that appear inside a heritage instance type so the printer can render
+    /// the reduced form that `tsc` shows. Only meta-typed leaves are
+    /// evaluated — concrete sub-structures are preserved verbatim so this
+    /// cannot widen or re-order object properties.
+    ///
+    /// Delegates to the solver via `query_boundaries::common::deep_reduce_for_display`
+    /// so the walker stays on the correct side of the checker/solver contract.
+    pub(crate) fn simplify_heritage_instance_type_for_display(
+        &mut self,
+        instance_type: TypeId,
+    ) -> TypeId {
+        match self.ctx.type_env.try_borrow() {
+            Ok(env) => crate::query_boundaries::common::deep_reduce_for_display(
+                self.ctx.types,
+                &*env,
+                instance_type,
+            ),
+            Err(_) => instance_type,
+        }
     }
 
     fn class_type_params_for_symbol(
