@@ -16,7 +16,7 @@ engine on top to match TypeScript behavior while preserving correctness where po
 `tsz` will be released after TypeScript 6 stable is released. `tsz` will only be compatible with TypeScript 6, not any older versions.
 
 <!-- TS_VERSION_START -->
-Currently targeting `TypeScript`@`6.0.2`
+Currently targeting `TypeScript`@`6.0.3`
 <!-- TS_VERSION_END -->
 
 ## Progress
