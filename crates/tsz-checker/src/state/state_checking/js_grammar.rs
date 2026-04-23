@@ -145,7 +145,7 @@ impl<'a> CheckerState<'a> {
                         );
                     } else if export_decl.export_clause.is_some() {
                         let inner = export_decl.export_clause;
-                        let inner_kind = self.ctx.arena.get(inner).map(|n| n.kind);
+                        let inner_kind = self.ctx.arena.kind_at(inner);
                         // For `export import X = require(...)`, emit TS8002 at the
                         // outer EXPORT_DECLARATION node so the span starts at `export`
                         // (matching tsc column offset).
