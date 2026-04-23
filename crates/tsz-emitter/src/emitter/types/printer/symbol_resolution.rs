@@ -102,7 +102,7 @@ impl<'a> TypePrinter<'a> {
             return is_nameable_statement;
         }
 
-        let mut current = node_arena.get_extended(decl_idx).map(|ext| ext.parent);
+        let mut current = node_arena.parent_of(decl_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = node_arena.get(parent_idx) else {
                 break;
@@ -121,7 +121,7 @@ impl<'a> TypePrinter<'a> {
                 k if k == syntax_kind_ext::SOURCE_FILE => return true,
                 k if k == syntax_kind_ext::MODULE_BLOCK => return true,
                 _ => {
-                    current = node_arena.get_extended(parent_idx).map(|ext| ext.parent);
+                    current = node_arena.parent_of(parent_idx);
                 }
             }
         }

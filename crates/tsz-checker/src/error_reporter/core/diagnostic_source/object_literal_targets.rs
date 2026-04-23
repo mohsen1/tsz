@@ -28,8 +28,7 @@ impl<'a> CheckerState<'a> {
                             parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
                     if is_object_literal_property {
-                        object_literal_idx =
-                            self.ctx.arena.get_extended(current).map(|ext| ext.parent);
+                        object_literal_idx = self.ctx.arena.parent_of(current);
                         property_elem = Some(current);
                         break;
                     }

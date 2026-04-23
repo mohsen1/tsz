@@ -1877,7 +1877,7 @@ impl<'a> CheckerState<'a> {
         raw_param_type: TypeId,
     ) -> bool {
         let mut child = arg_idx;
-        let Some(mut current) = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent) else {
+        let Some(mut current) = self.ctx.arena.parent_of(arg_idx) else {
             return false;
         };
 

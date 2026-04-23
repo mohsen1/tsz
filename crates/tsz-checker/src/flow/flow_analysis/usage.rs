@@ -1281,7 +1281,7 @@ impl<'a> CheckerState<'a> {
         let flow_node = if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
             flow
         } else {
-            let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            let mut current = self.ctx.arena.parent_of(idx);
             let mut found = None;
             while let Some(parent) = current {
                 if parent.is_none() {
@@ -1294,13 +1294,13 @@ impl<'a> CheckerState<'a> {
                     // BEFORE the assignment, so we need the prior flow state.
                     if self.is_compound_read_write_target(parent, idx) {
                         // Skip this flow node and keep walking up
-                        current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+                        current = self.ctx.arena.parent_of(parent);
                         continue;
                     }
                     found = Some(flow);
                     break;
                 }
-                current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+                current = self.ctx.arena.parent_of(parent);
             }
             match found {
                 Some(flow) => flow,

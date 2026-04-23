@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(node_idx);
         while let Some(parent_idx) = current {
             if parent_idx == ancestor_idx {
                 return true;
@@ -144,7 +144,7 @@ impl<'a> CheckerState<'a> {
         // In nested conditionals like `T extends A ? T extends B ? X<T> : ...`,
         // the effective constraint on T is the intersection A & B.
         let mut accumulated_extends: Vec<TypeId> = Vec::new();
-        let mut current = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(arg_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
@@ -230,7 +230,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type argument is inside the FALSE branch of a conditional type
     /// where the check type is (or contains) the same type parameter.
     fn type_arg_is_in_conditional_false_branch_of_check_type(&self, arg_idx: NodeIndex) -> bool {
-        let mut current = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(arg_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;

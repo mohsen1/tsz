@@ -436,7 +436,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
                 && parent.is_some()
             {
                 decl_idx = parent;

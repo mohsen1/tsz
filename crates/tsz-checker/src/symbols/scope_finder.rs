@@ -295,8 +295,7 @@ impl<'a> CheckerState<'a> {
         if fn_node.kind == FUNCTION_EXPRESSION {
             let mut current = enclosing_fn;
             for _ in 0..3 {
-                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
-                else {
+                let Some(parent) = self.ctx.arena.parent_of(current) else {
                     break;
                 };
                 let Some(parent_node) = self.ctx.arena.get(parent) else {

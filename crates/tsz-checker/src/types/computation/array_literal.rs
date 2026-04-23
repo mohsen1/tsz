@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn empty_array_literal_prefers_never(&self, idx: NodeIndex) -> bool {
-        let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent) else {
+        let Some(parent_idx) = self.ctx.arena.parent_of(idx) else {
             return false;
         };
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
