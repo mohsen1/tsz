@@ -469,7 +469,7 @@ impl BinderState {
                         let param = arena.get_parameter_at(param_idx)?;
                         let ident = arena.get_identifier_at(param.name)?;
                         if ident.escaped_text == name {
-                            return self.node_symbols.get(&param.name.0).copied();
+                            return self.get_node_symbol(param.name);
                         }
                     }
                 }

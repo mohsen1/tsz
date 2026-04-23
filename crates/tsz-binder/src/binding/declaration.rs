@@ -2737,7 +2737,7 @@ impl BinderState {
                 .and_then(|scope| {
                     if scope.kind == crate::ContainerKind::Module {
                         // Look up the namespace symbol from the scope's container node.
-                        self.node_symbols.get(&scope.container_node.0).copied()
+                        self.get_node_symbol(scope.container_node)
                     } else {
                         None
                     }
