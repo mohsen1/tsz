@@ -103,6 +103,10 @@ pub struct TypeFormatter<'a> {
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
     skip_intersection_display_alias: bool,
+    /// When true, don't follow `display_alias` back to a conditional type-alias
+    /// Application. Used for TS2353 target displays where tsc expands
+    /// conditional branches inside object shapes.
+    skip_conditional_application_alias: bool,
     /// When true, preserve a longer generic alias prefix while eliding nested
     /// structural object branches. Used for long property receiver diagnostics.
     long_property_receiver_display: bool,
@@ -130,6 +134,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
+            skip_conditional_application_alias: false,
             long_property_receiver_display: false,
         }
     }
@@ -208,6 +213,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
+            skip_conditional_application_alias: false,
             long_property_receiver_display: false,
         }
     }
@@ -289,6 +295,33 @@ impl<'a> TypeFormatter<'a> {
             .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
     }
 
+    fn display_alias_application_base_is_conditional_type_alias(
+        &self,
+        alias_origin: TypeId,
+    ) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            _ => def_store.find_def_for_type(app.base),
+        };
+
+        def_id
+            .and_then(|def_id| def_store.get(def_id))
+            .is_some_and(|def| {
+                def.kind == crate::def::DefKind::TypeAlias
+                    && def.body.is_some_and(|body| {
+                        matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+                    })
+            })
+    }
+
     /// Skip type alias names for aliases whose body is a generic Application.
     /// Used in assignability messages where tsc shows the Application form.
     pub const fn with_skip_application_alias_names(mut self) -> Self {
@@ -301,6 +334,12 @@ impl<'a> TypeFormatter<'a> {
     /// in TS2741 messages, not the intersection form.
     pub const fn with_skip_intersection_display_alias(mut self) -> Self {
         self.skip_intersection_display_alias = true;
+        self
+    }
+
+    /// Don't follow display aliases back to conditional type-alias Applications.
+    pub const fn with_skip_conditional_application_alias(mut self) -> Self {
+        self.skip_conditional_application_alias = true;
         self
     }
 
@@ -555,12 +594,16 @@ impl<'a> TypeFormatter<'a> {
                     // The display_alias is set when an Application type is evaluated,
                     // and preserves the concrete type arguments from the instantiation.
                     if !def.type_params.is_empty() {
-                        if let Some(alias_origin) = self.interner.get_display_alias(type_id)
-                            && self.display_alias_visiting.insert(alias_origin)
-                        {
-                            let result = self.format(alias_origin);
-                            self.display_alias_visiting.remove(&alias_origin);
-                            return result;
+                        if let Some(alias_origin) = self.interner.get_display_alias(type_id) {
+                            let skip_alias = self.skip_conditional_application_alias
+                                && self.display_alias_application_base_is_conditional_type_alias(
+                                    alias_origin,
+                                );
+                            if !skip_alias && self.display_alias_visiting.insert(alias_origin) {
+                                let result = self.format(alias_origin);
+                                self.display_alias_visiting.remove(&alias_origin);
+                                return result;
+                            }
                         }
                         // For Mapped types with generic params (e.g., Partial<T>,
                         // Record<K, V>), fall through to structural formatting.
@@ -700,6 +743,8 @@ impl<'a> TypeFormatter<'a> {
             // application display (e.g. `AsyncGenerator<number, void, unknown>`).
             if (!is_simple_type || use_keyof_alias || use_application_alias)
                 && !skip_intersection_alias
+                && !(self.skip_conditional_application_alias
+                    && self.display_alias_application_base_is_conditional_type_alias(alias_origin))
                 && !(is_empty_object
                     && self.display_alias_application_base_is_type_alias(alias_origin))
                 && self.display_alias_visiting.insert(alias_origin)

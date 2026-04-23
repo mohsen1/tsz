@@ -679,6 +679,34 @@ const value: object & { x: string } = { z: "abc" };
 }
 
 #[test]
+fn excess_property_expands_conditional_alias_applications_inside_object_target_display() {
+    let source = r#"
+type Example<T> = { ex?: T };
+type Schema<T> = T extends boolean ? { type: "boolean"; } & Example<T> : never;
+
+const value: { l2: Schema<boolean> } = {
+    l2: { type: "boolean" },
+    invalid: false,
+};
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains(
+            r#"{ l2: ({ type: "boolean"; } & Example<false>) | ({ type: "boolean"; } & Example<true>); }"#
+        ),
+        "Expected conditional alias applications to expand in TS2353 target display, got: {}",
+        ts2353.1
+    );
+    assert!(
+        !ts2353.1.contains("Schema<boolean>"),
+        "Did not expect conditional alias application name in TS2353 target display, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
 fn generic_intersection_target_skips_excess_property_check() {
     let source = r#"
 interface IFoo {}
