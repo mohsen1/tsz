@@ -343,5 +343,9 @@ path = "tests/cross_module_nested_interface_tests.rs"
 name = "jsdoc_extends_constraint_tests"
 path = "tests/jsdoc_extends_constraint_tests.rs"
 
+[[test]]
+name = "override_intersection_display_tests"
+path = "tests/override_intersection_display_tests.rs"
+
 [lints]
 workspace = true

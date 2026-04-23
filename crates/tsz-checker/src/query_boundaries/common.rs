@@ -69,6 +69,23 @@ pub(crate) fn instantiate_type(
     tsz_solver::instantiate_type(db, type_id, substitution)
 }
 
+/// Thin wrapper around `tsz_solver::deep_reduce_for_display`.
+///
+/// Deeply reduce meta-type applications (e.g. `InstanceType<typeof Foo>`)
+/// that appear inside `type_id` so the solver's type printer renders the
+/// concrete form that `tsc` shows in heritage diagnostics. The generic
+/// `TypeEvaluator` only visits the top-level node; this boundary helper
+/// walks composite wrappers (`Intersection`, `Union`, `Object`) and
+/// evaluates the inner `Application` / `Conditional` leaves using the
+/// caller-supplied `TypeResolver`.
+pub(crate) fn deep_reduce_for_display<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::deep_reduce_for_display(db, resolver, type_id)
+}
+
 pub(crate) fn callable_shape_for_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,

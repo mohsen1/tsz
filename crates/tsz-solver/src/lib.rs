@@ -211,6 +211,7 @@ pub use diagnostics::builders::{
 };
 pub use diagnostics::format::TypeFormatter;
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
+pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
