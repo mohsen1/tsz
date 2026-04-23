@@ -486,7 +486,7 @@ pub struct BindResult {
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
     pub declaration_arenas: DeclarationArenaMap,
     /// Persistent scopes for stateless checking
@@ -1559,8 +1559,11 @@ pub struct MergedProgram {
     pub files: Vec<BoundFile>,
     /// Global symbol arena (all symbols from all files, with remapped IDs)
     pub symbols: SymbolArena,
-    /// Symbol-to-arena mapping for declaration lookup (legacy, stores last arena)
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Symbol-to-arena mapping for declaration lookup (legacy, stores last arena).
+    ///
+    /// Wrapped in `Arc` so per-file checker binders can share the merged map
+    /// via `Arc::clone` (O(1)) instead of building a per-file derived map.
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
     /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
     pub declaration_arenas: DeclarationArenaMap,
@@ -2590,7 +2593,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         // Copy symbol_arenas entries from user file, remapping IDs
         // This propagates lib symbol arena mappings that were created during merge_lib_symbols
-        for (&old_sym_id, arena) in &result.symbol_arenas {
+        for (&old_sym_id, arena) in result.symbol_arenas.iter() {
             if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
                 symbol_arenas
                     .entry(new_sym_id)
@@ -3167,7 +3170,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             .collect();
 
         let mut remapped_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = FxHashMap::default();
-        for (&old_sym_id, arena) in &result.symbol_arenas {
+        for (&old_sym_id, arena) in result.symbol_arenas.iter() {
             if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
                 let has_non_local_decl = symbols_with_non_local_declarations.contains(&new_sym_id);
                 if has_non_local_decl || !Arc::ptr_eq(arena, &result.arena) {
@@ -3273,7 +3276,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     MergedProgram {
         files,
         symbols: global_symbols,
-        symbol_arenas,
+        symbol_arenas: Arc::new(symbol_arenas),
         declaration_arenas,
         cross_file_node_symbols,
         globals,
@@ -3899,7 +3902,7 @@ fn build_lib_bound_file_for_interface_checks(
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
         node_symbols,
-        symbol_arenas: program.symbol_arenas.clone(),
+        symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: FxHashMap::default(),
         scopes: Vec::new(),
@@ -4671,7 +4674,7 @@ pub fn create_binder_from_bound_file(
     file_idx: usize,
 ) -> BinderState {
     let declaration_arenas = file.declaration_arenas.clone();
-    let symbol_arenas = file.symbol_arenas.clone();
+    let symbol_arenas = Arc::new(file.symbol_arenas.clone());
 
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
@@ -4767,7 +4770,7 @@ pub fn create_binder_from_bound_file_with_shared(
     _shared: &SharedBinderData,
 ) -> BinderState {
     let declaration_arenas = file.declaration_arenas.clone();
-    let symbol_arenas = file.symbol_arenas.clone();
+    let symbol_arenas = Arc::new(file.symbol_arenas.clone());
 
     let mut file_locals = SymbolTable::new();
     if file_idx < program.file_locals.len() {

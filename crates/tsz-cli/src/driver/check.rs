@@ -2645,7 +2645,7 @@ fn build_lib_bound_file_for_interface_checks(
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
         node_symbols,
-        symbol_arenas: program.symbol_arenas.clone(),
+        symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: FxHashMap::default(),
         scopes: Vec::new(),
