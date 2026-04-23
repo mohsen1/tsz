@@ -495,7 +495,7 @@ pub struct BindResult {
     /// Shorthand ambient modules (`declare module "foo"` without body)
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
-    pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
+    pub global_augmentations: Arc<FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     /// Maps module specifier -> [`ModuleAugmentation`]
     pub module_augmentations: Arc<FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>>,
@@ -630,7 +630,7 @@ impl BindResult {
         }
 
         // global_augmentations
-        for (k, v) in &self.global_augmentations {
+        for (k, v) in self.global_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::GlobalAugmentation>();
         }
@@ -1474,7 +1474,7 @@ impl BoundFile {
         }
 
         // global_augmentations
-        for (k, v) in &self.global_augmentations {
+        for (k, v) in self.global_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::GlobalAugmentation>();
         }
@@ -3200,7 +3200,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             scopes: remapped_scopes,
             node_scope_ids: result.node_scope_ids.clone(),
             parse_diagnostics: result.parse_diagnostics.clone(),
-            global_augmentations: result.global_augmentations.clone(),
+            global_augmentations: (*result.global_augmentations).clone(),
             module_augmentations,
             augmentation_target_modules: result
                 .augmentation_target_modules
@@ -4689,7 +4689,7 @@ pub fn create_binder_from_bound_file(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: file.global_augmentations.clone(),
+            global_augmentations: Arc::new(file.global_augmentations.clone()),
             module_augmentations: Arc::new(file.module_augmentations.clone()),
             augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
@@ -4780,7 +4780,7 @@ pub fn create_binder_from_bound_file_with_shared(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: file.global_augmentations.clone(),
+            global_augmentations: Arc::new(file.global_augmentations.clone()),
             module_augmentations: Arc::new(file.module_augmentations.clone()),
             augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
