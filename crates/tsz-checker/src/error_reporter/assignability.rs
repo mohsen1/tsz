@@ -838,8 +838,8 @@ impl<'a> CheckerState<'a> {
                 return;
             };
 
-            let source_type = self.format_type_diagnostic(source);
-            let target_type = self.format_type_diagnostic(target);
+            let (source_type, target_type) =
+                self.format_top_level_assignability_message_types_at(source, target, anchor_idx);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_type, &target_type],
