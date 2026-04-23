@@ -225,15 +225,40 @@ function generateBenchmarkCharts(data) {
     </div>`;
   }
 
-  const results = data.results.filter(r => r.tsz_ms != null && r.tsgo_ms != null);
-  if (!results.length) return `<div class="bench-placeholder">No valid benchmark results found.</div>`;
+  const allResults = data.results;
+  const measurable = allResults.filter(r => r.tsz_ms != null && r.tsgo_ms != null);
+  if (!allResults.length) return `<div class="bench-placeholder">No valid benchmark results found.</div>`;
 
-  const maxMs = Math.max(...results.map(r => Math.max(r.tsz_ms, r.tsgo_ms)));
+  // Use measurable cases for the bar-width scale; error rows render
+  // without bars so they don't need to participate in the max.
+  const maxMs = measurable.length
+    ? Math.max(...measurable.map(r => Math.max(r.tsz_ms, r.tsgo_ms)))
+    : 1;
   const barMaxWidth = 400; // px
 
   let html = `<div class="bench-chart">\n`;
 
-  for (const r of results) {
+  for (const r of allResults) {
+    const isError = r.tsz_ms == null || r.tsgo_ms == null;
+
+    if (isError) {
+      // Render an error/timeout row with status text in place of bars.
+      // This way every benchmark that the runner attempted is visible
+      // on the site, not just the ones tsz currently completes.
+      const status = r.status || (r.winner === "error" ? "error" : "no data");
+      html += `  <div class="bench-row bench-row-error">
+    <div class="bench-name">${escapeHtml(r.name)}</div>
+    <div class="bench-meta">${fmt(r.lines || 0)} lines, ${fmt(r.kb || 0)} KB</div>
+    <div class="bench-bars">
+      <div class="bench-bar-row">
+        <span class="bench-bar-label">tsz</span>
+        <span class="bench-bar-status">${escapeHtml(status)}</span>
+      </div>
+    </div>
+  </div>\n`;
+      continue;
+    }
+
     const tszWidth = Math.max(2, (r.tsz_ms / maxMs) * barMaxWidth);
     const tsgoWidth = Math.max(2, (r.tsgo_ms / maxMs) * barMaxWidth);
     const winnerLabel = r.winner === "tsz"
