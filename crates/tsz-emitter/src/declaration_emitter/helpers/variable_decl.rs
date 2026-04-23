@@ -126,7 +126,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && (self.function_initializer_has_inline_parameter_comments(initializer)
                     || self.function_initializer_is_self_returning(initializer)
                     || self.function_initializer_returns_unique_identifier(initializer)
-                    || self.function_initializer_has_typeof_in_param_annotation(initializer))
+                    || self.function_initializer_has_typeof_in_param_annotations(initializer))
                 && {
                     self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
                     self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
@@ -1062,6 +1062,79 @@ impl<'a> DeclarationEmitter<'a> {
         self.function_body_returns_identifier(func.body, &name)
     }
 
+    /// True when the initializer is an arrow/function expression whose
+    /// parameter annotations reference a `typeof X` type query (possibly
+    /// inside unions/arrays/etc). The type printer cannot recover this
+    /// `typeof` form from the cached value-space type, so the AST-walking
+    /// emit path must be preferred to preserve the user's annotation.
+    pub(in crate::declaration_emitter) fn function_initializer_has_typeof_in_param_annotations(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+        func.parameters.nodes.iter().copied().any(|param_idx| {
+            self.arena
+                .get(param_idx)
+                .and_then(|n| self.arena.get_parameter(n))
+                .filter(|p| p.type_annotation.is_some())
+                .is_some_and(|p| self.type_node_contains_type_query(p.type_annotation))
+        })
+    }
+
+    /// Recursively check if a type node (or any of its children) is a
+    /// `typeof X` `TypeQuery`. Covers the common compound forms
+    /// (unions, intersections, arrays, parens, type-reference type args).
+    fn type_node_contains_type_query(&self, type_idx: NodeIndex) -> bool {
+        let Some(type_node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        let k = type_node.kind;
+        if k == syntax_kind_ext::TYPE_QUERY {
+            return true;
+        }
+        if (k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE)
+            && let Some(c) = self.arena.get_composite_type(type_node)
+        {
+            return c
+                .types
+                .nodes
+                .iter()
+                .copied()
+                .any(|i| self.type_node_contains_type_query(i));
+        }
+        if k == syntax_kind_ext::ARRAY_TYPE
+            && let Some(a) = self.arena.get_array_type(type_node)
+        {
+            return self.type_node_contains_type_query(a.element_type);
+        }
+        if k == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(p) = self.arena.get_wrapped_type(type_node)
+        {
+            return self.type_node_contains_type_query(p.type_node);
+        }
+        if k == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(r) = self.arena.get_type_ref(type_node)
+            && let Some(ref args) = r.type_arguments
+        {
+            return args
+                .nodes
+                .iter()
+                .copied()
+                .any(|i| self.type_node_contains_type_query(i));
+        }
+        false
+    }
+
     pub(in crate::declaration_emitter) fn function_initializer_returns_unique_identifier(
         &self,
         initializer: NodeIndex,
@@ -1082,88 +1155,6 @@ impl<'a> DeclarationEmitter<'a> {
             && self
                 .function_body_unique_return_identifier(func.body)
                 .is_some()
-    }
-
-    /// True when the function/arrow initializer has a parameter whose
-    /// explicit type annotation contains a `typeof` (`TypeQuery`) somewhere.
-    /// Used to keep source-written `typeof X` annotations in dts emit —
-    /// the type-printer path collapses `TypeQuery` into the resolved value
-    /// type and loses the syntactic form.
-    pub(in crate::declaration_emitter) fn function_initializer_has_typeof_in_param_annotation(
-        &self,
-        initializer: NodeIndex,
-    ) -> bool {
-        let Some(init_node) = self.arena.get(initializer) else {
-            return false;
-        };
-        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
-            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-        {
-            return false;
-        }
-        let Some(func) = self.arena.get_function(init_node) else {
-            return false;
-        };
-        func.parameters.nodes.iter().any(|&param_idx| {
-            self.arena
-                .get(param_idx)
-                .and_then(|n| self.arena.get_parameter(n))
-                .is_some_and(|p| {
-                    p.type_annotation.is_some()
-                        && self.type_node_contains_type_query(p.type_annotation)
-                })
-        })
-    }
-
-    /// Recursively check whether a type AST subtree contains a `TYPE_QUERY`
-    /// (i.e. a `typeof X` form). Walks the common composing forms — unions,
-    /// intersections, parens, arrays, tuples, optional/rest — so callers can
-    /// detect typeof anywhere in a parameter annotation.
-    pub(in crate::declaration_emitter) fn type_node_contains_type_query(
-        &self,
-        type_idx: NodeIndex,
-    ) -> bool {
-        if type_idx.is_none() {
-            return false;
-        }
-        let Some(type_node) = self.arena.get(type_idx) else {
-            return false;
-        };
-        if type_node.kind == syntax_kind_ext::TYPE_QUERY {
-            return true;
-        }
-        if (type_node.kind == syntax_kind_ext::UNION_TYPE
-            || type_node.kind == syntax_kind_ext::INTERSECTION_TYPE)
-            && let Some(comp) = self.arena.get_composite_type(type_node)
-        {
-            return comp
-                .types
-                .nodes
-                .iter()
-                .any(|&t| self.type_node_contains_type_query(t));
-        }
-        if (type_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
-            || type_node.kind == syntax_kind_ext::OPTIONAL_TYPE
-            || type_node.kind == syntax_kind_ext::REST_TYPE)
-            && let Some(wrapped) = self.arena.get_wrapped_type(type_node)
-        {
-            return self.type_node_contains_type_query(wrapped.type_node);
-        }
-        if type_node.kind == syntax_kind_ext::ARRAY_TYPE
-            && let Some(arr) = self.arena.get_array_type(type_node)
-        {
-            return self.type_node_contains_type_query(arr.element_type);
-        }
-        if type_node.kind == syntax_kind_ext::TUPLE_TYPE
-            && let Some(tup) = self.arena.get_tuple_type(type_node)
-        {
-            return tup
-                .elements
-                .nodes
-                .iter()
-                .any(|&t| self.type_node_contains_type_query(t));
-        }
-        false
     }
 
     pub(in crate::declaration_emitter) fn refine_invokable_return_type_from_identifier(

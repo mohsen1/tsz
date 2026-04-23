@@ -683,7 +683,7 @@ impl<'a> CheckerState<'a> {
 
         let constructor_name = format!("{base_name}Constructor");
         let constructor_type = self.resolve_lib_type_by_name(&constructor_name)?;
-        if matches!(constructor_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if constructor_type.is_unknown_or_error() {
             return None;
         }
 

@@ -36,9 +36,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("export ");
         }
         // Preserve the `declare` modifier from the source when present
-        let has_declare = self
-            .arena
-            .has_modifier(&iface.modifiers, SyntaxKind::DeclareKeyword);
+        let has_declare = self.arena.is_declare(&iface.modifiers);
         if has_declare {
             self.write("declare ");
         }
