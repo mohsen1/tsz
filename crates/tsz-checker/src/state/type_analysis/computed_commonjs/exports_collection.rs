@@ -950,10 +950,7 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop_type);
             let prop_atom = self.ctx.types.intern_string(&prop_name);
             if let Some(existing) = properties.get_mut(&prop_atom) {
-                let existing_is_placeholder = matches!(
-                    existing.type_id,
-                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-                );
+                let existing_is_placeholder = existing.type_id.is_any_unknown_or_error();
                 if existing_is_placeholder && !matches!(prop_type, TypeId::ANY | TypeId::UNKNOWN) {
                     existing.type_id = prop_type;
                     existing.write_type = prop_type;
