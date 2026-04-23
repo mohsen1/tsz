@@ -153,11 +153,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Skip ambient enums (they use TS1066)
-        if self
-            .ctx
-            .arena
-            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.ctx.arena.is_declare(&enum_data.modifiers) {
             return;
         }
 
