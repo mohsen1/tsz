@@ -968,6 +968,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             })
         }
 
+        fn signatures_match_for_contextual_union(
+            left: &FunctionShape,
+            right: &FunctionShape,
+        ) -> bool {
+            if left.type_params != right.type_params || left.params.len() != right.params.len() {
+                return false;
+            }
+
+            left.params.iter().zip(right.params.iter()).all(|(l, r)| {
+                l.type_id == r.type_id && l.optional == r.optional && l.rest == r.rest
+            })
+        }
+
         struct ContextualSignatureVisitor<'a> {
             db: &'a dyn TypeDatabase,
             arg_count: Option<usize>,
@@ -1154,26 +1167,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             fn visit_union(&mut self, list_id: u32) -> Self::Output {
                 let members = self.db.type_list(TypeListId(list_id));
-                let mut callable_member: Option<FunctionShape> = None;
+                let mut member_shapes = Vec::new();
 
                 for &member in members.iter() {
                     if member.is_nullable() || matches!(member, TypeId::VOID | TypeId::NEVER) {
                         continue;
                     }
 
-                    let shape = self.visit_guarded(member)?;
-
-                    if callable_member.is_some() {
-                        // Optional callback unions like `Fn | undefined` should preserve
-                        // the callable shape, but we intentionally stay conservative for
-                        // true unions of multiple callable members.
-                        return None;
+                    if let Some(shape) = self.visit_guarded(member) {
+                        member_shapes.push(shape);
                     }
-
-                    callable_member = Some(shape);
                 }
 
-                callable_member
+                if member_shapes.is_empty() {
+                    return None;
+                }
+
+                // Match tsc's contextual union signature behavior: ignore
+                // non-callable members and, when any call signature is available,
+                // ignore construct-only members. This lets unions like
+                // `FunctionComponent<P> | ComponentClass<P> | string` contribute
+                // the callable `P` shape needed for inference while still
+                // preserving pure-constructor unions for `new`-style contexts.
+                let prefer_call = member_shapes.iter().any(|shape| !shape.is_constructor);
+                let filtered_shapes: Vec<_> = member_shapes
+                    .into_iter()
+                    .filter(|shape| shape.is_constructor != prefer_call)
+                    .collect();
+                let first = filtered_shapes.first()?;
+                if filtered_shapes
+                    .iter()
+                    .skip(1)
+                    .any(|shape| !signatures_match_for_contextual_union(first, shape))
+                {
+                    return None;
+                }
+
+                combine_function_shapes(self.db, filtered_shapes, self.arg_count)
             }
         }
 

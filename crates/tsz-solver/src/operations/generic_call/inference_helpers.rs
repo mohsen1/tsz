@@ -89,6 +89,73 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .unwrap_or(lower_bounds[0])
     }
 
+    pub(super) fn should_prefer_single_contra_candidate_for_direct_inference(
+        &mut self,
+        lower_bounds: &[TypeId],
+        inferred: TypeId,
+        contra: TypeId,
+    ) -> bool {
+        if lower_bounds.len() <= 1 {
+            return false;
+        }
+
+        if !matches!(self.interner.lookup(inferred), Some(TypeData::Union(_))) {
+            return false;
+        }
+
+        let mut saw_fresh_literal_candidate = false;
+        let mut saw_concrete_lower_bound = false;
+
+        for &bound in lower_bounds {
+            if matches!(bound, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                continue;
+            }
+
+            saw_concrete_lower_bound = true;
+
+            if self.checker.is_assignable_to(bound, contra) {
+                continue;
+            }
+
+            if self.is_fresh_direct_object_or_array_literal_candidate(bound) {
+                saw_fresh_literal_candidate = true;
+                continue;
+            }
+
+            return false;
+        }
+
+        saw_concrete_lower_bound && saw_fresh_literal_candidate
+    }
+
+    pub(super) fn select_single_contra_candidate_direct_inference_type(
+        &mut self,
+        lower_bounds: &[TypeId],
+        contra: TypeId,
+    ) -> TypeId {
+        lower_bounds
+            .iter()
+            .copied()
+            .find(|bound| {
+                !matches!(*bound, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                    && !self.is_fresh_direct_object_or_array_literal_candidate(*bound)
+                    && self.checker.is_assignable_to(*bound, contra)
+            })
+            .unwrap_or(contra)
+    }
+
+    fn is_fresh_direct_object_or_array_literal_candidate(&self, ty: TypeId) -> bool {
+        match self.interner.lookup(ty) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => self
+                .interner
+                .object_shape(shape_id)
+                .flags
+                .contains(ObjectFlags::FRESH_LITERAL),
+            Some(TypeData::Tuple(_)) => true,
+            _ => false,
+        }
+    }
+
     fn should_preserve_nullable_direct_inference_result(
         &self,
         lower_bounds: &[TypeId],
