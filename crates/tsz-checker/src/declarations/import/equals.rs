@@ -309,7 +309,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let import_alias_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();
+            let import_alias_sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
             should_emit_module_not_found = if inside_namespace {
                 self.namespace_import_alias_is_referenced(
                     containing_module_node,
@@ -466,7 +466,7 @@ impl<'a> CheckerState<'a> {
         // with the same name and check if any non-import has VALUE flags.
         if let Some(ref name) = import_name {
             // Get the symbol for this import
-            let import_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();
+            let import_sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
             // Find the enclosing scope of the import statement
             let import_scope = self
                 .ctx

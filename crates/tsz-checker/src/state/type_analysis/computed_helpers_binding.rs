@@ -975,7 +975,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.ctx.binder.node_symbols.get(&clause_idx.0).copied()
+        self.ctx.binder.get_node_symbol(clause_idx)
     }
 
     fn default_export_wrapper_expression(
