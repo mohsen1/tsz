@@ -59,7 +59,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let concrete_bounds: Vec<TypeId> = lower_bounds
                         .iter()
                         .copied()
-                        .filter(|ty| !matches!(*ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
+                        .filter(|ty| !ty.is_any_unknown_or_error())
                         .collect();
                     if !concrete_bounds.is_empty() {
                         return crate::utils::union_or_single(self.interner, concrete_bounds);
@@ -85,7 +85,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         lower_bounds
             .iter()
             .copied()
-            .find(|ty| !matches!(*ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
+            .find(|ty| !ty.is_any_unknown_or_error())
             .unwrap_or(lower_bounds[0])
     }
 
@@ -266,7 +266,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .copied()
             .filter(|ty| {
-                !matches!(*ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                !ty.is_any_unknown_or_error()
                     && !crate::visitor::contains_type_parameters(
                         self.interner.as_type_database(),
                         *ty,
@@ -1288,7 +1288,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .copied()
             .filter(|upper| {
-                !matches!(*upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                !upper.is_any_unknown_or_error()
                     && !crate::visitor::contains_type_parameters(
                         self.interner.as_type_database(),
                         *upper,
