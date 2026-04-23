@@ -144,7 +144,17 @@ impl<'a> CheckerState<'a> {
             //                       ^^^^^^^^^^
             //   error TS1210: Code contained in a class is evaluated in JavaScript's
             //   strict mode which does not allow this use of 'arguments'.
-            if use_class_strict_message && ident.escaped_text == "arguments" {
+            //
+            // Skip when the parameter has a parameter-property modifier
+            // (`public`/`private`/`protected`/`readonly`/`override`) — that form
+            // is a shorthand field declaration (e.g. `constructor(public arguments: ASTList)`)
+            // and tsc does not emit TS1210 for those. See parserRealSource11.ts.
+            if use_class_strict_message
+                && ident.escaped_text == "arguments"
+                && self
+                    .find_first_parameter_property_modifier(&param.modifiers)
+                    .is_none()
+            {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 if let Some((pos, end)) = self.ctx.get_node_span(param.name) {
                     self.ctx.error(
