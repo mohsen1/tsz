@@ -46,7 +46,7 @@ impl BinderStateScopeInputs {
         Self {
             scopes,
             node_scope_ids,
-            flow_nodes: FlowNodeArena::new(),
+            flow_nodes: Arc::new(FlowNodeArena::new()),
             ..Self::default()
         }
     }
@@ -177,7 +177,7 @@ impl BinderState {
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
-            flow_nodes,
+            flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
             scope_chain: Vec::with_capacity(32),
@@ -244,8 +244,11 @@ impl BinderState {
         self.declared_modules.clear();
         self.is_external_module = false;
         self.is_strict_scope = false;
-        self.flow_nodes.clear();
-        self.unreachable_flow = self.flow_nodes.alloc(flow_flags::UNREACHABLE);
+        {
+            let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+            flow_nodes.clear();
+            self.unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
+        }
         self.current_flow = FlowNodeId::NONE;
         self.scope_chain.clear();
         self.current_scope_idx = 0;
@@ -416,7 +419,7 @@ impl BinderState {
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
-            flow_nodes,
+            flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
             scope_chain: Vec::new(),
@@ -1043,7 +1046,7 @@ impl BinderState {
         }
 
         // Create START flow node for the file
-        let start_flow = self.flow_nodes.alloc(flow_flags::START);
+        let start_flow = Arc::make_mut(&mut self.flow_nodes).alloc(flow_flags::START);
         self.current_flow = start_flow;
         self.is_external_module = Self::source_file_is_external_module(arena, root);
 

@@ -2661,7 +2661,7 @@ fn build_lib_bound_file_for_interface_checks(
         global_augmentations: FxHashMap::default(),
         module_augmentations: FxHashMap::default(),
         augmentation_target_modules: FxHashMap::default(),
-        flow_nodes: tsz::binder::FlowNodeArena::default(),
+        flow_nodes: std::sync::Arc::new(tsz::binder::FlowNodeArena::default()),
         node_flow: FxHashMap::default(),
         switch_clause_to_switch: FxHashMap::default(),
         is_external_module: lib_file.binder.is_external_module,

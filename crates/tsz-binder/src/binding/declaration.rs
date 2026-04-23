@@ -1569,16 +1569,20 @@ impl BinderState {
         F: FnOnce(&mut Self),
     {
         let prev_flow = self.current_flow;
-        let start_flow = self.flow_nodes.alloc(flow_flags::START);
+        let start_flow = {
+            let flow_nodes = std::sync::Arc::make_mut(&mut self.flow_nodes);
+            let start_flow = flow_nodes.alloc(flow_flags::START);
 
-        // For closures (arrow functions and function expressions), capture the enclosing flow
-        // so that const/let variables can preserve narrowing from the outer scope
-        if capture_enclosing
-            && prev_flow.is_some()
-            && let Some(start_node) = self.flow_nodes.get_mut(start_flow)
-        {
-            start_node.antecedent.push(prev_flow);
-        }
+            // For closures (arrow functions and function expressions), capture the enclosing flow
+            // so that const/let variables can preserve narrowing from the outer scope
+            if capture_enclosing
+                && prev_flow.is_some()
+                && let Some(start_node) = flow_nodes.get_mut(start_flow)
+            {
+                start_node.antecedent.push(prev_flow);
+            }
+            start_flow
+        };
 
         // Save and clear return_targets so that return statements inside
         // non-IIFE functions don't redirect to an enclosing IIFE's return target.
