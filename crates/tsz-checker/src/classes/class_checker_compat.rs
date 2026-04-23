@@ -180,17 +180,6 @@ impl<'a> CheckerState<'a> {
             CALL_SIGNATURE, INDEX_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
 
-        fn decl_arena_for<'a>(
-            binder: &'a tsz_binder::BinderState,
-            current_arena: &'a tsz_parser::parser::node::NodeArena,
-            sym_id: tsz_binder::SymbolId,
-            decl_idx: NodeIndex,
-        ) -> &'a tsz_parser::parser::node::NodeArena {
-            binder
-                .get_arena_for_declaration(sym_id, decl_idx)
-                .map_or(current_arena, |arena| arena.as_ref())
-        }
-
         let iface_sym_id = self.ctx.binder.get_node_symbol(_iface_idx);
 
         // Get heritage clauses (extends) — must have at least one across all declarations
@@ -200,8 +189,11 @@ impl<'a> CheckerState<'a> {
                 .and_then(|sym_id| self.ctx.binder.symbols.get(sym_id).map(|sym| (sym_id, sym)))
                 .is_some_and(|(sym_id, sym)| {
                     sym.declarations.iter().any(|&decl_idx| {
-                        let decl_arena =
-                            decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+                        let decl_arena = self.ctx.binder.arena_for_declaration_or(
+                            sym_id,
+                            decl_idx,
+                            self.ctx.arena,
+                        );
                         decl_idx != _iface_idx
                             && decl_arena.get(decl_idx).is_some_and(|n| {
                                 decl_arena
@@ -254,8 +246,11 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .copied()
                     .filter(|&decl_idx| {
-                        let decl_arena =
-                            decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+                        let decl_arena = self.ctx.binder.arena_for_declaration_or(
+                            sym_id,
+                            decl_idx,
+                            self.ctx.arena,
+                        );
                         decl_arena
                             .get(decl_idx)
                             .is_some_and(|n| decl_arena.get_interface(n).is_some())
@@ -274,7 +269,10 @@ impl<'a> CheckerState<'a> {
             let Some(sym_id) = iface_sym_id else {
                 continue;
             };
-            let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+            let decl_arena =
+                self.ctx
+                    .binder
+                    .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
             if let Some(decl_node) = decl_arena.get(decl_idx)
                 && let Some(decl_iface) = decl_arena.get_interface(decl_node)
             {
@@ -393,7 +391,10 @@ impl<'a> CheckerState<'a> {
             let Some(sym_id) = iface_sym_id else {
                 continue;
             };
-            let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+            let decl_arena =
+                self.ctx
+                    .binder
+                    .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
             if let Some(decl_node) = decl_arena.get(decl_idx)
                 && let Some(decl_iface) = decl_arena.get_interface(decl_node)
             {
@@ -463,7 +464,10 @@ impl<'a> CheckerState<'a> {
             && let Some(sym) = self.ctx.binder.symbols.get(sym_id)
         {
             for &decl_idx in &sym.declarations {
-                let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+                let decl_arena =
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
                 if let Some(node) = decl_arena.get(decl_idx)
                     && decl_arena.get_class(node).is_some()
                 {
@@ -492,7 +496,10 @@ impl<'a> CheckerState<'a> {
             let Some(sym_id) = iface_sym_id else {
                 continue;
             };
-            let decl_arena = decl_arena_for(self.ctx.binder, self.ctx.arena, sym_id, decl_idx);
+            let decl_arena =
+                self.ctx
+                    .binder
+                    .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
             if let Some(decl_node) = decl_arena.get(decl_idx)
                 && let Some(decl_iface) = decl_arena.get_interface(decl_node)
                 && let Some(ref heritage_clauses) = decl_iface.heritage_clauses
@@ -560,7 +567,9 @@ impl<'a> CheckerState<'a> {
             let mut base_iface_indices = Vec::new();
             for &decl_idx in &base_symbol.declarations {
                 let decl_arena =
-                    decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(base_sym_id, decl_idx, self.ctx.arena);
                 if let Some(node) = decl_arena.get(decl_idx)
                     && decl_arena.get_interface(node).is_some()
                 {
@@ -570,7 +579,9 @@ impl<'a> CheckerState<'a> {
             if base_iface_indices.is_empty() && base_symbol.value_declaration.is_some() {
                 let decl_idx = base_symbol.value_declaration;
                 let decl_arena =
-                    decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                    self.ctx
+                        .binder
+                        .arena_for_declaration_or(base_sym_id, decl_idx, self.ctx.arena);
                 if let Some(node) = decl_arena.get(decl_idx)
                     && decl_arena.get_interface(node).is_some()
                 {
@@ -602,11 +613,10 @@ impl<'a> CheckerState<'a> {
                 rustc_hash::FxHashSet::default();
 
             while let Some((iface_sym_id, iface_decl_idx, level_type_args)) = worklist.pop() {
-                let iface_arena = decl_arena_for(
-                    self.ctx.binder,
-                    self.ctx.arena,
+                let iface_arena = self.ctx.binder.arena_for_declaration_or(
                     iface_sym_id,
                     iface_decl_idx,
+                    self.ctx.arena,
                 );
                 let visit_key = (
                     iface_sym_id.0,
@@ -926,11 +936,10 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.binder.get_symbol(ancestor_sym_id)
                             {
                                 for &decl_idx in &ancestor_sym.declarations {
-                                    let decl_arena = decl_arena_for(
-                                        self.ctx.binder,
-                                        self.ctx.arena,
+                                    let decl_arena = self.ctx.binder.arena_for_declaration_or(
                                         ancestor_sym_id,
                                         decl_idx,
+                                        self.ctx.arena,
                                     );
                                     if let Some(dn) = decl_arena.get(decl_idx)
                                         && decl_arena.get_interface(dn).is_some()
@@ -954,8 +963,11 @@ impl<'a> CheckerState<'a> {
             if base_iface_indices.is_empty() {
                 let mut base_class_idx = None;
                 for &decl_idx in &base_symbol.declarations {
-                    let decl_arena =
-                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                    let decl_arena = self.ctx.binder.arena_for_declaration_or(
+                        base_sym_id,
+                        decl_idx,
+                        self.ctx.arena,
+                    );
                     if let Some(node) = decl_arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
                     {
@@ -966,8 +978,11 @@ impl<'a> CheckerState<'a> {
 
                 if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
                     let decl_idx = base_symbol.value_declaration;
-                    let decl_arena =
-                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, decl_idx);
+                    let decl_arena = self.ctx.binder.arena_for_declaration_or(
+                        base_sym_id,
+                        decl_idx,
+                        self.ctx.arena,
+                    );
                     if let Some(node) = decl_arena.get(decl_idx)
                         && node.kind == syntax_kind_ext::CLASS_DECLARATION
                     {
@@ -976,12 +991,16 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(class_idx) = base_class_idx
-                    && let Some(class_node) =
-                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, class_idx)
-                            .get(class_idx)
-                    && let Some(class_data) =
-                        decl_arena_for(self.ctx.binder, self.ctx.arena, base_sym_id, class_idx)
-                            .get_class(class_node)
+                    && let Some(class_node) = self
+                        .ctx
+                        .binder
+                        .arena_for_declaration_or(base_sym_id, class_idx, self.ctx.arena)
+                        .get(class_idx)
+                    && let Some(class_data) = self
+                        .ctx
+                        .binder
+                        .arena_for_declaration_or(base_sym_id, class_idx, self.ctx.arena)
+                        .get_class(class_node)
                 {
                     // Build type parameter substitution for generic class bases
                     // e.g. `extends C<string>` where `class C<T> { a: T; }` → a: string

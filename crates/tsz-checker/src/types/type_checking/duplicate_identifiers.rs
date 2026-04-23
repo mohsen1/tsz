@@ -928,18 +928,14 @@ impl<'a> CheckerState<'a> {
                         declarations[i];
                     let (other_idx, other_flags, other_is_local, other_is_exported, other_origin) =
                         declarations[j];
-                    let decl_arena = self
-                        .ctx
-                        .binder
-                        .get_arena_for_declaration(sym_id, decl_idx)
-                        .map(|arena| arena.as_ref())
-                        .unwrap_or(self.ctx.arena);
-                    let other_arena = self
-                        .ctx
-                        .binder
-                        .get_arena_for_declaration(sym_id, other_idx)
-                        .map(|arena| arena.as_ref())
-                        .unwrap_or(self.ctx.arena);
+                    let decl_arena =
+                        self.ctx
+                            .binder
+                            .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
+                    let other_arena =
+                        self.ctx
+                            .binder
+                            .arena_for_declaration_or(sym_id, other_idx, self.ctx.arena);
                     let decl_conflict_flags =
                         self.normalize_duplicate_conflict_flags(decl_arena, decl_idx, decl_flags);
                     let other_conflict_flags = self.normalize_duplicate_conflict_flags(
