@@ -448,12 +448,33 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(property_type) =
-            crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+        let target_key = self.ctx.types.literal_string_atom(prop_atom);
+        let instantiated_template =
+            crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
                 self.ctx.types,
-                mapped_id,
-                prop_name,
-            )
+                mapped.template,
+                mapped.type_param.name,
+                target_key,
+            );
+        let fast_path_is_concrete = !crate::query_boundaries::state::checking::needs_env_eval(
+            self.ctx.types,
+            instantiated_template,
+        ) && !crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            instantiated_template,
+        )
+            && !crate::query_boundaries::common::contains_lazy_or_recursive(
+                self.ctx.types,
+                instantiated_template,
+            );
+
+        if fast_path_is_concrete
+            && let Some(property_type) =
+                crate::query_boundaries::state::checking::get_finite_mapped_property_type(
+                    self.ctx.types,
+                    mapped_id,
+                    prop_name,
+                )
         {
             self.ctx
                 .narrowing_cache

@@ -1449,7 +1449,16 @@ impl<'a> CheckerState<'a> {
             }
         });
 
-        let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
+        let implicit_this = implicit_this.map(|tt| {
+            let tt = self.resolve_lazy_type(tt);
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, tt)
+                || crate::query_boundaries::common::contains_lazy_or_recursive(self.ctx.types, tt)
+            {
+                self.evaluate_type_with_env(tt)
+            } else {
+                tt
+            }
+        });
 
         let mut pushed_this_type_early = false;
         if let Some(tt) = implicit_this {
@@ -1470,13 +1479,21 @@ impl<'a> CheckerState<'a> {
             // This must happen before infer_return_type_from_body which evaluates body expressions.
             self.ctx.function_depth += 1;
             self.cache_parameter_types(&parameters.nodes, Some(&param_types));
-            let refresh_body_for_contextual_param_retyping =
-                is_closure && (ctx_helper.is_some() || func_jsdoc.is_some());
+            let refresh_body_for_contextual_param_retyping = (ctx_helper.is_some()
+                || func_jsdoc.is_some())
+                && (is_closure
+                    || matches!(
+                        node.kind,
+                        syntax_kind_ext::METHOD_DECLARATION
+                            | syntax_kind_ext::GET_ACCESSOR
+                            | syntax_kind_ext::SET_ACCESSOR
+                    ));
             if refresh_body_for_contextual_param_retyping {
-                // Function expressions are often visited once during environment building
-                // and again with contextual/JSDoc parameter types during checked mode.
-                // Re-evaluate the body from the shared cached parameter types so reads like
-                // `acceptNum(b)` see the same optionality/type-tag result as the signature.
+                // Contextually typed function-like bodies are often visited once during
+                // generic/context-free evaluation and again after a concrete contextual
+                // signature becomes available. Re-evaluate the body from the shared
+                // cached parameter/`this` types so reads like `this.options.suggestion`
+                // or `acceptNum(b)` don't stick with the stale generic pass result.
                 //
                 // Targeted invalidation: clear body only (not param symbols,
                 // which were just set by cache_parameter_types above).

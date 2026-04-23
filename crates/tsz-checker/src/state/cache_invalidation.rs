@@ -295,9 +295,11 @@ impl<'a> CheckerState<'a> {
                     self.invalidate_expression_for_contextual_retry(cond.when_false);
                 }
             }
-            k if k == syntax_kind_ext::SPREAD_ELEMENT => {
+            k if k == syntax_kind_ext::SPREAD_ELEMENT
+                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
                 self.invalidate_node_type_cache(idx);
-                if let Some(spread) = self.ctx.arena.get_unary_expr_ex(node) {
+                if let Some(spread) = self.ctx.arena.get_spread(node) {
                     self.invalidate_expression_for_contextual_retry(spread.expression);
                 }
             }
@@ -535,8 +537,10 @@ impl<'a> CheckerState<'a> {
                     self.clear_type_cache_recursive(cond.when_false);
                 }
             }
-            k if k == syntax_kind_ext::SPREAD_ELEMENT => {
-                if let Some(spread) = self.ctx.arena.get_unary_expr_ex(node) {
+            k if k == syntax_kind_ext::SPREAD_ELEMENT
+                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
+                if let Some(spread) = self.ctx.arena.get_spread(node) {
                     self.clear_type_cache_recursive(spread.expression);
                 }
             }

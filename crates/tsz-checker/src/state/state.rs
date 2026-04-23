@@ -1604,9 +1604,10 @@ impl<'a> CheckerState<'a> {
             // This prevents generic return type inference from being lost — e.g.,
             // querySelector<E>() returning E=Element instead of E=HTMLElement.
             //
-            // Closures need the same preservation: a later context-free pass can
-            // otherwise re-enter the same arrow/function expression, infer `any`
-            // parameters, and overwrite a previously-correct contextual signature.
+            // Closures, contextually typed object literals, and object-literal
+            // methods/accessors need the same preservation: a later context-free
+            // pass can otherwise re-enter the node, fall back to the generic
+            // owner type, and overwrite a previously-correct contextual result.
             if let Some(node) = self.ctx.arena.get(idx) {
                 use tsz_parser::parser::syntax_kind_ext;
                 if matches!(
@@ -1614,6 +1615,9 @@ impl<'a> CheckerState<'a> {
                     syntax_kind_ext::CALL_EXPRESSION
                         | syntax_kind_ext::ARROW_FUNCTION
                         | syntax_kind_ext::FUNCTION_EXPRESSION
+                        | syntax_kind_ext::METHOD_DECLARATION
+                        | syntax_kind_ext::GET_ACCESSOR
+                        | syntax_kind_ext::SET_ACCESSOR
                         | syntax_kind_ext::NON_NULL_EXPRESSION
                         | syntax_kind_ext::NEW_EXPRESSION
                 ) {
