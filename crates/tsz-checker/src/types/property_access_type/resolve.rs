@@ -2928,10 +2928,13 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Get expression name for error message
+        // Named "'this' is possibly 'undefined'." (TS18048) only when `this`
+        // is explicitly typed; implicit `this: undefined` uses TS2532.
         let name = self.expression_text(expression).or_else(|| {
-            self.is_this_expression(expression)
-                .then(|| "this".to_string())
+            (self.is_this_expression(expression)
+                && (self.enclosing_function_has_explicit_this_parameter(expression)
+                    || self.enclosing_function_has_contextual_this_type(expression)))
+            .then(|| "this".to_string())
         });
 
         let (code, message): (u32, String) = if let Some(ref name) = name {

@@ -146,6 +146,64 @@ const x = () => {
     );
 }
 
+/// At the top level of an *external module* (a file with `import`/`export`),
+/// `this` is `undefined`, not `globalThis`. TS7041 (global capture) must not
+/// fire — the downstream property access produces TS2532 instead. Matches
+/// tsc on `conformance/jsx/inline/inlineJsxFactoryDeclarationsLocalTypes.tsx`.
+#[test]
+fn arrow_at_module_top_level_does_not_report_ts7041() {
+    let diags = get_diagnostics(
+        r#"
+export const x = 1;
+const f = () => this.foo;
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.0 == 7041),
+        "Did not expect TS7041 inside an external module — `this` is not \
+         globalThis at module top-level. Got diagnostics: {diags:?}"
+    );
+}
+
+/// Regression guard: a *script* (no `import`/`export`) must still report
+/// TS7041 for `this` in a top-level arrow.
+#[test]
+fn arrow_at_script_top_level_still_reports_ts7041() {
+    let diags = get_diagnostics("var f = () => { this.window; }");
+
+    assert!(
+        diags.iter().any(|d| d.0 == 7041),
+        "Expected TS7041 in script context — `this` captures globalThis. \
+         Got diagnostics: {diags:?}"
+    );
+}
+
+/// In an external module, property access on top-level `this` produces
+/// TS2532 ("Object is possibly 'undefined'."), because module top-level
+/// `this` is `undefined`, not `globalThis`. Matches tsc on e.g.
+/// `conformance/jsx/inline/inlineJsxFactoryDeclarationsLocalTypes.tsx`.
+#[test]
+fn arrow_at_module_top_level_property_access_reports_ts2532_not_ts7017() {
+    let diags = get_diagnostics(
+        r#"
+export const x = 1;
+const f = () => this.foo;
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.0 == 2532),
+        "Expected TS2532 for property access on `this: undefined` at module \
+         top-level. Got diagnostics: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.0 == 7017),
+        "Did not expect TS7017 — `this` is `undefined`, not `typeof globalThis` \
+         in an external module. Got diagnostics: {diags:?}"
+    );
+}
+
 #[test]
 fn nullable_this_property_access_reports_named_ts18048() {
     // From typeofThis.ts: nullable `this` should use the named nullish diagnostic
