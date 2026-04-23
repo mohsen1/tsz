@@ -1074,3 +1074,23 @@ class C {
         "must not degrade to property syntax for const enum computed method: {output}"
     );
 }
+
+#[test]
+fn test_arrow_initializer_preserves_typeof_in_param_annotation() {
+    // Regression: a `const f = (x: typeof something) => ...` must preserve
+    // the `typeof something` in the inferred dts parameter type. The
+    // type-printer path collapses TypeQuery into the resolved value type,
+    // so we route through the AST-based function-initializer path when any
+    // parameter annotation contains a `typeof`.
+    let output = emit_dts_with_binding(
+        r#"
+declare function foo(n: number): number;
+
+const printFn = (action: typeof foo) => { action(1); };
+"#,
+    );
+    assert!(
+        output.contains("typeof foo"),
+        "arrow parameter `typeof X` must be preserved in dts: {output}"
+    );
+}
