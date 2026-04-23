@@ -211,6 +211,13 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// fail for concrete types. Used for implements/extends member type checking
     /// where tsc's `compareSignaturesRelated` does NOT erase.
     pub erase_generics: bool,
+    /// When true, a failed contextual inference for two generic signatures with
+    /// different arity falls through to erased-signature comparison.
+    ///
+    /// This is intentionally opt-in: interface property compatibility needs the
+    /// retry, but ordinary assignments must keep the failed inference as a real
+    /// mismatch so invalid reverse generic assignments still report TS2322.
+    pub allow_erased_generic_signature_retry: bool,
     /// Type parameter equivalences established during generic function subtype checking.
     ///
     /// When alpha-renaming in `check_function_subtype` maps target type params to source
@@ -257,6 +264,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
+            allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
@@ -297,6 +305,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
+            allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
@@ -427,6 +436,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
         self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
         self.erase_generics = (flags & crate::RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
+        self.allow_erased_generic_signature_retry =
+            (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
         self
     }
 
