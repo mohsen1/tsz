@@ -1,4 +1,4 @@
-# Large-repo performance follow-up (2026-04-22)
+# Large-repo performance follow-up (2026-04-22, refreshed 2026-04-23)
 
 Status: **open** — context dump for the next perf iteration.
 
@@ -7,6 +7,25 @@ what the post-sweep `bench-vs-tsgo` run revealed, and what the
 remaining high-leverage work looks like. It is intended as a read-me
 for whoever picks up the campaign next, including fresh profiling data
 from a nightly run on `large-ts-repo`.
+
+## 0. Status update (2026-04-23)
+
+Since the original writeup, several of the "remaining high-leverage
+targets" below have landed. Read §3 knowing which sub-items are
+already done — marked **✅ DONE** in each sub-section heading with
+the landing PR. The remaining open work is in §3.2 (agent in flight),
+§3.3 (design shipped in #1007, PR 1/4 in flight), and §3.4 (open).
+
+Additional 2026-04-23 landings:
+- **#986** `perf(cli): share program-wide symbol_arenas via Arc`
+- **#988** `fix(bench,ci): export partial JSON on OOM/TERM`
+- **#989** `chore(cli): drop now-unused symbols_with_non_local_declarations set`
+- **#1004** `perf(cli): parallelize build_cross_file_binders`
+- **#1007** `docs(perf): design for instantiate_type cross-call cache`
+
+`instantiate_type` cache plan lives at
+`docs/plan/perf-instantiate-type-cache-design.md` — four-PR breakdown.
+Start there before attempting §3.3.
 
 ## 1. What shipped on 2026-04-22
 
@@ -124,7 +143,7 @@ All of the items below are bigger than a single same-day PR.
 They are in rough priority order for moving `large-ts-repo` from
 OOM-kill to "finishes at all," then "finishes faster than tsgo":
 
-### 3.1. `binder.module_exports` consumer migration [memory, largest known]
+### 3.1. `binder.module_exports` consumer migration [memory, largest known] — ✅ DONE (#954)
 
 Per-file `create_binder_from_bound_file_with_augmentations` still
 does `module_exports: program.module_exports.clone()`. On the
@@ -149,7 +168,7 @@ Size: mechanical but spread across many files. Risk: moderate
 (similar pattern to #803, which had to fix 5 missed sites after
 an incomplete migration).
 
-### 3.2. `binder.declaration_arenas` per-file materialization [startup CPU + memory]
+### 3.2. `binder.declaration_arenas` per-file materialization [startup CPU + memory] — 🚧 IN FLIGHT
 
 In `create_binder_from_bound_file_with_augmentations`:
 
@@ -191,7 +210,7 @@ backed out — adding the field without migrating consumers wins
 nothing, and migrating consumers in one PR is a several-hour
 change I didn't want to rush.
 
-### 3.3. `instantiate_type` cross-call cache [compute, the utility-type blow-ups]
+### 3.3. `instantiate_type` cross-call cache [compute, the utility-type blow-ups] — 📐 DESIGN (#1007), PR 1/4 IN FLIGHT
 
 `TypeInstantiator` is constructed **per call** at every
 `instantiate_type(interner, type_id, substitution)` entry point.
@@ -224,7 +243,7 @@ corrupts type identity across the whole pipeline.
 vs union supertype detection in `inference/infer_bct.rs` doing
 O(N²) work that tsgo shortcircuits. Needs profiling to confirm.
 
-### 3.5. `lib_symbol_ids` Arc wrap [memory, cheap]
+### 3.5. `lib_symbol_ids` Arc wrap [memory, cheap] — ✅ DONE (#932)
 
 `program.lib_symbol_ids.clone()` is done per-file binder
 construction (twice — cross-file + per-file). On large repos
@@ -238,39 +257,58 @@ both during binding where refcount=1 so `Arc::make_mut` is free.
 Smaller scope than the module_exports / declaration_arenas
 migrations.
 
-## 4. Concrete suggested next sequence
+## 4. Concrete suggested next sequence (updated 2026-04-23)
 
-Assuming the next session starts with profiler data (e.g. `cargo
-flamegraph --bin tsz -- --noEmit -p large-ts-repo/tsconfig.flat.json`):
+Status: all three module_exports / declaration_arenas / symbol_arenas
+Arc migrations have either landed or are in flight. Large-ts-repo
+OOM root cause is now likely one of:
+- remaining per-file `file.*` clones (flow_nodes, scopes, etc.) — an
+  audit is in flight
+- `instantiate_type` allocations inside recursive utility types — cache
+  design shipped in #1007, PR 1/4 in flight
 
-1. **First:** chase the OOM. `dhat` / `heaptrack` a small run
-   (say 1000 files) and confirm which allocations dominate. The
-   suspects in priority order:
-   - `program.module_exports.clone()` per-file binder (3.1 above)
-   - `program.declaration_arenas`-derived per-file map (3.2)
-   - `program.symbol_arenas`-derived per-file map
-2. Ship the winner as its own PR. It's likely the module_exports
-   migration.
-3. **Second:** once large-ts-repo finishes at all, re-run
-   `bench-vs-tsgo` with the full suite and establish a real
-   large-repo time vs tsgo. Only then is "2× on large repos"
-   measurable.
-4. **Third:** tackle `instantiate_type` cross-call cache (3.3).
-   This is the lever that closes the 16× utility-type gap.
-5. BCT and other solver-level work as a follow-up pass.
+Next sequence:
+
+1. **First:** land `declaration_arenas` Arc migration (§3.2).
+   Includes `sym_to_decl_indices` secondary index to keep the
+   iter consumers in `expando.rs` / `computed/mod.rs` O(1).
+2. **Second:** land the highest-impact remaining `file.*` clone
+   Arc migration. Candidates in rough size order:
+   `FlowNodeArena` (plain `Vec<FlowNode>` today, cloned 2×/file),
+   `file.scopes` (plain `Vec<Scope>`),
+   `file.node_scope_ids` / `file.node_symbols` / `file.node_flow`.
+3. **Third:** ship PRs 1–3 of the `instantiate_type` cache design
+   (`docs/plan/perf-instantiate-type-cache-design.md`). PR 1 is pure
+   plumbing (no behavior change). PR 2 is the cache shell. PR 3 wires
+   it and lands the perf win.
+4. **Fourth:** re-run `bench-vs-tsgo` against `large-ts-repo`.
+   The cumulative Arc migrations + cache should drop peak RSS enough
+   to finish. Only then is "2× on large repos" measurable.
+5. BCT (§3.4) and remaining solver-level work as a follow-up pass.
 
 ## 5. Quick-reference bench state
 
-Artifact: `artifacts/bench-vs-tsgo-20260422-161834.json`
+### Latest committed (2026-04-23): `crates/tsz-website/data/benchmarks.json`
+
+- 76 cases run, 4 errors, 1 timeout
+- tsz wins: 56; tsgo wins: 15
+- Biggest tsz wins: `DeepPartial optional-chain N=400` (1.33×),
+  `Shallow optional-chain N=400` (1.41×)
+- Biggest tsgo wins now:
+  - `BCT candidates=200` (1.71×) — §3.4 remains open
+  - `200 generic functions` (1.50×) — gated on §3.3 cache
+  - `binaryArithmeticControlFlowGraphNotTooLarge.ts` (1.47×)
+  - `200 classes` (1.40×)
+  - `manyConstExports.ts` (1.26×) — symbol-heavy hot path
+- `ts-essentials/deep-readonly.ts` no longer in this run's tsgo-wins list — verify post §3.3
+- **`large-ts-repo`: tsz TIMEOUT** — campaign's primary target still blocked
+
+### Prior baseline (2026-04-22): `artifacts/bench-vs-tsgo-20260422-161834.json`
 
 - 76 cases run, 5 errors, 1 timeout
 - tsz wins: 56; tsgo wins: 14
-- Biggest tsz wins: `utility-types/aliases-and-guards.ts` (2.28×),
-  `utility-types/mapped-types.ts` (1.80×)
 - Biggest tsgo wins: `ts-essentials/deep-readonly.ts` (16.56×),
   `ts-essentials/paths.ts` (7.27×), `ts-essentials/deep-pick.ts` (3.68×)
-- **`large-ts-repo`: tsz TIMEOUT / OOM** — the campaign's primary
-  target is blocked on memory.
 
-Don't treat the 56–14 win count as the headline. The headline is
-the large-repo timeout and the three ts-essentials blow-ups.
+Don't treat the 56–15 win count as the headline. The headline is
+the large-repo timeout and the remaining BCT/generic-functions blow-ups.
