@@ -44,6 +44,10 @@ name = "ts1210_arguments_param_in_class_tests"
 path = "tests/ts1210_arguments_param_in_class_tests.rs"
 
 [[test]]
+name = "ts2307_per_site_dedup_tests"
+path = "tests/ts2307_per_site_dedup_tests.rs"
+
+[[test]]
 name = "ts2769_anchor_disagreeing_overloads_tests"
 path = "tests/ts2769_anchor_disagreeing_overloads_tests.rs"
 
