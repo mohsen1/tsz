@@ -516,6 +516,186 @@ function f<T extends { [key: string]: number }>(c: T, k: keyof T) {
 }
 
 #[test]
+fn test_ts2339_preserves_merge_alias_receiver_for_instantiation_chain() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
+
+const o1 = merge({ p1: 1 }, { p2: 2 });
+const o2 = merge(o1, { p3: 3 });
+o2.p4;
+"#,
+    );
+
+    let ts2339 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2339)
+        .expect("expected TS2339 for missing p4");
+    assert!(
+        ts2339.1.contains("merge<merge<"),
+        "Expected TS2339 receiver to preserve merge alias chain.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2339.1.contains("Omit<"),
+        "Expected TS2339 receiver to avoid the expanded Omit surface.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .1
+            .contains("merge<merge<{ p1: number; }, { p2: number; }>, { p3: number; }>"),
+        "Expected TS2339 receiver to widen inferred merge literal arguments.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2339_keeps_conditional_merge_receiver_branch_display() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = keyof base & keyof props extends never
+    ? base & props
+    : Omit<base, keyof props & keyof base> & props;
+declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
+
+const o1 = merge({ p1: 1 }, { p2: 2 });
+const o2 = merge(o1, { p2: 2, p3: 3 });
+o2.p4;
+"#,
+    );
+
+    let ts2339 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2339)
+        .expect("expected TS2339 for missing p4");
+    assert!(
+        ts2339.1.contains("Omit<"),
+        "Expected TS2339 receiver to preserve the conditional Omit branch.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2339.1.contains("merge<"),
+        "Expected TS2339 receiver not to repaint a resolved conditional branch as merge.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2339_elides_long_merge_receiver_instantiation_chain() {
+    let mut source = String::from(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+declare const merge: <l, r>(l: l, r: r) => merge<l, r>;
+
+const o1 = merge({ p1: 1 }, { p2: 2 });
+"#,
+    );
+    for i in 2..=30 {
+        source.push_str(&format!(
+            "const o{i} = merge(o{}, {{ p{}: {} }});\n",
+            i - 1,
+            i + 1,
+            i + 1
+        ));
+    }
+    source.push_str("o30.p38;\no30.p51;\n");
+
+    let diagnostics = compile_and_get_diagnostics(&source);
+    assert!(
+        diagnostics.iter().filter(|(code, _)| *code == 2339).count() == 2,
+        "Expected TS2339 for both missing long-chain properties.\nActual diagnostics: {diagnostics:#?}"
+    );
+    for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
+        assert!(
+            message.matches("merge<").count() >= 25,
+            "Expected TS2339 receiver to preserve the long merge application chain.\nActual message: {message}"
+        );
+        assert!(
+            message.contains("{ p1: number; }")
+                && message.contains("{ p2: number; }")
+                && message.contains("{ p5: number; }"),
+            "Expected TS2339 receiver to preserve the stable merge chain prefix.\nActual message: {message}"
+        );
+        assert!(
+            message.contains("{ ...; }"),
+            "Expected TS2339 receiver to elide the middle merge object arguments.\nActual message: {message}"
+        );
+        assert!(
+            !message.contains("{ p31: number; }"),
+            "Expected TS2339 receiver to truncate before the shallow suffix.\nActual message: {message}"
+        );
+        assert!(
+            message.contains("{ ....."),
+            "Expected TS2339 receiver truncation to match tsc's merge-chain suffix.\nActual message: {message}"
+        );
+        assert!(
+            !message.contains("<...,"),
+            "Expected TS2339 receiver not to collapse the older chain to a raw ellipsis.\nActual message: {message}"
+        );
+        assert!(
+            message.len() < 390,
+            "Expected TS2339 receiver to stay bounded.\nActual len: {}\nActual message: {message}",
+            message.len()
+        );
+    }
+}
+
+#[test]
+fn test_ts2339_elides_long_merge_receiver_method_chain_shape_access() {
+    let mut source = String::from(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+type Type<t> = {
+    shape: t;
+    merge: <r>(r: r) => Type<merge<t, r>>;
+};
+
+declare const o1: Type<{ p1: 1 }>;
+"#,
+    );
+    for i in 2..=30 {
+        source.push_str(&format!(
+            "const o{i} = o{}.merge({{ p{}: {} }});\n",
+            i - 1,
+            i,
+            i
+        ));
+    }
+    source.push_str("o30.shape.p31;\no30.shape.p38;\no30.shape.p50;\n");
+
+    let diagnostics = compile_and_get_diagnostics(&source);
+    assert!(
+        diagnostics.iter().filter(|(code, _)| *code == 2339).count() == 3,
+        "Expected TS2339 for missing long-chain shape properties.\nActual diagnostics: {diagnostics:#?}"
+    );
+    for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
+        assert!(
+            message.contains("{ p1: 1; }")
+                && message.contains("{ p2: number; }")
+                && message.contains("{ p5: number; }"),
+            "Expected TS2339 receiver to preserve the stable method-chain prefix.\nActual message: {message}"
+        );
+        assert!(
+            message.contains("{ ...; }") && message.contains("{ ....."),
+            "Expected TS2339 receiver to elide and truncate the middle method-chain arguments.\nActual message: {message}"
+        );
+        assert!(
+            !message.contains("{ p30: number; }") && !message.contains("<...,"),
+            "Expected TS2339 receiver not to keep the shallow suffix or raw ellipsis.\nActual message: {message}"
+        );
+    }
+}
+
+#[test]
 fn test_object_literal_source_display_preserves_quoted_numeric_property_names() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

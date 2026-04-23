@@ -560,6 +560,38 @@ impl<'a> CheckerState<'a> {
         Some(symbol.escaped_name.clone())
     }
 
+    fn property_receiver_application_chain_depth(&self, ty: TypeId) -> u32 {
+        let mut current = ty;
+        let mut depth = 0;
+        let mut guard = 0;
+
+        loop {
+            let application =
+                crate::query_boundaries::common::type_application(self.ctx.types, current).or_else(
+                    || {
+                        self.ctx.types.get_display_alias(current).and_then(|alias| {
+                            crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                        })
+                    },
+                );
+            let Some(app) = application else {
+                break;
+            };
+
+            depth += 1;
+            guard += 1;
+            if guard > 128 {
+                break;
+            }
+            let Some(&next) = app.args.first() else {
+                break;
+            };
+            current = next;
+        }
+
+        depth
+    }
+
     pub(crate) fn format_property_receiver_type_for_diagnostic(&mut self, ty: TypeId) -> String {
         if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
             return format!("typeof import(\"{module_name}\")");
@@ -576,12 +608,19 @@ impl<'a> CheckerState<'a> {
         if let Some(application_display) = application_display {
             let display_ty =
                 self.normalize_property_receiver_application_display_type(application_display);
+            let elision_end_depth = self
+                .property_receiver_application_chain_depth(display_ty)
+                .saturating_sub(4);
             let mut formatter = self
                 .ctx
                 .create_diagnostic_type_formatter()
+                .with_long_property_receiver_display()
+                .with_long_property_receiver_object_elision_end_depth(elision_end_depth)
                 .with_display_properties()
                 .with_skip_application_alias_names();
-            return formatter.format(display_ty).into_owned();
+            return Self::truncate_property_receiver_display(
+                formatter.format(display_ty).into_owned(),
+            );
         }
         let has_object_shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty).is_some();

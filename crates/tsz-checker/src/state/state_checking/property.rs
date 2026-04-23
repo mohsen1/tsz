@@ -231,6 +231,7 @@ impl<'a> CheckerState<'a> {
         // Handle union targets first using type_queries
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
+            let mut any_member_has_string_index = false;
             let mut any_member_has_number_index = false;
             let mut has_unresolved_member = false;
 
@@ -256,15 +257,24 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                // String index signatures accept ANY string-keyed property,
-                // so all excess property checking can be skipped.
-                if shape.string_index.is_some() {
-                    return;
+                if let Some(string_index) = &shape.string_index {
+                    any_member_has_string_index = true;
+                    if Self::index_value_type_is_deferred(self.ctx.types, string_index.value_type)
+                        || crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            resolved_target,
+                        )
+                    {
+                        return;
+                    }
                 }
 
                 // Empty types (like `{}`) accept any non-primitive,
                 // so skip excess property checking entirely.
-                if shape.properties.is_empty() && shape.number_index.is_none() {
+                if shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+                {
                     return;
                 }
 
@@ -287,6 +297,22 @@ impl<'a> CheckerState<'a> {
             }
 
             if target_shapes.is_empty() {
+                return;
+            }
+
+            if self.try_union_index_signature_value_check(
+                source_props,
+                idx,
+                &target_shapes,
+                explicit_property_names.as_ref(),
+            ) {
+                return;
+            }
+
+            // String index signatures accept arbitrary string-keyed property
+            // names, so fallback TS2353 excess-property checking can be skipped
+            // once index-signature value compatibility has had a chance to run.
+            if any_member_has_string_index {
                 return;
             }
 
@@ -317,7 +343,8 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .map(|i| target_shapes[i].clone())
                 .collect::<Vec<_>>();
-            let effective_shapes = if discriminant_shapes.is_empty() {
+            let had_discriminant_narrowing = !discriminant_shapes.is_empty();
+            let effective_shapes = if !had_discriminant_narrowing {
                 if has_unresolved_member {
                     let matching_shapes = target_shapes
                         .iter()
@@ -403,11 +430,27 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         target_prop_types.clone(),
                     );
-                    let nested_target = self.nested_property_target_type(
-                        effective_target,
-                        source_prop.name,
-                        nested_target,
-                    );
+                    let nested_target = if had_discriminant_narrowing {
+                        nested_target
+                    } else {
+                        self.nested_property_target_type(
+                            effective_target,
+                            source_prop.name,
+                            nested_target,
+                        )
+                    };
+
+                    if had_discriminant_narrowing
+                        && self.try_emit_nested_discriminated_union_assignability_error(
+                            source,
+                            target,
+                            idx,
+                            source_prop.name,
+                            nested_target,
+                        )
+                    {
+                        return;
+                    }
 
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
@@ -624,6 +667,15 @@ impl<'a> CheckerState<'a> {
             // properties. E.g., for target `{ [k: string]: { a: 0 } & { b: 0 } }`,
             // a nested `{ a: 0, b: 0, c: 0 }` should flag `c` as excess.
             if let Some(ref idx_sig) = target_shape.string_index {
+                if self.try_union_index_signature_value_check(
+                    source_props,
+                    idx,
+                    std::slice::from_ref(&target_shape),
+                    explicit_property_names.as_ref(),
+                ) {
+                    return;
+                }
+
                 let idx_value_type = idx_sig.value_type;
                 for source_prop in source_props {
                     if explicit_property_names.is_some()
@@ -955,6 +1007,284 @@ impl<'a> CheckerState<'a> {
 
             if !matching_indices.is_empty() && matching_indices.len() < union_shapes.len() {
                 return Some(matching_indices);
+            }
+        }
+
+        None
+    }
+
+    fn try_union_index_signature_value_check(
+        &mut self,
+        source_props: &[tsz_solver::PropertyInfo],
+        obj_literal_idx: NodeIndex,
+        union_shapes: &[std::sync::Arc<tsz_solver::ObjectShape>],
+        explicit_property_names: Option<&HashSet<Atom>>,
+    ) -> bool {
+        let diag_count_before = self.ctx.diagnostics.len();
+
+        for source_prop in source_props {
+            if explicit_property_names.is_some()
+                && !explicit_property_names
+                    .as_ref()
+                    .is_some_and(|names| names.contains(&source_prop.name))
+            {
+                continue;
+            }
+
+            // Named properties have their own union-member compatibility paths.
+            // Keep this check scoped to properties whose only plausible union
+            // acceptance is through an index signature.
+            if union_shapes.iter().any(|shape| {
+                shape
+                    .properties
+                    .iter()
+                    .any(|target_prop| target_prop.name == source_prop.name)
+            }) {
+                continue;
+            }
+
+            let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+            let is_numeric_name = tsz_solver::utils::is_numeric_literal_name(&prop_name);
+            let mut applicable_index_value_types = Vec::new();
+            let mut accepted_by_index = false;
+            let mut has_deferred_index_value_type = false;
+
+            for shape in union_shapes {
+                if let Some(string_index) = &shape.string_index {
+                    if Self::index_value_type_is_deferred(self.ctx.types, string_index.value_type) {
+                        has_deferred_index_value_type = true;
+                        continue;
+                    }
+                    applicable_index_value_types.push(string_index.value_type);
+                    if self.is_assignable_to(source_prop.type_id, string_index.value_type) {
+                        accepted_by_index = true;
+                        break;
+                    }
+                }
+
+                if is_numeric_name && let Some(number_index) = &shape.number_index {
+                    if Self::index_value_type_is_deferred(self.ctx.types, number_index.value_type) {
+                        has_deferred_index_value_type = true;
+                        continue;
+                    }
+                    applicable_index_value_types.push(number_index.value_type);
+                    if self.is_assignable_to(source_prop.type_id, number_index.value_type) {
+                        accepted_by_index = true;
+                        break;
+                    }
+                }
+            }
+
+            if accepted_by_index
+                || applicable_index_value_types.is_empty()
+                || has_deferred_index_value_type
+            {
+                continue;
+            }
+
+            let target_value_type =
+                tsz_solver::utils::union_or_single(self.ctx.types, applicable_index_value_types);
+            if self.is_assignable_to(source_prop.type_id, target_value_type) {
+                continue;
+            }
+
+            let report_idx = self
+                .find_object_literal_property_element(obj_literal_idx, source_prop.name)
+                .unwrap_or(obj_literal_idx);
+            self.error_type_not_assignable_at_with_anchor(
+                source_prop.type_id,
+                target_value_type,
+                report_idx,
+            );
+        }
+
+        self.ctx.diagnostics.len() > diag_count_before
+    }
+
+    fn index_value_type_is_deferred(types: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::is_index_access_type(types, type_id)
+            || crate::query_boundaries::common::contains_type_parameters(types, type_id)
+    }
+
+    fn try_emit_nested_discriminated_union_assignability_error(
+        &mut self,
+        outer_source: TypeId,
+        outer_target: TypeId,
+        obj_literal_idx: NodeIndex,
+        prop_name: Atom,
+        nested_target: TypeId,
+    ) -> bool {
+        if !self.is_object_like_nested_target(nested_target) {
+            return false;
+        }
+
+        let literal_idx = if self
+            .ctx
+            .arena
+            .get(obj_literal_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        {
+            obj_literal_idx
+        } else {
+            let Some(literal_idx) = self.find_rhs_object_literal(obj_literal_idx) else {
+                return false;
+            };
+            literal_idx
+        };
+
+        let Some((report_idx, value_idx)) =
+            self.object_literal_property_name_and_value(literal_idx, prop_name)
+        else {
+            return false;
+        };
+        let effective_value_idx = self.ctx.arena.skip_parenthesized(value_idx);
+        let Some(value_node) = self.ctx.arena.get(effective_value_idx) else {
+            return false;
+        };
+        if value_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(rejected_property) =
+            self.nested_literal_rejected_fresh_property(effective_value_idx, nested_target)
+        else {
+            return false;
+        };
+
+        let source_str = self.format_type(outer_source);
+        let target_str = self.format_type(outer_target);
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        if let Some((start, length)) =
+            self.find_excess_property_anchor(effective_value_idx, rejected_property)
+        {
+            self.error(
+                start,
+                length,
+                message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        } else {
+            self.error_at_anchor(
+                report_idx,
+                crate::error_reporter::DiagnosticAnchorKind::PropertyToken,
+                &message,
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+        }
+        true
+    }
+
+    fn is_object_like_nested_target(&mut self, nested_target: TypeId) -> bool {
+        let nested_target = self.evaluate_type_with_env(nested_target);
+        let nested_target = self.resolve_type_for_property_access(nested_target);
+
+        if query::object_shape(self.ctx.types, nested_target).is_some() {
+            return true;
+        }
+
+        let resolved_target = self.prune_impossible_object_union_members_with_env(nested_target);
+        query::union_members(self.ctx.types, resolved_target).is_some_and(|members| {
+            members.iter().any(|member| {
+                let resolved_member = self.resolve_type_for_property_access(*member);
+                query::object_shape(self.ctx.types, resolved_member).is_some()
+            })
+        })
+    }
+
+    fn nested_literal_rejected_fresh_property(
+        &mut self,
+        nested_literal_idx: NodeIndex,
+        nested_target: TypeId,
+    ) -> Option<Atom> {
+        let nested_target = self.evaluate_type_with_env(nested_target);
+        let nested_target = self.resolve_type_for_property_access(nested_target);
+        let resolved_target = self.prune_impossible_object_union_members_with_env(nested_target);
+        let Some(members) = query::union_members(self.ctx.types, resolved_target) else {
+            return None;
+        };
+
+        let mut target_shapes = Vec::new();
+        for &member in &members {
+            let resolved_member = self.resolve_type_for_property_access(member);
+            let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
+                return None;
+            };
+            target_shapes.push(shape);
+        }
+        if target_shapes.is_empty() {
+            return None;
+        }
+
+        let nested_node = self.ctx.arena.get(nested_literal_idx)?;
+        let nested_literal = self.ctx.arena.get_literal_expr(nested_node)?;
+        for &elem_idx in &nested_literal.elements.nodes {
+            let elem_node = self.ctx.arena.get(elem_idx)?;
+            let prop_name = match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                    self.get_property_name(prop.name)
+                }
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_shorthand_property(elem_node)?;
+                    self.get_property_name(prop.name)
+                }
+                _ => None,
+            };
+            let Some(prop_name) = prop_name.map(|name| self.ctx.types.intern_string(&name)) else {
+                continue;
+            };
+            let accepted_by_target = target_shapes.iter().any(|shape| {
+                shape
+                    .properties
+                    .iter()
+                    .any(|target_prop| target_prop.name == prop_name)
+                    || shape.string_index.is_some()
+                    || (shape.number_index.is_some()
+                        && tsz_solver::utils::is_numeric_literal_name(
+                            &self.ctx.types.resolve_atom(prop_name),
+                        ))
+            });
+            if !accepted_by_target {
+                return Some(prop_name);
+            }
+        }
+
+        None
+    }
+
+    fn object_literal_property_name_and_value(
+        &self,
+        obj_literal_idx: NodeIndex,
+        prop_name: Atom,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+        let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+
+        for &elem_idx in obj_lit.elements.nodes.iter().rev() {
+            let elem_node = self.ctx.arena.get(elem_idx)?;
+            match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                    let elem_prop_name = self
+                        .get_property_name(prop.name)
+                        .map(|name| self.ctx.types.intern_string(&name));
+                    if elem_prop_name == Some(prop_name) {
+                        return Some((prop.name, prop.initializer));
+                    }
+                }
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    let prop = self.ctx.arena.get_shorthand_property(elem_node)?;
+                    let elem_prop_name = self
+                        .get_property_name(prop.name)
+                        .map(|name| self.ctx.types.intern_string(&name));
+                    if elem_prop_name == Some(prop_name) {
+                        return Some((prop.name, prop.name));
+                    }
+                }
+                _ => {}
             }
         }
 

@@ -339,8 +339,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     &target_instantiated,
                     allow_constructor_bivariance,
                 );
-                self.type_param_equivalences.truncate(equiv_start);
-                return result;
+                if result.is_true() {
+                    self.type_param_equivalences.truncate(equiv_start);
+                    return result;
+                }
+                if !self.allow_erased_generic_signature_retry {
+                    self.type_param_equivalences.truncate(equiv_start);
+                    return result;
+                }
             }
 
             let source_canonical =

@@ -97,3 +97,85 @@ var w: M.A = new Other();
         "target should not be qualified when there is no collision; got: {msg:?}"
     );
 }
+
+#[test]
+fn ts2559_assignment_qualifies_weak_type_pair_when_names_collide() {
+    let source = r#"
+namespace M { export interface A { m?: string; } }
+namespace N { export interface A { n?: number; } }
+const sourceValue: N.A = {};
+const targetValue: M.A = sourceValue;
+"#;
+    let diags = get_diagnostics(source);
+
+    let ts2559: Vec<_> = diags.iter().filter(|(c, _)| *c == 2559).collect();
+    assert_eq!(
+        ts2559.len(),
+        1,
+        "expected exactly one TS2559 diagnostic; got: {diags:?}"
+    );
+    let msg = &ts2559[0].1;
+    assert!(
+        msg.contains("'N.A'") && msg.contains("'M.A'"),
+        "TS2559 assignment should qualify both weak types, got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("Type 'A' has no properties in common with type 'A'."),
+        "TS2559 assignment should not collapse both sides to the same short name, got: {msg:?}"
+    );
+}
+
+#[test]
+fn ts2559_call_argument_qualifies_weak_type_pair_when_names_collide() {
+    let source = r#"
+namespace M { export interface A { m?: string; } }
+namespace N { export interface A { n?: number; } }
+declare function take(value: M.A): void;
+const sourceValue: N.A = {};
+take(sourceValue);
+"#;
+    let diags = get_diagnostics(source);
+
+    let ts2559: Vec<_> = diags.iter().filter(|(c, _)| *c == 2559).collect();
+    assert_eq!(
+        ts2559.len(),
+        1,
+        "expected exactly one TS2559 diagnostic; got: {diags:?}"
+    );
+    let msg = &ts2559[0].1;
+    assert!(
+        msg.contains("'N.A'") && msg.contains("'M.A'"),
+        "TS2559 call argument should qualify both weak types, got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("Type 'A' has no properties in common with type 'A'."),
+        "TS2559 call argument should not collapse both sides to the same short name, got: {msg:?}"
+    );
+}
+
+#[test]
+fn ts2559_generic_constraint_qualifies_weak_type_pair_when_names_collide() {
+    let source = r#"
+namespace M { export interface A { m?: string; } }
+namespace N { export interface A { n?: number; } }
+type Box<T extends M.A> = T;
+type Bad = Box<N.A>;
+"#;
+    let diags = get_diagnostics(source);
+
+    let ts2559: Vec<_> = diags.iter().filter(|(c, _)| *c == 2559).collect();
+    assert_eq!(
+        ts2559.len(),
+        1,
+        "expected exactly one TS2559 diagnostic; got: {diags:?}"
+    );
+    let msg = &ts2559[0].1;
+    assert!(
+        msg.contains("'N.A'") && msg.contains("'M.A'"),
+        "TS2559 generic constraint should qualify both weak types, got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("Type 'A' has no properties in common with type 'A'."),
+        "TS2559 generic constraint should not collapse both sides to the same short name, got: {msg:?}"
+    );
+}

@@ -156,6 +156,12 @@ pub trait TypeDatabase {
     /// its original Application TypeId for diagnostic display.
     fn store_display_alias(&self, _evaluated: TypeId, _application: TypeId) {}
 
+    /// Store an Application display alias even when structural provenance was
+    /// recorded earlier for the same evaluated type.
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        self.store_display_alias(evaluated, application);
+    }
+
     /// Look up the original Application TypeId for a type produced by
     /// evaluating an Application. Returns `None` if no mapping exists.
     fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
@@ -533,6 +539,10 @@ impl TypeDatabase for TypeInterner {
 
     fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
         Self::store_display_alias(self, evaluated, application);
+    }
+
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        Self::store_display_alias_preferring_application(self, evaluated, application);
     }
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {

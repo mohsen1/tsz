@@ -376,6 +376,18 @@ impl<'a> CheckerState<'a> {
                                 args.len(),
                             )
                         };
+                        // Keep the first-pass instantiated retry consistent with the
+                        // signature-specific retry below. The retry may contextually
+                        // type an object literal with the inferred parameter type
+                        // (for example `Object.freeze<T>(o: T): Readonly<T>`). If
+                        // literal preservation is dropped here, the retry overwrites
+                        // the successful first pass with widened property values.
+                        let prev_preserve_literals_retry = self.ctx.preserve_literal_types;
+                        let prev_in_const_assertion_retry = self.ctx.in_const_assertion;
+                        self.ctx.preserve_literal_types = true;
+                        if sig.type_params.iter().any(|tp| tp.is_const) {
+                            self.ctx.in_const_assertion = true;
+                        }
                         let refreshed_arg_types = self.collect_call_argument_types_with_context(
                             args,
                             |i, _arg_count| refreshed_contextual_types.get(i).copied().flatten(),
@@ -383,6 +395,8 @@ impl<'a> CheckerState<'a> {
                             None,
                             sig_callable_ctx,
                         );
+                        self.ctx.preserve_literal_types = prev_preserve_literals_retry;
+                        self.ctx.in_const_assertion = prev_in_const_assertion_retry;
                         // When return-context substitution was used to provide better
                         // contextual types, re-resolve the call with the correctly-typed
                         // arguments to get the right return type. Without this, the return
