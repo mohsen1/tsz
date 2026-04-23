@@ -279,11 +279,15 @@ function toString() {
     let diagnostics = check_js(source);
     let ts2339: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, msg)| *code == 2339 && msg.contains("'yadda'"))
+        .filter(|(code, _)| *code == 2339)
         .collect();
-    assert!(
-        !ts2339.is_empty(),
-        "Expected TS2339 for unknown `this.yadda` in JS function, got: {diagnostics:?}"
+    assert_eq!(
+        ts2339,
+        vec![&(
+            2339,
+            "Property 'yadda' does not exist on type 'toString'.".to_string()
+        )],
+        "Expected TS2339 for unknown `this.yadda` in JS function to use the function receiver name. Actual diagnostics: {diagnostics:?}"
     );
 }
 
