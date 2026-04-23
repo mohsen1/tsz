@@ -7,6 +7,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::syntax::transform_utils::contains_this_reference;
 
 fn callee_needs_contextual_return_type(state: &CheckerState, callee_idx: NodeIndex) -> bool {
     use tsz_parser::parser::syntax_kind_ext;
@@ -61,7 +62,11 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
                         .and_then(|pn| state.ctx.arena.get_parameter(pn))
                         .is_some_and(|p| p.type_annotation.is_none())
                 });
+                let zero_param_contextual_this = method.parameters.nodes.is_empty()
+                    && method.type_annotation.is_none()
+                    && contains_this_reference(state.ctx.arena, method.body);
                 has_unannotated_params
+                    || zero_param_contextual_this
                     || (method.parameters.nodes.is_empty()
                         && method.type_annotation.is_none()
                         && function_body_needs_contextual_return_type(state, method.body))
@@ -166,7 +171,14 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
                                                 .and_then(|pn| state.ctx.arena.get_parameter(pn))
                                                 .is_some_and(|p| p.type_annotation.is_none())
                                         });
+                                    let zero_param_contextual_this = method
+                                        .parameters
+                                        .nodes
+                                        .is_empty()
+                                        && method.type_annotation.is_none()
+                                        && contains_this_reference(state.ctx.arena, method.body);
                                     if has_unannotated
+                                        || zero_param_contextual_this
                                         || (method.parameters.nodes.is_empty()
                                             && method.type_annotation.is_none()
                                             && function_body_needs_contextual_return_type(
