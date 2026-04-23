@@ -801,7 +801,7 @@ impl<'a> EnumES5Transformer<'a> {
         if node.kind == SyntaxKind::PrivateIdentifier as u16 {
             return IRNode::Identifier(String::new().into());
         }
-        if node.kind == SyntaxKind::NumericLiteral as u16
+        if node.is_numeric_literal()
             && let Some(lit) = self.arena.get_literal(node)
             && let Some(val) = tsz_common::numeric::parse_numeric_literal_value(&lit.text)
         {
@@ -818,7 +818,7 @@ impl<'a> EnumES5Transformer<'a> {
         }
         // For string literal member names, use source text to preserve Unicode escapes
         // (e.g., "gold \u2730" must stay as-is, not be decoded to the literal char).
-        if node.kind == SyntaxKind::StringLiteral as u16
+        if node.is_string_literal()
             && let Some(source_text) = self.source_text
         {
             let start = node.pos as usize;
@@ -961,11 +961,11 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node)
                     && let Some(obj_node) = self.arena.get(access.expression)
-                    && obj_node.kind == SyntaxKind::Identifier as u16
+                    && obj_node.is_identifier()
                     && let Some(obj_id) = self.arena.get_identifier(obj_node)
                     && obj_id.escaped_text == self.current_enum_name
                     && let Some(prop_node) = self.arena.get(access.name_or_argument)
-                    && prop_node.kind == SyntaxKind::Identifier as u16
+                    && prop_node.is_identifier()
                     && let Some(prop_id) = self.arena.get_identifier(prop_node)
                 {
                     let name = prop_id.escaped_text.as_str();
@@ -980,11 +980,11 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node)
                     && let Some(obj_node) = self.arena.get(access.expression)
-                    && obj_node.kind == SyntaxKind::Identifier as u16
+                    && obj_node.is_identifier()
                     && let Some(obj_id) = self.arena.get_identifier(obj_node)
                     && obj_id.escaped_text == self.current_enum_name
                     && let Some(index_node) = self.arena.get(access.name_or_argument)
-                    && index_node.kind == SyntaxKind::StringLiteral as u16
+                    && index_node.is_string_literal()
                     && let Some(lit) = self.arena.get_literal(index_node)
                 {
                     let name = lit.text.as_str();
@@ -1031,7 +1031,7 @@ impl<'a> EnumES5Transformer<'a> {
                 // Resolve E.Member references
                 let access = self.arena.get_access_expr(node)?;
                 let obj_node = self.arena.get(access.expression)?;
-                if obj_node.kind == SyntaxKind::Identifier as u16
+                if obj_node.is_identifier()
                     && let Some(obj_id) = self.arena.get_identifier(obj_node)
                 {
                     let prop_node = self.arena.get(access.name_or_argument)?;
@@ -1057,12 +1057,12 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;
                 let obj_node = self.arena.get(access.expression)?;
-                if obj_node.kind == SyntaxKind::Identifier as u16
+                if obj_node.is_identifier()
                     && let Some(obj_id) = self.arena.get_identifier(obj_node)
                 {
                     // Get the string key from the index expression
                     let index_node = self.arena.get(access.name_or_argument)?;
-                    let member_name = if index_node.kind == SyntaxKind::StringLiteral as u16 {
+                    let member_name = if index_node.is_string_literal() {
                         self.arena
                             .get_literal(index_node)
                             .map(|lit| lit.text.as_str())
@@ -1211,7 +1211,7 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;
                 let obj_node = self.arena.get(access.expression)?;
-                if obj_node.kind != SyntaxKind::Identifier as u16 {
+                if !obj_node.is_identifier() {
                     return None;
                 }
                 let obj_id = self.arena.get_identifier(obj_node)?;
@@ -1278,7 +1278,7 @@ impl<'a> EnumES5Transformer<'a> {
                     // Check if the object is the enum parameter name
                     let obj_node = self.arena.get(access.expression);
                     let obj_is_enum = obj_node.is_some_and(|n| {
-                        n.kind == SyntaxKind::Identifier as u16
+                        n.is_identifier()
                             && self
                                 .arena
                                 .get_identifier(n)

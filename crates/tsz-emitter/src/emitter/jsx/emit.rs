@@ -541,7 +541,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if node.kind == SyntaxKind::Identifier as u16 {
+        if node.is_identifier() {
             // Check if it's an intrinsic element (starts with lowercase)
             if let Some(ident) = self.arena.get_identifier(node) {
                 let text = self.arena.resolve_identifier_text(ident);
@@ -721,12 +721,12 @@ impl<'a> Printer<'a> {
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             return false;
         }
-        if name_node.kind == SyntaxKind::Identifier as u16
+        if name_node.is_identifier()
             && let Some(ident) = self.arena.get_identifier(name_node)
         {
             return ident.escaped_text == "__proto__";
         }
-        if name_node.kind == SyntaxKind::StringLiteral as u16
+        if name_node.is_string_literal()
             && let Some(lit) = self.arena.get_literal(name_node)
         {
             return lit.text == "__proto__";
@@ -791,7 +791,7 @@ impl<'a> Printer<'a> {
             return String::new();
         };
 
-        if node.kind == SyntaxKind::Identifier as u16
+        if node.is_identifier()
             && let Some(ident) = self.arena.get_identifier(node)
         {
             return self.arena.resolve_identifier_text(ident).to_string();
@@ -825,7 +825,7 @@ impl<'a> Printer<'a> {
         };
 
         // String literal (e.g. `"hello"`) -- preserve original node for quote fidelity
-        if node.kind == SyntaxKind::StringLiteral as u16 {
+        if node.is_string_literal() {
             return JsxAttrValue::StringNode(init_idx);
         }
 

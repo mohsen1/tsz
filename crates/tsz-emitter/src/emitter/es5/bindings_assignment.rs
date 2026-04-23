@@ -166,7 +166,7 @@ impl<'a> Printer<'a> {
         // - Simple identifier `arr` -> `arr_1`, `arr_2`, etc. (doesn't consume counter)
         // - Complex expression -> `_a`, `_b`, etc. (from global counter)
         let array_name = if let Some(expr_node) = self.arena.get(for_in_of.expression) {
-            if expr_node.kind == SyntaxKind::Identifier as u16 {
+            if expr_node.is_identifier() {
                 if let Some(ident) = self.arena.get_identifier(expr_node) {
                     let name = self.arena.resolve_identifier_text(ident).to_string();
                     // Try incrementing suffixes: name_1, name_2, name_3, ...
@@ -582,7 +582,7 @@ impl<'a> Printer<'a> {
         };
 
         // Simple identifier: register it directly
-        if name_node.kind == SyntaxKind::Identifier as u16 {
+        if name_node.is_identifier() {
             if let Some(ident) = self.arena.get_identifier(name_node) {
                 let original_name = self.arena.resolve_identifier_text(ident);
                 self.ctx.block_scope_state.register_variable(original_name);
@@ -615,7 +615,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if name_node.kind == SyntaxKind::Identifier as u16 {
+        if name_node.is_identifier() {
             if let Some(ident) = self.arena.get_identifier(name_node) {
                 let original_name = self.arena.resolve_identifier_text(ident);
                 self.ctx
@@ -767,7 +767,7 @@ impl<'a> Printer<'a> {
                             // Handle variable shadowing: get the pre-registered renamed name
                             // (variable was already registered in pre_register_for_of_loop_variable)
                             if let Some(ident_node) = self.arena.get(decl.name) {
-                                if ident_node.kind == SyntaxKind::Identifier as u16 {
+                                if ident_node.is_identifier() {
                                     if let Some(ident) = self.arena.get_identifier(ident_node) {
                                         let original_name =
                                             self.arena.resolve_identifier_text(ident);
@@ -967,7 +967,7 @@ impl<'a> Printer<'a> {
         let is_simple = self
             .arena
             .get(effective_right_idx)
-            .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
+            .is_some_and(|n| n.is_identifier());
 
         // Count elements to determine if we need a temp for complex sources.
         // TypeScript creates a temp for non-identifier sources when there are 2+ elements
@@ -1461,14 +1461,14 @@ impl<'a> Printer<'a> {
     /// Get property key text from a property name node.
     pub(in crate::emitter) fn get_property_key_text(&self, name_idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(name_idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
+        if node.is_identifier() {
             Some(crate::transforms::emit_utils::identifier_text_or_empty(
                 self.arena, name_idx,
             ))
-        } else if node.kind == SyntaxKind::StringLiteral as u16 {
+        } else if node.is_string_literal() {
             // For string keys like { "name": value }
             self.get_string_literal_text(name_idx)
-        } else if node.kind == SyntaxKind::NumericLiteral as u16 {
+        } else if node.is_numeric_literal() {
             self.get_numeric_literal_text(name_idx)
         } else {
             None

@@ -1704,7 +1704,7 @@ impl ParserState {
             return false;
         }
 
-        if node_a.kind == SyntaxKind::Identifier as u16 {
+        if node_a.is_identifier() {
             if let (Some(id_a), Some(id_b)) = (
                 self.arena.get_identifier(node_a),
                 self.arena.get_identifier(node_b),
