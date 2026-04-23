@@ -28,7 +28,10 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
-use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
+use crate::binder::state::{
+    BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap, WildcardReexportsMap,
+    WildcardReexportsTypeOnlyMap,
+};
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -504,9 +507,12 @@ pub struct BindResult {
     /// Re-exports: tracks `export { x } from 'module'` declarations
     pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// `Arc`-wrapped to mirror `BinderState.wildcard_reexports`; the
+    /// final `MergedProgram` builds its own `Arc` once and shares it
+    /// with every per-file `BinderState` via `Arc::clone`.
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
     /// Wildcard re-export type-only provenance aligned with `wildcard_reexports`.
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
     pub lib_binders: Arc<Vec<Arc<BinderState>>>,
@@ -661,7 +667,7 @@ impl BindResult {
         }
 
         // wildcard_reexports
-        for (k, v) in &self.wildcard_reexports {
+        for (k, v) in self.wildcard_reexports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for s in v {
                 size += s.capacity();
@@ -669,7 +675,7 @@ impl BindResult {
         }
 
         // wildcard_reexports_type_only
-        for (k, v) in &self.wildcard_reexports_type_only {
+        for (k, v) in self.wildcard_reexports_type_only.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for (s, _) in v {
                 size += s.capacity() + 1;
@@ -1579,9 +1585,12 @@ pub struct MergedProgram {
     pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// `Arc`-wrapped so per-file `BinderState` reconstruction is a
+    /// cheap atomic increment instead of a deep clone of the merged
+    /// `FxHashMap`. Mutations during binding go through `Arc::make_mut`.
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
     /// Wildcard re-export type-only provenance per entry.
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
     pub lib_binders: Arc<Vec<Arc<BinderState>>>,
@@ -2404,7 +2413,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         // Merge wildcard reexports from this file
-        for (file_name, source_modules) in &result.wildcard_reexports {
+        for (file_name, source_modules) in result.wildcard_reexports.iter() {
             let entry = wildcard_reexports.entry(file_name.clone()).or_default();
             let type_only_entry = wildcard_reexports_type_only
                 .entry(file_name.clone())
@@ -3273,8 +3282,8 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         shorthand_ambient_modules: Arc::new(shorthand_ambient_modules),
         module_exports: Arc::new(module_exports),
         reexports: Arc::new(reexports),
-        wildcard_reexports,
-        wildcard_reexports_type_only,
+        wildcard_reexports: Arc::new(wildcard_reexports),
+        wildcard_reexports_type_only: Arc::new(wildcard_reexports_type_only),
         lib_binders: Arc::new(lib_binders),
         lib_symbol_ids: Arc::new(global_lib_symbol_ids),
         type_interner,
