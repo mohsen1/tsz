@@ -240,13 +240,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        let mut decls = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decls.push(symbol.value_declaration);
-        }
-        decls.extend(symbol.declarations.iter().copied());
-
-        for decl_idx in decls {
+        for decl_idx in symbol.all_declarations() {
             if let Some(text) = self.jsx_children_declared_type_text_from_declaration(decl_idx) {
                 return Some(text);
             }

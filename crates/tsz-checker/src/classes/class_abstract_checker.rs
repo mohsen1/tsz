@@ -438,17 +438,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.get_symbol_globally(sym_id)?;
         let symbol_name = symbol.escaped_name.clone();
 
-        let mut decl_candidates = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decl_candidates.push(symbol.value_declaration);
-        }
-        for &decl_idx in &symbol.declarations {
-            if decl_idx != symbol.value_declaration {
-                decl_candidates.push(decl_idx);
-            }
-        }
-
-        for decl_idx in decl_candidates {
+        for decl_idx in symbol.all_declarations() {
             if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                 for arena in arenas {
                     if std::ptr::eq(arena.as_ref(), self.ctx.arena) {

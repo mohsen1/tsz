@@ -105,12 +105,8 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut decls = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
-            decls.push(symbol.value_declaration);
-        }
-
-        decls
+        symbol
+            .all_declarations()
             .into_iter()
             .any(|decl_idx| self.declaration_is_hidden_from_declaration_emit(decl_idx))
     }
@@ -854,12 +850,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some()
-            && !decl_candidates.contains(&symbol.value_declaration)
-        {
-            decl_candidates.push(symbol.value_declaration);
-        }
+        let decl_candidates = symbol.all_declarations();
 
         let owner_file_idx = self.symbol_decl_file_idx(sym_id);
 
@@ -998,12 +989,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some()
-            && !decl_candidates.contains(&symbol.value_declaration)
-        {
-            decl_candidates.push(symbol.value_declaration);
-        }
+        let decl_candidates = symbol.all_declarations();
 
         for decl_idx in decl_candidates {
             if !decl_idx.is_some() {
@@ -1228,12 +1214,7 @@ impl<'a> CheckerState<'a> {
             return Some((candidate.escaped_name.clone(), candidate.id, file_idx));
         }
 
-        let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some()
-            && !decl_candidates.contains(&symbol.value_declaration)
-        {
-            decl_candidates.push(symbol.value_declaration);
-        }
+        let decl_candidates = symbol.all_declarations();
 
         for decl_idx in decl_candidates {
             if !decl_idx.is_some() {

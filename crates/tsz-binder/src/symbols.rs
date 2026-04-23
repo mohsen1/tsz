@@ -232,6 +232,25 @@ impl Symbol {
             .into_option()
             .or_else(|| self.declarations.first().copied())
     }
+
+    /// All unique declarations for this symbol, with `value_declaration` first
+    /// (when set), then entries from `declarations` that are not equal to
+    /// `value_declaration`. Each unique declaration appears exactly once.
+    #[must_use]
+    pub fn all_declarations(&self) -> Vec<NodeIndex> {
+        let value_decl = self.value_declaration.into_option();
+        let mut out =
+            Vec::with_capacity(self.declarations.len() + usize::from(value_decl.is_some()));
+        if let Some(v) = value_decl {
+            out.push(v);
+        }
+        for d in &self.declarations {
+            if Some(*d) != value_decl {
+                out.push(*d);
+            }
+        }
+        out
+    }
 }
 
 // =============================================================================
@@ -582,5 +601,79 @@ impl SymbolArena {
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sym() -> Symbol {
+        Symbol::new(SymbolId(0), 0, String::new())
+    }
+
+    #[test]
+    fn all_declarations_empty_returns_empty() {
+        let s = sym();
+        assert!(s.all_declarations().is_empty());
+    }
+
+    #[test]
+    fn all_declarations_only_declarations() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.add_declaration(NodeIndex(2), None);
+        assert_eq!(s.all_declarations(), vec![NodeIndex(1), NodeIndex(2)]);
+    }
+
+    #[test]
+    fn all_declarations_only_value_declaration() {
+        let mut s = sym();
+        s.set_value_declaration(NodeIndex(5), None);
+        assert_eq!(s.all_declarations(), vec![NodeIndex(5)]);
+    }
+
+    #[test]
+    fn all_declarations_value_first_then_others_no_duplicate() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.add_declaration(NodeIndex(2), None);
+        s.set_value_declaration(NodeIndex(2), None);
+        // value_declaration should appear first, and not be duplicated.
+        assert_eq!(s.all_declarations(), vec![NodeIndex(2), NodeIndex(1)]);
+    }
+
+    #[test]
+    fn all_declarations_value_not_in_declarations() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.add_declaration(NodeIndex(2), None);
+        s.set_value_declaration(NodeIndex(9), None);
+        assert_eq!(
+            s.all_declarations(),
+            vec![NodeIndex(9), NodeIndex(1), NodeIndex(2)]
+        );
+    }
+
+    #[test]
+    fn primary_declaration_prefers_value_declaration() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.set_value_declaration(NodeIndex(9), None);
+        assert_eq!(s.primary_declaration(), Some(NodeIndex(9)));
+    }
+
+    #[test]
+    fn primary_declaration_falls_back_to_first() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(3), None);
+        s.add_declaration(NodeIndex(4), None);
+        assert_eq!(s.primary_declaration(), Some(NodeIndex(3)));
+    }
+
+    #[test]
+    fn primary_declaration_none_when_empty() {
+        let s = sym();
+        assert_eq!(s.primary_declaration(), None);
     }
 }

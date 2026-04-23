@@ -1385,12 +1385,7 @@ impl BinderState {
             return true;
         }
 
-        let mut declarations = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !declarations.contains(&symbol.value_declaration) {
-            declarations.push(symbol.value_declaration);
-        }
-
-        declarations.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             if decl_idx.is_none() {
                 return false;
             }
@@ -1429,12 +1424,7 @@ impl BinderState {
     fn compute_module_export_equals_non_module(&self, exports: &SymbolTable) -> Option<bool> {
         let export_assignment_targets = |sym: &Symbol| -> Vec<String> {
             let mut targets = Vec::new();
-            let mut declarations = sym.declarations.clone();
-            if sym.value_declaration.is_some() && !declarations.contains(&sym.value_declaration) {
-                declarations.push(sym.value_declaration);
-            }
-
-            for decl_idx in declarations {
+            for decl_idx in sym.all_declarations() {
                 if decl_idx.is_none() {
                     continue;
                 }

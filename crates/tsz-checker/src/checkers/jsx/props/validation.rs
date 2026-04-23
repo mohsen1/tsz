@@ -425,13 +425,7 @@ impl<'a> CheckerState<'a> {
         let ica_symbol = self.ctx.binder.get_symbol(ica_sym_id)?;
         let instance_type = self.get_class_instance_type_for_component(component_type)?;
 
-        let mut declarations = Vec::new();
-        if ica_symbol.value_declaration.is_some() {
-            declarations.push(ica_symbol.value_declaration);
-        }
-        declarations.extend(ica_symbol.declarations.iter().copied());
-
-        for mut decl_idx in declarations {
+        for mut decl_idx in ica_symbol.all_declarations() {
             let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };

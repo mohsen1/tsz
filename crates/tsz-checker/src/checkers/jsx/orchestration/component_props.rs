@@ -263,13 +263,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut decls = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decls.push(symbol.value_declaration);
-        }
-        decls.extend(symbol.declarations.iter().copied());
-
-        for mut decl_idx in decls {
+        for mut decl_idx in symbol.all_declarations() {
             let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
@@ -490,17 +484,11 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(intrinsic_elements_sym_id, &lib_binders)?;
-        let mut declarations = Vec::new();
-        if symbol.value_declaration.is_some() {
-            declarations.push(symbol.value_declaration);
-        }
-        declarations.extend(symbol.declarations.iter().copied());
-
         let tag_literal =
             crate::query_boundaries::common::create_string_literal_type(self.ctx.types, tag);
         let mut candidates = Vec::new();
 
-        for mut decl_idx in declarations {
+        for mut decl_idx in symbol.all_declarations() {
             let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };

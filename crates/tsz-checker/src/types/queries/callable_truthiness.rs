@@ -238,11 +238,7 @@ impl<'a> CheckerState<'a> {
             .filter(|arena| !std::ptr::eq(*arena, self.ctx.arena));
 
         if delegate_arena.is_none() {
-            let mut decl_candidates = symbol.declarations.clone();
-            if symbol.value_declaration.is_some() {
-                decl_candidates.push(symbol.value_declaration);
-            }
-            for decl_idx in decl_candidates {
+            for decl_idx in symbol.all_declarations() {
                 if decl_idx.is_none() {
                     continue;
                 }
