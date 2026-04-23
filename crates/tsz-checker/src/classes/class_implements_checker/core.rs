@@ -1448,6 +1448,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_jsdoc_extends_tag_type_arguments(class_idx);
+        self.check_jsdoc_extends_tag_type_argument_constraints(class_idx);
         self.check_missing_jsdoc_extends_type_arguments(class_idx, class_data);
 
         // Get the actual extends clause base class name
