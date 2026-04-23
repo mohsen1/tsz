@@ -311,8 +311,36 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn js_function_this_receiver_display_for_node(&self, idx: NodeIndex) -> Option<String> {
+        if !self.is_js_file() {
+            return None;
+        }
+
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::ThisKeyword as u16 {
+            return None;
+        }
+
+        let function_idx = self.find_enclosing_non_arrow_function(receiver)?;
+        let function_node = self.ctx.arena.get(function_idx)?;
+        if function_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return None;
+        }
+
+        let function = self.ctx.arena.get_function(function_node)?;
+        let name_node = self.ctx.arena.get(function.name)?;
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .map(|ident| ident.escaped_text.clone())
+    }
+
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        if let Some(name) = self.js_function_this_receiver_display_for_node(idx) {
+            return name;
+        }
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
         }
