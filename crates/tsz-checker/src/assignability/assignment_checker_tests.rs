@@ -626,6 +626,30 @@ let value: {
 }
 
 #[test]
+fn mapped_enum_key_missing_property_uses_enum_member_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Record<K extends string | number, T> = { [P in K]: T };
+enum E { A }
+let foo: Record<E, any> = {};
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing enum mapped key");
+    assert!(
+        diag.message_text.contains("Property '[E.A]' is missing"),
+        "TS2741 should render the enum member key, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Property '0' is missing"),
+        "TS2741 should not render the erased numeric key, got: {diag:?}"
+    );
+}
+
+#[test]
 fn function_expression_assignment_reports_outer_signature_mismatch() {
     let source = r#"
 interface T {
