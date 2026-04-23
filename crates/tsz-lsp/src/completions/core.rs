@@ -704,8 +704,7 @@ impl<'a> Completions<'a> {
                 break;
             };
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.is_function_expression_or_arrow()
             {
                 if let Some(function) = self.arena.get_function(node)
                     && function.body.is_some()

@@ -387,8 +387,7 @@ impl<'a> CheckerState<'a> {
             // Also recurse into function expression defaults to check their inner params
             if param.initializer.is_some()
                 && let Some(init_node) = self.ctx.arena.get(param.initializer)
-                && (init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+                && (init_node.is_function_expression_or_arrow())
                 && let Some(func) = self.ctx.arena.get_function(init_node)
             {
                 self.check_isolated_decl_function_params(&func.parameters);
@@ -690,8 +689,7 @@ impl<'a> CheckerState<'a> {
             // Even if the property value is inferrable, nested function-expression
             // defaults in parameters still require TS9007.
             if let Some(init_node) = self.ctx.arena.get(prop.initializer)
-                && (init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+                && (init_node.is_function_expression_or_arrow())
                 && let Some(func) = self.ctx.arena.get_function(init_node)
             {
                 self.check_isolated_decl_function_params(&func.parameters);
@@ -864,8 +862,7 @@ impl<'a> CheckerState<'a> {
                 };
                 // Check if the initializer is a function expression or arrow function
                 if let Some(init_node) = self.ctx.arena.get(decl.initializer)
-                    && (init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || init_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+                    && (init_node.is_function_expression_or_arrow())
                 {
                     // Get the variable name and scan for property assignments
                     if let Some(name_ident) = self.ctx.arena.get_identifier_at(decl.name) {

@@ -143,8 +143,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+        init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
     }
@@ -628,10 +627,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::BINARY_EXPRESSION => {
                             let Some(binary_node) = arena.get(decl_idx) else {
@@ -643,10 +641,9 @@ impl<'a> CheckerState<'a> {
                             if !self.is_assignment_operator(binary.operator_token) {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::VARIABLE_DECLARATION => {
                             let Some(var_decl) = arena.get_variable_declaration(node) else {
@@ -655,8 +652,7 @@ impl<'a> CheckerState<'a> {
                             let Some(init_node) = arena.get(var_decl.initializer) else {
                                 return false;
                             };
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            init_node.is_function_expression_or_arrow()
                         }
                         _ => false,
                     }
@@ -739,10 +735,7 @@ impl<'a> CheckerState<'a> {
                         .get(decl_idx)
                         .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
                         .and_then(|decl| self.ctx.arena.get(decl.initializer))
-                        .is_some_and(|init_node| {
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        })
+                        .is_some_and(|init_node| init_node.is_function_expression_or_arrow())
                 };
             if !is_declared_function_or_class && !is_callable_variable {
                 return false;
@@ -964,10 +957,7 @@ impl<'a> CheckerState<'a> {
                         .get(decl_idx)
                         .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
                         .and_then(|decl| self.ctx.arena.get(decl.initializer))
-                        .is_some_and(|init_node| {
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        })
+                        .is_some_and(|init_node| init_node.is_function_expression_or_arrow())
                 };
             let is_declared_function_or_class =
                 (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
@@ -1001,10 +991,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::BINARY_EXPRESSION => {
                             let Some(binary_node) = arena.get(decl_idx) else {
@@ -1016,10 +1005,9 @@ impl<'a> CheckerState<'a> {
                             if !self.is_assignment_operator(binary.operator_token) {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::VARIABLE_DECLARATION => {
                             let Some(var_decl) = arena.get_variable_declaration(node) else {
@@ -1028,8 +1016,7 @@ impl<'a> CheckerState<'a> {
                             let Some(init_node) = arena.get(var_decl.initializer) else {
                                 return false;
                             };
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            init_node.is_function_expression_or_arrow()
                         }
                         _ => false,
                     }
