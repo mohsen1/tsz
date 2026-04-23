@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
         if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return Some(symbol.parent);
         }
-        (symbol.has_any_flags(symbol_flags::ENUM)).then_some(sym_id)
+        symbol.has_any_flags(symbol_flags::ENUM).then_some(sym_id)
     }
 
     pub(crate) fn apparent_enum_instance_type(&self, type_id: TypeId) -> Option<TypeId> {
@@ -529,7 +529,7 @@ impl<'a> CheckerState<'a> {
             })?;
 
         let member_symbol = self.ctx.binder.get_symbol(member_sym_id)?;
-        if member_symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
+        if !member_symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
             return None;
         }
 
@@ -714,10 +714,9 @@ impl<'a> CheckerState<'a> {
         if symbol.has_any_flags(symbol_flags::CLASS) {
             return Some(sym_id);
         }
-        if symbol.flags
-            & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
-            == 0
-        {
+        if !symbol.has_any_flags(
+            symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE,
+        ) {
             return None;
         }
         if symbol.value_declaration.is_none() {

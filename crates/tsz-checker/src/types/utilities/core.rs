@@ -1288,7 +1288,7 @@ impl<'a> CheckerState<'a> {
         // Fallback: check via symbol flags (legacy path)
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
         {
             return self.get_type_of_symbol(symbol.parent);
         }
@@ -1321,7 +1321,7 @@ impl<'a> CheckerState<'a> {
         // Fallback: check via symbol flags (legacy path)
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
         {
             return self.get_type_of_symbol(symbol.parent);
         }
@@ -1599,7 +1599,7 @@ impl<'a> CheckerState<'a> {
         // Fast path using symbol flags: if symbol has TYPE flag, it's not value-only
         // This handles classes, interfaces, enums, type aliases, etc.
         // TYPE flag includes: CLASS | INTERFACE | ENUM | ENUM_MEMBER | TYPE_LITERAL | TYPE_PARAMETER | TYPE_ALIAS
-        let has_type_flag = (symbol.flags & symbol_flags::TYPE) != 0;
+        let has_type_flag = symbol.has_any_flags(symbol_flags::TYPE);
         if has_type_flag {
             return false;
         }
@@ -1607,14 +1607,13 @@ impl<'a> CheckerState<'a> {
         // Modules/namespaces can be used as types in some contexts, but not if they're
         // merged with functions or other values (e.g., function+namespace declaration merging)
         // In such cases, the function/value takes precedence and TS2749 should be emitted
-        let has_module = (symbol.flags & symbol_flags::MODULE) != 0;
-        let has_function = (symbol.flags & symbol_flags::FUNCTION) != 0;
+        let has_module = symbol.has_any_flags(symbol_flags::MODULE);
+        let has_function = symbol.has_any_flags(symbol_flags::FUNCTION);
         // Exclude both FUNCTION and MODULE flags when checking for "other" value flags.
         // VALUE_MODULE is part of VALUE, but a symbol that only has module flags
         // (VALUE_MODULE | NAMESPACE_MODULE) should be treated as a pure namespace.
-        let has_other_value = (symbol.flags
-            & (symbol_flags::VALUE & !symbol_flags::FUNCTION & !symbol_flags::MODULE))
-            != 0;
+        let has_other_value = symbol
+            .has_any_flags(symbol_flags::VALUE & !symbol_flags::FUNCTION & !symbol_flags::MODULE);
 
         // Pure namespace (MODULE only, no function/value flags) is not value-only
         if has_module && !has_function && !has_other_value {
@@ -1633,8 +1632,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Finally, check if this is purely a value symbol (has VALUE but not TYPE)
-        let has_value = (symbol.flags & symbol_flags::VALUE) != 0;
-        let has_type = (symbol.flags & symbol_flags::TYPE) != 0;
+        let has_value = symbol.has_any_flags(symbol_flags::VALUE);
+        let has_type = symbol.has_any_flags(symbol_flags::TYPE);
         has_value && !has_type
     }
 
@@ -1664,7 +1663,7 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return false;
         }
 

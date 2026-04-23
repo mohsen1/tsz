@@ -199,7 +199,7 @@ impl<'a> CheckerState<'a> {
             .resolve_qualified_symbol(node_idx)
             .or_else(|| self.ctx.resolve_type_to_symbol_id(ty))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return None;
         }
 
@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<&'static str> {
         let symbol = self.get_cross_file_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return None;
         }
         let member_decl = if symbol.value_declaration.is_some() {

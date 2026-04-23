@@ -795,7 +795,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = sym_id {
             // Get the symbol's declaration(s) from the main file's binder
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
-                symbol_has_interface = (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0;
+                symbol_has_interface = symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE);
                 let fallback_arena = resolve_lib_fallback_arena(
                     self.ctx.binder,
                     sym_id,
@@ -898,7 +898,7 @@ impl<'a> CheckerState<'a> {
                     // lowering. Type aliases like Record<K,T>, Partial<T>, Pick<T,K>
                     // would incorrectly succeed interface lowering with 0 type params,
                     // preventing the proper type alias path from running.
-                    let is_type_alias = (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0;
+                    let is_type_alias = symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS);
 
                     if !is_type_alias {
                         let deduped = dedup_decl_arenas(&decls_with_arenas);

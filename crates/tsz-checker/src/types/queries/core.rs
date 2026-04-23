@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
                 // Check if name matches and symbol has STATIC flag
-                if symbol.escaped_name == name && (symbol.has_any_flags(symbol_flags::STATIC)) {
+                if symbol.escaped_name == name && symbol.has_any_flags(symbol_flags::STATIC) {
                     return true;
                 }
             }
@@ -312,7 +312,7 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 && symbol.escaped_name == name
-                && (!symbol.has_any_flags(symbol_flags::STATIC))
+                && !symbol.has_any_flags(symbol_flags::STATIC)
             {
                 return true;
             }
@@ -1253,7 +1253,7 @@ impl<'a> CheckerState<'a> {
         for (sym_id, sym_type) in self.ctx.symbol_types.iter() {
             if sym_type == type_id
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && symbol.flags & tsz_binder::symbol_flags::CLASS != 0
+                && symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
                 && let Some(class_idx) = self.get_class_declaration_from_symbol(sym_id)
             {
                 return Some((class_idx, true));

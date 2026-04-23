@@ -1121,7 +1121,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .def_to_symbol_id(def_id)
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0)
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
         })
     }
 }

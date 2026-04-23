@@ -25,7 +25,7 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             return true;
         }
 
