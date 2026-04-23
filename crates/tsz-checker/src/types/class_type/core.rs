@@ -1819,7 +1819,7 @@ impl<'a> CheckerState<'a> {
                 let Some(candidate_symbol) = self.get_cross_file_symbol(candidate_id) else {
                     continue;
                 };
-                if (candidate_symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+                if !candidate_symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
                     continue;
                 }
 
@@ -2038,7 +2038,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = current_sym {
             let is_class_symbol = self
                 .get_symbol_globally(sym_id)
-                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::CLASS != 0);
+                .is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::CLASS));
             if is_class_symbol {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
                 self.ctx

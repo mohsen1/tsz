@@ -949,10 +949,12 @@ impl<'a> CheckerState<'a> {
                 {
                     let name = &ident.escaped_text;
                     // Check if this identifier resolves to a type symbol
-                    let has_type = (symbol.flags & tsz_binder::symbol_flags::TYPE) != 0
-                        || (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0
-                        || (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0;
-                    let has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                    let has_type = symbol.has_any_flags(
+                        tsz_binder::symbol_flags::TYPE
+                            | tsz_binder::symbol_flags::TYPE_ALIAS
+                            | tsz_binder::symbol_flags::INTERFACE,
+                    );
+                    let has_value = symbol.has_any_flags(tsz_binder::symbol_flags::VALUE);
                     if has_type && !has_value {
                         // The identifier refers to a type-only symbol
                         // Emit TS2693: Type only used as value

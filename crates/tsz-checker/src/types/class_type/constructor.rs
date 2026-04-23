@@ -2283,7 +2283,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             // Only check class arguments
-            if arg_symbol.flags & tsz_binder::symbol_flags::CLASS == 0 {
+            if !arg_symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
                 continue;
             }
 

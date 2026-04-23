@@ -743,7 +743,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Only handle type aliases (not classes/interfaces)
-        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return false;
         }
 

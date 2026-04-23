@@ -151,7 +151,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .binder
                     .get_symbol(sym_id)
-                    .is_some_and(|symbol| (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_PARAMETER))
             })
     }
 }

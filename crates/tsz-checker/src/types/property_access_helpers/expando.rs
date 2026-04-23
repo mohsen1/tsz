@@ -113,17 +113,16 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags
-            & (symbol_flags::FUNCTION
+        if symbol.has_any_flags(
+            symbol_flags::FUNCTION
                 | symbol_flags::CLASS
                 | symbol_flags::VALUE_MODULE
-                | symbol_flags::NAMESPACE_MODULE))
-            != 0
-        {
+                | symbol_flags::NAMESPACE_MODULE,
+        ) {
             return true;
         }
 
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
             return false;
         }
 
@@ -807,8 +806,8 @@ impl<'a> CheckerState<'a> {
             && let Some(root_name) = root_identifier(self.ctx.arena, object_expr_idx)
             && let Some(root_sym) = self.ctx.binder.file_locals.get(&root_name)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym)
-            && (root_symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
-                != 0
+            && root_symbol
+                .has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)
         {
             return true;
         }
@@ -863,7 +862,7 @@ impl<'a> CheckerState<'a> {
             && root_node.kind == SyntaxKind::Identifier as u16
             && let Some(root_sym_id) = self.resolve_identifier_symbol(root_idx)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
-            && (root_symbol.flags & symbol_flags::ALIAS) != 0
+            && root_symbol.has_any_flags(symbol_flags::ALIAS)
             && root_symbol.import_module.is_some()
         {
             return false;
@@ -912,7 +911,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "prototype")
             && let Some(root_sym_id) = self.resolve_identifier_symbol(object_access.expression)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
-            && (root_symbol.flags & symbol_flags::ALIAS) != 0
+            && root_symbol.has_any_flags(symbol_flags::ALIAS)
             && root_symbol.import_module.is_some()
         {
             return false;
