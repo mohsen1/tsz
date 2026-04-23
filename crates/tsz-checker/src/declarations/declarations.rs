@@ -449,9 +449,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             let Some(parent) = self.ctx.arena.get(parent_idx) else {
                 return false;
             };
-            if parent.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent.is_class_like() {
                 return true;
             }
             current = parent_idx;

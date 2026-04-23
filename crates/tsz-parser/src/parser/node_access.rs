@@ -1903,6 +1903,14 @@ impl Node {
         self.kind == CLASS_DECLARATION
     }
 
+    /// Check if this is any class-like node (class declaration or class expression).
+    #[inline]
+    #[must_use]
+    pub const fn is_class_like(&self) -> bool {
+        use super::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
+        matches!(self.kind, CLASS_DECLARATION | CLASS_EXPRESSION)
+    }
+
     /// Check if this is any kind of function-like node
     #[inline]
     #[must_use]

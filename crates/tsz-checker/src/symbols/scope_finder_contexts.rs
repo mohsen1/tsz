@@ -1343,8 +1343,7 @@ impl<'a> CheckerState<'a> {
                     || node.is_function_expression_or_arrow()
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    || node.is_class_like()
                     || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 {
                     return None;
@@ -1411,8 +1410,7 @@ impl<'a> CheckerState<'a> {
             // Stop at function/class/interface boundaries
             if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || parent_node.is_function_expression_or_arrow()
-                || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.is_class_like()
                 || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 || parent_node.kind == syntax_kind_ext::SOURCE_FILE
             {
@@ -1467,9 +1465,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Class: check extends vs implements, and declare modifier
-                if hc_parent.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || hc_parent.kind == syntax_kind_ext::CLASS_EXPRESSION
-                {
+                if hc_parent.is_class_like() {
                     // `implements` is always a type-only context
                     if let Some(heritage) = self.ctx.arena.get_heritage_clause(parent_node)
                         && heritage.token == SyntaxKind::ImplementsKeyword as u16
@@ -1500,8 +1496,7 @@ impl<'a> CheckerState<'a> {
             // Stop at function/class/interface boundaries
             if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || parent_node.is_function_expression_or_arrow()
-                || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.is_class_like()
                 || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 || parent_node.kind == syntax_kind_ext::SOURCE_FILE
             {

@@ -504,9 +504,7 @@ impl<'a> CodeActionProvider<'a> {
         let container_node = self.arena.get(container_idx)?;
 
         if heritage.token == SyntaxKind::ExtendsKeyword as u16 {
-            if container_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || container_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if container_node.is_class_like() {
                 return Some(ImportUsage::Value);
             }
             return Some(ImportUsage::Type);
