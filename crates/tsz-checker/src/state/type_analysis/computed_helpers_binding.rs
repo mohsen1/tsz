@@ -25,7 +25,7 @@ impl<'a> CheckerState<'a> {
 
         let value_type =
             self.type_of_value_declaration_for_symbol(sym_id, symbol.value_declaration);
-        (!matches!(value_type, TypeId::UNKNOWN | TypeId::ERROR)).then_some(value_type)
+        (!value_type.is_unknown_or_error()).then_some(value_type)
     }
 
     pub(crate) fn imported_namespace_display_module_name(&self, module_name: &str) -> String {

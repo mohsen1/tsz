@@ -1395,11 +1395,11 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(TypeId::ANY);
             let return_type = self
                 .get_generator_return_type_argument(shape.return_type)
-                .filter(|ty| !matches!(*ty, TypeId::UNKNOWN | TypeId::ERROR))
+                .filter(|ty| !ty.is_unknown_or_error())
                 .unwrap_or(TypeId::VOID);
             let next_type = self
                 .get_generator_next_type_argument(shape.return_type)
-                .filter(|ty| !matches!(*ty, TypeId::UNKNOWN | TypeId::ERROR))
+                .filter(|ty| !ty.is_unknown_or_error())
                 .unwrap_or(TypeId::ANY);
             format!(
                 "{generator_name}<{}, {}, {}>",

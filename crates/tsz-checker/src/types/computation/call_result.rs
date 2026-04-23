@@ -213,7 +213,7 @@ impl<'a> CheckerState<'a> {
         let has_mappable_param = source_fn.params.iter().zip(target_fn.params.iter()).any(
             |(source_param, target_param)| {
                 let target_type = target_param.type_id;
-                if matches!(target_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                if target_type.is_any_unknown_or_error() {
                     return false;
                 }
                 common::collect_all_types(self.ctx.types, source_param.type_id)

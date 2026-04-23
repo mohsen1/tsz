@@ -1488,10 +1488,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                             };
                                             for lb in other_constraints.lower_bounds.iter().copied()
                                             {
-                                                if matches!(
-                                                    lb,
-                                                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-                                                ) {
+                                                if lb.is_any_unknown_or_error() {
                                                     continue;
                                                 }
                                                 if !self.checker.is_assignable_to(lb, ty)
