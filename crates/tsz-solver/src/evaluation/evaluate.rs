@@ -608,6 +608,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
             let resolved = self.resolver.resolve_lazy(def_id, self.interner);
+            let prefer_application_display_alias = matches!(
+                self.resolver.get_def_kind(def_id),
+                Some(crate::def::DefKind::TypeAlias)
+            ) && resolved.is_some_and(|body| {
+                !matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)))
+            });
 
             tracing::trace!(
                 ?def_id,
@@ -922,7 +928,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         )
                     )
                 {
-                    self.interner.store_display_alias(result, original_type_id);
+                    if prefer_application_display_alias {
+                        self.interner
+                            .store_display_alias_preferring_application(result, original_type_id);
+                    } else {
+                        self.interner.store_display_alias(result, original_type_id);
+                    }
 
                     // If the conditional branch resolved to an intermediate Application
                     // (e.g., `DeepReadonly<Part>` -> conditional -> `DeepReadonlyObject<Part>`),
