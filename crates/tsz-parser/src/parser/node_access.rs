@@ -1097,8 +1097,7 @@ impl NodeArena {
     #[inline]
     #[must_use]
     pub fn get_accessor(&self, node: &Node) -> Option<&AccessorData> {
-        use super::syntax_kind_ext::{GET_ACCESSOR, SET_ACCESSOR};
-        if node.has_data() && (node.kind == GET_ACCESSOR || node.kind == SET_ACCESSOR) {
+        if node.has_data() && node.is_accessor() {
             self.accessors.get(node.data_index as usize)
         } else {
             None
@@ -1850,6 +1849,13 @@ impl Node {
                 | GET_ACCESSOR
                 | SET_ACCESSOR
         )
+    }
+
+    /// Check if this is a get or set accessor declaration.
+    #[inline]
+    #[must_use]
+    pub const fn is_accessor(&self) -> bool {
+        matches!(self.kind, GET_ACCESSOR | SET_ACCESSOR)
     }
 
     /// Check if this is a binding pattern (array or object destructuring)
