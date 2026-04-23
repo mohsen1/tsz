@@ -20,7 +20,7 @@ retries = 0
 test-threads = "num-cpus"
 
 [[profile.default.overrides]]
-filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source)'
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
 [profile.default.junit]
@@ -35,7 +35,7 @@ retries = 0
 test-threads = "num-cpus"
 
 [[profile.ci.overrides]]
-filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source)'
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
 # Quick profile for fast feedback during development
