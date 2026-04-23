@@ -303,7 +303,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-        lib_binders: Vec::new(),
+        lib_binders: Arc::new(Vec::new()),
         lib_arenas: Vec::new(),
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -509,7 +509,7 @@ pub struct BindResult {
     pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
-    pub lib_binders: Vec<Arc<BinderState>>,
+    pub lib_binders: Arc<Vec<Arc<BinderState>>>,
     /// Arenas corresponding to each `lib_binder` (same order/length as `lib_binders`).
     /// Used by `merge_bind_results_ref` to populate `declaration_arenas` for lib symbols.
     pub lib_arenas: Vec<Arc<NodeArena>>,
@@ -794,7 +794,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
                 wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-                lib_binders: Vec::new(), // No libs in this path
+                lib_binders: Arc::new(Vec::new()), // No libs in this path
                 lib_arenas: Vec::new(),
                 lib_symbol_ids: binder.lib_symbol_ids,
                 lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -849,7 +849,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-        lib_binders: Vec::new(), // No libs in this path
+        lib_binders: Arc::new(Vec::new()), // No libs in this path
         lib_arenas: Vec::new(),
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -1582,7 +1582,7 @@ pub struct MergedProgram {
     pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
-    pub lib_binders: Vec<Arc<BinderState>>,
+    pub lib_binders: Arc<Vec<Arc<BinderState>>>,
     /// Global symbol IDs that originated from lib files (remapped to global arena IDs).
     /// `Arc`-wrapped so the CLI driver can install the same set into
     /// every per-file `BinderState.lib_symbol_ids` via `Arc::clone`
@@ -3273,7 +3273,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         reexports,
         wildcard_reexports,
         wildcard_reexports_type_only,
-        lib_binders,
+        lib_binders: Arc::new(lib_binders),
         lib_symbol_ids: Arc::new(global_lib_symbol_ids),
         type_interner,
         alias_partners,
