@@ -1,7 +1,38 @@
 # `instantiate_type` cross-call cache — design
 
-Status: **design only**. No production code changes associated with this document.
+Status: **design — revised after review**. No production code changes associated with this document.
 Companion to: `docs/plan/perf-large-repo-followup.md` §3.3.
+
+### Review feedback addressed (2026-04-23)
+
+This revision responds to five concrete issues raised in review:
+
+1. Cache hooks must live on `QueryDatabase`, not `TypeDatabase`. The original
+   version proposed promoting the two methods onto `TypeDatabase` "with default
+   `None`/no-op" for convenience; that pushes cache concerns below the layer
+   the codebase designates as the cache boundary. §2 now keeps the hooks on
+   `QueryDatabase` and threads `&dyn QueryDatabase` into the instantiation
+   entry points.
+2. `substitute_this_type` always calls `TypeSubstitution::new()` (empty). The
+   original "skip cache when `substitution.is_empty()`" rule would disable
+   caching for every `substitute_this_type` call. §5 (PR 3) now carves out
+   "skip only when `substitution.is_empty() && this_type.is_none()`".
+3. Do not intern substitutions on `TypeInterner`. `QueryCache` doesn't own the
+   interner and doesn't clear it; interning there would leak long-lived state
+   that `QueryCache::clear()` and `estimated_size_bytes` can't see. §1 now
+   stores the canonical `SmallVec` directly in the cache key (or, optionally,
+   interns on `QueryCache` itself with matching clear/size accounting).
+4. Test strategy #3 cannot compare `TypeId`s across distinct `TypeInterner`s —
+   `TypeId` is an interner-local `u32` handle. §6 replaces it with a
+   structural/formatting comparison within a single interner.
+5. `instantiate_type` has bespoke leaf fast paths for `TypeParameter` and
+   `IndexAccess(T, P)` ahead of `TypeInstantiator::new()` (`instantiate.rs:1449–1468`).
+   §5 (PR 3) explicitly requires the cache probe to run **after** those fast
+   paths, not before, so hot leaf substitutions stay allocation-free.
+
+Additionally: §5 now declares whether `instantiate_generic` (`instantiate.rs:1596`)
+is in scope — it also constructs a fresh `TypeInstantiator` and was previously
+unaddressed.
 
 ## Executive summary
 
@@ -11,10 +42,13 @@ Companion to: `docs/plan/perf-large-repo-followup.md` §3.3.
 `(type_id, substitution)` redo the full recursive walk. On `ts-essentials/deep-readonly.ts`
 this shows up as a 16.56× gap vs `tsgo` which caches the result per unique shape.
 
-The proposed fix is a cross-call memo cache keyed by `(TypeId, InternedSubstId, InstantiatorMode)`
-that lives on `QueryCache` alongside the existing `eval_cache` and `application_eval_cache`.
-Calls with identical keys return the cached `TypeId`; calls that tripped the depth/ERROR
-guard are **not** cached (same discipline tsc uses for `recursionIdentity` failures).
+The proposed fix is a cross-call memo cache keyed by
+`(TypeId, CanonicalSubst, InstantiatorMode, Option<this_type>)` that lives on
+`QueryCache` alongside the existing `eval_cache` and `application_eval_cache`.
+`CanonicalSubst` is a `SmallVec<[(Atom, TypeId); 4]>` sorted by `Atom` — stored
+directly in the key, not interned on `TypeInterner`. Calls with identical keys
+return the cached `TypeId`; calls that tripped the depth/ERROR guard are **not**
+cached (same discipline tsc uses for `recursionIdentity` failures).
 
 ## Current state
 
@@ -71,31 +105,64 @@ Both `Atom` (`crates/tsz-common/src/interner/mod.rs:20`) and `TypeId` are `Copy`
 ### 1. Cache key
 
 ```text
-InstantiationCacheKey = (TypeId, InternedSubstId, u8 mode_bits)
+InstantiationCacheKey = (TypeId, CanonicalSubst, u8 mode_bits, Option<TypeId>)
 ```
 
-`InternedSubstId` is a new `u32` handle backed by a content-keyed interner on
-`TypeInterner`. Two `TypeSubstitution`s with the same `(name, type_id)` multiset
-must map to the same `InternedSubstId`. Implementation shape:
+`CanonicalSubst` is the canonical-sorted pair list stored **directly in the
+key** — no second-level interning for v1. Two `TypeSubstitution`s with the
+same `(name, type_id)` multiset must produce equal `CanonicalSubst`.
+Implementation shape:
 
 ```text
-struct SubstKey(SmallVec<[(Atom, TypeId); 4]>);  // sorted by Atom, dedup-free
+struct CanonicalSubst(SmallVec<[(Atom, TypeId); 4]>);  // sorted by Atom, dedup-free
 ```
 
 Sorting by `Atom` produces a canonical form so `{"T": u32, "U": f64}` and
 `{"U": f64, "T": u32}` hit the same slot. Sorting is O(k log k) for k ≤ ~4
 in practice; this is trivially cheaper than the recursive walk being cached.
+`Hash`, `PartialEq`, and `Eq` are derived on `CanonicalSubst` directly — no
+second-level interning needed for v1.
 
-`mode_bits` packs the four instantiator booleans plus a `this_type` discriminator:
+`mode_bits` packs the three instantiator booleans:
 ```
 bit 0: substitute_infer
 bit 1: preserve_meta_types
 bit 2: preserve_unsubstituted_type_params
-bit 3: has_this_type
 ```
-When `has_this_type` is set, the `this_type: TypeId` must also be part of the key.
-Cleanest encoding: make the key `(TypeId, InternedSubstId, u8, Option<TypeId>)`
-so `ThisType`-substitution calls don't share cache slots with non-`this` calls.
+The `this_type` lives in its own `Option<TypeId>` key component rather than
+being packed as a bit, because the actual `TypeId` value must participate in
+the key when `Some(_)` — otherwise calls with different `this_type` values
+alias.
+
+Final key shape:
+```
+(TypeId, CanonicalSubst, u8, Option<TypeId>)
+//  ^        ^            ^          ^
+//  |        |            |          this_type
+//  |        |            mode_bits
+//  |        canonical-sorted substitution pairs
+//  source
+```
+
+### Why no `TypeInterner` intern handle
+
+A prior version of this doc proposed
+`TypeInterner::intern_substitution(&CanonicalSubst) -> InternedSubstId`, on the
+grounds that a `u32` handle is cheaper to hash than a `SmallVec`. That design
+is rejected for v1 because:
+
+- `QueryCache` only holds a reference to the interner and `QueryCache::clear()`
+  only clears cache-owned maps. An interner-owned substitution table would
+  outlive `clear()` and would not be counted in `estimated_size_bytes()`.
+- On large repos with many unique substitutions this becomes a new,
+  unaccounted memory-growth source — exactly the risk §7 calls out.
+- Hashing a `SmallVec<[(Atom, TypeId); 4]>` where k ≤ 4 is cheap; this is not
+  a measured bottleneck.
+
+If profiling ever shows the substitution hash is a hot path, a **QueryCache-local**
+intern table is the correct place — not the global `TypeInterner`. That way
+`QueryCache::clear()` and `estimated_size_bytes()` both see it, and the cache
+boundary remains clean.
 
 ### 2. Storage and ownership
 
@@ -110,21 +177,37 @@ instantiation_cache: RefCell<FxHashMap<InstantiationCacheKey, TypeId>>,
 Add its entry count to `QueryCacheStatistics` (`query_cache.rs:127`),
 `clear()` (`query_cache.rs:350`), and `estimated_size_bytes`.
 
-Expose two methods through `QueryDatabase` (`caches/db.rs`), mirroring the existing
-`lookup_application_eval_cache`/`insert_application_eval_cache` pattern at
-`db.rs:724–741`:
+Expose two methods on `QueryDatabase` (`caches/db.rs:636`), mirroring the
+existing `lookup_application_eval_cache`/`insert_application_eval_cache`
+pattern at `db.rs:724–741`:
 
 ```text
 fn lookup_instantiation_cache(&self, key: InstantiationCacheKey) -> Option<TypeId>;
 fn insert_instantiation_cache(&self, key: InstantiationCacheKey, result: TypeId);
 ```
 
-Defaults return `None` / no-op so non-`QueryCache` databases (raw `TypeInterner`,
-tests) don't need the cache. `TypeInstantiator` is already parameterized by
-`&dyn TypeDatabase`, so upgrading it to probe the cache is a matter of having
-`TypeDatabase` expose the lookup methods (or a supertrait). Prefer promoting the
-two methods onto `TypeDatabase` with default `None`/no-op — matches the existing
-`lookup_application_eval_cache` precedent.
+Defaults on `QueryDatabase` return `None` / no-op so non-`QueryCache` databases
+(raw `TypeInterner`, tests) don't need the cache.
+
+**Important — do NOT widen `TypeDatabase`.** An earlier version of this doc
+proposed promoting the two methods onto `TypeDatabase` because the instantiation
+entry points only see `&dyn TypeDatabase`. That is the wrong direction: it
+pushes cache concerns below the `QueryDatabase` layer that the codebase
+designates as the cache/incremental boundary. The correct fix is to thread
+`&dyn QueryDatabase` (or a narrow `InstantiationCacheAccess` supertrait)
+through the five instantiation entry points instead of widening `TypeDatabase`.
+
+Concretely, PR 2 must:
+- Add `lookup_instantiation_cache` / `insert_instantiation_cache` to
+  `QueryDatabase` only (not `TypeDatabase`).
+- Keep default implementations on `QueryDatabase` that return `None` / no-op.
+- Implement them on `QueryCache`-backed impls.
+- Leave `TypeDatabase` unchanged.
+
+PR 3 then changes the five `instantiate_type*` entry-point signatures from
+`&dyn TypeDatabase` to `&dyn QueryDatabase`. The type signatures `impl QueryDatabase for T`
+at `db.rs:977` confirm the main backend (`TypeInterner`) already satisfies
+the supertrait, so callers don't need to change what they pass.
 
 **Per-call vs project-wide.** Start with per-`QueryCache` (per-file). Optionally add
 `SharedQueryCache` instantiation cache later if profiling shows cross-file wins
@@ -176,22 +259,25 @@ boundary for rebinding.
 
 ### 5. Implementation plan — 4 PRs
 
-**PR 1 — Content-hashable `TypeSubstitution` + interner.**
-- In `instantiate.rs`, derive a `canonical_entries() -> SmallVec<[(Atom, TypeId); 4]>`
-  method that returns a sorted copy of the map.
-- Implement `Hash`/`PartialEq`/`Eq` on a new `CanonicalSubst` wrapper (not on
-  `TypeSubstitution` itself — keep its `FxHashMap` implementation detail).
-- Add `TypeInterner::intern_substitution(&CanonicalSubst) -> InternedSubstId`
-  alongside the existing list/shape interners.
-- No behavior change yet. Unit tests: two structurally-equal substitutions hash
-  equal; map order does not affect identity.
+**PR 1 — Content-hashable `TypeSubstitution` (canonical pairs only).**
+- In `instantiate.rs`, add a `canonical_pairs(&self) -> SmallVec<[(Atom, TypeId); 4]>`
+  method on `TypeSubstitution` that returns the entries sorted by `Atom`.
+- Implement `Hash`/`PartialEq`/`Eq` on a new `CanonicalSubst(SmallVec<...>)`
+  wrapper (not on `TypeSubstitution` itself — keep its `FxHashMap` as an
+  implementation detail).
+- **Do NOT add interning to `TypeInterner`.** See §2 for why.
+- No behavior change yet. Unit tests: two structurally-equal substitutions
+  produce equal `CanonicalSubst`, hash equal, and compare equal; insertion
+  order does not affect identity; empty substitution produces the empty
+  `CanonicalSubst` marker used to short-circuit cache probing in PR 3.
 
-**PR 2 — `InstantiationCache` storage and trait methods.**
+**PR 2 — `InstantiationCache` storage and trait methods on `QueryDatabase`.**
 - Add `crates/tsz-solver/src/caches/instantiation_cache.rs` with
-  `InstantiationCacheKey` + `InstantiationCache` + `RefCell<FxHashMap>`.
+  `InstantiationCacheKey = (TypeId, CanonicalSubst, u8, Option<TypeId>)` +
+  `InstantiationCache(RefCell<FxHashMap<_, _>>)`.
 - Add `lookup_instantiation_cache` / `insert_instantiation_cache` to
-  `TypeDatabase` with `None`/no-op defaults (mirror `lookup_application_eval_cache`
-  at `db.rs:724–741`).
+  **`QueryDatabase`** (not `TypeDatabase`) with `None`/no-op defaults, mirroring
+  `lookup_application_eval_cache` at `db.rs:724–741`.
 - Implement them on `QueryCache`.
 - Extend `QueryCacheStatistics` (+ display, + `estimated_size_bytes`, + `clear`).
 - Architecture test already blocks checker access (`architecture_contract_tests.rs:2259`);
@@ -199,22 +285,80 @@ boundary for rebinding.
 - No behavior change yet (cache exists, no one writes to it).
 
 **PR 3 — Wire cache at the five entry points.**
-- In each of `instantiate_type`, `instantiate_type_preserving`,
-  `instantiate_type_preserving_meta`, `instantiate_type_with_infer`,
-  `substitute_this_type`: before constructing the `TypeInstantiator`, build the
-  cache key and probe. On hit, return early. After the walk, insert **only if**
-  `!instantiator.depth_exceeded` **and** no intermediate `ERROR` was returned from
-  the overflow path.
-- Do **not** cache when `substitution.is_empty() || substitution.is_identity(...)` —
-  those are already free.
-- Gate behind `#[cfg]`-free runtime check; no flag needed. Add a stats counter
-  (`instantiation_cache_hits` / `_misses` on `QueryCache`, like the subtype counters
-  at `query_cache.rs:298–301`).
+- Entry points to wire: `instantiate_type` (`instantiate.rs:1440`),
+  `instantiate_type_preserving` (`:1480`),
+  `instantiate_type_preserving_meta` (`:1525`),
+  `instantiate_type_with_infer` (`:1544`),
+  `substitute_this_type` (`:1626`).
+
+- **Signature change.** Each entry point's database parameter changes from
+  `&dyn TypeDatabase` to `&dyn QueryDatabase` so it can reach the cache hooks
+  added in PR 2. `TypeInterner` already implements `QueryDatabase`
+  (`db.rs:977`), so most call sites remain unchanged; audit cross-crate usage
+  for any `&dyn TypeDatabase` that needs upgrading.
+
+- **Preserve existing leaf fast paths.** `instantiate_type` runs two
+  bespoke fast paths BEFORE any `TypeInstantiator::new()` call
+  (`instantiate.rs:1449–1468`):
+    - `TypeParameter(info)` with a direct hit in `substitution` → return
+      the substituted `TypeId` immediately.
+    - `IndexAccess(obj, idx)` → recurse on `obj` and `idx`, avoid the
+      instantiator entirely.
+  Both must stay **ahead of** cache-key construction. Building a
+  `CanonicalSubst` for every leaf `TypeParameter` hit would reintroduce
+  hash/allocation work where today there is none.
+
+- **Carve-out for `substitute_this_type`.** The "skip cache when
+  `substitution.is_empty() || substitution.is_identity(...)`" rule does not
+  apply to `substitute_this_type`, which always passes an empty substitution
+  but carries a non-empty `this_type` (`instantiate.rs:1635`). The correct
+  rule is:
+
+  ```
+  if substitution.is_empty() && this_type.is_none()       → skip cache
+  else if substitution.is_identity_for(...)               → skip cache
+  else                                                     → probe cache
+  ```
+
+  When wiring `substitute_this_type`, the cache key's `Option<TypeId>` slot
+  carries the `this_type`; the `CanonicalSubst` part is empty. Two calls with
+  the same `(type_id, this_type)` hit the cache.
+
+- **After the walk, insert only if** `!instantiator.depth_exceeded` **and**
+  the result is not `TypeId::ERROR` caused by overflow. A real `ERROR` type
+  propagated through substitution is fine (see §3.6); a cycle-guard `ERROR`
+  is not.
+
+- Gate behind `#[cfg]`-free runtime check; no flag needed. Add a stats
+  counter (`instantiation_cache_hits` / `_misses` on `QueryCache`, like the
+  subtype counters at `query_cache.rs:298–301`).
+
 - Expected win: the recursive utility-type cases in
   `docs/plan/perf-large-repo-followup.md` §2.
 - Verify: `bench-vs-tsgo` specifically `ts-essentials/deep-readonly.ts`,
   `ts-essentials/paths.ts`, `ts-essentials/deep-pick.ts`,
   `ts-toolbelt/Any/Compute.ts`.
+
+### PR 3 scope — `instantiate_generic` is out of scope
+
+`instantiate_generic` (`instantiate.rs:1596`) also constructs a fresh
+`TypeInstantiator` and recurses through `TypeInstantiator::instantiate`.
+It is **deliberately excluded** from PR 3 because:
+
+- Generic applications already have a dedicated cache: `application_eval_cache`
+  (`query_cache.rs:1201–1229`) memoizes the post-evaluation result of
+  `Application(Lazy(DefId), args)` keyed by `(DefId, args, flags)`. That cache
+  covers the common call path (`evaluate_type` tail-call application).
+- Wiring `instantiate_generic` through the instantiation cache risks
+  double-caching — the same `Application(...)` resolution would land in both
+  caches with different keys, inflating memory.
+- If profiling after PR 3 shows `instantiate_generic` is still a
+  non-application hot spot (e.g., direct generic function instantiation), a
+  PR 5 can revisit it with the carve-out made explicit.
+
+If `instantiate_generic` is later added to scope, the same canonical-pairs
+key shape applies; the only extra consideration is avoiding overlap with
+`application_eval_cache`.
 
 **PR 4 — (Optional) Shared cross-file cache.**
 - Add `instantiation_cache: DashMap<InstantiationCacheKey, TypeId>` to
@@ -240,9 +384,19 @@ Run via `cargo nextest run -p tsz-solver --lib` per CLAUDE.md §19.5.
    the same `type_id` must produce different cached entries and different results.
 
 3. **Recursive utility-type parity.** For a `DeepReadonly<T>`-style fixture,
-   run `instantiate_type` twice with the same args; result `TypeId` must equal
-   the uncached baseline (call once with cache, once through a fresh
-   `TypeInterner` without cache, compare).
+   run `instantiate_type` twice with the same args inside **the same**
+   `QueryCache`. The two `TypeId` results must be identical (`TypeId` is a
+   `u32` handle keyed on the same `TypeInterner`, so raw equality is the
+   right check here) and the second call must register a cache hit in the
+   stats counter added by PR 3.
+
+   > **Do not** try to compare results across two separate `TypeInterner`
+   > instances — `TypeId` values are interner-local handles, so the raw
+   > integer comparison is meaningless across interners. If a cross-interner
+   > cross-check is ever needed (e.g., to sanity-check a cache-on/cache-off
+   > invariant), compare via a stable rendering: either the canonicalized
+   > structure walk produced by `TypeData` visitors, or
+   > `DisplayType::to_string(db)` output — not `TypeId` integers.
 
 4. **Depth-exceeded not cached.** Build a pathological input that trips
    `MAX_INSTANTIATION_DEPTH` (`instantiate.rs:24`). First call returns
@@ -261,9 +415,26 @@ Run via `cargo nextest run -p tsz-solver --lib` per CLAUDE.md §19.5.
    (`instantiate.rs:1488, 1507, 1530, 1549`) must run before the cache probe
    so empty/identity subs remain zero-cost.
 
-8. **Intern stability under cache.** Construct a substitution, mutate it
-   (`.insert`), re-canonicalize, and confirm the `InternedSubstId` changes
-   — prevents accidental `&TypeSubstitution` capture by ID after mutation.
+8. **Leaf fast paths preserved.** A unit test that pattern-matches on a
+   `TypeParameter` + direct substitution hit (`instantiate.rs:1452–1456`) and
+   an `IndexAccess(T, P)` substitution (`:1459–1466`) must confirm the cache
+   is **not** probed / populated for those leaf cases. The rationale: these
+   paths do one pointer-lookup-or-recurse and must not pay `CanonicalSubst`
+   hash cost. A stats counter assertion (`cache_miss_count` unchanged after
+   N leaf calls) is sufficient.
+
+9. **`substitute_this_type` carve-out.**  Two back-to-back
+   `substitute_this_type(t, this_a)` calls with the same `this_a` hit the
+   cache (register a hit in the stats counter). A call with
+   `substitute_this_type(t, this_b)` where `this_b != this_a` must register a
+   miss. A pathological call with `substitute_this_type(t, <none-ish>)` (if
+   constructable) must skip caching entirely per the carve-out rule.
+
+10. **Canonical-pairs stability under mutation.** Construct a substitution,
+    compute `CanonicalSubst`, then mutate (`.insert`/`.remove`). Compute
+    `CanonicalSubst` again and assert the two values compare unequal whenever
+    the underlying pair multiset changed. Prevents accidental `&TypeSubstitution`
+    capture by identity after mutation.
 
 ## Risks and mitigations
 
@@ -273,7 +444,9 @@ Run via `cargo nextest run -p tsz-solver --lib` per CLAUDE.md §19.5.
 | `TypeSubstitution` sort is not canonical | Hash mismatch → cache never hits → no corruption, just no win | Unit test #1 above is the tripwire. |
 | `depth_exceeded` result accidentally cached | A transient cycle error becomes permanent; later calls return `ERROR` instead of retrying | Insert guarded by `!depth_exceeded`. Unit test #4. |
 | `Lazy(DefId)` resolves differently between two `QueryCache` instances | Cross-file cache returns wrong result | Start single-file (no `SharedQueryCache` write in PR 3). Measure before enabling PR 4. |
-| Memory growth on large repos | Another OOM risk on `large-ts-repo` | Report cache size via `estimated_size_bytes`. Cap entries or evict on `clear()` if growth exceeds a threshold in profiling. |
+| Memory growth on large repos | Another OOM risk on `large-ts-repo` | Report cache size via `estimated_size_bytes`. Cache lives on `QueryCache` (not `TypeInterner`), so `QueryCache::clear()` is authoritative. Cap entries or evict if growth exceeds a threshold in profiling. |
+| `CanonicalSubst` allocation hot path if leaf fast paths regress | Each `TypeParameter` / `IndexAccess` hit pays a `SmallVec` allocation | §5 PR 3 explicitly requires cache-key construction to run AFTER the existing leaf fast paths. Test #8 above guards this. |
+| `instantiate_generic` aliasing with `application_eval_cache` | Double-caching, confused invalidation | Deliberately excluded from PR 3 scope. See §5 "PR 3 scope — `instantiate_generic` is out of scope". |
 | Fresh-identity concerns under shadowing (`enter_shadowing_scope`) | Cache returns a `TypeId` that references a shadowed type param interned elsewhere | Shadowing only affects the instantiator's `shadowed`/`local_type_params` lists; the returned `TypeId` is interned on the shared `TypeInterner`. Same-shape ⇒ same `TypeId` is already the intern contract. Unit test #3 covers this. |
 
 ## Non-goals
