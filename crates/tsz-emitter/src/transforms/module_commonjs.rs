@@ -236,7 +236,7 @@ fn collect_export_name_from_declaration(
     match decl_node.kind {
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
             if let Some(class) = arena.get_class(decl_node) {
-                if arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword) {
+                if arena.is_declare(&class.modifiers) {
                     return;
                 }
                 if let Some(name) = get_identifier_text(arena, class.name) {
@@ -246,7 +246,7 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
             if let Some(func) = arena.get_function(decl_node) {
-                if arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword) {
+                if arena.is_declare(&func.modifiers) {
                     return;
                 }
                 // Skip overload signatures (no body) — if the implementation
@@ -263,7 +263,7 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
             if let Some(var_stmt) = arena.get_variable(decl_node) {
-                if arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword) {
+                if arena.is_declare(&var_stmt.modifiers) {
                     return;
                 }
                 for &decl_idx in &var_stmt.declarations.nodes {
@@ -273,7 +273,7 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::ENUM_DECLARATION => {
             if let Some(enum_decl) = arena.get_enum(decl_node) {
-                if arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword) {
+                if arena.is_declare(&enum_decl.modifiers) {
                     return;
                 }
                 if arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
@@ -288,7 +288,7 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::MODULE_DECLARATION => {
             if let Some(module) = arena.get_module(decl_node) {
-                if arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword) {
+                if arena.is_declare(&module.modifiers) {
                     return;
                 }
                 if !super::emit_utils::is_instantiated_module_ext(
@@ -777,7 +777,7 @@ pub fn collect_export_names_with_options(
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node)
                     && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-                    && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                    && !arena.is_declare(&var_stmt.modifiers)
                 {
                     for &decl_idx in &var_stmt.declarations.nodes {
                         collect_declaration_names(arena, decl_idx, &mut exports);
@@ -792,7 +792,7 @@ pub fn collect_export_names_with_options(
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
                     && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                    && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                    && !arena.is_declare(&func.modifiers)
                     && func.body.is_some()
                     && let Some(name) = get_identifier_text(arena, func.name)
                     && !exports.contains(&name)
@@ -804,7 +804,7 @@ pub fn collect_export_names_with_options(
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = arena.get_class(node)
                     && arena.has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
-                    && !arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
+                    && !arena.is_declare(&class.modifiers)
                     && let Some(name) = get_identifier_text(arena, class.name)
                 {
                     exports.push(name);
@@ -814,7 +814,7 @@ pub fn collect_export_names_with_options(
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node)
                     && arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
-                    && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    && !arena.is_declare(&enum_decl.modifiers)
                     && (preserve_const_enums
                         || !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
                     && let Some(name) = get_identifier_text(arena, enum_decl.name)
@@ -826,7 +826,7 @@ pub fn collect_export_names_with_options(
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = arena.get_module(node)
                     && arena.has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
-                    && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                    && !arena.is_declare(&module.modifiers)
                     && super::emit_utils::is_instantiated_module_ext(
                         arena,
                         module.body,
@@ -922,7 +922,7 @@ pub fn collect_export_names_categorized(
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
             if let Some(func) = arena.get_function(node)
                 && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                && !arena.is_declare(&func.modifiers)
                 && func.body.is_some()
                 && let Some(name) = get_identifier_text(arena, func.name)
                 && !func_exports.iter().any(|(e, _)| e == &name)
@@ -941,7 +941,7 @@ pub fn collect_export_names_categorized(
             && let Some(clause_node) = arena.get(export_decl.export_clause)
             && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(clause_node)
-            && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+            && !arena.is_declare(&func.modifiers)
             && func.body.is_some()
             && let Some(name) = get_identifier_text(arena, func.name)
             && !func_exports.iter().any(|(e, _)| e == &name)
@@ -959,7 +959,7 @@ pub fn collect_export_names_categorized(
             && let Some(clause_node) = arena.get(export_decl.export_clause)
             && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(clause_node)
-            && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+            && !arena.is_declare(&func.modifiers)
             && func.body.is_some() // skip overload signatures (no body)
             && let Some(name) = get_identifier_text(arena, func.name)
         {
@@ -1029,7 +1029,7 @@ pub fn collect_export_names_categorized(
                 let var_has_name = |n: &Node| -> bool {
                     if n.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && let Some(var_stmt) = arena.get_variable(n)
-                        && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                        && !arena.is_declare(&var_stmt.modifiers)
                     {
                         let mut names = Vec::new();
                         for &decl_idx in &var_stmt.declarations.nodes {
