@@ -2541,6 +2541,34 @@ fn test_ts2345_index_signature_mismatch_includes_related_detail() {
 }
 
 #[test]
+fn test_ts2345_index_signature_mismatch_related_detail_qualifies_same_named_values() {
+    let source = r#"
+        declare namespace N { export interface Token { kind: "n"; } }
+        declare namespace M { export interface Token { kind: "m"; } }
+        declare function takes(value: { [key: string]: M.Token }): void;
+        declare const arg: { [key: string]: N.Token };
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for index-signature mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text.contains(
+                "string index signature is incompatible: 'N.Token' is not assignable to 'M.Token'.",
+            )
+        }),
+        "Expected TS2345 related info to qualify same-named index value types, got: {ts2345:?}"
+    );
+}
+
+#[test]
 fn test_ts2345_missing_index_signature_includes_related_detail() {
     let source = r#"
         declare function takes(value: { [index: number]: number }): void;
@@ -2599,6 +2627,33 @@ fn test_ts2345_array_element_mismatch_includes_related_detail() {
                     .contains("Type 'string' is not assignable to type 'number'.")
         }),
         "Expected TS2345 to include nested type mismatch under array-element elaboration, got: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_array_element_mismatch_related_detail_qualifies_same_named_elements() {
+    let source = r#"
+        declare namespace N { export interface Token { kind: "n"; } }
+        declare namespace M { export interface Token { kind: "m"; } }
+        declare function takes(value: M.Token[]): void;
+        declare const arg: N.Token[];
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for array-element mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Array element type 'N.Token' is not assignable to 'M.Token'.")
+        }),
+        "Expected TS2345 related info to qualify same-named element types, got: {ts2345:?}"
     );
 }
 
