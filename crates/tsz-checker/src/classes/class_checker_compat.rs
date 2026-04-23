@@ -286,7 +286,7 @@ impl<'a> CheckerState<'a> {
                         || member_node.kind == PROPERTY_SIGNATURE)
                         && let Some(sig) = decl_arena.get_signature(member_node)
                         && let Some(name) =
-                            crate::types_domain::queries::core::get_literal_property_name(
+                            crate::types_domain::queries::core::get_literal_or_well_known_property_name(
                                 decl_arena, sig.name,
                             )
                     {
@@ -668,10 +668,12 @@ impl<'a> CheckerState<'a> {
                     let Some(sig) = iface_arena.get_signature(member_node) else {
                         continue;
                     };
-                    let Some(name) = crate::types_domain::queries::core::get_literal_property_name(
-                        iface_arena,
-                        sig.name,
-                    ) else {
+                    let Some(name) =
+                        crate::types_domain::queries::core::get_literal_or_well_known_property_name(
+                            iface_arena,
+                            sig.name,
+                        )
+                    else {
                         continue;
                     };
                     *base_method_counts.entry(name).or_insert(0) += 1;
@@ -683,51 +685,53 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    let (member_key, member_type, member_optional) =
-                        if member_node.kind == CALL_SIGNATURE {
-                            (
-                                String::from("__call__"),
-                                instantiate_type(
-                                    self.ctx.types,
-                                    self.get_type_of_node(member_idx),
-                                    &substitution,
-                                ),
-                                false,
-                            )
-                        } else if member_node.kind == METHOD_SIGNATURE
-                            || member_node.kind == PROPERTY_SIGNATURE
-                        {
-                            let Some(sig) = iface_arena.get_signature(member_node) else {
-                                continue;
-                            };
-                            let Some(name) =
-                                crate::types_domain::queries::core::get_literal_property_name(
+                    let (member_key, member_type, member_optional) = if member_node.kind
+                        == CALL_SIGNATURE
+                    {
+                        (
+                            String::from("__call__"),
+                            instantiate_type(
+                                self.ctx.types,
+                                self.get_type_of_node(member_idx),
+                                &substitution,
+                            ),
+                            false,
+                        )
+                    } else if member_node.kind == METHOD_SIGNATURE
+                        || member_node.kind == PROPERTY_SIGNATURE
+                    {
+                        let Some(sig) = iface_arena.get_signature(member_node) else {
+                            continue;
+                        };
+                        // Well-known symbol keys compare as equal across bases for TS2320.
+                        let Some(name) =
+                                crate::types_domain::queries::core::get_literal_or_well_known_property_name(
                                     iface_arena,
                                     sig.name,
                                 )
                             else {
                                 continue;
                             };
-                            (
-                                name,
-                                self.delegate_cross_arena_interface_member_simple_type(
-                                    iface_decl_idx,
-                                    member_idx,
-                                    iface_arena,
-                                    Some(&substitution_args),
-                                )
-                                .unwrap_or_else(|| {
-                                    instantiate_type(
-                                        self.ctx.types,
-                                        self.get_type_of_interface_member_simple(member_idx),
-                                        &substitution,
-                                    )
-                                }),
-                                sig.question_token,
+                        (
+                            name,
+                            self.delegate_cross_arena_interface_member_simple_type(
+                                iface_decl_idx,
+                                member_idx,
+                                iface_arena,
+                                Some(&substitution_args),
                             )
-                        } else {
-                            continue;
-                        };
+                            .unwrap_or_else(|| {
+                                instantiate_type(
+                                    self.ctx.types,
+                                    self.get_type_of_interface_member_simple(member_idx),
+                                    &substitution,
+                                )
+                            }),
+                            sig.question_token,
+                        )
+                    } else {
+                        continue;
+                    };
 
                     // Skip members already seen at a closer level in this base chain
                     if !seen_member_keys.insert(member_key.clone()) {

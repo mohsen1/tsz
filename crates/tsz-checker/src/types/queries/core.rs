@@ -62,6 +62,59 @@ pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) 
     None
 }
 
+/// Like [`get_literal_property_name`] but also maps `[Symbol.<name>]`
+/// computed property names to the canonical `[Symbol.<name>]` key so
+/// TS2320/TS2430 heritage checks match well-known-symbol members across
+/// bases. User-defined `unique symbol` bindings still need symbol
+/// resolution and are out of scope here.
+pub(crate) fn get_literal_or_well_known_property_name(
+    arena: &NodeArena,
+    name_idx: NodeIndex,
+) -> Option<String> {
+    if let Some(name) = get_literal_property_name(arena, name_idx) {
+        return Some(name);
+    }
+    let name_node = arena.get(name_idx)?;
+    if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+        return None;
+    }
+    let mut expr = arena.get_computed_property(name_node)?.expression;
+    // Peel parentheses.
+    while let Some(node) = arena.get(expr)
+        && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+    {
+        expr = arena.get_parenthesized(node)?.expression;
+    }
+    let node = arena.get(expr)?;
+    if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+    {
+        return None;
+    }
+    let access = arena.get_access_expr(node)?;
+    if arena
+        .get_identifier(arena.get(access.expression)?)?
+        .escaped_text
+        != "Symbol"
+    {
+        return None;
+    }
+    let name_node = arena.get(access.name_or_argument)?;
+    if let Some(ident) = arena.get_identifier(name_node) {
+        return Some(format!("[Symbol.{}]", ident.escaped_text));
+    }
+    if matches!(
+        name_node.kind,
+        k if k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+    ) && let Some(lit) = arena.get_literal(name_node)
+        && !lit.text.is_empty()
+    {
+        return Some(format!("[Symbol.{}]", lit.text));
+    }
+    None
+}
+
 /// Check if a property name node is syntactically a string key (not numeric).
 /// Handles direct string literals and computed property names with string literal expressions.
 pub(crate) fn is_string_property_name_node(arena: &NodeArena, name_idx: NodeIndex) -> bool {

@@ -314,3 +314,48 @@ interface MoverShaker extends Mover, Shaker { }
         "Expected TS2320 for class + interface bases with conflicting members"
     );
 }
+
+/// Reproduces `conformance/es6/Symbols/symbolProperty35.ts`.
+///
+/// `[Symbol.toStringTag]()` in two different bases with different return
+/// types is a TS2320 conflict. The cross-base comparison has to canonicalize
+/// the computed-property key (`[Symbol.toStringTag]`) so keys from both
+/// bases match; previously we bailed on computed keys and missed the
+/// conflict entirely.
+#[test]
+fn ts2320_well_known_symbol_method_conflict_across_bases() {
+    let source = r#"
+interface I1 {
+    [Symbol.toStringTag](): { x: string }
+}
+interface I2 {
+    [Symbol.toStringTag](): { x: number }
+}
+
+interface I3 extends I1, I2 { }
+"#;
+    assert!(
+        has_error(source, 2320),
+        "Expected TS2320 for `[Symbol.toStringTag]` methods with conflicting return types across bases"
+    );
+}
+
+/// Regression: two bases declaring `[Symbol.iterator]` with the *same*
+/// return type must NOT produce TS2320 (no conflict).
+#[test]
+fn ts2320_no_false_positive_for_matching_well_known_symbol_method() {
+    let source = r#"
+interface I1 {
+    [Symbol.iterator](): { next(): { value: number; done: boolean } }
+}
+interface I2 {
+    [Symbol.iterator](): { next(): { value: number; done: boolean } }
+}
+
+interface I3 extends I1, I2 { }
+"#;
+    assert!(
+        !has_error(source, 2320),
+        "Did not expect TS2320 when two bases declare matching `[Symbol.iterator]` methods"
+    );
+}
