@@ -1482,7 +1482,6 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         decl_node: NodeIndex,
     ) {
-        use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
         // Only emit if report_unresolved_imports is enabled
@@ -1608,23 +1607,18 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // The driver's ModuleResolver may have a more specific error code than TS2307.
         if let Some(error) = self.ctx.get_resolution_error(module_specifier) {
-            // For Node.js built-in modules, use TS2591 instead of TS2307
+            // For Node.js built-in modules, use TS2591 instead of TS2307.
+            //
+            // The resolver is the source of truth for TS2307 vs TS2792: it
+            // already applies tsc's "would node-style resolution help?" check
+            // before suggesting the nodenext hint. Don't re-derive TS2792 here
+            // from `implied_classic_resolution` — doing so would over-trigger
+            // the hint for specifiers where switching resolution modes
+            // wouldn't actually resolve them (e.g., ambient-only modules).
             let (error_message, error_code) = {
                 let (msg, code) = self.module_not_found_diagnostic(module_specifier);
                 if code != error.code {
                     (msg, code) // module_not_found_diagnostic upgraded to TS2591
-                } else if error.code
-                    == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
-                    && self.ctx.compiler_options.implied_classic_resolution
-                {
-                    use crate::diagnostics::{diagnostic_messages, format_message};
-                    (
-                        format_message(
-                            diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                            &[module_specifier],
-                        ),
-                        diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                    )
                 } else {
                     (error.message.clone(), error.code)
                 }
