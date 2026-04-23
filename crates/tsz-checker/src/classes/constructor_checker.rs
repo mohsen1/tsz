@@ -324,6 +324,12 @@ impl<'a> CheckerState<'a> {
         } else {
             self.resolve_type_for_property_access(type_id)
         };
+        // tsc applies `getReducedType` when displaying heritage instance types,
+        // so utility conditional applications like `InstanceType<typeof Foo>`
+        // render in their concrete form (`Foo`). Mirror that behaviour for
+        // mixin heritage display so `A & { context: InstanceType<typeof
+        // Context>; }` prints as `A & { context: Context; }` (override19.ts).
+        let display_type = self.simplify_heritage_instance_type_for_display(display_type);
         self.format_type(display_type)
     }
 

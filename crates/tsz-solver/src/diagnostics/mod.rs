@@ -16,5 +16,6 @@
 pub mod builders;
 mod core;
 pub mod format;
+pub mod reduce;
 
 pub use self::core::*;
