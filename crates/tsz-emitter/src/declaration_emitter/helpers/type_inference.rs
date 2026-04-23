@@ -1519,13 +1519,38 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
             {
-                let interner = self.type_interner?;
-                let type_id = self.get_node_type_or_names(&[expr_idx])?;
-                let literal = tsz_solver::visitor::literal_value(interner, type_id)?;
-                Some(Self::format_property_name_literal_value(&literal, interner))
+                if let Some(interner) = self.type_interner
+                    && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
+                    && let Some(literal) = tsz_solver::visitor::literal_value(interner, type_id)
+                {
+                    return Some(Self::format_property_name_literal_value(&literal, interner));
+                }
+                // Fallback: an enum member access (e.g. `[E.A]`) is a valid
+                // property-name source even when the type cache hasn't
+                // produced a `Literal` form for it. Detecting it via the
+                // binder lets the caller keep method/getter syntax instead
+                // of degrading to `[E.A]: () => T`.
+                self.enum_member_access_name_text(expr_idx)
             }
             _ => None,
         }
+    }
+
+    /// If `expr_idx` is a value reference whose symbol is an enum member,
+    /// return the member's escaped name. This is used as a fallback to keep
+    /// method-like dts syntax for `[E.A]() {}` even when the type system
+    /// hasn't produced a literal type for the access expression.
+    pub(in crate::declaration_emitter) fn enum_member_access_name_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
+            return None;
+        }
+        Some(symbol.escaped_name.clone())
     }
 
     pub(in crate::declaration_emitter) fn format_property_name_literal_value(
