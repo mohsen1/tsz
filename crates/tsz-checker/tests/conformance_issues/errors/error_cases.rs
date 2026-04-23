@@ -647,6 +647,55 @@ const o1 = merge({ p1: 1 }, { p2: 2 });
 }
 
 #[test]
+fn test_ts2339_elides_long_merge_receiver_method_chain_shape_access() {
+    let mut source = String::from(
+        r#"
+type Exclude<T, U> = T extends U ? never : T;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type merge<base, props> = Omit<base, keyof props & keyof base> & props;
+type Type<t> = {
+    shape: t;
+    merge: <r>(r: r) => Type<merge<t, r>>;
+};
+
+declare const o1: Type<{ p1: 1 }>;
+"#,
+    );
+    for i in 2..=30 {
+        source.push_str(&format!(
+            "const o{i} = o{}.merge({{ p{}: {} }});\n",
+            i - 1,
+            i,
+            i
+        ));
+    }
+    source.push_str("o30.shape.p31;\no30.shape.p38;\no30.shape.p50;\n");
+
+    let diagnostics = compile_and_get_diagnostics(&source);
+    assert!(
+        diagnostics.iter().filter(|(code, _)| *code == 2339).count() == 3,
+        "Expected TS2339 for missing long-chain shape properties.\nActual diagnostics: {diagnostics:#?}"
+    );
+    for (_, message) in diagnostics.iter().filter(|(code, _)| *code == 2339) {
+        assert!(
+            message.contains("{ p1: 1; }")
+                && message.contains("{ p2: number; }")
+                && message.contains("{ p5: number; }"),
+            "Expected TS2339 receiver to preserve the stable method-chain prefix.\nActual message: {message}"
+        );
+        assert!(
+            message.contains("{ ...; }") && message.contains("{ ....."),
+            "Expected TS2339 receiver to elide and truncate the middle method-chain arguments.\nActual message: {message}"
+        );
+        assert!(
+            !message.contains("{ p30: number; }") && !message.contains("<...,"),
+            "Expected TS2339 receiver not to keep the shallow suffix or raw ellipsis.\nActual message: {message}"
+        );
+    }
+}
+
+#[test]
 fn test_object_literal_source_display_preserves_quoted_numeric_property_names() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
