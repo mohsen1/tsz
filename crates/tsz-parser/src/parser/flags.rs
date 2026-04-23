@@ -40,6 +40,30 @@ pub mod node_flags {
 
     // Type-only imports/exports
     pub const TYPE_ONLY: u32 = 1_073_741_824; // 1 << 30
+
+    /// Returns `true` if the flags represent an `await using` declaration.
+    /// Since `AWAIT_USING == CONST | USING`, both bits must be set.
+    #[inline]
+    #[must_use]
+    pub const fn is_await_using(flags: u32) -> bool {
+        (flags & AWAIT_USING) == AWAIT_USING
+    }
+
+    /// Returns `true` if the declaration is block-scoped via `let` or `const`
+    /// (does not include `using` / `await using`).
+    #[inline]
+    #[must_use]
+    pub const fn is_let_or_const(flags: u32) -> bool {
+        (flags & (LET | CONST)) != 0
+    }
+
+    /// Returns `true` if the declaration is any lexical (block-scoped) binding:
+    /// `let`, `const`, or `using` (including `await using`).
+    #[inline]
+    #[must_use]
+    pub const fn is_block_scoped(flags: u32) -> bool {
+        (flags & (LET | CONST | USING)) != 0
+    }
 }
 
 /// Modifier flags for declarations.

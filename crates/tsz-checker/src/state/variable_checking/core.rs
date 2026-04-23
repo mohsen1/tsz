@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
             {
                 let flags = other_parent.flags as u32;
                 use tsz_parser::parser::node_flags;
-                if (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) != 0 {
+                if node_flags::is_block_scoped(flags) {
                     return false;
                 }
             }
@@ -1727,7 +1727,7 @@ impl<'a> CheckerState<'a> {
             {
                 let flags = parent.flags as u32;
                 use tsz_parser::parser::node_flags;
-                (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) != 0
+                node_flags::is_block_scoped(flags)
             } else {
                 false
             };
@@ -1963,10 +1963,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 let flags = other_parent.flags as u32;
                                 use tsz_parser::parser::node_flags;
-                                if (flags
-                                    & (node_flags::LET | node_flags::CONST | node_flags::USING))
-                                    != 0
-                                {
+                                if node_flags::is_block_scoped(flags) {
                                     continue;
                                 }
                             }
@@ -2199,12 +2196,7 @@ impl<'a> CheckerState<'a> {
                                     {
                                         let other_flags = other_parent.flags as u32;
                                         use tsz_parser::parser::node_flags;
-                                        if (other_flags
-                                            & (node_flags::LET
-                                                | node_flags::CONST
-                                                | node_flags::USING))
-                                            != 0
-                                        {
+                                        if node_flags::is_block_scoped(other_flags) {
                                             continue; // block-scoped, skip
                                         }
                                     }

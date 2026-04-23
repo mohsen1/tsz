@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl_flags = arena.get_variable_declaration_flags(decl_idx);
-                if (decl_flags & (node_flags::LET | node_flags::CONST)) != 0 {
+                if node_flags::is_let_or_const(decl_flags) {
                     Some(symbol_flags::BLOCK_SCOPED_VARIABLE)
                 } else {
                     Some(symbol_flags::FUNCTION_SCOPED_VARIABLE)

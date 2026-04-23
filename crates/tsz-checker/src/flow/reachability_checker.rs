@@ -869,7 +869,7 @@ impl<'a> CheckerState<'a> {
         for &list_idx in &var_data.declarations.nodes {
             // Check let/const flag at the list level.
             let list_flags = self.ctx.arena.get_variable_declaration_flags(list_idx);
-            if (list_flags & (node_flags::LET | node_flags::CONST)) != 0 {
+            if node_flags::is_let_or_const(list_flags) {
                 return false;
             }
             let Some(list_node) = self.ctx.arena.get(list_idx) else {

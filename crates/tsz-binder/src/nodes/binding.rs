@@ -239,7 +239,7 @@ impl BinderState {
             && let Some(list) = arena.get_variable(node)
         {
             // Check if this is a var declaration (not let/const)
-            let is_var = (u32::from(node.flags) & (node_flags::LET | node_flags::CONST)) == 0;
+            let is_var = !node_flags::is_let_or_const(u32::from(node.flags));
             if is_var {
                 for &decl_idx in &list.declarations.nodes {
                     if let Some(decl) = arena.get_variable_declaration_at(decl_idx) {
@@ -364,7 +364,7 @@ impl BinderState {
                     if let Some(&decl_list_idx) = var_stmt.declarations.nodes.first() {
                         if let Some(list_node) = arena.get(decl_list_idx) {
                             let flags = u32::from(list_node.flags);
-                            if (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING {
+                            if node_flags::is_await_using(flags) {
                                 self.file_features.set(FileFeatures::AWAIT_USING);
                             } else if (flags & node_flags::USING) != 0 {
                                 self.file_features.set(FileFeatures::USING);
