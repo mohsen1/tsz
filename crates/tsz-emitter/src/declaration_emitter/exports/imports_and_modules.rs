@@ -210,9 +210,7 @@ impl<'a> DeclarationEmitter<'a> {
         // separately inside `should_emit_public_api_module`.
         if !is_exported
             && self.public_api_filter_enabled()
-            && self
-                .arena
-                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            && self.arena.is_declare(&module.modifiers)
         {
             let is_identifier_namespace = self
                 .arena
@@ -349,9 +347,7 @@ impl<'a> DeclarationEmitter<'a> {
             // A namespace is ambient if it has `declare`, or if the source
             // is a .d.ts file, or if it's nested inside an ambient namespace
             // (but NOT if it's nested inside a non-ambient namespace).
-            let is_ambient_ns = self
-                .arena
-                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            let is_ambient_ns = self.arena.is_declare(&module.modifiers)
                 || self.source_is_declaration_file
                 || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
             if is_ambient_ns {
@@ -394,9 +390,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // body when there is a mix of exported and non-exported
                 // members (the "scope-fix marker").
                 // Use emission-time tracking instead of source analysis.
-                let is_ambient_module = self
-                    .arena
-                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                let is_ambient_module = self.arena.is_declare(&module.modifiers)
                     || self.source_is_declaration_file
                     || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
 

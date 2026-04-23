@@ -1118,10 +1118,7 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare function)
-        if self
-            .arena
-            .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&func.modifiers) {
             return;
         }
 

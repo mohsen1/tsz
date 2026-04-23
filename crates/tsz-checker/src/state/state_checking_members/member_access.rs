@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|name| name == property_name)
                 {
                     let mut rhs_type = self.get_type_of_node(bin.right);
-                    if matches!(rhs_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                    if rhs_type.is_any_unknown_or_error()
                         && let Some(name_idx) = self.this_access_name_node(bin.right)
                         && let Some(ref_name) = self.get_property_name(name_idx)
                         && ref_name != property_name

@@ -74,6 +74,25 @@ impl NodeArena {
         self.has_modifier(modifiers, SyntaxKind::StaticKeyword)
     }
 
+    /// Check whether a modifier list contains `declare`.
+    ///
+    /// Shortcut for `has_modifier(modifiers, SyntaxKind::DeclareKeyword)`,
+    /// the most common single-kind query across the emitter lowering and
+    /// declaration-file pipelines (ambient-namespace detection, CommonJS
+    /// lowering, const-enum gating).
+    #[inline]
+    #[must_use]
+    pub fn is_declare(&self, modifiers: &Option<NodeList>) -> bool {
+        self.has_modifier(modifiers, SyntaxKind::DeclareKeyword)
+    }
+
+    /// Like [`is_declare`](Self::is_declare) but accepts `Option<&NodeList>`.
+    #[inline]
+    #[must_use]
+    pub fn is_declare_ref(&self, modifiers: Option<&NodeList>) -> bool {
+        self.has_modifier_ref(modifiers, SyntaxKind::DeclareKeyword)
+    }
+
     /// Extract the visibility level from a modifier list.
     ///
     /// Scans for `private` or `protected` keywords; returns `Public` if neither is found.

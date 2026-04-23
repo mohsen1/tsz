@@ -219,7 +219,7 @@ impl<'a> Printer<'a> {
                             self.write(",");
                         } else {
                             // Find the separator comma in the source that follows this element.
-                            let elem_end = self.arena.get(elem).map(|n| n.end).unwrap_or(0);
+                            let elem_end = self.arena.end_at(elem).unwrap_or(0);
 
                             // Some element nodes (e.g. function expressions) include the
                             // trailing comma and whitespace in their `end` span.  In that

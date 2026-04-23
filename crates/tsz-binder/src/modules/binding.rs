@@ -5,6 +5,7 @@
 
 use crate::state::BinderState;
 use crate::{ContainerKind, Symbol, SymbolId, SymbolTable, symbol_flags};
+use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -159,7 +160,8 @@ impl BinderState {
                             // Shorthand ambient module: `declare module "*.json";` (no body)
                             // Even when classified as augmentation, a bodyless declaration
                             // is a shorthand that makes matching imports resolve to `any`.
-                            self.shorthand_ambient_modules.insert(module_specifier);
+                            Arc::make_mut(&mut self.shorthand_ambient_modules)
+                                .insert(module_specifier);
                         } else {
                             self.node_scope_ids
                                 .insert(module.body.0, self.current_scope_id);
@@ -283,7 +285,7 @@ impl BinderState {
                     && let Some(lit) = arena.get_literal(name_node)
                     && !lit.text.is_empty()
                 {
-                    self.shorthand_ambient_modules.insert(lit.text.clone());
+                    Arc::make_mut(&mut self.shorthand_ambient_modules).insert(lit.text.clone());
                 }
             } else {
                 self.node_scope_ids

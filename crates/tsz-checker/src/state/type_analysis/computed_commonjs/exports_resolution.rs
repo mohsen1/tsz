@@ -583,7 +583,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let define_property_type = self.ctx.types.factory().object(props);
-        if matches!(base_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if base_type.is_unknown_or_error() {
             define_property_type
         } else {
             self.ctx

@@ -89,7 +89,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Get the reference position in source
-        let ref_pos = self.arena.get(reference).map(|n| n.pos).unwrap_or(0);
+        let ref_pos = self.arena.pos_at(reference).unwrap_or(0);
 
         // Get the last assignment position for this symbol
         let last_assign_pos = self.get_last_assignment_pos(symbol_id, reference);

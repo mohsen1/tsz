@@ -206,6 +206,22 @@ impl TypeId {
         self.is_top_type()
     }
 
+    /// Returns true if this type is `UNKNOWN` or `ERROR` — the "unresolved"
+    /// intrinsics that typically indicate a failed resolution or a propagated
+    /// error, regardless of display.
+    #[inline]
+    pub const fn is_unknown_or_error(self) -> bool {
+        matches!(self, Self::UNKNOWN | Self::ERROR)
+    }
+
+    /// Returns true if this type is `ANY`, `UNKNOWN`, or `ERROR` — the
+    /// "information-less" intrinsics callers typically treat as wildcards
+    /// when deciding whether a type carries useful structural information.
+    #[inline]
+    pub const fn is_any_unknown_or_error(self) -> bool {
+        matches!(self, Self::ANY | Self::UNKNOWN | Self::ERROR)
+    }
+
     // =========================================================================
     // Local/Global Partitioning (for ScopedTypeInterner GC)
     // =========================================================================

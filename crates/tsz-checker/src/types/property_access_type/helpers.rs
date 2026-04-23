@@ -725,9 +725,9 @@ impl<'a> CheckerState<'a> {
                 // Check if parent is a module with `declare` modifier
                 if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     && let Some(m) = arena.get_module(parent_node)
-                    && m.modifiers.as_ref().is_some_and(|mods| {
-                        arena.has_modifier_ref(Some(mods), SyntaxKind::DeclareKeyword)
-                    })
+                    && m.modifiers
+                        .as_ref()
+                        .is_some_and(|mods| arena.is_declare_ref(Some(mods)))
                 {
                     return true;
                 }
@@ -744,9 +744,10 @@ impl<'a> CheckerState<'a> {
                     let has_direct_export = m.modifiers.as_ref().is_some_and(|mods| {
                         arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
                     });
-                    let has_declare = m.modifiers.as_ref().is_some_and(|mods| {
-                        arena.has_modifier_ref(Some(mods), SyntaxKind::DeclareKeyword)
-                    });
+                    let has_declare = m
+                        .modifiers
+                        .as_ref()
+                        .is_some_and(|mods| arena.is_declare_ref(Some(mods)));
                     Some(
                         has_direct_export
                             || has_declare
@@ -761,9 +762,10 @@ impl<'a> CheckerState<'a> {
                 let has_direct_export = f.modifiers.as_ref().is_some_and(|mods| {
                     arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
                 });
-                let has_declare = f.modifiers.as_ref().is_some_and(|mods| {
-                    arena.has_modifier_ref(Some(mods), SyntaxKind::DeclareKeyword)
-                });
+                let has_declare = f
+                    .modifiers
+                    .as_ref()
+                    .is_some_and(|mods| arena.is_declare_ref(Some(mods)));
                 has_direct_export
                     || has_declare
                     || is_inside_export_decl()
@@ -773,9 +775,10 @@ impl<'a> CheckerState<'a> {
                 let has_direct_export = c.modifiers.as_ref().is_some_and(|mods| {
                     arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
                 });
-                let has_declare = c.modifiers.as_ref().is_some_and(|mods| {
-                    arena.has_modifier_ref(Some(mods), SyntaxKind::DeclareKeyword)
-                });
+                let has_declare = c
+                    .modifiers
+                    .as_ref()
+                    .is_some_and(|mods| arena.is_declare_ref(Some(mods)));
                 has_direct_export
                     || has_declare
                     || is_inside_export_decl()
@@ -785,9 +788,10 @@ impl<'a> CheckerState<'a> {
                 let has_direct_export = e.modifiers.as_ref().is_some_and(|mods| {
                     arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
                 });
-                let has_declare = e.modifiers.as_ref().is_some_and(|mods| {
-                    arena.has_modifier_ref(Some(mods), SyntaxKind::DeclareKeyword)
-                });
+                let has_declare = e
+                    .modifiers
+                    .as_ref()
+                    .is_some_and(|mods| arena.is_declare_ref(Some(mods)));
                 has_direct_export
                     || has_declare
                     || is_inside_export_decl()

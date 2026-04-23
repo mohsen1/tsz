@@ -442,7 +442,7 @@ impl SymbolIndex {
         // `index_file`, so callers no longer need manual `add_import` calls.
         for (local_name, symbol_id) in binder.file_locals.iter() {
             if let Some(symbol) = binder.symbols.get(*symbol_id)
-                && symbol.flags & symbol_flags::ALIAS != 0
+                && symbol.has_any_flags(symbol_flags::ALIAS)
                 && let Some(ref source_module) = symbol.import_module
             {
                 let exported_name = symbol

@@ -125,7 +125,7 @@ impl<'a> CheckerState<'a> {
         // Use resolve_type_to_symbol_id instead of get_ref_symbol
         let sym_id = self.ctx.resolve_type_to_symbol_id(type_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM) {
             return None;
         }
         Some(sym_id)
@@ -135,19 +135,19 @@ impl<'a> CheckerState<'a> {
         let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        ((symbol.flags & symbol_flags::ENUM) != 0
-            && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0)
-            .then_some(sym_id)
+        (symbol.has_any_flags(symbol_flags::ENUM)
+            && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER))
+        .then_some(sym_id)
     }
 
     pub(crate) fn enum_symbol_from_enumish_type(&self, type_id: TypeId) -> Option<SymbolId> {
         let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return Some(symbol.parent);
         }
-        ((symbol.flags & symbol_flags::ENUM) != 0).then_some(sym_id)
+        (symbol.has_any_flags(symbol_flags::ENUM)).then_some(sym_id)
     }
 
     pub(crate) fn apparent_enum_instance_type(&self, type_id: TypeId) -> Option<TypeId> {
@@ -239,7 +239,7 @@ impl<'a> CheckerState<'a> {
     /// Returns None if the symbol is not an enum or has no members.
     pub(crate) fn enum_kind(&self, sym_id: SymbolId) -> Option<EnumKind> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM) {
             return None;
         }
 
@@ -333,7 +333,7 @@ impl<'a> CheckerState<'a> {
             .get_node_symbol(member_decl)
             .or_else(|| self.ctx.binder.get_node_symbol(member.name))
             && let Some(symbol) = self.ctx.binder.get_symbol(member_sym)
-            && symbol.flags & symbol_flags::ENUM_MEMBER != 0
+            && symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
             && symbol.parent.is_some()
             && let Some(auto_value) = self.compute_auto_increment_value(symbol.parent, member_decl)
         {
@@ -442,7 +442,7 @@ impl<'a> CheckerState<'a> {
                     |_| true,
                 )?;
                 let symbol = self.ctx.binder.get_symbol(sym_id)?;
-                if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+                if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
                     let member_decl = symbol.value_declaration;
 
                     // Check memoization cache first.
@@ -678,7 +678,7 @@ impl<'a> CheckerState<'a> {
         if node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self.resolve_identifier_symbol(expr_idx)?;
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            if symbol.flags & symbol_flags::CLASS != 0 {
+            if symbol.has_any_flags(symbol_flags::CLASS) {
                 return Some(sym_id);
             }
         }
@@ -711,7 +711,7 @@ impl<'a> CheckerState<'a> {
         }
         let sym_id = self.resolve_identifier_symbol(left_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS != 0 {
+        if symbol.has_any_flags(symbol_flags::CLASS) {
             return Some(sym_id);
         }
         if symbol.flags
@@ -765,7 +765,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
         let decl_idx = symbol.primary_declaration()?;
@@ -2006,7 +2006,7 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
     ) -> Option<TypeId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM) {
             return None;
         }
 
