@@ -579,6 +579,7 @@ impl<'a> CheckerState<'a> {
             let mut formatter = self
                 .ctx
                 .create_diagnostic_type_formatter()
+                .with_long_property_receiver_display()
                 .with_display_properties()
                 .with_skip_application_alias_names();
             return formatter.format(display_ty).into_owned();
