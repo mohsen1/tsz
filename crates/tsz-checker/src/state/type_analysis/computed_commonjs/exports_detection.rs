@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
 
         let sym_id = self.resolve_identifier_symbol_without_tracking(rhs_expr)?;
         let symbol = self.get_symbol_globally(sym_id)?;
-        if (symbol.flags & symbol_flags::CLASS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
 

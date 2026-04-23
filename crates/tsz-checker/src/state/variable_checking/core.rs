@@ -1880,7 +1880,7 @@ impl<'a> CheckerState<'a> {
                                 // (interfaces, type aliases) occupy a different declaration
                                 // space and never conflict with var declarations.
                                 use tsz_binder::symbols::symbol_flags;
-                                if lib_sym.flags & symbol_flags::VALUE == 0 {
+                                if !lib_sym.has_any_flags(symbol_flags::VALUE) {
                                     continue;
                                 }
                                 for &lib_decl in &lib_sym.declarations {

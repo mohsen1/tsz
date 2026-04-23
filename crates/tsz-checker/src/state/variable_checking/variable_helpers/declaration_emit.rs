@@ -546,7 +546,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let is_from_current_file = local_symbol.decl_file_idx == u32::MAX
                     || local_symbol.decl_file_idx == self.ctx.current_file_idx as u32;
-                let is_import = (local_symbol.flags & symbol_flags::ALIAS) != 0;
+                let is_import = local_symbol.has_any_flags(symbol_flags::ALIAS);
                 if !is_from_current_file && !is_import {
                     return false;
                 }

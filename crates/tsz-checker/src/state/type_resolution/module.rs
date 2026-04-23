@@ -298,7 +298,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol_with_libs(alias_sym_id, &lib_binders)?;
 
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return None;
         }
         let module_name = symbol.import_module.as_ref()?;
@@ -2134,7 +2134,7 @@ impl<'a> CheckerState<'a> {
             //   namespace a.b { class C {} } export = a.b;
             // where named imports should resolve via members on `a.b`.
             if let Some(export_equals_symbol) = lookup_symbol(export_equals_sym)
-                && (export_equals_symbol.flags & symbol_flags::ALIAS) != 0
+                && export_equals_symbol.has_any_flags(symbol_flags::ALIAS)
             {
                 if let Some(resolved_export_equals) =
                     self.resolve_alias_symbol(export_equals_sym, visited_aliases)

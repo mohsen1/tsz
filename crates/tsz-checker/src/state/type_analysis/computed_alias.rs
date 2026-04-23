@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
             }
             let referenced_sym_id = resolve_type_name(ident_name)?;
             let symbol = binder.get_symbol_with_libs(referenced_sym_id, &lib_binders)?;
-            ((symbol.flags & symbol_flags::TYPE) != 0).then_some(referenced_sym_id.0)
+            (symbol.has_any_flags(symbol_flags::TYPE)).then_some(referenced_sym_id.0)
         };
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
             let ident_name = decl_arena.get_identifier_text(node_idx)?;
@@ -159,7 +159,7 @@ impl<'a> CheckerState<'a> {
             }
             let referenced_sym_id = resolve_type_name(ident_name)?;
             let symbol = binder.get_symbol_with_libs(referenced_sym_id, &lib_binders)?;
-            ((symbol.flags & symbol_flags::TYPE) != 0)
+            (symbol.has_any_flags(symbol_flags::TYPE))
                 .then(|| self.ctx.get_or_create_def_id(referenced_sym_id))
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
