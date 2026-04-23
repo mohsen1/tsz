@@ -892,9 +892,7 @@ pub fn resolve_compiler_options(
             resolved.checker.strict_property_initialization = false;
             resolved.checker.no_implicit_this = false;
             resolved.checker.use_unknown_in_catch_variables = false;
-            resolved.checker.always_strict = false;
             resolved.checker.strict_builtin_iterator_return = false;
-            resolved.printer.always_strict = false;
         }
     }
 
@@ -5662,8 +5660,9 @@ mod tests {
     }
 
     #[test]
-    fn test_strict_false_disables_strict_family() {
-        // When strict: false is explicitly set, all strict sub-flags should be false.
+    fn test_strict_false_keeps_always_strict_default() {
+        // In TS 6.0, strict:false still leaves alwaysStrict on by default unless it
+        // is explicitly set to false.
         let json = r#"{"compilerOptions":{"strict":false}}"#;
         let config: TsConfig = serde_json::from_str(json).unwrap();
         let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
@@ -5678,6 +5677,10 @@ mod tests {
         assert!(
             !resolved.checker.strict_property_initialization,
             "strictPropertyInitialization should be false when strict: false"
+        );
+        assert!(
+            resolved.checker.always_strict,
+            "alwaysStrict should remain true by default when strict: false"
         );
     }
 
@@ -5699,9 +5702,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ts5024_boolean_string_is_not_applied() {
-        // When alwaysStrict is a string "true" (not boolean true), tsc emits TS5024
-        // and does NOT apply the value (convertJsonOption returns undefined).
+    fn test_ts5024_boolean_string_uses_always_strict_default() {
+        // tsc still enforces strict-mode syntax here: the invalid string value is
+        // rejected with TS5024, then option resolution falls back to the TS 6.0
+        // alwaysStrict default of true.
         let source = r#"{
   "compilerOptions": {
     "strict": false,
@@ -5715,11 +5719,29 @@ mod tests {
             has_ts5024,
             "Should emit TS5024 for string 'true' on boolean option"
         );
-        // Invalidly-typed values should not be applied.
+        // The invalid value itself is not applied, but alwaysStrict still falls
+        // back to its TS 6.0 default of true.
+        let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
+        assert!(
+            resolved.checker.always_strict,
+            "alwaysStrict should fall back to the TS 6.0 default when provided as a string-typed boolean"
+        );
+    }
+
+    #[test]
+    fn test_explicit_always_strict_false_overrides_default_even_with_strict_false() {
+        let source = r#"{
+  "compilerOptions": {
+    "strict": false,
+    "alwaysStrict": false,
+    "ignoreDeprecations": "6.0"
+  }
+}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
         let resolved = resolve_compiler_options(parsed.config.compiler_options.as_ref()).unwrap();
         assert!(
             !resolved.checker.always_strict,
-            "alwaysStrict should remain false when provided as a string-typed boolean"
+            "explicit alwaysStrict=false should still disable alwaysStrict"
         );
     }
 

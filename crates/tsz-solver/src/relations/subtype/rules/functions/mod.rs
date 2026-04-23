@@ -753,7 +753,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     const fn is_uninformative_contextual_inference_input(&self, ty: TypeId) -> bool {
-        matches!(ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+        ty.is_any_unknown_or_error()
     }
 
     pub(crate) fn infer_source_type_param_substitution(

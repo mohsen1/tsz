@@ -913,7 +913,7 @@ impl BinderState {
                 && sym_id.is_some()
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.augmentation_target_modules
+                Arc::make_mut(&mut self.augmentation_target_modules)
                     .insert(sym_id, module_spec.clone());
             }
 

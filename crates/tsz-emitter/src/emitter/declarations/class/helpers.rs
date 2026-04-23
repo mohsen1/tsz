@@ -117,9 +117,7 @@ impl<'a> Printer<'a> {
                     .arena
                     .get(prop_data.name)
                     .is_none_or(|n| n.kind != SyntaxKind::PrivateIdentifier as u16)
-                && !self
-                    .arena
-                    .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                && !self.arena.is_declare(&prop_data.modifiers)
             {
                 let Some(name_node) = self.arena.get(prop_data.name) else {
                     continue;
