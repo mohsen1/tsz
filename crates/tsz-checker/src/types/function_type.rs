@@ -2482,8 +2482,31 @@ impl<'a> CheckerState<'a> {
             // returns Promise<T> (e.g., `async () => fetch(url)`), the runtime
             // awaits it to get T, then the async wrapper produces Promise<T> —
             // NOT Promise<Promise<T>>. Unwrap any existing Promise layer first.
-            if let Some(inner) = self.unwrap_promise_type(final_return_type) {
-                final_return_type = inner;
+            let had_promise_wrapper =
+                if let Some(inner) = self.unwrap_promise_type(final_return_type) {
+                    final_return_type = inner;
+                    true
+                } else {
+                    false
+                };
+            // Widen literal return types before re-wrapping in Promise, matching
+            // tsc's async return-type inference: `async () => 0` infers
+            // `() => Promise<number>`, not `() => Promise<0>`. Skip widening when
+            // the body already produced a `Promise<T>` — the inner T either came
+            // from contextual typing (which preserved literals intentionally) or
+            // from a Promise-returning expression whose type is already stable.
+            // Also preserve `unique symbol` types: tsc does not widen them to
+            // `symbol` in async return-type inference; widening breaks
+            // `uniqueSymbolsDeclarations.ts` (the solver's generic widen_type
+            // walks UniqueSymbol → SYMBOL, which is right for mutable-binding
+            // contexts but wrong here).
+            if !had_promise_wrapper
+                && !crate::query_boundaries::common::is_unique_symbol_type(
+                    self.ctx.types,
+                    final_return_type,
+                )
+            {
+                final_return_type = self.widen_literal_type(final_return_type);
             }
             // Resolve the real Promise type from lib files when available,
             // so that the return type is structurally compatible with PromiseLike<T>.
