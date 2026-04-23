@@ -1880,10 +1880,7 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(method) = self.arena.get_method_decl(member_node) else {
                 continue;
             };
-            if !self
-                .arena
-                .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
-            {
+            if !self.arena.is_static(&method.modifiers) {
                 continue;
             }
             let Some(method_name) = self.get_identifier_text(method.name) else {

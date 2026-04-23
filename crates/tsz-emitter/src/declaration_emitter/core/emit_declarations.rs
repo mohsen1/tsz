@@ -1117,14 +1117,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let is_static = if let Some(prop) = self.arena.get_property_decl(member_node) {
-                self.arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                self.arena.is_static(&prop.modifiers)
             } else if let Some(method) = self.arena.get_method_decl(member_node) {
-                self.arena
-                    .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
+                self.arena.is_static(&method.modifiers)
             } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                self.arena
-                    .has_modifier(&accessor.modifiers, SyntaxKind::StaticKeyword)
+                self.arena.is_static(&accessor.modifiers)
             } else {
                 false
             };

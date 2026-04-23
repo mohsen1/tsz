@@ -477,9 +477,7 @@ impl<'a> Printer<'a> {
                                 && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                                 && let Some(prop) = self.arena.get_property_decl(member_node)
                                 && prop.initializer.is_some()
-                                && self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                                && self.arena.is_static(&prop.modifiers)
                                 && !self
                                     .arena
                                     .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)

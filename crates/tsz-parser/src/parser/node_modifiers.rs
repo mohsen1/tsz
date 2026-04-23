@@ -63,6 +63,17 @@ impl NodeArena {
         None
     }
 
+    /// Check whether a modifier list contains `static`.
+    ///
+    /// Shortcut for `has_modifier(modifiers, SyntaxKind::StaticKeyword)`, the
+    /// most common single-kind query in the emitter and class lowering
+    /// pipelines.
+    #[inline]
+    #[must_use]
+    pub fn is_static(&self, modifiers: &Option<NodeList>) -> bool {
+        self.has_modifier(modifiers, SyntaxKind::StaticKeyword)
+    }
+
     /// Extract the visibility level from a modifier list.
     ///
     /// Scans for `private` or `protected` keywords; returns `Public` if neither is found.
