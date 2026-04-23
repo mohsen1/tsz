@@ -2506,6 +2506,33 @@ fn test_ts2345_function_return_mismatch_includes_related_return_detail() {
 }
 
 #[test]
+fn test_ts2345_function_return_mismatch_related_detail_qualifies_same_named_returns() {
+    let source = r#"
+        declare namespace N { export interface Token { kind: "n"; } }
+        declare namespace M { export interface Token { kind: "m"; } }
+        declare function takes(cb: () => M.Token): void;
+        declare const cb: () => N.Token;
+        takes(cb);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for function return type mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Return type 'N.Token' is not assignable to 'M.Token'.")
+        }),
+        "Expected TS2345 related return detail to qualify same-named return types, got: {ts2345:?}"
+    );
+}
+
+#[test]
 fn test_ts2345_index_signature_mismatch_includes_related_detail() {
     let source = r#"
         declare function takes(value: { [key: string]: number }): void;
