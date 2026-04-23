@@ -983,7 +983,7 @@ impl<'a> CheckerContext<'a> {
         if let Some(ref idx) = self.program_module_exports {
             return Self::lookup_any_file_key(module_key, idx);
         }
-        Self::lookup_any_file_key(module_key, &binder.module_exports)
+        Self::lookup_any_file_key(module_key, binder.module_exports.as_ref())
     }
 
     /// Like `module_exports_for_module` but tests existence only.

@@ -706,7 +706,7 @@ impl BinderState {
                     } else {
                         // Regular namespace re-export — add to module exports
                         let current_file = self.debugger.current_file.clone();
-                        self.module_exports
+                        Arc::make_mut(&mut self.module_exports)
                             .entry(current_file)
                             .or_default()
                             .set(name.to_string(), sym_id);

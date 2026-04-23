@@ -332,7 +332,7 @@ pub struct BinderState {
 
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
 
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
@@ -806,7 +806,7 @@ pub struct BinderStateScopeInputs {
     pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
     pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     pub reexports: Arc<FileReexportsMap>,
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,

@@ -357,7 +357,7 @@ impl BinderState {
                 && let Some(exports) = symbol.exports.as_ref()
                 && !exports.is_empty()
             {
-                self.module_exports
+                Arc::make_mut(&mut self.module_exports)
                     .insert(module_specifier.clone(), exports.as_ref().clone());
             }
 
