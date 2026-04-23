@@ -1452,7 +1452,12 @@ pub(super) struct MergedAugmentations {
     /// `Arc::clone` instead of deep-cloning the entire map into each binder.
     pub augmentation_target_modules:
         std::sync::Arc<rustc_hash::FxHashMap<tsz::binder::SymbolId, String>>,
-    pub global_augmentations: rustc_hash::FxHashMap<String, Vec<tsz::binder::GlobalAugmentation>>,
+    /// Cross-file merged global augmentations.
+    ///
+    /// Wrapped in `Arc` so per-file binders can share the merged map via
+    /// `Arc::clone` instead of deep-cloning the entire map into each binder.
+    pub global_augmentations:
+        std::sync::Arc<rustc_hash::FxHashMap<String, Vec<tsz::binder::GlobalAugmentation>>>,
 }
 
 impl MergedAugmentations {
@@ -1501,7 +1506,7 @@ impl MergedAugmentations {
         Self {
             module_augmentations: std::sync::Arc::new(module_augmentations),
             augmentation_target_modules: std::sync::Arc::new(augmentation_target_modules),
-            global_augmentations,
+            global_augmentations: std::sync::Arc::new(global_augmentations),
         }
     }
 }

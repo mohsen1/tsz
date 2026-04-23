@@ -234,7 +234,7 @@ impl BinderState {
                 // declare_symbol takes is_exported flag.
                 if self.in_global_augmentation {
                     self.file_locals.set(name.to_string(), sym_id);
-                    self.global_augmentations
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
                         .push(crate::state::GlobalAugmentation::new(idx));

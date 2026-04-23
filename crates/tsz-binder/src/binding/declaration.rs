@@ -59,7 +59,7 @@ impl BinderState {
                 // as global augmentations, just like interfaces and namespaces.
                 // This enables cross-file conflict detection with UMD exports.
                 if self.in_global_augmentation {
-                    self.global_augmentations
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
                         .push(crate::state::GlobalAugmentation::new(idx));
@@ -84,7 +84,7 @@ impl BinderState {
                 // This mirrors the interface hoisting at bind_interface_declaration.
                 if self.in_global_augmentation {
                     self.file_locals.set(name.to_string(), sym_id);
-                    self.global_augmentations
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
                         .push(crate::state::GlobalAugmentation::new(idx));
@@ -114,7 +114,7 @@ impl BinderState {
                         );
                         if self.in_global_augmentation {
                             self.file_locals.set(name.to_string(), sym_id);
-                            self.global_augmentations
+                            Arc::make_mut(&mut self.global_augmentations)
                                 .entry(name.to_string())
                                 .or_default()
                                 .push(crate::state::GlobalAugmentation::new(ident_idx));
@@ -831,7 +831,7 @@ impl BinderState {
             // If we're inside a global augmentation block, track this as an augmentation
             // that should merge with lib.d.ts symbols at type resolution time
             if self.in_global_augmentation {
-                self.global_augmentations
+                Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
                     .push(crate::state::GlobalAugmentation::new(idx));
@@ -845,7 +845,7 @@ impl BinderState {
                 && !self.is_external_module
                 && Self::is_built_in_global_type(name)
             {
-                self.global_augmentations
+                Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
                     .push(crate::state::GlobalAugmentation::new(idx));
@@ -940,7 +940,7 @@ impl BinderState {
             // If we're inside a global augmentation block, track this as an augmentation
             // that should merge with lib.d.ts symbols at type resolution time
             if self.in_global_augmentation {
-                self.global_augmentations
+                Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
                     .push(crate::state::GlobalAugmentation::new(idx));

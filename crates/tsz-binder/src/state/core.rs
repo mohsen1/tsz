@@ -196,7 +196,7 @@ impl BinderState {
             node_scope_ids: FxHashMap::with_capacity_and_hasher(64, Default::default()),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
-            global_augmentations: FxHashMap::default(),
+            global_augmentations: Arc::new(FxHashMap::default()),
             in_global_augmentation: false,
             module_augmentations: Arc::new(FxHashMap::default()),
             in_module_augmentation: false,
@@ -262,7 +262,7 @@ impl BinderState {
         self.node_scope_ids.clear();
         self.current_scope_id = ScopeId::NONE;
         self.debugger.clear();
-        self.global_augmentations.clear();
+        Arc::make_mut(&mut self.global_augmentations).clear();
         self.in_global_augmentation = false;
         Arc::make_mut(&mut self.module_augmentations).clear();
         self.in_module_augmentation = false;
@@ -433,7 +433,7 @@ impl BinderState {
             node_scope_ids: FxHashMap::default(),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
-            global_augmentations: FxHashMap::default(),
+            global_augmentations: Arc::new(FxHashMap::default()),
             in_global_augmentation: false,
             module_augmentations: Arc::new(FxHashMap::default()),
             in_module_augmentation: false,
