@@ -973,14 +973,20 @@ impl<'a> CheckerState<'a> {
         let direct_discriminants =
             self.object_literal_direct_unit_discriminants(obj_literal_idx, explicit_property_names);
 
+        let mut narrowed_indices: Option<Vec<usize>> = None;
+
         for (prop_name, prop_type) in direct_discriminants {
             let source_prop = source_props.iter().find(|prop| prop.name == prop_name);
             let Some(source_prop) = source_prop else {
                 continue;
             };
 
+            let candidate_indices = narrowed_indices
+                .clone()
+                .unwrap_or_else(|| (0..union_shapes.len()).collect());
             let mut present_target_props = Vec::with_capacity(union_shapes.len());
-            for (i, shape) in union_shapes.iter().enumerate() {
+            for &i in &candidate_indices {
+                let shape = &union_shapes[i];
                 if let Some(target_prop) =
                     shape.properties.iter().find(|p| p.name == source_prop.name)
                 {
@@ -1004,7 +1010,7 @@ impl<'a> CheckerState<'a> {
             // declare it use unit property types. This captures overlapping
             // discriminant keys like `a: 1 | 2` without treating arbitrary payload
             // properties such as `abc: string` as discriminants.
-            if present_target_props.len() != union_shapes.len()
+            if present_target_props.len() != candidate_indices.len()
                 && !present_target_props
                     .iter()
                     .all(|&(_, target_ty)| query::is_unit_type(self.ctx.types, target_ty))
@@ -1017,12 +1023,12 @@ impl<'a> CheckerState<'a> {
                 .filter_map(|&(i, target_ty)| self.is_subtype_of(prop_type, target_ty).then_some(i))
                 .collect();
 
-            if !matching_indices.is_empty() && matching_indices.len() < union_shapes.len() {
-                return Some(matching_indices);
+            if !matching_indices.is_empty() && matching_indices.len() < candidate_indices.len() {
+                narrowed_indices = Some(matching_indices);
             }
         }
 
-        None
+        narrowed_indices
     }
 
     fn try_union_index_signature_value_check(
