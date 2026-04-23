@@ -7,7 +7,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeData, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn sanitize_type_annotation_text_for_diagnostic(
@@ -1242,6 +1242,142 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn format_excess_property_target_type_part(&self, ty: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_type_formatter()
+            .with_diagnostic_mode()
+            .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+            .with_skip_conditional_application_alias();
+        formatter.format(ty).into_owned()
+    }
+
+    fn is_conditional_type_alias_application(&self, ty: TypeId) -> bool {
+        let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, ty)
+        else {
+            return false;
+        };
+        let def_id = match self.ctx.types.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            _ => self.ctx.definition_store.find_def_for_type(app.base),
+        };
+        def_id
+            .and_then(|def_id| self.ctx.definition_store.get(def_id))
+            .is_some_and(|def| {
+                matches!(def.kind, tsz_solver::def::DefKind::TypeAlias)
+                    && def.body.is_some_and(|body| {
+                        matches!(self.ctx.types.lookup(body), Some(TypeData::Conditional(_)))
+                    })
+            })
+    }
+
+    fn expand_conditional_application_aliases_for_excess_display(
+        &mut self,
+        ty: TypeId,
+        depth: u8,
+    ) -> Option<TypeId> {
+        if depth > 8 {
+            return None;
+        }
+
+        if self.is_conditional_type_alias_application(ty) {
+            let evaluated = self.evaluate_type_for_assignability(ty);
+            if evaluated != ty {
+                return Some(
+                    self.expand_conditional_application_aliases_for_excess_display(
+                        evaluated,
+                        depth + 1,
+                    )
+                    .unwrap_or(evaluated),
+                );
+            }
+        }
+
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
+        {
+            let mut display_shape = shape.as_ref().clone();
+            let mut changed = false;
+            for property in &mut display_shape.properties {
+                if let Some(expanded) = self
+                    .expand_conditional_application_aliases_for_excess_display(
+                        property.type_id,
+                        depth + 1,
+                    )
+                {
+                    property.type_id = expanded;
+                    changed = true;
+                }
+                if property.write_type != property.type_id
+                    && let Some(expanded) = self
+                        .expand_conditional_application_aliases_for_excess_display(
+                            property.write_type,
+                            depth + 1,
+                        )
+                {
+                    property.write_type = expanded;
+                    changed = true;
+                }
+            }
+            if changed {
+                return Some(
+                    if display_shape.string_index.is_some() || display_shape.number_index.is_some()
+                    {
+                        self.ctx.types.factory().object_with_index(display_shape)
+                    } else {
+                        self.ctx.types.factory().object_with_flags_and_symbol(
+                            display_shape.properties,
+                            display_shape.flags,
+                            display_shape.symbol,
+                        )
+                    },
+                );
+            }
+        }
+
+        if let Some(members) = query::union_members(self.ctx.types, ty) {
+            let mut changed = false;
+            let expanded: Vec<_> = members
+                .iter()
+                .map(|&member| {
+                    self.expand_conditional_application_aliases_for_excess_display(
+                        member,
+                        depth + 1,
+                    )
+                    .inspect(|_| {
+                        changed = true;
+                    })
+                    .unwrap_or(member)
+                })
+                .collect();
+            if changed {
+                return Some(self.ctx.types.factory().union(expanded));
+            }
+        }
+
+        if let Some(members) = query::intersection_members(self.ctx.types, ty) {
+            let mut changed = false;
+            let expanded: Vec<_> = members
+                .iter()
+                .map(|&member| {
+                    self.expand_conditional_application_aliases_for_excess_display(
+                        member,
+                        depth + 1,
+                    )
+                    .inspect(|_| {
+                        changed = true;
+                    })
+                    .unwrap_or(member)
+                })
+                .collect();
+            if changed {
+                return Some(self.ctx.types.factory().intersection(expanded));
+            }
+        }
+
+        None
+    }
+
     pub(crate) fn format_excess_property_target_type(&mut self, ty: TypeId) -> String {
         // If the type is a named alias (e.g., `type ExoticAnimal = CatDog | ManBearPig`),
         // tsc shows the alias name in excess property messages. Check for Lazy(DefId)
@@ -1270,7 +1406,8 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .create_diagnostic_type_formatter()
                 .with_display_properties()
-                .with_skip_application_alias_names();
+                .with_skip_application_alias_names()
+                .with_skip_conditional_application_alias();
             return formatter.format(ty).into_owned();
         }
 
@@ -1290,6 +1427,9 @@ impl<'a> CheckerState<'a> {
         // only applies to object-like members, so the diagnostic should reference
         // only those members rather than the full union.
         let ty = self.strip_non_object_union_members_for_excess_display(ty);
+        let ty = self
+            .expand_conditional_application_aliases_for_excess_display(ty, 0)
+            .unwrap_or(ty);
 
         if let Some(members) = query::intersection_members(self.ctx.types, ty) {
             let preserve_intersection_parts = members.iter().any(|member| {
@@ -1304,9 +1444,9 @@ impl<'a> CheckerState<'a> {
                         self.materialize_finite_mapped_type_for_display(member)
                     {
                         changed = true;
-                        self.format_type_diagnostic_widened(materialized)
+                        self.format_excess_property_target_type_part(materialized)
                     } else {
-                        self.format_type_diagnostic_widened(member)
+                        self.format_excess_property_target_type_part(member)
                     }
                 })
                 .collect();
@@ -1318,7 +1458,7 @@ impl<'a> CheckerState<'a> {
         let display_ty = self
             .materialize_finite_mapped_type_for_display(ty)
             .unwrap_or(ty);
-        self.format_type_diagnostic_widened(display_ty)
+        self.format_excess_property_target_type_part(display_ty)
     }
 
     pub(in crate::error_reporter) fn format_extract_keyof_string_type(
