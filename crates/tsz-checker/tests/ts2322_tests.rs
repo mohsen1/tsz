@@ -4143,3 +4143,47 @@ u2.email = e;
         "Expected TS2412 for exact-optional property write mismatch, got: {diagnostics:#?}"
     );
 }
+
+/// Regression test for assignmentCompatWithConstructSignatures4.ts:
+///
+/// A non-generic concrete construct signature is NOT assignable to a
+/// constrained-generic construct signature. The concrete types in the source
+/// may match the constraints of the target's type parameters, but T could be
+/// instantiated with a MORE SPECIFIC subtype (e.g., T extends Base means T
+/// could be Derived). So the assignment is unsound.
+///
+/// Previously tsz incorrectly allowed this by erasing target type params to
+/// their constraints, making the two signatures look identical.
+///
+/// See: TypeScript test assignmentCompatWithConstructSignatures4.ts line 49-50.
+#[test]
+fn nongeneric_concrete_not_assignable_to_constrained_generic_construct_sig() {
+    let source = r#"
+class Base { foo: string; }
+class Derived extends Base { bar: string; }
+class Derived2 extends Derived { baz: string; }
+
+// a7: non-generic concrete construct signature
+declare var a7: new (x: (arg: Base) => Derived) => (r: Base) => Derived2;
+// b7: generic construct signature with constrained type params
+declare var b7: new <T extends Base, U extends Derived, V extends Derived2>(x: (arg: T) => U) => (r: T) => V;
+
+// This should be OK (generic -> concrete is fine via inference/erasure)
+a7 = b7;
+// This should ERROR: concrete 'a7' is NOT assignable to generic 'b7'
+// because T could be instantiated with a subtype of Base (e.g., Derived)
+// making Base an invalid argument for arg: T
+b7 = a7;
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322_errors: Vec<_> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert!(
+        !ts2322_errors.is_empty(),
+        "Expected at least 1 TS2322 for `b7 = a7` (non-generic not assignable to constrained generic), got: {ts2322_errors:?}"
+    );
+}

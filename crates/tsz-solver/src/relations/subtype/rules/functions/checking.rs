@@ -489,8 +489,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // will match correctly.
                 target_instantiated.type_params.clear();
                 source_instantiated.type_params.clear();
-            } else if !self.erase_generics {
-                if source_mentions_outer_type_params {
+            } else {
+                if source_mentions_outer_type_params && !self.erase_generics {
                     // Strict member-compatibility checks (TS2416/TS2430) must reject a
                     // non-generic source that only works for some outer-scope type
                     // parameter when the target is genuinely generic. Otherwise shapes like
@@ -500,24 +500,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                // When erase_generics is false (strict mode, used for implements/extends
-                // member type checking), a non-generic function is NOT assignable to a
-                // generic function. This matches tsc's compareSignaturesRelated with
-                // eraseGenerics=false: the comparison proceeds with raw TypeParameter
-                // types in the target, and the SubtypeChecker rejects concrete types
-                // against opaque type parameters (e.g., string ≤ T returns False).
-                // This ensures TS2416 is correctly emitted for incompatible overrides.
+                // Non-generic source, generic target: leave target TypeParam types in
+                // place so the structural comparison rejects concrete types against
+                // universally-quantified type parameters. This matches tsc's
+                // `compareSignaturesRelated` with `eraseGenerics=false` (which is used
+                // for both the assignable relation and strict member-compatibility
+                // checks). Concrete types like `Base` are not assignable to an opaque
+                // `T extends Base` — T could be instantiated as `Derived` — so the
+                // comparison naturally fails.
+                //
+                // Note: `erase_generics=true` (comparable relation) also uses this path
+                // because even for comparability, a non-generic concrete function is not
+                // comparable to a universally-quantified generic one when the type params
+                // introduce constraints that the concrete function doesn't satisfy for
+                // all possible instantiations.
                 target_instantiated.type_params.clear();
-            } else {
-                // erase_generics=true path: erase target type params to their
-                // constraints so a concrete source signature can match the target's
-                // structural shape through constraint-erasure (tsc's
-                // `getErasedSignature` behavior). This is what single-signature
-                // assignability uses for base-type structural compatibility checks.
-                let target_canonical =
-                    erase_type_params_to_constraints(&target_instantiated.type_params);
-                target_instantiated =
-                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
             }
         }
 
