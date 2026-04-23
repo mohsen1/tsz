@@ -12,6 +12,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// A JSDoc template parameter: `(name, has_default, constraint_expr)`.
+type JsDocTemplateParam = (String, bool, Option<String>);
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_jsdoc_extends_tag_type_arguments(&mut self, class_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -195,11 +198,8 @@ impl<'a> CheckerState<'a> {
         let (Some(arg_shape), Some(constraint_shape)) = (arg_shape, constraint_shape) else {
             return false;
         };
-        let arg_props: rustc_hash::FxHashMap<_, _> = arg_shape
-            .properties
-            .iter()
-            .map(|p| (p.name, p))
-            .collect();
+        let arg_props: rustc_hash::FxHashMap<_, _> =
+            arg_shape.properties.iter().map(|p| (p.name, p)).collect();
         for constraint_prop in &constraint_shape.properties {
             let Some(arg_prop) = arg_props.get(&constraint_prop.name) else {
                 if !constraint_prop.optional {
@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
     fn resolve_jsdoc_extends_target_template_params(
         &mut self,
         base_name: &str,
-    ) -> Option<Vec<(String, bool, Option<String>)>> {
+    ) -> Option<Vec<JsDocTemplateParam>> {
         use tsz_binder::symbol_flags;
 
         let sym_id = self.ctx.binder.file_locals.get(base_name).or_else(|| {
@@ -356,10 +356,8 @@ impl<'a> CheckerState<'a> {
     /// comment. Supports the `{Constraint}` prefix with balanced-brace
     /// matching so object-literal constraints (`{Foo: {...}}`) are captured
     /// intact. Names sharing a line share the constraint.
-    fn parse_jsdoc_template_params_with_constraints(
-        jsdoc: &str,
-    ) -> Vec<(String, bool, Option<String>)> {
-        let mut out: Vec<(String, bool, Option<String>)> = Vec::new();
+    fn parse_jsdoc_template_params_with_constraints(jsdoc: &str) -> Vec<JsDocTemplateParam> {
+        let mut out: Vec<JsDocTemplateParam> = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
             let Some(rest) = trimmed.strip_prefix("@template") else {
@@ -527,12 +525,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let rest_offset = rest.as_ptr() as usize - comment_text.as_ptr() as usize;
-                if rest.starts_with('{') {
+                if let Some(inner) = rest.strip_prefix('{') {
                     // Walk brace-balanced so nested `{...}` inside the
                     // annotation (e.g. `@extends {A<{x:number}>}`) are kept
                     // intact. The previous `rest.find('}')` truncated at the
                     // inner closing `}` and silently dropped the remainder.
-                    let inner = &rest[1..];
                     let mut depth = 1usize;
                     let mut close = None;
                     for (idx, ch) in inner.char_indices() {
