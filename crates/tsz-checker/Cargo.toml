@@ -36,6 +36,10 @@ name = "generator_annotation_mismatch_display_tests"
 path = "tests/generator_annotation_mismatch_display_tests.rs"
 
 [[test]]
+name = "async_return_widening_tests"
+path = "tests/async_return_widening_tests.rs"
+
+[[test]]
 name = "ts2769_anchor_disagreeing_overloads_tests"
 path = "tests/ts2769_anchor_disagreeing_overloads_tests.rs"
 
