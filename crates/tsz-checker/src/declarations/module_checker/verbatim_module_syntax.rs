@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
             if sym.is_type_only {
                 return false;
             }
-            if (sym.flags & symbol_flags::ALIAS) != 0
+            if sym.has_any_flags(symbol_flags::ALIAS)
                 && let Some(ref module_spec) = sym.import_module
             {
                 let import_name = sym.import_name.as_deref().unwrap_or(name);
@@ -247,7 +247,7 @@ impl<'a> CheckerState<'a> {
             if sym.is_type_only {
                 return false;
             }
-            if (sym.flags & symbol_flags::ALIAS) != 0
+            if sym.has_any_flags(symbol_flags::ALIAS)
                 && let Some(ref module_spec) = sym.import_module
             {
                 let import_name = sym.import_name.as_deref().unwrap_or(name);
@@ -310,7 +310,7 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-            if (sym.flags & symbol_flags::ALIAS) != 0
+            if sym.has_any_flags(symbol_flags::ALIAS)
                 && let Some(ref module_spec) = sym.import_module
             {
                 let import_name = sym.import_name.as_deref().unwrap_or(name);

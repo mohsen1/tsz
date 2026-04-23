@@ -1311,7 +1311,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     fn resolve_imported_const_target(&self, sym_id: SymbolId) -> Option<SymbolId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return Some(sym_id);
         }
         let module_specifier = symbol.import_module.as_ref()?;

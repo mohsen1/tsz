@@ -615,7 +615,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(symbol) =
                         self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_ref.0))
                     {
-                        symbol.flags & symbol_flags::ABSTRACT != 0
+                        symbol.has_any_flags(symbol_flags::ABSTRACT)
                     } else {
                         false
                     }
@@ -918,7 +918,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         // Verify it's a class
-        (symbol.flags & symbol_flags::CLASS != 0).then_some(sym_id)
+        (symbol.has_any_flags(symbol_flags::CLASS)).then_some(sym_id)
     }
 
     /// Find ALL enclosing class symbols by walking up the AST parent chain.

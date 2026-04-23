@@ -358,7 +358,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 {
                     let is_enum_member = binder
                         .get_symbol(member_id)
-                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER));
                     if !is_enum_member {
                         return Some(member_id);
                     }
@@ -372,7 +372,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 {
                     let is_enum_member = binder
                         .get_symbol(member_id)
-                        .is_some_and(|s| s.flags & symbol_flags::ENUM_MEMBER != 0);
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::ENUM_MEMBER));
                     if !is_enum_member {
                         return Some(member_id);
                     }
