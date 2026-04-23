@@ -136,6 +136,28 @@ impl<'a> CheckerState<'a> {
             {
                 self.emit_eval_or_arguments_strict_mode_error(param.name, &ident.escaped_text);
             }
+            // TS1210: In class bodies, using `arguments` as a parameter name is
+            // rejected with the class-strict message. `eval` is already handled
+            // above via TS1100. Mirrors tsc:
+            //
+            //   class C { public foo(arguments: any) { } }
+            //                       ^^^^^^^^^^
+            //   error TS1210: Code contained in a class is evaluated in JavaScript's
+            //   strict mode which does not allow this use of 'arguments'.
+            if use_class_strict_message && ident.escaped_text == "arguments" {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                if let Some((pos, end)) = self.ctx.get_node_span(param.name) {
+                    self.ctx.error(
+                        pos,
+                        end - pos,
+                        format_message(
+                            diagnostic_messages::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                            &[&ident.escaped_text],
+                        ),
+                        diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT,
+                    );
+                }
+            }
         }
     }
 
