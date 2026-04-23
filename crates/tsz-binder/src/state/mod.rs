@@ -337,7 +337,7 @@ pub struct BinderState {
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
     /// Example: ("./a.ts", "foo", "./b.ts") means a.ts re-exports "foo" from b.ts
-    pub reexports: FileReexportsMap,
+    pub reexports: Arc<FileReexportsMap>,
 
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
@@ -808,7 +808,7 @@ pub struct BinderStateScopeInputs {
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     pub module_exports: FxHashMap<String, SymbolTable>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
-    pub reexports: FileReexportsMap,
+    pub reexports: Arc<FileReexportsMap>,
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,

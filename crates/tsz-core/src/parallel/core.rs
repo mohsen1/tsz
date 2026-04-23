@@ -502,7 +502,7 @@ pub struct BindResult {
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
-    pub reexports: Reexports,
+    pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     /// Wildcard re-export type-only provenance aligned with `wildcard_reexports`.
@@ -650,7 +650,7 @@ impl BindResult {
         }
 
         // reexports (FxHashMap<String, FxHashMap<String, (String, Option<String>)>>)
-        for (k, inner) in &self.reexports {
+        for (k, inner) in self.reexports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for (ik, (s1, s2)) in inner {
                 size += ik.capacity() + s1.capacity() + 8;
@@ -1574,7 +1574,7 @@ pub struct MergedProgram {
     pub module_exports: FxHashMap<String, SymbolTable>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
-    pub reexports: Reexports,
+    pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
@@ -2394,7 +2394,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
 
         // Merge reexports from this file
-        for (file_name, file_reexports) in &result.reexports {
+        for (file_name, file_reexports) in result.reexports.iter() {
             let entry = reexports.entry(file_name.clone()).or_default();
             for (export_name, mapping) in file_reexports {
                 entry.insert(export_name.clone(), mapping.clone());
@@ -3270,7 +3270,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         declared_modules,
         shorthand_ambient_modules,
         module_exports,
-        reexports,
+        reexports: Arc::new(reexports),
         wildcard_reexports,
         wildcard_reexports_type_only,
         lib_binders,
