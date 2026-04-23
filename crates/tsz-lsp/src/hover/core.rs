@@ -1123,7 +1123,7 @@ impl<'a> HoverProvider<'a> {
                     .resolve_identifier(self.arena, var_decl.initializer)
             })?;
         let init_symbol = self.binder.get_symbol(init_sym_id)?;
-        if (init_symbol.flags & symbol_flags::FUNCTION) == 0
+        if !init_symbol.has_any_flags(symbol_flags::FUNCTION)
             || !self.symbol_has_namespace_merge(init_symbol)
         {
             return None;
@@ -1265,7 +1265,7 @@ impl<'a> HoverProvider<'a> {
             exports.iter().any(|(_, sym_id)| {
                 self.binder
                     .get_symbol(*sym_id)
-                    .is_some_and(|export_symbol| (export_symbol.flags & symbol_flags::VALUE) != 0)
+                    .is_some_and(|export_symbol| export_symbol.has_any_flags(symbol_flags::VALUE))
             })
         })
     }

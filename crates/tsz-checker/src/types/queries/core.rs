@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
                 // Check if name matches and symbol has STATIC flag
-                if symbol.escaped_name == name && (symbol.flags & symbol_flags::STATIC != 0) {
+                if symbol.escaped_name == name && (symbol.has_any_flags(symbol_flags::STATIC)) {
                     return true;
                 }
             }
@@ -312,7 +312,7 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 && symbol.escaped_name == name
-                && (symbol.flags & symbol_flags::STATIC == 0)
+                && (!symbol.has_any_flags(symbol_flags::STATIC))
             {
                 return true;
             }
