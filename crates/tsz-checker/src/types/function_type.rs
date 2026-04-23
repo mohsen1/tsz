@@ -907,7 +907,8 @@ impl<'a> CheckerState<'a> {
                     };
                     let has_external_binding_context = jsdoc_param_type.is_some()
                         || iife_arg_type.is_some()
-                        || (contextual_type.is_some()
+                        || (!is_bare_js_prototype_assignment_function
+                            && contextual_type.is_some()
                             && ty != TypeId::ANY
                             && ty != TypeId::UNKNOWN
                             && ty != TypeId::ERROR);

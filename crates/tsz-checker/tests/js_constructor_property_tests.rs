@@ -1084,6 +1084,70 @@ a.m("nope");
 }
 
 #[test]
+fn test_js_prototype_object_function_properties_keep_constructor_this_and_ts7006() {
+    let source = r#"
+function Color(obj) {
+    this.example = true;
+}
+Color.prototype = {
+    negate: function () { return this; },
+    lighten: function (ratio) { return this; },
+    darken: function (ratio) { return this; },
+    saturate: function (ratio) { return this; },
+    desaturate: function (ratio) { return this; },
+    whiten: function (ratio) { return this; },
+    blacken: function (ratio) { return this; },
+    greyscale: function () { return this; },
+    clearer: function (ratio) { return this; },
+    toJSON: function () { return this.rgb(); },
+};
+"#;
+
+    let diagnostics = check_js(source);
+    let ts7006: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7006)
+        .collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert_eq!(
+        ts7006.len(),
+        8,
+        "Expected TS7006 for obj plus every unannotated prototype-function ratio parameter, got: {diagnostics:?}"
+    );
+    assert!(
+        ts7006
+            .iter()
+            .any(|(_, message)| message.contains("Parameter 'obj' implicitly has an 'any' type.")),
+        "Expected TS7006 for the constructor parameter, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts7006
+            .iter()
+            .filter(|(_, message)| {
+                message.contains("Parameter 'ratio' implicitly has an 'any' type.")
+            })
+            .count(),
+        7,
+        "Expected TS7006 for each unannotated prototype-function ratio parameter, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected a single missing-member error for this.rgb(), got: {diagnostics:?}"
+    );
+    assert!(
+        ts2339[0]
+            .1
+            .contains("Property 'rgb' does not exist on type 'Color'."),
+        "Expected the prototype-function receiver to display as Color, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_plain_function_prototype_object_literal_private_methods_report_without_crashing() {
     let source = r#"
 function A() {}

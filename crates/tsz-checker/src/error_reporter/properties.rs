@@ -265,6 +265,16 @@ impl<'a> CheckerState<'a> {
 
         let receiver = self.access_receiver_for_diagnostic_node(idx)?;
         let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind == SyntaxKind::ThisKeyword as u16 {
+            return self
+                .find_enclosing_non_arrow_function(receiver)
+                .and_then(|func_idx| self.js_prototype_owner_expression_for_node(func_idx))
+                .and_then(|owner_expr| {
+                    self.js_prototype_owner_function_target(owner_expr)
+                        .map(|_| owner_expr)
+                })
+                .and_then(|owner_expr| self.expression_text(owner_expr));
+        }
         if receiver_node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
