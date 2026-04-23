@@ -327,5 +327,9 @@ path = "tests/ts2364_import_meta_assignment_tests.rs"
 name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
 
+[[test]]
+name = "jsdoc_extends_constraint_tests"
+path = "tests/jsdoc_extends_constraint_tests.rs"
+
 [lints]
 workspace = true
