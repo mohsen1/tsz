@@ -1,6 +1,69 @@
 use crate::core::*;
 
 #[test]
+fn module_augmentation_of_reexported_interface_applies_to_original_import() {
+    for index_source in [
+        r#"export * from "./eventList";"#,
+        r#"export { EventList } from "./eventList";"#,
+    ] {
+        let diagnostics = compile_named_files_get_diagnostics_with_options(
+            &[
+                ("index.ts", index_source),
+                (
+                    "test.ts",
+                    r#"
+import { EventList } from "./eventList";
+
+declare const p012: "p0" | "p1" | "p2";
+const t: keyof EventList = p012;
+"#,
+                ),
+                (
+                    "eventList.ts",
+                    r#"
+export interface EventList {
+    p0: [];
+}
+"#,
+                ),
+                (
+                    "foo.ts",
+                    r#"
+declare module "./index" {
+    interface EventList {
+        p1: [];
+    }
+}
+export {};
+"#,
+                ),
+                (
+                    "bar.ts",
+                    r#"
+declare module "./index" {
+    interface EventList {
+        p2: [];
+    }
+}
+export {};
+"#,
+                ),
+            ],
+            "test.ts",
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        );
+
+        assert!(
+            !diagnostics.iter().any(|(code, _)| *code == 2322),
+            "Expected keyof EventList to include module augmentations from re-exporting module {index_source:?}. Got: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn test_js_constructor_branch_property_visible_cross_file() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[
