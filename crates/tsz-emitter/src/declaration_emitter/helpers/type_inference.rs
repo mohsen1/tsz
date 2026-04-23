@@ -1443,11 +1443,16 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 let data = self.arena.get_shorthand_property(member_node)?;
+                // For `{ foo }` the value reference is the name identifier itself.
+                // For `{ foo = expr }` (CoverInitializedName) the assignment
+                // initializer holds the default value.
+                let initializer = if data.object_assignment_initializer == NodeIndex::NONE {
+                    data.name
+                } else {
+                    data.object_assignment_initializer
+                };
                 let type_text = self
-                    .preferred_object_member_initializer_type_text(
-                        data.object_assignment_initializer,
-                        depth,
-                    )
+                    .preferred_object_member_initializer_type_text(initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("{name}: {type_text}"))
             }
@@ -2225,9 +2230,16 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(data) = self.arena.get_property_assignment(member_node) {
             return Some(data.initializer);
         }
-        self.arena
-            .get_shorthand_property(member_node)
-            .map(|data| data.object_assignment_initializer)
+        // Shorthand `{ foo }` has no separate initializer node; the value
+        // reference IS the name identifier. `{ foo = expr }` (CoverInitializedName)
+        // is the only shape where `object_assignment_initializer` is non-`NONE`.
+        self.arena.get_shorthand_property(member_node).map(|data| {
+            if data.object_assignment_initializer == NodeIndex::NONE {
+                data.name
+            } else {
+                data.object_assignment_initializer
+            }
+        })
     }
 
     pub(in crate::declaration_emitter) fn is_numeric_property_name_text(name: &str) -> bool {
