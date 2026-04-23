@@ -477,7 +477,7 @@ pub struct BindResult {
     /// Ambient module declarations by specifier
     pub declared_modules: FxHashSet<String>,
     /// Module exports keyed by specifier or file name
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
@@ -586,7 +586,7 @@ impl BindResult {
         }
 
         // module_exports
-        for (k, v) in &self.module_exports {
+        for (k, v) in self.module_exports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += std::mem::size_of::<SymbolTable>();
             size += v.len() * (32 + std::mem::size_of::<SymbolId>());
@@ -1571,7 +1571,9 @@ pub struct MergedProgram {
     pub shorthand_ambient_modules: FxHashSet<String>,
     /// Module exports: maps file name (or module specifier) to its exported symbols
     /// This enables cross-file module resolution: import { X } from './file' can find X's symbol
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    /// `Arc`-wrapped so per-file `BinderState` reconstruction is a cheap atomic
+    /// increment instead of a deep clone of the merged map.
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
     pub reexports: Reexports,
@@ -2745,7 +2747,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             module_exports.insert(result.file_name.clone(), exports);
         }
 
-        for (module_key, exports_table) in &result.module_exports {
+        for (module_key, exports_table) in result.module_exports.iter() {
             let remapped = remap_symbol_table(exports_table, &id_remap);
             if !remapped.is_empty() {
                 merge_symbol_table(
@@ -3269,7 +3271,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         file_locals: file_locals_list,
         declared_modules,
         shorthand_ambient_modules,
-        module_exports,
+        module_exports: Arc::new(module_exports),
         reexports,
         wildcard_reexports,
         wildcard_reexports_type_only,

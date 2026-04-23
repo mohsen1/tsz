@@ -67,7 +67,7 @@ fn check_with_module_exports(
                 table.set(name.to_string(), sym_id);
             }
         }
-        binder.module_exports.insert(module_name.to_string(), table);
+        std::sync::Arc::make_mut(&mut binder.module_exports).insert(module_name.to_string(), table);
     }
 
     binder.bind_source_file(parser.get_arena(), root);
@@ -138,7 +138,7 @@ pub fn check_with_module_sources(
         for (name, &sym_id) in export_binder.file_locals.iter() {
             table.set(name.clone(), sym_id);
         }
-        binder.module_exports.insert(module_name.to_string(), table);
+        std::sync::Arc::make_mut(&mut binder.module_exports).insert(module_name.to_string(), table);
     }
 
     binder.bind_source_file(parser.get_arena(), root);
@@ -1216,13 +1216,11 @@ const x = value;
     let importer_arena = importer_parser.get_arena();
 
     let mut importer_binder = BinderState::new();
-    importer_binder
-        .module_exports
-        .insert("./file1".to_string(), {
-            let mut table = crate::binder::SymbolTable::new();
-            table.set("value".to_string(), export_sym_id);
-            table
-        });
+    std::sync::Arc::make_mut(&mut importer_binder.module_exports).insert("./file1".to_string(), {
+        let mut table = crate::binder::SymbolTable::new();
+        table.set("value".to_string(), export_sym_id);
+        table
+    });
     importer_binder.bind_source_file(importer_arena, importer_root);
 
     assert!(
@@ -1268,13 +1266,11 @@ import hello from './file1';
     let importer_root = importer_parser.parse_source_file();
 
     let mut importer_binder = BinderState::new();
-    importer_binder
-        .module_exports
-        .insert("./file1".to_string(), {
-            let mut table = crate::binder::SymbolTable::new();
-            table.set("default".to_string(), default_sym_id);
-            table
-        });
+    std::sync::Arc::make_mut(&mut importer_binder.module_exports).insert("./file1".to_string(), {
+        let mut table = crate::binder::SymbolTable::new();
+        table.set("default".to_string(), default_sym_id);
+        table
+    });
     importer_binder.bind_source_file(importer_parser.get_arena(), importer_root);
 
     assert!(

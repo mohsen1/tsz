@@ -217,7 +217,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // same-named exports in unrelated modules.
                 let import_module = symbol.import_module.as_deref().unwrap_or("");
                 let mut found = None;
-                for (path, table) in &binder.module_exports {
+                for (path, table) in binder.module_exports.iter() {
                     // Only search in modules whose path ends with the import specifier.
                     // e.g. import_module="foo" matches ".../node_modules/foo/index.d.ts"
                     if !import_module.is_empty() {

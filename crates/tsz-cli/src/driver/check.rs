@@ -745,10 +745,9 @@ pub(super) fn collect_diagnostics(
     let program_wildcard_reexports = Arc::new(program.wildcard_reexports.clone());
     let program_wildcard_reexports_type_only =
         Arc::new(program.wildcard_reexports_type_only.clone());
-    // Same rationale for `program.module_exports`: the merged map is the
-    // authoritative cross-file exports table; wrap once, share via `Arc`
-    // to avoid N deep-clones into per-file cross-file lookup binders.
-    let program_module_exports = Arc::new(program.module_exports.clone());
+    // `program.module_exports` is already `Arc`-wrapped on `MergedProgram`;
+    // cheap atomic clone for ProjectEnv install.
+    let program_module_exports = Arc::clone(&program.module_exports);
     // Same rationale for `program.cross_file_node_symbols`: the outer
     // map is `FxHashMap<usize, Arc<…>>` (~24 bytes * N_files for the
     // entries plus hash overhead). Cloning into every one of N per-file
@@ -1540,9 +1539,7 @@ fn propagate_module_export_maps(
         let target_file_name = &program.files[current_target_idx].file_name;
 
         if let Some(exports) = program.module_exports.get(target_file_name).cloned() {
-            binder
-                .module_exports
-                .insert(current_specifier.clone(), exports);
+            Arc::make_mut(&mut binder.module_exports).insert(current_specifier.clone(), exports);
         }
         if let Some(wildcards) = program.wildcard_reexports.get(target_file_name).cloned() {
             binder

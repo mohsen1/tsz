@@ -1696,7 +1696,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         let package_root_str = package_root.to_string_lossy();
 
-        for (module_path, exports) in &binder.module_exports {
+        for (module_path, exports) in binder.module_exports.iter() {
             // Only consider modules inside the same package.
             if !module_path.starts_with(package_root_str.as_ref()) {
                 continue;
@@ -1756,7 +1756,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
         let source_relative_stripped = self.strip_ts_extensions(source_relative);
 
-        for (module_path, exports) in &binder.module_exports {
+        for (module_path, exports) in binder.module_exports.iter() {
             if module_path == source_path || !module_path.starts_with(package_root_str.as_ref()) {
                 continue;
             }

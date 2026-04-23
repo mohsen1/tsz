@@ -63,8 +63,7 @@ fn check_commonjs_two_files(
 
     let file_a_exports = binder_a.module_exports.get(producer_name).cloned();
     if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_b.module_exports)
             .insert(module_specifier.to_string(), exports.clone());
     }
 
@@ -159,8 +158,7 @@ fn check_commonjs_three_files_with_types(
 
     let file_exports = binder_producer.module_exports.get(producer_name).cloned();
     if let Some(exports) = &file_exports {
-        binder_consumer
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_consumer.module_exports)
             .insert(module_specifier.to_string(), exports.clone());
     }
 

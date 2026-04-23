@@ -5,6 +5,7 @@
 
 use crate::state::BinderState;
 use crate::{ContainerKind, Symbol, SymbolId, SymbolTable, symbol_flags};
+use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -355,7 +356,7 @@ impl BinderState {
                 && let Some(exports) = symbol.exports.as_ref()
                 && !exports.is_empty()
             {
-                self.module_exports
+                Arc::make_mut(&mut self.module_exports)
                     .insert(module_specifier.clone(), exports.as_ref().clone());
             }
 
