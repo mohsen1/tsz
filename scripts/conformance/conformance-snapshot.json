@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-23T15:24:59Z",
-  "git_sha": "93c0bee993a40c2bf21499a3f0ea17817b2ed897",
+  "timestamp": "2026-04-23T16:01:27Z",
+  "git_sha": "2a501a69cf0e47052653dede09eb815e99c19f1f",
   "summary": {
-    "total_tests": 12581,
+    "total_tests": 12582,
     "passed": 12096,
-    "failed": 485,
+    "failed": 486,
     "pass_rate": 96.1
   },
   "areas_by_pass_rate": [
@@ -296,17 +296,17 @@
       "pass_rate": 96.55
     },
     {
+      "area": "compiler",
+      "total": 6520,
+      "passed": 6302,
+      "failed": 218,
+      "pass_rate": 96.66
+    },
+    {
       "area": "internalModules/DeclarationMerging",
       "total": 30,
       "passed": 29,
       "failed": 1,
-      "pass_rate": 96.67
-    },
-    {
-      "area": "compiler",
-      "total": 6519,
-      "passed": 6302,
-      "failed": 217,
       "pass_rate": 96.67
     },
     {
@@ -1095,7 +1095,7 @@
   "one_extra_zero_missing": [
     {
       "code": "TS2345",
-      "count": 8
+      "count": 9
     },
     {
       "code": "TS2322",
@@ -1197,7 +1197,7 @@
   "false_positive_codes": [
     {
       "code": "TS2345",
-      "count": 8
+      "count": 9
     },
     {
       "code": "TS2322",
@@ -1236,11 +1236,11 @@
       "count": 1
     },
     {
-      "code": "TS2749",
+      "code": "TS2451",
       "count": 1
     },
     {
-      "code": "TS2451",
+      "code": "TS2749",
       "count": 1
     },
     {
@@ -1449,7 +1449,7 @@
   "top_extra_codes": [
     {
       "code": "TS2345",
-      "count": 12
+      "count": 13
     },
     {
       "code": "TS2322",
@@ -1609,7 +1609,7 @@
     }
   ],
   "categories": {
-    "false_positive": 34,
+    "false_positive": 35,
     "all_missing": 23,
     "wrong_code": 104,
     "fingerprint_only": 324,
