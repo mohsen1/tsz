@@ -1644,15 +1644,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check the value declaration and all declarations for type parameters
-        let decl_indices: Vec<_> = if symbol.value_declaration.is_some() {
-            std::iter::once(symbol.value_declaration)
-                .chain(symbol.declarations.iter().copied())
-                .collect()
-        } else {
-            symbol.declarations.clone()
-        };
-
-        for decl_idx in decl_indices {
+        for decl_idx in symbol.all_declarations() {
             // Try current arena first
             if let Some(node) = self.ctx.arena.get(decl_idx) {
                 if let Some(ta) = self.ctx.arena.get_type_alias(node) {

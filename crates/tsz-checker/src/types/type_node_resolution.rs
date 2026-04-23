@@ -169,14 +169,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ) -> Option<(NodeIndex, &NodeArena)> {
         use tsz_parser::parser::syntax_kind_ext;
 
-        let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some()
-            && !decl_candidates.contains(&symbol.value_declaration)
-        {
-            decl_candidates.push(symbol.value_declaration);
-        }
-
-        for decl_idx in decl_candidates {
+        for decl_idx in symbol.all_declarations() {
             if decl_idx.is_none() {
                 continue;
             }
@@ -404,14 +397,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .get_binder_for_file(file_idx as usize)
             .unwrap_or(self.ctx.binder);
 
-        let mut decl_candidates = symbol.declarations.clone();
-        if symbol.value_declaration.is_some()
-            && !decl_candidates.contains(&symbol.value_declaration)
-        {
-            decl_candidates.push(symbol.value_declaration);
-        }
-
-        decl_candidates.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
             if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
                 candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));

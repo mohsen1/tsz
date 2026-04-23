@@ -505,14 +505,7 @@ impl<'a> CheckerState<'a> {
         // For `export = alias` where `alias` comes from `import alias = Namespace`,
         // resolve the namespace target explicitly so named imports can see members.
         if target_symbol.has_any_flags(symbol_flags::ALIAS) {
-            let mut decl_candidates = target_symbol.declarations.clone();
-            if target_symbol.value_declaration.is_some()
-                && !decl_candidates.contains(&target_symbol.value_declaration)
-            {
-                decl_candidates.push(target_symbol.value_declaration);
-            }
-
-            for decl_idx in decl_candidates {
+            for decl_idx in target_symbol.all_declarations() {
                 if !decl_idx.is_some() {
                     continue;
                 }

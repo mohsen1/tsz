@@ -347,12 +347,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut decl_nodes = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() {
-            decl_nodes.push(symbol.value_declaration);
-        }
-
-        decl_nodes.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 return false;
             };
@@ -374,12 +369,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut decl_nodes = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() {
-            decl_nodes.push(symbol.value_declaration);
-        }
-
-        decl_nodes.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 return false;
             };
