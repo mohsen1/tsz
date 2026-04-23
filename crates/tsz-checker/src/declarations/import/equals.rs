@@ -154,6 +154,20 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Each `import X = require("...")` statement reports TS2307 at its own
+        // site. Clear the per-module dedupe up front so that a second
+        // statement importing the same unresolved module (for example, an
+        // `import im2 = require("...")` inside a `declare module "m1"`
+        // augmentation whose outer file already imported the same name)
+        // still emits TS2307 — matching tsc's per-site behavior. The dedupe
+        // remains effective *within* a single statement to suppress
+        // cascading emissions.
+        if let Some(module_name) = self.get_require_module_specifier(import.module_specifier) {
+            self.ctx
+                .modules_with_ts2307_emitted
+                .remove(module_name.as_str());
+        }
+
         // TS1294: erasableSyntaxOnly — import equals declarations are not erasable.
         if self.ctx.compiler_options.erasable_syntax_only
             && !self.ctx.is_ambient_declaration(stmt_idx)
