@@ -266,7 +266,7 @@ bitflags::bitflags! {
     /// Bits `0..=8` are preserved from the original packed `u16` layout so
     /// legacy callers (e.g. checker boundary helpers that import the
     /// `FLAG_*` constants) continue to interoperate byte-for-byte. Bits
-    /// `9..=12` are new and encode previously-missing Lawyer-layer options
+    /// `9..=13` are new and encode previously-missing Lawyer-layer options
     /// that were silently missing from the cache key.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct RelationFlags: u32 {
@@ -303,6 +303,11 @@ bitflags::bitflags! {
         /// Treat recursive relation cycles as assumed-related. When clear,
         /// cycles resolve to "not related".
         const ASSUME_RELATED_ON_CYCLE       = 1 << 12;
+        /// Retry a failed contextual generic-signature inference by comparing
+        /// erased signatures. This is a targeted relation mode for interface
+        /// property compatibility; ordinary assignment keeps inference failure
+        /// definitive so invalid generic assignments still report TS2322.
+        const ALLOW_ERASED_GENERIC_SIGNATURE_RETRY = 1 << 13;
     }
 }
 
@@ -442,6 +447,11 @@ impl RelationCacheKey {
     /// When set, non-generic functions are NOT assignable to generic functions,
     /// matching tsc's `eraseGenerics=false` behavior for implements/extends checks.
     pub const FLAG_NO_ERASE_GENERICS: u16 = RelationFlags::NO_ERASE_GENERICS.bits() as u16;
+    /// Allow a failed contextual generic-signature inference to retry with
+    /// erased signatures. Used for interface property compatibility, not
+    /// ordinary assignment.
+    pub const FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY: u16 =
+        RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY.bits() as u16;
 
     /// Typed builder for subtype cache entries.
     pub const fn for_subtype(source: TypeId, target: TypeId, config: RelationCacheConfig) -> Self {

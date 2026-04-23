@@ -728,13 +728,13 @@ impl<'a> CheckerState<'a> {
                         _derived_name,
                         derived_member_type,
                         derived_member_idx,
-                        _derived_kind,
+                        derived_kind,
                         _derived_optional,
                     )) = derived_members
                         .iter()
                         .find(|(derived_name, _, _, _, _)| derived_name == &member_key)
                     {
-                        let overloaded_method_compare = *_derived_kind == METHOD_SIGNATURE
+                        let overloaded_method_compare = *derived_kind == METHOD_SIGNATURE
                             && member_node.kind == METHOD_SIGNATURE
                             && (derived_method_counts.get(&member_key).copied().unwrap_or(0) > 1
                                 || base_method_counts.get(&member_key).copied().unwrap_or(0) > 1);
@@ -758,12 +758,45 @@ impl<'a> CheckerState<'a> {
                         .map(|p| p.type_id)
                         .unwrap_or(member_type);
 
-                        if should_report_member_type_mismatch(
-                            self,
-                            derived_prop_type,
-                            base_prop_type,
-                            *derived_member_idx,
-                        ) {
+                        let property_signature_pair = *derived_kind == PROPERTY_SIGNATURE
+                            && member_node.kind == PROPERTY_SIGNATURE;
+                        let callable_property_pair = property_signature_pair
+                            && (crate::query_boundaries::common::callable_shape_for_type(
+                                self.ctx.types,
+                                derived_prop_type,
+                            )
+                            .is_some()
+                                || crate::query_boundaries::common::has_function_shape(
+                                    self.ctx.types,
+                                    derived_prop_type,
+                                ))
+                            && (crate::query_boundaries::common::callable_shape_for_type(
+                                self.ctx.types,
+                                base_prop_type,
+                            )
+                            .is_some()
+                                || crate::query_boundaries::common::has_function_shape(
+                                    self.ctx.types,
+                                    base_prop_type,
+                                ));
+
+                        let type_mismatch = if callable_property_pair {
+                            should_report_property_type_mismatch(
+                                self,
+                                derived_prop_type,
+                                base_prop_type,
+                                *derived_member_idx,
+                            )
+                        } else {
+                            should_report_member_type_mismatch(
+                                self,
+                                derived_prop_type,
+                                base_prop_type,
+                                *derived_member_idx,
+                            )
+                        };
+
+                        if type_mismatch {
                             let derived_type_str = self.format_type(derived_prop_type);
                             let base_type_str = self.format_type(base_prop_type);
                             self.error_at_node(
