@@ -134,7 +134,11 @@ editors/
 
 # Website build output
 crates/tsz-website/dist/
-crates/tsz-website/data/
+# Ignore everything inside data/ except benchmarks.json so the site
+# has fresh bench data even when the CI bench job times out
+# (gh-pages.yml has a 15min cap that's tight for full hyperfine runs).
+crates/tsz-website/data/*
+!crates/tsz-website/data/benchmarks.json
 .worktrees
 .local-target
 .ctx-target/
