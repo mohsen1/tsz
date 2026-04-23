@@ -445,6 +445,53 @@ interface Child extends Parent {
 }
 
 #[test]
+fn test_generic_member_call_signature_with_extra_type_param_no_false_ts2430() {
+    // Contextual generic signature instantiation can relate a derived member with
+    // extra type params to a base member after erasing both signatures.
+    let source = r#"
+type Base = { foo: string };
+
+interface A {
+    a11: <T>(x: { foo: T }, y: { foo: T; bar: T }) => Base;
+}
+
+interface I extends A {
+    a11: <T, U>(x: { foo: T }, y: { foo: U; bar: U }) => Base;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 when the derived generic member call signature \
+         is accepted by erased contextual comparison. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_generic_member_construct_signature_with_extra_type_param_no_false_ts2430() {
+    // The same erased contextual comparison is needed for construct signatures.
+    let source = r#"
+type Base = { foo: string };
+
+interface A {
+    a11: new <T>(x: { foo: T }, y: { foo: T; bar: T }) => Base;
+}
+
+interface I extends A {
+    a11: new <T, U>(x: { foo: T }, y: { foo: U; bar: U }) => Base;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 when the derived generic member construct signature \
+         is accepted by erased contextual comparison. Got: {diags:?}"
+    );
+}
+
+#[test]
 fn test_overloaded_generic_callable_property_incompatible_still_errors() {
     // The erasure path must NOT suppress genuine incompatibilities.
     // Here the return type is wrong (number[] vs string[]).

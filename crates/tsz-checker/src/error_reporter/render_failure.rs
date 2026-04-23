@@ -490,6 +490,8 @@ impl<'a> CheckerState<'a> {
                 {
                     source_str = Self::widen_member_literals_in_display_text(&source_str);
                 }
+                let (source_str, target_str) = self
+                    .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = format_message(msg_template, &[&source_str, &target_str]);
                 Diagnostic::error(file_name, start, length, message, code)
             }
@@ -975,7 +977,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Private brand properties handling
-        let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+        let prop_name = self.ctx.types.resolve_atom_ref(property_name).to_string();
         if prop_name.starts_with("__private_brand") {
             let src_str = if depth == 0 {
                 self.format_type_for_diagnostic_role(
@@ -1122,7 +1124,7 @@ impl<'a> CheckerState<'a> {
             let prop_list: Vec<String> = all_missing
                 .iter()
                 .take(4)
-                .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                .map(|name| self.missing_property_name_for_display(*name, target))
                 .collect();
             let props_joined = prop_list.join(", ");
             let (message, code) = if all_missing.len() > 4 {
@@ -1202,9 +1204,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        let prop_name_display = self.missing_property_name_for_display(property_name, target);
         let message = format_message(
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-            &[&prop_name, &src_str, &tgt_str_qualified],
+            &[&prop_name_display, &src_str, &tgt_str_qualified],
         );
         Diagnostic::error(
             file_name,
@@ -1679,7 +1682,7 @@ impl<'a> CheckerState<'a> {
         let prop_list: Vec<String> = ordered_names
             .iter()
             .take(display_count)
-            .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+            .map(|name| self.missing_property_name_for_display(*name, target))
             .collect();
         let props_joined = prop_list.join(", ");
         if is_truncated {
@@ -1707,6 +1710,132 @@ impl<'a> CheckerState<'a> {
                 message,
                 diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE,
             )
+        }
+    }
+
+    fn missing_property_name_for_display(
+        &mut self,
+        property_name: tsz_common::interner::Atom,
+        target: TypeId,
+    ) -> String {
+        if let Some(display) = self.enum_mapped_property_name_for_display(property_name, target) {
+            return display;
+        }
+        self.ctx.types.resolve_atom_ref(property_name).to_string()
+    }
+
+    fn enum_mapped_property_name_for_display(
+        &mut self,
+        property_name: tsz_common::interner::Atom,
+        target: TypeId,
+    ) -> Option<String> {
+        let property_key = self.ctx.types.resolve_atom_ref(property_name).to_string();
+        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, target)?;
+
+        args.into_iter()
+            .find_map(|arg| self.enum_key_property_name_for_display(&property_key, arg))
+    }
+
+    fn enum_key_property_name_for_display(
+        &mut self,
+        property_key: &str,
+        key_type: TypeId,
+    ) -> Option<String> {
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, key_type)
+        {
+            return members
+                .iter()
+                .find_map(|&member| self.enum_key_property_name_for_display(property_key, member));
+        }
+
+        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, key_type)
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, key_type))?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind == tsz_solver::def::DefKind::Enum && !def.enum_members.is_empty() {
+            return self.enum_property_name_from_parent_def(property_key, &def);
+        }
+
+        self.enum_property_name_from_member_type(property_key, key_type, &def)
+    }
+
+    fn enum_property_name_from_parent_def(
+        &mut self,
+        property_key: &str,
+        enum_def: &tsz_solver::def::DefinitionInfo,
+    ) -> Option<String> {
+        let enum_name = self.ctx.types.resolve_atom_ref(enum_def.name).to_string();
+        let enum_symbol_id = tsz_binder::SymbolId(enum_def.symbol_id?);
+        let enum_symbol = self.ctx.binder.get_symbol(enum_symbol_id)?;
+        let exports = enum_symbol.exports.as_ref()?;
+
+        for (member_atom, _) in &enum_def.enum_members {
+            let member_name = self.ctx.types.resolve_atom_ref(*member_atom).to_string();
+            let Some(member_symbol_id) = exports.get(&member_name) else {
+                continue;
+            };
+            let Some(member_type) = self.ctx.symbol_types.get(&member_symbol_id).copied() else {
+                continue;
+            };
+            if self.enum_member_type_matches_property_key(member_type, property_key) {
+                return Some(format!("[{enum_name}.{member_name}]"));
+            }
+        }
+
+        None
+    }
+
+    fn enum_property_name_from_member_type(
+        &mut self,
+        property_key: &str,
+        member_type: TypeId,
+        member_def: &tsz_solver::def::DefinitionInfo,
+    ) -> Option<String> {
+        if !self.enum_member_type_matches_property_key(member_type, property_key) {
+            return None;
+        }
+
+        let member_symbol_id = tsz_binder::SymbolId(member_def.symbol_id?);
+        let member_symbol = self.ctx.binder.get_symbol(member_symbol_id)?;
+        if member_symbol.parent.is_none() {
+            return None;
+        }
+        let enum_symbol = self.ctx.binder.get_symbol(member_symbol.parent)?;
+        Some(format!(
+            "[{}.{}]",
+            enum_symbol.escaped_name, member_symbol.escaped_name
+        ))
+    }
+
+    fn enum_member_type_matches_property_key(
+        &self,
+        member_type: TypeId,
+        property_key: &str,
+    ) -> bool {
+        let value_type =
+            crate::query_boundaries::common::enum_member_type(self.ctx.types, member_type)
+                .unwrap_or(member_type);
+        crate::query_boundaries::common::literal_value(self.ctx.types, value_type)
+            .and_then(|literal| self.literal_property_key_text(literal))
+            .is_some_and(|key| key == property_key)
+    }
+
+    fn literal_property_key_text(&self, literal: tsz_solver::LiteralValue) -> Option<String> {
+        match literal {
+            tsz_solver::LiteralValue::String(atom) | tsz_solver::LiteralValue::BigInt(atom) => {
+                Some(self.ctx.types.resolve_atom_ref(atom).to_string())
+            }
+            tsz_solver::LiteralValue::Number(value) => {
+                let value = value.0;
+                if value == 0.0 {
+                    Some("0".to_string())
+                } else if value.is_finite() && value.fract() == 0.0 {
+                    Some(format!("{value:.0}"))
+                } else {
+                    Some(value.to_string())
+                }
+            }
+            tsz_solver::LiteralValue::Boolean(value) => Some(value.to_string()),
         }
     }
 

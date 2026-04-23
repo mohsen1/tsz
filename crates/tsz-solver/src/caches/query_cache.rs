@@ -978,6 +978,11 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.store_display_alias(evaluated, application);
     }
 
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        self.interner
+            .store_display_alias_preferring_application(evaluated, application);
+    }
+
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         self.interner.get_display_alias(type_id)
     }

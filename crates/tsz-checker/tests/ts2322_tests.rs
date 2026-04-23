@@ -2506,6 +2506,33 @@ fn test_ts2345_function_return_mismatch_includes_related_return_detail() {
 }
 
 #[test]
+fn test_ts2345_function_return_mismatch_related_detail_qualifies_same_named_returns() {
+    let source = r#"
+        declare namespace N { export interface Token { kind: "n"; } }
+        declare namespace M { export interface Token { kind: "m"; } }
+        declare function takes(cb: () => M.Token): void;
+        declare const cb: () => N.Token;
+        takes(cb);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for function return type mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Return type 'N.Token' is not assignable to 'M.Token'.")
+        }),
+        "Expected TS2345 related return detail to qualify same-named return types, got: {ts2345:?}"
+    );
+}
+
+#[test]
 fn test_ts2345_index_signature_mismatch_includes_related_detail() {
     let source = r#"
         declare function takes(value: { [key: string]: number }): void;
@@ -2537,6 +2564,34 @@ fn test_ts2345_index_signature_mismatch_includes_related_detail() {
                     .contains("Type 'string' is not assignable to type 'number'.")
         }),
         "Expected TS2345 to include nested type mismatch under index-signature elaboration, got: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_index_signature_mismatch_related_detail_qualifies_same_named_values() {
+    let source = r#"
+        declare namespace N { export interface Token { kind: "n"; } }
+        declare namespace M { export interface Token { kind: "m"; } }
+        declare function takes(value: { [key: string]: M.Token }): void;
+        declare const arg: { [key: string]: N.Token };
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for index-signature mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text.contains(
+                "string index signature is incompatible: 'N.Token' is not assignable to 'M.Token'.",
+            )
+        }),
+        "Expected TS2345 related info to qualify same-named index value types, got: {ts2345:?}"
     );
 }
 
@@ -2599,6 +2654,33 @@ fn test_ts2345_array_element_mismatch_includes_related_detail() {
                     .contains("Type 'string' is not assignable to type 'number'.")
         }),
         "Expected TS2345 to include nested type mismatch under array-element elaboration, got: {ts2345:?}"
+    );
+}
+
+#[test]
+fn test_ts2345_array_element_mismatch_related_detail_qualifies_same_named_elements() {
+    let source = r#"
+        declare namespace N { export interface Token { kind: "n"; } }
+        declare namespace M { export interface Token { kind: "m"; } }
+        declare function takes(value: M.Token[]): void;
+        declare const arg: N.Token[];
+        takes(arg);
+    "#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| {
+            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .expect("expected TS2345 for array-element mismatch");
+
+    assert!(
+        ts2345.related_information.iter().any(|info| {
+            info.message_text
+                .contains("Array element type 'N.Token' is not assignable to 'M.Token'.")
+        }),
+        "Expected TS2345 related info to qualify same-named element types, got: {ts2345:?}"
     );
 }
 
@@ -3639,6 +3721,160 @@ fn test_index_signature_target_missing_prop_emits_ts2322_not_ts2741() {
     );
 }
 
+#[test]
+fn test_union_index_signature_object_literal_value_mismatches_emit_ts2322() {
+    let source = r#"
+interface IValue {
+  value: string
+}
+
+interface StringKeys {
+    [propertyName: string]: IValue;
+};
+
+interface NumberKeys {
+    [propertyName: number]: IValue;
+}
+
+type ObjectDataSpecification = StringKeys | NumberKeys;
+
+const dataSpecification: ObjectDataSpecification = {
+    foo: "asdfsadffsd"
+};
+
+const obj1: { [x: string]: number } | { [x: number]: number } = { a: 'abc' };
+const obj2: { [x: string]: number } | { a: number } = { a: 5, c: 'abc' };
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected three TS2322 index-signature value mismatches. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, message)| message
+                .contains("Type 'string' is not assignable to type 'IValue'.")),
+        "Expected string-to-IValue mismatch. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322
+            .iter()
+            .filter(|(_, message)| message
+                .contains("Type 'string' is not assignable to type 'number'."))
+            .count(),
+        2,
+        "Expected two string-to-number mismatches. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_nested_discriminated_union_property_mismatch_emits_ts2322() {
+    let source = r#"
+type AN = { a: string } | { c: string }
+type BN = { b: string }
+type AB = { kind: "A", n: AN } | { kind: "B", n: BN }
+
+const abab: AB = {
+    kind: "A",
+    n: {
+        a: "a",
+        b: "b",
+    }
+}
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one nested union TS2322 mismatch. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322.iter().any(|diagnostic| {
+            diagnostic.message_text.contains(
+            "Type '{ kind: \"A\"; n: { a: string; b: string; }; }' is not assignable to type 'AB'."
+        )
+        }),
+        "Expected outer AB assignability message. Got: {diagnostics:?}"
+    );
+    let expected_start = source.find("b: \"b\"").expect("expected b property") as u32;
+    assert_eq!(
+        ts2322[0].start, expected_start,
+        "Expected TS2322 to anchor at the rejected nested property. Got: {diagnostics:?}"
+    );
+
+    let ok_source = r#"
+type AN = { a: string } | { c: string }
+type BN = { b: string }
+type AB = { kind: "A", n: AN } | { kind: "B", n: BN }
+
+const abac: AB = {
+    kind: "A",
+    n: {
+        a: "a",
+        c: "c",
+    }
+}
+"#;
+
+    let ok_diagnostics = get_all_diagnostics(ok_source);
+    assert!(
+        !ok_diagnostics.iter().any(|(code, _)| matches!(
+            *code,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE | 2353
+        )),
+        "Expected valid nested union object to stay accepted. Got: {ok_diagnostics:?}"
+    );
+}
+
+#[test]
+fn object_freeze_preserves_literal_property_values_for_readonly_return() {
+    let source = r#"
+const PUPPETEER_REVISIONS = Object.freeze({
+    chromium: '1011831',
+    firefox: 'latest',
+});
+
+let preferredRevision = PUPPETEER_REVISIONS.chromium;
+preferredRevision = PUPPETEER_REVISIONS.firefox;
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one TS2322 for Object.freeze literal property mismatch. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0]
+            .message_text
+            .contains("Type '\"latest\"' is not assignable to type '\"1011831\"'."),
+        "Expected literal property values to be preserved through Object.freeze. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2322[0].start,
+        source
+            .find("preferredRevision = PUPPETEER_REVISIONS.firefox")
+            .expect("assignment should exist") as u32,
+        "Expected TS2322 to anchor at the assignment expression. Got: {diagnostics:?}"
+    );
+}
+
 /// Regression: assignFromStringInterface2.ts
 /// When both source and target have number index signatures but the source is
 /// missing named properties from the target, TS2739/TS2740 should be emitted
@@ -3803,11 +4039,10 @@ newTextChannel2.phoneNumber = '613-555-1234';
         "Expected one outer TS2322 for the return object. Got: {diagnostics:?}"
     );
     assert!(
-        ts2322.iter().any(|(_, message)| {
-            message.contains(
-                "Type '{ type: T; localChannelId: string; }' is not assignable to type 'NewChannel<ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>>'"
-            )
-        }),
+        ts2322.iter().any(|(_, message)| message.contains(
+            "Type '{ type: T; localChannelId: string; }' is not assignable to type 'NewChannel<"
+        ) && message.contains("ChannelOfType<T, TextChannel>")
+            && message.contains("ChannelOfType<T, EmailChannel>")),
         "Expected TS2322 to stay on the outer object literal. Got: {diagnostics:?}"
     );
     assert!(

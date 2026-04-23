@@ -129,6 +129,8 @@ impl<'a> CheckerState<'a> {
             {
                 arg_str = self.widen_weak_type_callable_source_display(arg_type, arg_str);
             }
+            let (arg_str, param_str) =
+                self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
             let message = format_message(msg_template, &[&arg_str, &param_str]);
             let request =
                 DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message);

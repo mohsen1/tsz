@@ -299,6 +299,24 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn normalize_property_receiver_application_display_alias(&mut self, ty: TypeId) -> TypeId {
+        let Some(app) = query::type_application(self.ctx.types, ty) else {
+            return ty;
+        };
+
+        let args: Vec<_> = app
+            .args
+            .iter()
+            .map(|&arg| self.normalize_property_receiver_application_display_arg(arg))
+            .collect();
+
+        if args == app.args {
+            ty
+        } else {
+            self.ctx.types.factory().application(app.base, args)
+        }
+    }
+
     fn normalize_property_receiver_application_display_arg(&mut self, ty: TypeId) -> TypeId {
         let evaluated = self.evaluate_type_with_env(ty);
         if evaluated != ty {
@@ -402,7 +420,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if changed {
-            self.ctx.types.factory().object_with_index(normalized_shape)
+            let new_ty = self.ctx.types.factory().object_with_index(normalized_shape);
+            if let Some(alias_origin) = self.ctx.types.get_display_alias(ty) {
+                let alias_origin =
+                    self.normalize_property_receiver_application_display_alias(alias_origin);
+                if query::type_application(self.ctx.types, alias_origin).is_some() {
+                    self.ctx
+                        .types
+                        .store_display_alias_preferring_application(new_ty, alias_origin);
+                } else {
+                    self.ctx.types.store_display_alias(new_ty, alias_origin);
+                }
+            }
+            new_ty
         } else {
             ty
         }

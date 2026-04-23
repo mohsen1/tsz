@@ -2788,6 +2788,65 @@ mod tests {
         resolved
     }
 
+    fn collect_es2015_default_lib_diagnostics(source: &str) -> Vec<Diagnostic> {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(&file_path, source).expect("write source");
+
+        let resolved = resolved_options_for_es2015_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            type_reference_errors,
+            resolution_mode_errors,
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &program,
+            &resolved,
+            dir.path(),
+            None,
+            &checker_libs,
+            (false, false, false),
+            &type_cache_output,
+            false,
+        )
+        .diagnostics
+    }
+
     fn mapped_type_indexed_access_constraint_repro() -> &'static str {
         r#"type Identity<T> = { [K in keyof T]: T[K] };
 
@@ -4872,6 +4931,50 @@ function foo() {
         assert_eq!(
             ts2430_count, 1,
             "Expected one TS2430 diagnostic from lib.dom.d.ts after merging Node.kind, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn default_lib_validation_ignores_unresolved_overload_cascades_after_global_merge() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+interface HTMLElement {
+    type: string;
+}
+"#,
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+            }),
+            "Did not expect default-lib TS2430 diagnostics from unrelated unresolved overload parameters, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn default_lib_validation_normalizes_cross_arena_method_members_after_global_merge() {
+        let diagnostics = collect_es2015_default_lib_diagnostics(
+            r#"
+interface HTMLElement {
+    clientWidth: number;
+    isDisabled: boolean;
+}
+
+declare var document: Document;
+interface Document {
+    getElementById(elementId: string): HTMLElement;
+}
+"#,
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+            }),
+            "Did not expect default-lib TS2430 diagnostics when a cross-arena method override is compatible, got: {diagnostics:?}"
         );
     }
 
