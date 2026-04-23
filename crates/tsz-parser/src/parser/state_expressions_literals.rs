@@ -3212,10 +3212,15 @@ impl ParserState {
             self.next_token(); // Skip the '?' for error recovery
 
             // After skipping '?', if followed by '(' or '<', continue parsing as method
-            // for error recovery (e.g., `{ foo?() { } }` should still parse the method body)
+            // for error recovery (e.g., `{ foo?() { } }` should still parse the method body).
+            // Preserve `question_token=true` on the recovered method so downstream
+            // type inference marks the inferred property as optional — tsc's .d.ts
+            // output for an inferred `{ foo?() {} }` is `{ foo?(): void }`.
             if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken)
             {
-                return self.parse_object_method_after_name(start_pos, name, false, false);
+                return self.parse_object_method_after_name_with_optional(
+                    start_pos, name, false, false, true,
+                );
             }
         }
 
@@ -3661,6 +3666,26 @@ impl ParserState {
         asterisk: bool,
         is_async: bool,
     ) -> NodeIndex {
+        self.parse_object_method_after_name_with_optional(
+            start_pos, name, asterisk, is_async, false,
+        )
+    }
+
+    /// Parse method after name with explicit optional (`?`) marker.
+    ///
+    /// `{ foo?() {} }` is a grammar error (TS1162) but tsc still types
+    /// the resulting property as optional, so the emitter can render
+    /// `foo?(): void` in the inferred `.d.ts`. The caller emits TS1162
+    /// when recovering from the `?`; this path just records that the
+    /// method carried the optional marker.
+    pub(crate) fn parse_object_method_after_name_with_optional(
+        &mut self,
+        start_pos: u32,
+        name: NodeIndex,
+        asterisk: bool,
+        is_async: bool,
+        question_token: bool,
+    ) -> NodeIndex {
         // Optional type parameters
         let type_parameters = self
             .is_token(SyntaxKind::LessThanToken)
@@ -3750,7 +3775,7 @@ impl ParserState {
                 modifiers,
                 asterisk_token: asterisk,
                 name,
-                question_token: false,
+                question_token,
                 type_parameters,
                 parameters,
                 type_annotation,
