@@ -132,6 +132,77 @@ let s: Shape = { kind: "sq", x: 12, y: 13 }
 }
 
 #[test]
+fn discriminated_union_excess_applies_multiple_discriminants_in_sequence() {
+    let source = r#"
+type DisjointDiscriminants =
+    | { p1: "left"; p2: true; p3: number }
+    | { p1: "right"; p2: false; p4: string }
+    | { p1: "left"; p2: boolean };
+
+const a: DisjointDiscriminants = {
+    p1: "left",
+    p2: false,
+    p3: 42,
+    p4: "hello"
+};
+
+const b: DisjointDiscriminants = {
+    p1: "left",
+    p2: true,
+    p3: 42,
+    p4: "hello"
+};
+
+const c: DisjointDiscriminants = {
+    p1: "right",
+    p2: false,
+    p3: 42,
+    p4: "hello"
+};
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        3,
+        "Expected three TS2353 diagnostics, got: {diags:?}"
+    );
+
+    let p3_count = ts2353.iter().filter(|d| d.1.contains("'p3'")).count();
+    let p4_count = ts2353.iter().filter(|d| d.1.contains("'p4'")).count();
+    assert_eq!(
+        p3_count, 2,
+        "Expected two diagnostics for excess 'p3', got: {ts2353:?}"
+    );
+    assert_eq!(
+        p4_count, 1,
+        "Expected one diagnostic for excess 'p4', got: {ts2353:?}"
+    );
+    assert!(
+        ts2353
+            .iter()
+            .any(|d| d.1.contains("'p3'") && d.1.contains("{ p1: \"left\"; p2: boolean; }")),
+        "Expected first case to narrow to the third variant, got: {ts2353:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| {
+            d.1.contains("'p4'")
+                && d.1.contains(
+                    "{ p1: \"left\"; p2: true; p3: number; } | { p1: \"left\"; p2: boolean; }",
+                )
+        }),
+        "Expected second case to keep both left variants, got: {ts2353:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| {
+            d.1.contains("'p3'") && d.1.contains("{ p1: \"right\"; p2: false; p4: string; }")
+        }),
+        "Expected third case to narrow to the right/false variant, got: {ts2353:?}"
+    );
+}
+
+#[test]
 fn discriminated_union_excess_narrows_with_partial_discriminant_presence() {
     let source = r#"
 type Overlapping =
