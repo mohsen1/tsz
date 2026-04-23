@@ -1020,3 +1020,28 @@ fn test_accessor_keyword_preserved_on_class_field() {
         "static accessor keyword should be preserved: {output}"
     );
 }
+
+#[test]
+fn test_object_literal_shorthand_function_emits_typeof() {
+    // Regression: shorthand `{ doSomethingWithKeys }` where the value is a
+    // function symbol must emit `typeof doSomethingWithKeys`, not the
+    // expanded function signature. Mirrors tsc's
+    // declarationEmitIndexTypeArray baseline.
+    let output = emit_dts_with_binding(
+        r#"
+function doSomethingWithKeys<T>(...keys: (keyof T)[]) { }
+
+const utilityFunctions = {
+  doSomethingWithKeys
+};
+"#,
+    );
+    assert!(
+        output.contains("typeof doSomethingWithKeys"),
+        "shorthand property referencing a function value must emit `typeof`: {output}"
+    );
+    assert!(
+        !output.contains("doSomethingWithKeys: <T>"),
+        "expanded generic signature should not appear in place of typeof: {output}"
+    );
+}
