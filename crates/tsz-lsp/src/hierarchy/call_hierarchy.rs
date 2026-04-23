@@ -145,8 +145,8 @@ impl<'a> CallHierarchyProvider<'a> {
 
         let name_idx = self.get_function_name_idx(func_idx);
         let target_symbol_id = name_idx
-            .and_then(|idx| self.binder.node_symbols.get(&idx.0).copied())
-            .or_else(|| self.binder.node_symbols.get(&func_idx.0).copied());
+            .and_then(|idx| self.binder.get_node_symbol(idx))
+            .or_else(|| self.binder.get_node_symbol(func_idx));
         let target_namespace_hint = self.enclosing_namespace_name(func_idx);
         let target_member_container_hint = self.member_container_hint_for_callable(func_idx);
         let target_is_member_like =
