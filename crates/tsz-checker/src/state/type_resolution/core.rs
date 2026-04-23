@@ -193,11 +193,11 @@ impl<'a> CheckerState<'a> {
                 let lib_binders = self.get_lib_binders();
                 let symbol_info = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
                 let is_type_alias =
-                    symbol_info.is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
+                    symbol_info.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
                 // TS2589 detection for class types with generic type arguments that may
                 // recursively expand (e.g., `Foo<[...Elements, "abc"]>` where mapped types
                 // in the class cause infinite type instantiation)
-                let is_class = symbol_info.is_some_and(|s| s.flags & symbol_flags::CLASS != 0);
+                let is_class = symbol_info.is_some_and(|s| s.has_any_flags(symbol_flags::CLASS));
 
                 if is_type_alias || is_class {
                     let args_have_type_params = query::get_application_info(
@@ -235,7 +235,7 @@ impl<'a> CheckerState<'a> {
                                     // The base is a type alias whose body is a mapped
                                     // type that references itself in its template
                                     self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
-                                        symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                                        symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
                                             && symbol.declarations.iter().any(|&decl_idx| {
                                                 self.alias_has_self_referencing_mapped_body(
                                                     ref_sym, decl_idx,
@@ -742,7 +742,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
-                        .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
+                        .is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
                     if is_type_alias {
                         let args_have_type_params = query::get_application_info(
                             self.ctx.types,
@@ -777,7 +777,7 @@ impl<'a> CheckerState<'a> {
                                         // The base is a type alias whose body is a mapped
                                         // type that references itself in its template
                                         self.ctx.binder.get_symbol(ref_sym).is_some_and(|symbol| {
-                                            symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                                            symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
                                                 && symbol.declarations.iter().any(|&decl_idx| {
                                                     self.alias_has_self_referencing_mapped_body(
                                                         ref_sym, decl_idx,
@@ -848,7 +848,7 @@ impl<'a> CheckerState<'a> {
                                         .binder
                                         .get_symbol_with_libs(candidate_sym_id, &lib_binders)
                                         .is_some_and(|base_symbol| {
-                                            base_symbol.flags & symbol_flags::CLASS != 0
+                                            base_symbol.has_any_flags(symbol_flags::CLASS)
                                         })
                                 })
                                 .or_else(|| {
@@ -868,7 +868,7 @@ impl<'a> CheckerState<'a> {
                                                     &lib_binders,
                                                 )
                                                 .is_some_and(|base_symbol| {
-                                                    base_symbol.flags & symbol_flags::CLASS != 0
+                                                    base_symbol.has_any_flags(symbol_flags::CLASS)
                                                 })
                                         })
                                 });

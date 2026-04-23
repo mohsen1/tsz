@@ -107,7 +107,7 @@ impl<'a> CheckerState<'a> {
                 };
                 if let Some(sym_id) = scope.table.get(var_name)
                     && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-                    && sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                    && sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
                 {
                     found_block_scoped_symbol = Some(sym_id);
                     found_scope_kind = Some(scope.kind);
@@ -368,7 +368,7 @@ impl<'a> CheckerState<'a> {
         // Check if this scope has a symbol with BLOCK_SCOPED_VARIABLE flag for this name
         if let Some(sym_id) = scope.table.get(var_name)
             && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-            && (sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+            && sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
         {
             // The scope has a block-scoped binding for this name.
             // Check that this scope is NOT at function/module/source-file level

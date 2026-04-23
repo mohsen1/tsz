@@ -294,7 +294,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .alias_partner_for(self.ctx.binder, sym_id)
                         .and_then(|partner_id| self.ctx.binder.get_symbol(partner_id))
-                        .is_some_and(|partner| partner.flags & symbol_flags::ALIAS != 0);
+                        .is_some_and(|partner| partner.has_any_flags(symbol_flags::ALIAS));
                     // tsc's hasParseDiagnostics() checks ALL parse diagnostics
                     // (including grammar checks like TS1359) to suppress TS2456.
                     // Our has_parse_errors only tracks "real" syntax errors, so
@@ -1612,8 +1612,8 @@ impl<'a> CheckerState<'a> {
                         }
                         let should_cache_on_export_symbol =
                             self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
-                                (sym.flags & symbol_flags::TYPE) == 0
-                                    || (sym.flags & symbol_flags::VALUE) == 0
+                                !sym.has_any_flags(symbol_flags::TYPE)
+                                    || !sym.has_any_flags(symbol_flags::VALUE)
                             });
                         if should_cache_on_export_symbol {
                             self.ctx.symbol_types.insert(export_sym_id, result);
@@ -1629,7 +1629,7 @@ impl<'a> CheckerState<'a> {
                     // aliases (value position), we need the variable/function
                     // type so the imported binding is callable/constructable.
                     let mut result = if let Some(sym) = self.get_symbol_globally(export_sym_id) {
-                        let has_interface = sym.flags & symbol_flags::INTERFACE != 0;
+                        let has_interface = sym.has_any_flags(symbol_flags::INTERFACE);
                         let has_value = sym.flags
                             & (symbol_flags::FUNCTION_SCOPED_VARIABLE
                                 | symbol_flags::BLOCK_SCOPED_VARIABLE
@@ -1660,8 +1660,8 @@ impl<'a> CheckerState<'a> {
                     }
                     let should_cache_on_export_symbol =
                         self.get_symbol_globally(export_sym_id).is_none_or(|sym| {
-                            (sym.flags & symbol_flags::TYPE) == 0
-                                || (sym.flags & symbol_flags::VALUE) == 0
+                            !sym.has_any_flags(symbol_flags::TYPE)
+                                || !sym.has_any_flags(symbol_flags::VALUE)
                         });
                     if should_cache_on_export_symbol {
                         self.ctx.symbol_types.insert(export_sym_id, result);

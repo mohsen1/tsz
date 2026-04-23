@@ -344,7 +344,7 @@ impl<'a> CheckerState<'a> {
         // returns the stored value (which may be undefined), but tsc treats enum
         // member references as "evaluated" — the TS18033 check was already done on
         // the member itself.
-        if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return Some(true);
         }
 

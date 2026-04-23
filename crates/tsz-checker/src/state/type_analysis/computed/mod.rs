@@ -391,7 +391,7 @@ impl<'a> CheckerState<'a> {
                     && target_sym_id != sym_id
                     && let Some(target_symbol) = self.get_symbol_globally(target_sym_id)
                 {
-                    if (target_symbol.flags & symbol_flags::CLASS) != 0 {
+                    if target_symbol.has_any_flags(symbol_flags::CLASS) {
                         let target_type = self.get_type_of_symbol(target_sym_id);
                         // Also cache the instance type so type-position references
                         // (`let x: Observable<number>`) continue to work.
