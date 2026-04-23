@@ -243,8 +243,18 @@ pub struct BinderState {
     /// Whether the current scope is in strict mode (via "use strict" directive or --alwaysStrict).
     /// In strict mode, function declarations inside blocks are block-scoped, not hoisted.
     pub(crate) is_strict_scope: bool,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// Wrapped in `Arc` so per-file binders constructed by the CLI driver
+    /// can share a single file's flow graph via `Arc::clone` instead of
+    /// deep-cloning `Vec<FlowNode>` (each `FlowNode` carries its own
+    /// `Vec<FlowNodeId>` antecedents, so the clone is allocation-heavy).
+    /// The driver builds ~2×N per-file binders (cross-file lookup +
+    /// per-file checking), so N-file projects previously paid 2N deep
+    /// clones of their flow graphs. Mutations during binding go through
+    /// `Arc::make_mut`, which is zero-cost while the refcount is 1
+    /// (always the case during a single binder's construction).
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Current flow node
     pub(crate) current_flow: FlowNodeId,
     /// Unreachable flow node
@@ -853,7 +863,7 @@ pub struct BinderStateScopeInputs {
     pub cross_file_node_symbols: CrossFileNodeSymbols,
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     pub modules_with_export_equals: FxHashSet<String>,
-    pub flow_nodes: FlowNodeArena,
+    pub flow_nodes: Arc<FlowNodeArena>,
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,

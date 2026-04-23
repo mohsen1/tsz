@@ -1607,7 +1607,13 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
-            flow_nodes: file.flow_nodes.clone(),
+            // Per-binder `flow_nodes` is an Arc clone (atomic increment)
+            // instead of a deep clone of the underlying `Vec<FlowNode>`.
+            // Each `FlowNode` owns a `Vec<FlowNodeId>` antecedents, so
+            // the previous deep clone was allocation-heavy; on large
+            // repos it was paid ~2× per file (cross-file lookup +
+            // per-file checking binder).
+            flow_nodes: Arc::clone(&file.flow_nodes),
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
@@ -1730,7 +1736,10 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
-            flow_nodes: file.flow_nodes.clone(),
+            // Per-binder `flow_nodes` is an Arc clone; see
+            // `create_binder_from_bound_file_with_augmentations` for
+            // the rationale.
+            flow_nodes: Arc::clone(&file.flow_nodes),
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
