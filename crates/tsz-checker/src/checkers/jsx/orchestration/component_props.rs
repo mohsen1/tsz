@@ -245,7 +245,7 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         };
 
-        if (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
             && let Some(name) = self.get_identifier_text_from_idx(tag_name_idx)
         {
             let expando_props = self.collect_expando_properties_for_root(&name);
