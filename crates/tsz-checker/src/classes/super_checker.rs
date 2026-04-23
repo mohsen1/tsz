@@ -423,8 +423,7 @@ impl<'a> CheckerState<'a> {
             };
 
             if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || parent_node.is_function_expression_or_arrow()
                 || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
                 || parent_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || parent_node.kind == syntax_kind_ext::SET_ACCESSOR

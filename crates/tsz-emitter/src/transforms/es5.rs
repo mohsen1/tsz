@@ -1310,8 +1310,7 @@ impl<'a> ES5AsyncTransformer<'a> {
 
         // Don't recurse into nested functions
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.is_function_expression_or_arrow()
         {
             return false;
         }

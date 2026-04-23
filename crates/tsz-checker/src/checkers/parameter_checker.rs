@@ -207,8 +207,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Deferred function/class evaluation does not trigger TS2373.
-        if (node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::ARROW_FUNCTION)
+        if (node.is_function_expression_or_arrow())
             && !self.ctx.arena.is_immediately_invoked(node_idx)
         {
             return;

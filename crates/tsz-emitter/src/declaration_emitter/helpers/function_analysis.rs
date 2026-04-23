@@ -84,9 +84,7 @@ impl<'a> DeclarationEmitter<'a> {
                     return None;
                 }
                 let init_node = self.arena.get(decl.initializer)?;
-                if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                {
+                if init_node.is_function_expression_or_arrow() {
                     Some(decl.initializer)
                 } else {
                     None

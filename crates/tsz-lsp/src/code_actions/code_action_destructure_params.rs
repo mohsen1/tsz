@@ -92,8 +92,7 @@ impl<'a> CodeActionProvider<'a> {
         while current.is_some() {
             let node = self.arena.get(current)?;
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.is_function_expression_or_arrow()
                 || node.kind == syntax_kind_ext::METHOD_DECLARATION
             {
                 return Some(current);

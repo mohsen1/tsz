@@ -232,10 +232,7 @@ impl<'a> CheckerState<'a> {
             // through a symbol (e.g., named function expression `self` calling
             // itself), body analysis would recurse infinitely because the body
             // contains calls to the same function.
-            if check_body_for_throws
-                && (decl_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || decl_node.kind == syntax_kind_ext::ARROW_FUNCTION)
-            {
+            if check_body_for_throws && (decl_node.is_function_expression_or_arrow()) {
                 let body_idx = func.body;
                 if let Some(body_node) = self.ctx.arena.get(body_idx)
                     && let Some(block) = self.ctx.arena.get_block(body_node)
