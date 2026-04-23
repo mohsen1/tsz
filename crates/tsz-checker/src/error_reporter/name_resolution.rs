@@ -332,7 +332,7 @@ impl<'a> CheckerState<'a> {
                     let Some(symbol) = binder.get_symbol(sym_id) else {
                         continue;
                     };
-                    if (symbol.flags & symbol_flags::ENUM) == 0 {
+                    if !symbol.has_any_flags(symbol_flags::ENUM) {
                         continue;
                     }
                     let arena = self.ctx.get_arena_for_file(file_idx as u32);
