@@ -2457,7 +2457,19 @@ impl<'a> CheckerState<'a> {
                     && return_type != TypeId::UNDEFINED
                     && !(return_type == TypeId::ANY && early_gen_return_type.is_some())
                 {
-                    Some(return_type)
+                    // Widen literal body-inferred returns before assembling the
+                    // Generator<Y, R, N> type: `return 1;` produces TReturn =
+                    // number, not 1. Matches tsc's generator return-type
+                    // widening. Unique symbols are preserved.
+                    let widened = if crate::query_boundaries::common::is_unique_symbol_type(
+                        self.ctx.types,
+                        return_type,
+                    ) {
+                        return_type
+                    } else {
+                        self.widen_literal_type(return_type)
+                    };
+                    Some(widened)
                 } else {
                     None
                 };
