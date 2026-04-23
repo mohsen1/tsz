@@ -376,11 +376,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     TypeId::ANY
                 } else if self.checker.ctx.no_implicit_this()
                     && !self.checker.is_js_file()
+                    && !self.checker.ctx.binder.is_external_module()
                     && self.checker.is_this_in_global_capturing_arrow(idx)
                 {
                     // TS7041: `this` in an arrow chain with no enclosing
                     // function/class/object `this` binder captures globalThis.
                     // Prefer this over the generic TS2683 path.
+                    //
+                    // Only fires in *script* files. At the top level of an
+                    // external module (has `import`/`export`), `this` is
+                    // `undefined`, not `globalThis`, so a capturing arrow at
+                    // module top-level produces TS2532 on property access,
+                    // not a global-capture warning. Matches tsc.
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
                         idx,
@@ -429,14 +436,25 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .find_enclosing_non_arrow_function(idx)
                         .is_none()
                 {
-                    // `this` at the top level of a script/module with noImplicitThis.
-                    // tsc resolves this to `typeof globalThis` (an object type), not `any`.
-                    // We approximate with TypeId::OBJECT since we don't have a full
-                    // globalThis type yet. This ensures that operations like `++this`
-                    // correctly emit TS2356 (arithmetic type error) instead of TS2357
-                    // (invalid lvalue) — matching tsc behavior where the type check
-                    // fires first and suppresses the lvalue check.
-                    TypeId::OBJECT
+                    // `this` at the top level of a script or module with noImplicitThis.
+                    //
+                    // In an external module (has `import`/`export`), top-level `this`
+                    // — including `this` inside a top-level arrow — is `undefined`.
+                    // Property access on `this` then produces TS2532 ("Object is
+                    // possibly 'undefined'.") under strictNullChecks, matching tsc.
+                    //
+                    // In a script, tsc resolves `this` to `typeof globalThis` (an
+                    // object type). We approximate with TypeId::OBJECT since we
+                    // don't have a full globalThis type yet; this ensures that
+                    // operations like `++this` correctly emit TS2356 (arithmetic
+                    // type error) instead of TS2357 (invalid lvalue) — matching
+                    // tsc behavior where the type check fires first and suppresses
+                    // the lvalue check.
+                    if self.checker.ctx.binder.is_external_module() {
+                        TypeId::UNDEFINED
+                    } else {
+                        TypeId::OBJECT
+                    }
                 } else {
                     TypeId::ANY
                 }

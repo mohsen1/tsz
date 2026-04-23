@@ -715,6 +715,14 @@ impl<'a> CheckerState<'a> {
         if node.kind != SyntaxKind::ThisKeyword as u16 {
             return false;
         }
+        // In an *external module* (has `import`/`export`, or is `.mts`/`.cts`),
+        // top-level `this` — including `this` inside a top-level arrow — is
+        // `undefined`, not `globalThis`. Callers that route through the
+        // "globalThis property access" path would emit the wrong diagnostic
+        // (TS7017 instead of TS2532) in that context, so short-circuit here.
+        if self.ctx.binder.is_external_module() {
+            return false;
+        }
         // `this` at the top level (no enclosing non-arrow function, no enclosing class)
         // resolves to `typeof globalThis`.
         if self.ctx.enclosing_class.is_none()
