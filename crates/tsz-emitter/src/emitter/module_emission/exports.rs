@@ -1,7 +1,6 @@
 use super::super::{ModuleKind, Printer};
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     /// Write `exports.name` or `exports["name"]` depending on whether the name
@@ -87,7 +86,7 @@ impl<'a> Printer<'a> {
             if let Some(clause_node) = self.arena.get(export.export_clause)
                 && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
             {
-                let ns_name = if clause_node.kind == SyntaxKind::StringLiteral as u16 {
+                let ns_name = if clause_node.is_string_literal() {
                     self.arena
                         .get_literal(clause_node)
                         .map(|lit| lit.text.clone())
@@ -210,7 +209,7 @@ impl<'a> Printer<'a> {
                 return;
             }
             if export.is_default_export
-                && (clause_node.kind == SyntaxKind::Identifier as u16
+                && (clause_node.is_identifier()
                     || clause_node.kind == syntax_kind_ext::QUALIFIED_NAME)
                 && !self.export_default_target_has_runtime_value(export.export_clause)
             {
@@ -719,7 +718,7 @@ impl<'a> Printer<'a> {
                     // otherwise use the local name (class/function/enum have local
                     // declarations).
                     if let Some(expr_node) = self.arena.get(export.export_clause)
-                        && expr_node.kind == SyntaxKind::Identifier as u16
+                        && expr_node.is_identifier()
                     {
                         let ident = self.get_identifier_text_idx(export.export_clause);
                         if self.ctx.module_state.inlined_var_exports.contains(&ident) {
@@ -897,7 +896,7 @@ impl<'a> Printer<'a> {
                         && self
                             .arena
                             .get(decl.initializer)
-                            .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16);
+                            .is_some_and(|n| n.is_numeric_literal());
                     self.write("exports.");
                     self.write(export_name);
                     self.write(" = ");

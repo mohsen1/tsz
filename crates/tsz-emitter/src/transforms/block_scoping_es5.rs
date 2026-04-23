@@ -440,7 +440,7 @@ pub fn collect_loop_vars(arena: &NodeArena, initializer_idx: NodeIndex) -> Vec<S
         for &decl_idx in &decl_list.declarations.nodes {
             if let Some(decl) = arena.get_variable_declaration_at(decl_idx)
                 && let Some(name_node) = arena.get(decl.name)
-                && name_node.kind == SyntaxKind::Identifier as u16
+                && name_node.is_identifier()
                 && let Some(ident) = arena.get_identifier(name_node)
             {
                 vars.push(ident.escaped_text.clone());

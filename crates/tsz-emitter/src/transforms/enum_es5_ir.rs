@@ -310,7 +310,7 @@ impl EnumMemberValue {
 /// Check if a node is a string literal
 fn is_string_literal(arena: &NodeArena, idx: NodeIndex) -> bool {
     if let Some(node) = arena.get(idx) {
-        node.kind == SyntaxKind::StringLiteral as u16
+        node.is_string_literal()
     } else {
         false
     }

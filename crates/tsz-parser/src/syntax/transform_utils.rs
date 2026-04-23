@@ -124,7 +124,7 @@ fn contains_target_reference(
         }
     }
 
-    if node.kind == SyntaxKind::Identifier as u16
+    if node.is_identifier()
         && let Some(identifier) = arena.get_identifier(node)
     {
         return identifier.escaped_text == target.identifier_name();
@@ -159,7 +159,7 @@ fn collect_target_references(
         }
     }
 
-    if node.kind == SyntaxKind::Identifier as u16
+    if node.is_identifier()
         && let Some(identifier) = arena.get_identifier(node)
         && identifier.escaped_text == target.identifier_name()
     {

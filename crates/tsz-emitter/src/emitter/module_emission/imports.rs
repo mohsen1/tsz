@@ -632,7 +632,7 @@ impl<'a> Printer<'a> {
             // For `import { foo }`, there's no property_name and name is the Identifier foo.
             let (import_name, is_string_import) = if spec.property_name.is_some() {
                 if let Some(prop_name_node) = self.arena.get(spec.property_name) {
-                    if prop_name_node.kind == SyntaxKind::StringLiteral as u16 {
+                    if prop_name_node.is_string_literal() {
                         if let Some(lit) = self.arena.get_literal(prop_name_node) {
                             (lit.text.clone(), true)
                         } else {
@@ -692,8 +692,8 @@ impl<'a> Printer<'a> {
         // This is restricted to namespace scope because top-level import
         // aliases in scripts create global variables that may be consumed
         // externally, and tsc preserves those even when unreferenced locally.
-        let is_namespace_alias = module_node.kind == SyntaxKind::Identifier as u16
-            || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
+        let is_namespace_alias =
+            module_node.is_identifier() || module_node.kind == syntax_kind_ext::QUALIFIED_NAME;
         if is_namespace_alias
             && self.in_namespace_iife
             && !self.import_alias_is_referenced_after_node(node, import)
@@ -716,7 +716,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let is_external = module_node.kind == SyntaxKind::StringLiteral as u16
+        let is_external = module_node.is_string_literal()
             || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
 
         // AMD and System bind external imports via wrapper parameters/setters,
@@ -760,7 +760,7 @@ impl<'a> Printer<'a> {
             self.write(" = ");
         }
 
-        if module_node.kind == SyntaxKind::StringLiteral as u16 {
+        if module_node.is_string_literal() {
             if let Some(lit) = self.arena.get_literal(module_node) {
                 let spec = self.rewrite_module_spec(&lit.text);
                 self.write("require(\"");

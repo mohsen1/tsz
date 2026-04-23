@@ -1208,7 +1208,7 @@ impl<'a> Printer<'a> {
         // For complex expressions, fall back to generic temp names (_b, _c).
         let (loop_iterator_name, loop_result_name) = if let Some(expr_node) =
             self.arena.get(for_in_of.expression)
-            && expr_node.kind == SyntaxKind::Identifier as u16
+            && expr_node.is_identifier()
             && let Some(ident) = self.arena.get_identifier(expr_node)
         {
             let base = self.arena.resolve_identifier_text(ident).to_string();
