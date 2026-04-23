@@ -821,11 +821,12 @@ impl<'a> TypeInstantiator<'a> {
                     }
                     // For `any`, we need to let evaluation handle it properly
                     // so it can distribute to both branches
-                    // TypeScript treats `boolean` as `true | false` for distributive conditionals
+                    // TypeScript treats `boolean` as `false | true` for distributive
+                    // conditional diagnostics.
                     if substituted == TypeId::BOOLEAN {
                         let cond_type = self.interner.conditional(cond);
                         let mut results = Vec::with_capacity(2);
-                        for &member in &[TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE] {
+                        for &member in &[TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE] {
                             if self.depth_exceeded {
                                 return TypeId::ERROR;
                             }
