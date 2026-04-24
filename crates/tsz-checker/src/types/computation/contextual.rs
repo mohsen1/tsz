@@ -303,6 +303,19 @@ pub(crate) fn expression_needs_contextual_return_type(
         {
             true
         }
+        // Literal expressions benefit from contextual return typing to preserve
+        // literal types instead of widening. Without this, `return 0` in a
+        // generator expecting TReturn=0 would widen to `number`, and
+        // `() => 1` with contextual return `0|1|2` would lose the literal.
+        k if k == tsz_scanner::SyntaxKind::NumericLiteral as u16
+            || k == tsz_scanner::SyntaxKind::StringLiteral as u16
+            || k == tsz_scanner::SyntaxKind::TrueKeyword as u16
+            || k == tsz_scanner::SyntaxKind::FalseKeyword as u16
+            || k == tsz_scanner::SyntaxKind::BigIntLiteral as u16
+            || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+        {
+            true
+        }
         _ => false,
     }
 }
