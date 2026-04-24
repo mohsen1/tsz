@@ -200,6 +200,14 @@ pub struct ParserState {
     /// Current lower bound for scanning parse diagnostics when JSX recovery
     /// absorbs statement terminators into `JsxText`.
     pub(crate) jsx_missing_brace_semicolon_window_start: Option<u32>,
+    /// Set when `parse_namespace_import` encountered a reserved word that also
+    /// starts a statement (e.g. `while` in `import * as while from "foo"`).
+    /// Signals `parse_import_declaration_with_modifiers` to bail out of import
+    /// recovery without consuming the token, so the outer statement parser
+    /// re-parses it as the head of a statement — matching tsc, which emits
+    /// TS1359 at the reserved word and then cascades the statement's
+    /// diagnostics (`'(' expected.` / `')' expected.`) at the following tokens.
+    pub(crate) namespace_import_yielded_to_statement: bool,
 }
 
 impl ParserState {
@@ -254,6 +262,7 @@ impl ParserState {
             in_tagged_template: false,
             pending_jsx_missing_close_brace_in_expression_statement: 0,
             jsx_missing_brace_semicolon_window_start: None,
+            namespace_import_yielded_to_statement: false,
         }
     }
 
@@ -288,6 +297,7 @@ impl ParserState {
         self.in_tagged_template = false;
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = None;
+        self.namespace_import_yielded_to_statement = false;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
@@ -1695,6 +1705,22 @@ impl ParserState {
         // token >= SyntaxKind.FirstReservedWord && token <= SyntaxKind.LastReservedWord
         self.current_token as u16 >= SyntaxKind::FIRST_RESERVED_WORD as u16
             && self.current_token as u16 <= SyntaxKind::LAST_RESERVED_WORD as u16
+    }
+
+    /// Check if current token is a reserved word that, when encountered at the
+    /// start of a statement, begins a construct whose grammar is `kw ( expr )`.
+    /// These are the keywords whose cascade (`'(' expected.`, `')' expected.`)
+    /// tsc emits when recovery re-parses the token as a statement.
+    #[inline]
+    pub(crate) const fn is_paren_statement_starter_reserved_word(&self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::WhileKeyword
+                | SyntaxKind::ForKeyword
+                | SyntaxKind::IfKeyword
+                | SyntaxKind::SwitchKeyword
+                | SyntaxKind::WithKeyword
+        )
     }
 
     /// Get the text representation of the current keyword token
