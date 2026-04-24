@@ -45,8 +45,6 @@ CHECKS = [
             "exclude_files": {
                 # These files use .lookup() in tracing::trace! macros for debug output only
                 "crates/tsz-checker/src/types/computation/complex.rs",
-                # ClassSummary::lookup() — not a solver interner lookup
-                "crates/tsz-checker/src/types/property_access_type.rs",
                 # Pre-existing: class member lookup in class_checker
                 "crates/tsz-checker/src/classes/class_checker.rs",
                 "crates/tsz-checker/src/classes/class_checker_compat.rs",
@@ -419,7 +417,6 @@ LINE_LIMIT_CHECKS = [
             # Pre-existing oversized files captured as the current ratchet baseline.
             "crates/tsz-checker/src/checkers/generic_checker.rs",
             "crates/tsz-checker/src/types/property_access_helpers.rs",
-            "crates/tsz-checker/src/types/property_access_type.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
             "crates/tsz-checker/src/types/computation/binary.rs",
             "crates/tsz-checker/src/types/computation/object_literal.rs",
