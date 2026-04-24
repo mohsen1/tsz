@@ -453,3 +453,78 @@ var props = {};
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// JS function declarations annotated with a generic `@type {<T>(...) => T}`
+/// must inherit the contextual type parameters — JS syntax has no way to
+/// declare `<T>` on a function declaration, so without this inheritance the
+/// call site sees a free type parameter and inference fails with TS2345.
+/// Regression test for typeTagOnFunctionReferencesGeneric conformance test.
+#[test]
+fn test_jsdoc_type_tag_generic_on_function_declaration_inherits_type_params() {
+    let source = r#"
+/**
+ * @typedef {<T>(m: T) => T} IFn
+ */
+
+/** @type {IFn} */
+function inJs(l) {
+    return l;
+}
+inJs(1);
+"#;
+    let diagnostics = check_js(source);
+    let ts2345 = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345,
+        0,
+        "Expected no TS2345 for call on generic JSDoc @type function declaration, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Arrow function reference case — already worked before the fix, keep as
+/// parity guard so regressions show up paired with the declaration case.
+#[test]
+fn test_jsdoc_type_tag_generic_on_arrow_function_no_ts2345() {
+    let source = r#"
+/**
+ * @typedef {<T>(m: T) => T} IFn
+ */
+
+/** @type {IFn} */
+const inJsArrow = (j) => {
+    return j;
+};
+inJsArrow(2);
+"#;
+    let diagnostics = check_js(source);
+    let ts2345 = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345,
+        0,
+        "Expected no TS2345 for call on generic JSDoc @type arrow, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Inline generic JSDoc `@type` (no typedef alias) on a function declaration
+/// must also inherit the contextual `<T>`.
+#[test]
+fn test_jsdoc_type_tag_inline_generic_signature_on_function_declaration() {
+    let source = r#"
+/** @type {<T>(param?: T) => T | undefined} */
+function typed(param) {
+    return param;
+}
+typed(1);
+typed("x");
+"#;
+    let diagnostics = check_js(source);
+    let ts2345 = diagnostics.iter().filter(|d| d.code == 2345).count();
+    assert_eq!(
+        ts2345,
+        0,
+        "Expected no TS2345 for call on inline generic JSDoc @type function, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
