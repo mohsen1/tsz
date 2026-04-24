@@ -5339,16 +5339,20 @@ fn test_mutable_to_readonly_no_ts4104() {
 }
 
 #[test]
-fn test_readonly_to_type_param_with_array_constraint_ts4104() {
-    // readonly [...T] → T (where T extends unknown[]) should produce
-    // ReadonlyToMutableAssignment (TS4104), matching tsc behavior.
-    // This is the case from variadicTuples1.ts:
+fn test_readonly_spread_tuple_to_type_param_is_ts2322() {
+    // Source: readonly [...T]. Target: T extends unknown[].
+    // tsc emits TS2322 (generic "not assignable") — NOT TS4104 — when the target
+    // is a type parameter and the source is a readonly *tuple* (not a plain
+    // readonly array). See variadicTuples1.ts:160 where
     //   function f11<T extends unknown[]>(t: T, m: [...T], r: readonly [...T]) {
-    //     t = r;  // Error TS4104
+    //     t = r;  // TS2322 (target is T, a type parameter)
+    //     m = r;  // TS4104 (target is [...T], a concrete tuple)
     //   }
+    // The plain `readonly number[] → T extends unknown[]` case is preserved and
+    // still yields TS4104 (exercised by
+    // `test_readonly_to_type_param_with_array_constraint_still_ts4104`).
     let interner = TypeInterner::new();
 
-    // Create T extends unknown[] (type parameter with array constraint)
     let unknown_array = interner.array(TypeId::UNKNOWN);
     let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("T"),
@@ -5357,23 +5361,60 @@ fn test_readonly_to_type_param_with_array_constraint_ts4104() {
         is_const: false,
     }));
 
-    // readonly [...T] — for simplicity, use readonly array of unknown
-    // (the key is source is readonly, target is type param with array constraint)
-    let readonly_source = interner.readonly_array(TypeId::UNKNOWN);
+    let spread_tuple = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    let readonly_spread = interner.intern(TypeData::ReadonlyType(spread_tuple));
 
     let mut checker = CompatChecker::new(&interner);
     checker.strict_null_checks = true;
     assert!(
-        !checker.is_assignable(readonly_source, t_param),
-        "readonly unknown[] should not be assignable to T extends unknown[]"
+        !checker.is_assignable(readonly_spread, t_param),
+        "readonly [...T] should not be assignable to T extends unknown[]"
     );
+    let reason = checker.explain_failure(readonly_spread, t_param);
+    assert!(
+        !matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Expected non-TS4104 failure for readonly-tuple source with type-param target \
+         (tsc emits TS2322), got {reason:?}"
+    );
+}
+
+#[test]
+fn test_readonly_to_type_param_with_array_constraint_still_ts4104() {
+    // Source: readonly unknown[] (plain readonly array, not a tuple).
+    // Target: T extends unknown[]. tsc short-circuits this to TS4104, matching
+    // the behavior tsz already relied on. This test locks in that the narrowing
+    // applied for readonly-tuple sources does not affect the plain readonly-array
+    // case.
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    let readonly_source = interner.readonly_array(TypeId::UNKNOWN);
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
     let reason = checker.explain_failure(readonly_source, t_param);
     assert!(
         matches!(
             reason,
             Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
         ),
-        "Expected ReadonlyToMutableAssignment for type param with array constraint, got {reason:?}"
+        "Expected ReadonlyToMutableAssignment for readonly array → type-param with \
+         array constraint, got {reason:?}"
     );
 }
 
@@ -5402,6 +5443,43 @@ fn test_readonly_to_unconstrained_type_param_no_ts4104() {
             Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
         ),
         "Should NOT be ReadonlyToMutableAssignment for unconstrained type param, got {reason:?}"
+    );
+}
+
+#[test]
+fn test_readonly_spread_tuple_to_mutable_spread_tuple_is_ts4104() {
+    // Source: readonly [...T]. Target: [...T].
+    // Both are concrete tuple types with a single rest element — target is a
+    // mutable tuple, so tsc emits TS4104 (readonly-to-mutable). Mirrors
+    // variadicTuples1.ts:162 where `m = r;` with `m: [...T]` and
+    // `r: readonly [...T]` yields TS4104.
+    let interner = TypeInterner::new();
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    let spread_tuple = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    let readonly_spread = interner.intern(TypeData::ReadonlyType(spread_tuple));
+
+    let mut checker = CompatChecker::new(&interner);
+    checker.strict_null_checks = true;
+    let reason = checker.explain_failure(readonly_spread, spread_tuple);
+    assert!(
+        matches!(
+            reason,
+            Some(SubtypeFailureReason::ReadonlyToMutableAssignment { .. })
+        ),
+        "Expected ReadonlyToMutableAssignment (TS4104) for mutable tuple target, got {reason:?}"
     );
 }
 

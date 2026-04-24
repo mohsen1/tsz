@@ -1027,11 +1027,22 @@ impl<'a> CheckerState<'a> {
                     .get(&sym_id)
                     .map_or(self.ctx.arena, |arena| arena.as_ref());
 
+                // Detect whether any declaration arena entry points to an arena other
+                // than the current file's arena. Previously the per-file
+                // `declaration_arenas` map was pre-filtered to only contain such
+                // non-local entries, so a simple `contains_key` was enough. The
+                // program-wide `Arc`-shared map now contains entries for purely-local
+                // declarations too, so we must check the arena contents explicitly.
                 let has_declaration_arenas = symbol.declarations.iter().any(|&decl_idx| {
                     self.ctx
                         .binder
                         .declaration_arenas
-                        .contains_key(&(sym_id, decl_idx))
+                        .get(&(sym_id, decl_idx))
+                        .is_some_and(|arenas| {
+                            arenas
+                                .iter()
+                                .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
+                        })
                 });
                 let needs_text_based_resolution =
                     has_declaration_arenas || !std::ptr::eq(fallback_arena, self.ctx.arena);

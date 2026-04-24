@@ -1197,17 +1197,36 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a name refers to a Generator-like type.
     fn is_generator_like_name(name: &str) -> bool {
-        matches!(
-            name,
+        Self::generator_like_priority(name) > 0
+    }
+
+    /// Priority of a Generator-like name for heritage-based iteration-type
+    /// extraction. Higher wins.
+    ///
+    /// tsc derives a type's iteration types from its `[Symbol.iterator]()`
+    /// method, which only exists on `Iterable`-family types. When a type
+    /// extends both an `Iterable`-family and an `Iterator`-family type
+    /// (e.g. `interface BadGenerator extends Iterator<number>,
+    /// Iterable<string> {}`), the `[Symbol.iterator]()` method comes from
+    /// the `Iterable<T>` side, so `T` determines the yield type — regardless
+    /// of source order. We encode that by giving Iterable-family names a
+    /// higher priority than Iterator-family names.
+    fn generator_like_priority(name: &str) -> u8 {
+        match name {
+            // Iterable-family — expose `[Symbol.iterator]()`, so their first
+            // type argument is the true iteration type.
             "Generator"
-                | "AsyncGenerator"
-                | "Iterator"
-                | "AsyncIterator"
-                | "IterableIterator"
-                | "AsyncIterableIterator"
-                | "Iterable"
-                | "AsyncIterable"
-        )
+            | "AsyncGenerator"
+            | "IterableIterator"
+            | "AsyncIterableIterator"
+            | "Iterable"
+            | "AsyncIterable" => 2,
+            // Iterator-family — do not expose `[Symbol.iterator]()` by
+            // themselves; their first type argument is only the iteration
+            // type when no Iterable-family heritage is present.
+            "Iterator" | "AsyncIterator" => 1,
+            _ => 0,
+        }
     }
 
     /// Resolve through interface/class heritage clauses to extract a specific type argument
@@ -1265,6 +1284,14 @@ impl<'a> CheckerState<'a> {
     /// Heritage types are `ExpressionWithTypeArguments` nodes (e.g., `Iterator<0, 1, 2>`).
     /// We check syntactically if the heritage expression names a generator-like type,
     /// then extract the type argument at the requested index using `get_type_from_type_node`.
+    ///
+    /// When a type extends multiple generator-like bases at the same level
+    /// (e.g. `extends Iterator<number>, Iterable<string>`), tsc derives the
+    /// iteration type from `[Symbol.iterator]()`, which only exists on the
+    /// Iterable-family side. We mirror that by collecting all direct matches
+    /// and returning the highest-priority one (see
+    /// `generator_like_priority`), falling back to transitive heritage only
+    /// when no direct generator-like base is present.
     fn find_generator_arg_in_heritage(
         &mut self,
         heritage_clauses: &Option<tsz_parser::parser::base::NodeList>,
@@ -1272,6 +1299,8 @@ impl<'a> CheckerState<'a> {
         depth: u32,
     ) -> Option<TypeId> {
         let heritage_clauses = heritage_clauses.as_ref()?;
+
+        let mut best_direct: Option<(u8, Option<TypeId>)> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -1298,23 +1327,60 @@ impl<'a> CheckerState<'a> {
                 let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
                     continue;
                 };
-                if let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                    && Self::is_generator_like_name(&ident.escaped_text)
-                {
-                    // Found generator-like heritage. Extract the type arg at arg_index.
-                    if let Some(type_args) = &type_arguments {
-                        if arg_index < type_args.nodes.len() {
-                            return Some(self.get_type_from_type_node(type_args.nodes[arg_index]));
+                if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+                    let priority = Self::generator_like_priority(&ident.escaped_text);
+                    if priority > 0 {
+                        // Direct generator-like heritage — record a candidate
+                        // for this arg_index. Higher priority wins; ties
+                        // keep the earliest match (source order).
+                        if best_direct.is_none_or(|(p, _)| priority > p) {
+                            let extracted = if let Some(type_args) = &type_arguments {
+                                if arg_index < type_args.nodes.len() {
+                                    Some(self.get_type_from_type_node(type_args.nodes[arg_index]))
+                                } else if arg_index == 1 && type_args.nodes.len() == 1 {
+                                    // Single type arg: TReturn defaults to `any`.
+                                    Some(TypeId::ANY)
+                                } else {
+                                    // Generator-like but missing the requested arg.
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            best_direct = Some((priority, extracted));
                         }
-                        // arg_index == 1 with only 1 arg: TReturn defaults to `any`
-                        if arg_index == 1 && type_args.nodes.len() == 1 {
-                            return Some(TypeId::ANY);
-                        }
+                        continue;
                     }
-                    return None; // Generator-like but missing the requested arg
                 }
+            }
+        }
 
-                // Non-generator heritage type — resolve its type and recurse through its heritage
+        if let Some((_, extracted)) = best_direct {
+            return extracted;
+        }
+
+        // No direct generator-like heritage at this level — recurse through
+        // transitive heritage as a fallback.
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+
+                let expr_idx = if let Some(expr_data) = self.ctx.arena.get_expr_type_args(type_node)
+                {
+                    expr_data.expression
+                } else {
+                    type_idx
+                };
+
                 let heritage_base_type = self.get_type_of_node(expr_idx);
                 if heritage_base_type != TypeId::ERROR
                     && let Some(result) = self.resolve_generator_arg_from_heritage(

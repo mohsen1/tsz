@@ -423,14 +423,7 @@ impl<'a> UsageAnalyzer<'a> {
             let Some(symbol) = self.binder.symbols.get(sym_id) else {
                 return;
             };
-
-            let mut declarations = symbol.declarations.clone();
-            if symbol.value_declaration.is_some()
-                && !declarations.contains(&symbol.value_declaration)
-            {
-                declarations.push(symbol.value_declaration);
-            }
-            declarations
+            symbol.all_declarations()
         };
 
         for decl_idx in declarations {

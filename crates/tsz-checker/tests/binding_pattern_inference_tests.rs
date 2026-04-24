@@ -225,6 +225,37 @@ trans(({a, b = 10}) => a);
 }
 
 #[test]
+fn test_parameter_destructuring_with_default_tuple_skips_ts2493() {
+    // Regression test for destructuringWithLiteralInitializers2.ts:
+    // Parameter `function f01([x, y] = []) {}` should NOT emit TS2493 for the
+    // out-of-bounds element access into `[]`. tsc treats the binding elements
+    // as implicitly any (TS7031) instead.
+    let source = r#"
+function f01([x, y] = []) {}
+function f10([x = 0, y] = []) {}
+function f11([x, y] = [1]) {}
+"#;
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2493_errors: Vec<&(u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2493)
+        .collect();
+    assert!(
+        ts2493_errors.is_empty(),
+        "Parameter destructuring with default tuple must not emit TS2493. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_destructuring_assignment_defaults_skip_ts2493_for_empty_array_literal_rhs() {
     let source = r#"
 class A {

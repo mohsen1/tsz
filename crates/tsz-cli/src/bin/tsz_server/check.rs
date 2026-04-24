@@ -221,7 +221,7 @@ impl Server {
             project_env.apply_to(&mut checker.ctx);
             checker
                 .ctx
-                .set_resolved_modules((*resolved_modules_arc).clone());
+                .set_resolved_modules(Arc::clone(&resolved_modules_arc));
             checker.ctx.set_current_file_idx(file_idx);
             checker.check_source_file(file.source_file);
 
@@ -466,7 +466,7 @@ impl Server {
             project_env.apply_to(&mut checker.ctx);
             checker
                 .ctx
-                .set_resolved_modules((*resolved_modules_arc).clone());
+                .set_resolved_modules(Arc::clone(&resolved_modules_arc));
             checker.ctx.set_current_file_idx(file_idx);
             checker.check_source_file(file.source_file);
 

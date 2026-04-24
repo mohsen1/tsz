@@ -478,3 +478,147 @@ fn test_ts2420_for_public_class_member_vs_private_interface_member() {
         "expected visibility-widening elaboration for TS2420 on Bar2, got: {d:?}"
     );
 }
+
+// ============================================================
+// Ergonomic brand check (`#field in expr`) diagnostics
+// ============================================================
+
+/// TS1451: `(#field) in v` — private identifier in a parenthesized expression is a
+/// standalone expression (not the direct LHS of `in`).
+#[test]
+fn test_ts1451_parenthesized_private_identifier_in_expression() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        return (#field) in v; // TS1451
+    }
+}
+"#,
+    );
+    let ts1451_count = diagnostics.iter().filter(|d| d.code == 1451).count();
+    assert_eq!(
+        ts1451_count, 1,
+        "Expected exactly 1 TS1451 for parenthesized private identifier in `in` expression. Got: {diagnostics:?}"
+    );
+}
+
+/// TS18016: `#field in v` used outside any class body.
+#[test]
+fn test_ts18016_private_in_expression_outside_class() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+}
+function check(v: C) {
+    return #field in v; // TS18016 - outside class body
+}
+"#,
+    );
+    let ts18016_count = diagnostics.iter().filter(|d| d.code == 18016).count();
+    assert_eq!(
+        ts18016_count, 1,
+        "Expected TS18016 for #field in expression outside class body. Got: {diagnostics:?}"
+    );
+}
+
+/// TS2339: typo in private identifier name (`#fiel` vs `#field`) — error even when RHS is `any`.
+#[test]
+fn test_ts2339_typo_private_identifier_in_expression_any_rhs() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        return #fiel in v; // TS2339 - typo, even though v is any
+    }
+}
+"#,
+    );
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+    assert_eq!(
+        ts2339_count, 1,
+        "Expected TS2339 for undeclared private identifier #fiel even when RHS is any. Got: {diagnostics:?}"
+    );
+}
+
+/// TS2406: `for (#field in v)` — private identifier as for-in LHS.
+#[test]
+fn test_ts2406_private_identifier_as_for_in_lhs() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        for (#field in v) {} // TS2406
+    }
+}
+"#,
+    );
+    let ts2406_count = diagnostics.iter().filter(|d| d.code == 2406).count();
+    let ts2405_count = diagnostics.iter().filter(|d| d.code == 2405).count();
+    assert_eq!(
+        ts2406_count, 1,
+        "Expected TS2406 (not TS2405) for private identifier as for-in LHS. Got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2405_count, 0,
+        "Should NOT emit TS2405 for private identifier as for-in LHS. Got: {diagnostics:?}"
+    );
+}
+
+/// TS18047: `#field in u` where `u: object | null` — null is not valid RHS.
+#[test]
+fn test_ts18047_possibly_null_rhs_in_private_in_expression() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(u: object | null) {
+        return #field in u; // TS18047 - u is possibly null
+    }
+}
+"#,
+    );
+    let ts18047_count = diagnostics.iter().filter(|d| d.code == 18047).count();
+    assert_eq!(
+        ts18047_count, 1,
+        "Expected TS18047 for possibly-null RHS in #field in expr. Got: {diagnostics:?}"
+    );
+    // Must NOT emit TS2719 (spurious "two different types" error)
+    let ts2719_count = diagnostics.iter().filter(|d| d.code == 2719).count();
+    assert_eq!(
+        ts2719_count, 0,
+        "Should NOT emit TS2719 for possibly-null RHS. Got: {diagnostics:?}"
+    );
+}
+
+/// No errors for valid `#field in expr` with non-class RHS types.
+/// tsc does NOT require the RHS to be assignable to the declaring class type.
+#[test]
+fn test_no_error_private_in_expression_non_class_rhs() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C {
+    #field = 1;
+    check(v: any) {
+        const a = #field in v;             // ok - any
+        const b = #field in {};            // ok - object literal
+        const c = #field in (v as object); // ok - object type
+        const d = #field in new C();       // ok - instance of C
+    }
+}
+"#,
+    );
+    // Should emit no errors for these valid uses
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| [2339, 1451, 18016, 18047, 2719, 2322].contains(&d.code))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Expected no errors for valid #field in expressions. Got: {errors:?}"
+    );
+}

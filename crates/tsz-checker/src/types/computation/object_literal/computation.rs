@@ -1533,7 +1533,10 @@ impl<'a> CheckerState<'a> {
                             name: name_atom,
                             type_id: method_type,
                             write_type: method_type,
-                            optional: false,
+                            // A method shorthand may carry `?` — `{ a?() {} }` —
+                            // in which case the inferred property type must be
+                            // optional so the .d.ts emits `a?(): void`.
+                            optional: method.question_token,
                             readonly: false,
                             is_method: true, // Object literal methods should be bivariant
                             is_class_prototype: false,

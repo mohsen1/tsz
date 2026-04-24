@@ -118,3 +118,58 @@ class B extends Mixed {
         );
     }
 }
+
+/// When a mixin constructor's return type references a utility conditional
+/// application such as `InstanceType<C>`, tsc reduces the application to its
+/// concrete form (`Context`) when rendering the heritage instance type in
+/// override diagnostics. This mirrors the `override19.ts` conformance
+/// scenario: the diagnostic must render `A & { context: Context; }` rather
+/// than `A & { context: InstanceType<typeof Context>; }`.
+///
+/// The test uses a locally-defined alias with the same conditional body as
+/// the standard `InstanceType<T>` so it does not need the full lib loaded
+/// by the test harness.
+#[test]
+fn override_heritage_display_reduces_utility_conditional_application() {
+    let diags = get_diagnostics(
+        r#"
+type Foo = abstract new(...args: any) => any;
+type Inst<T extends Foo> = T extends abstract new (...args: any) => infer R ? R : any;
+declare function CreateMixin<C extends Foo, T extends Foo>(Context: C, Base: T): T & {
+   new (...args: any[]): { context: Inst<C> }
+}
+class Context {}
+class A {
+    doSomething() {}
+}
+class B extends CreateMixin(Context, A) {
+   override foo() {}
+}
+class C extends CreateMixin(Context, A) {
+    override doSomethang() {}
+}
+"#,
+    );
+
+    let override_diags: Vec<&str> = diags
+        .iter()
+        .filter(|(code, _)| *code == 4113 || *code == 4117)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+
+    assert!(
+        !override_diags.is_empty(),
+        "Expected TS4113/TS4117 diagnostics, got: {diags:?}"
+    );
+
+    for msg in &override_diags {
+        assert!(
+            msg.contains("A & { context: Context; }"),
+            "Expected reduced heritage display 'A & {{ context: Context; }}' in message, got: {msg}"
+        );
+        assert!(
+            !msg.contains("Inst<"),
+            "Should NOT render unreduced 'Inst<...>' in heritage display, got: {msg}"
+        );
+    }
+}

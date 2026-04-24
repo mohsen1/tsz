@@ -1174,11 +1174,7 @@ impl<'a> CheckerState<'a> {
         }
         if sym.has_any_flags(symbol_flags::ALIAS) && sym.import_module.is_none() {
             let arena = self.ctx.get_arena_for_file(owner_file_idx as u32);
-            let mut declarations = sym.declarations.clone();
-            if sym.value_declaration.is_some() && !declarations.contains(&sym.value_declaration) {
-                declarations.push(sym.value_declaration);
-            }
-            if declarations.into_iter().any(|decl_idx| {
+            if sym.all_declarations().into_iter().any(|decl_idx| {
                 arena.get(decl_idx).is_some_and(|node| {
                     node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
                         || node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_ALIAS_DECLARATION

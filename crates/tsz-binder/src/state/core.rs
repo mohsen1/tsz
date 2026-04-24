@@ -46,7 +46,7 @@ impl BinderStateScopeInputs {
         Self {
             scopes,
             node_scope_ids,
-            flow_nodes: FlowNodeArena::new(),
+            flow_nodes: Arc::new(FlowNodeArena::new()),
             ..Self::default()
         }
     }
@@ -177,7 +177,7 @@ impl BinderState {
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
-            flow_nodes,
+            flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
             scope_chain: Vec::with_capacity(32),
@@ -185,7 +185,8 @@ impl BinderState {
             node_symbols: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: Arc::new(FxHashMap::default()),
-            declaration_arenas: FxHashMap::default(),
+            declaration_arenas: Arc::new(FxHashMap::default()),
+            sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::with_capacity_and_hasher(128, Default::default()),
             top_level_flow: FxHashMap::default(),
@@ -243,15 +244,19 @@ impl BinderState {
         self.declared_modules.clear();
         self.is_external_module = false;
         self.is_strict_scope = false;
-        self.flow_nodes.clear();
-        self.unreachable_flow = self.flow_nodes.alloc(flow_flags::UNREACHABLE);
+        {
+            let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+            flow_nodes.clear();
+            self.unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
+        }
         self.current_flow = FlowNodeId::NONE;
         self.scope_chain.clear();
         self.current_scope_idx = 0;
         self.node_symbols.clear();
         self.module_declaration_exports_publicly.clear();
         Arc::make_mut(&mut self.symbol_arenas).clear();
-        self.declaration_arenas.clear();
+        Arc::make_mut(&mut self.declaration_arenas).clear();
+        Arc::make_mut(&mut self.sym_to_decl_indices).clear();
         self.cross_file_node_symbols.clear();
         self.node_flow.clear();
         self.top_level_flow.clear();
@@ -414,7 +419,7 @@ impl BinderState {
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
-            flow_nodes,
+            flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
             scope_chain: Vec::new(),
@@ -422,7 +427,8 @@ impl BinderState {
             node_symbols,
             module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: Arc::new(FxHashMap::default()),
-            declaration_arenas: FxHashMap::default(),
+            declaration_arenas: Arc::new(FxHashMap::default()),
+            sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
@@ -511,6 +517,7 @@ impl BinderState {
             wildcard_reexports_type_only,
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols,
             shorthand_ambient_modules,
             modules_with_export_equals,
@@ -546,6 +553,7 @@ impl BinderState {
             module_declaration_exports_publicly,
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols,
             node_flow,
             top_level_flow: FxHashMap::default(),
@@ -1038,7 +1046,7 @@ impl BinderState {
         }
 
         // Create START flow node for the file
-        let start_flow = self.flow_nodes.alloc(flow_flags::START);
+        let start_flow = Arc::make_mut(&mut self.flow_nodes).alloc(flow_flags::START);
         self.current_flow = start_flow;
         self.is_external_module = Self::source_file_is_external_module(arena, root);
 
@@ -1138,13 +1146,34 @@ impl BinderState {
     /// not already assigned by a multi-file merge). Lib symbols (tracked in
     /// `lib_symbol_ids`) are skipped to avoid overwriting their original
     /// file provenance.
+    ///
+    /// Also finalizes `StableLocation::file_idx` on every symbol's
+    /// `stable_declarations` and `stable_value_declaration`. During single-
+    /// file binding these stable locations are recorded with
+    /// `file_idx = u32::MAX`; this pass promotes them to the driver-assigned
+    /// index. This is Phase 1 plumbing for the
+    /// [global query graph architecture][plan]; the parallel `NodeIndex`
+    /// fields remain authoritative for existing consumers.
+    ///
+    /// [plan]: ../../../../docs/plan/global-query-graph-architecture.md
     fn stamp_file_idx(&mut self) {
         let idx = self.file_idx;
+        let lib_symbol_ids = &self.lib_symbol_ids;
 
         // Stamp symbols
         for sym in self.symbols.iter_mut() {
-            if sym.decl_file_idx == u32::MAX && !self.lib_symbol_ids.contains(&sym.id) {
+            let is_lib = lib_symbol_ids.contains(&sym.id);
+            if sym.decl_file_idx == u32::MAX && !is_lib {
                 sym.decl_file_idx = idx;
+            }
+            // Stable locations: only stamp entries that are still unassigned
+            // and only for non-lib symbols. Lib stable locations keep their
+            // own file provenance once it is assigned.
+            if !is_lib {
+                for stable in &mut sym.stable_declarations {
+                    stable.set_file_idx_if_unassigned(idx);
+                }
+                sym.stable_value_declaration.set_file_idx_if_unassigned(idx);
             }
         }
 
@@ -1385,12 +1414,7 @@ impl BinderState {
             return true;
         }
 
-        let mut declarations = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !declarations.contains(&symbol.value_declaration) {
-            declarations.push(symbol.value_declaration);
-        }
-
-        declarations.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             if decl_idx.is_none() {
                 return false;
             }
@@ -1429,12 +1453,7 @@ impl BinderState {
     fn compute_module_export_equals_non_module(&self, exports: &SymbolTable) -> Option<bool> {
         let export_assignment_targets = |sym: &Symbol| -> Vec<String> {
             let mut targets = Vec::new();
-            let mut declarations = sym.declarations.clone();
-            if sym.value_declaration.is_some() && !declarations.contains(&sym.value_declaration) {
-                declarations.push(sym.value_declaration);
-            }
-
-            for decl_idx in declarations {
+            for decl_idx in sym.all_declarations() {
                 if decl_idx.is_none() {
                     continue;
                 }
@@ -1689,7 +1708,20 @@ impl BinderState {
             if let Some(sym_id) = self.node_symbols.remove(&node.0)
                 && let Some(sym) = self.symbols.get_mut(sym_id)
             {
-                sym.declarations.retain(|decl| *decl != node);
+                // Keep `declarations` and `stable_declarations` in lockstep —
+                // they share a positional invariant established in
+                // `Symbol::add_declaration`.
+                let mut i = 0;
+                while i < sym.declarations.len() {
+                    if sym.declarations[i] == node {
+                        sym.declarations.remove(i);
+                        if i < sym.stable_declarations.len() {
+                            sym.stable_declarations.remove(i);
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
                 sym.first_declaration_span = sym
                     .declarations
                     .first()
@@ -1702,6 +1734,10 @@ impl BinderState {
                     } else {
                         None
                     };
+                    sym.stable_value_declaration = crate::symbols::StableLocation::from_span(
+                        self.file_idx,
+                        sym.value_declaration_span,
+                    );
                 }
             }
         }

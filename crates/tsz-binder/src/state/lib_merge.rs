@@ -143,6 +143,13 @@ impl BinderState {
             // `export {}`), build a set of declaration NodeIndices from
             // `declare global { ... }` blocks. Module-scoped declarations
             // must NOT be merged into existing global symbols.
+            // Also build a per-name map of flags contributed by `declare global`
+            // declarations, so we can selectively merge those flags without
+            // contaminating globals with module-scoped flags (e.g. the module-
+            // scoped `class Iterator` must not add CLASS to the global
+            // `interface Iterator` from es2015.iterable.d.ts, but the
+            // `var Iterator: IteratorConstructor` from `declare global` must
+            // add FUNCTION_SCOPED_VARIABLE so Iterator is usable as a value).
             let global_aug_nodes: Option<rustc_hash::FxHashSet<tsz_parser::NodeIndex>> =
                 if lib_ctx.binder.is_external_module {
                     let mut nodes = rustc_hash::FxHashSet::default();
@@ -152,6 +159,22 @@ impl BinderState {
                         }
                     }
                     Some(nodes)
+                } else {
+                    None
+                };
+            // Per-name flags from `declare global` entries.
+            let global_aug_flags: Option<rustc_hash::FxHashMap<&str, u32>> =
+                if lib_ctx.binder.is_external_module {
+                    let mut flags_map: rustc_hash::FxHashMap<&str, u32> =
+                        rustc_hash::FxHashMap::default();
+                    for (name, augs) in lib_ctx.binder.global_augmentations.iter() {
+                        let mut combined = 0u32;
+                        for aug in augs {
+                            combined |= aug.flags;
+                        }
+                        flags_map.insert(name.as_str(), combined);
+                    }
+                    Some(flags_map)
                 } else {
                     None
                 };
@@ -183,22 +206,31 @@ impl BinderState {
                                         }
                                         existing_mut
                                             .add_declaration(decl, lib_sym.first_declaration_span);
-                                        let arenas = self
-                                            .declaration_arenas
+                                        let arenas = Arc::make_mut(&mut self.declaration_arenas)
                                             .entry((existing_id, decl))
                                             .or_default();
                                         if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
                                             arenas.push(Arc::clone(&lib_ctx.arena));
                                         }
                                     }
-                                    // Do NOT merge flags from external module symbols.
+                                    // Merge only the flags that originate from `declare global`
+                                    // declarations, not module-scoped ones. For example,
+                                    // `declare global { var Iterator: IteratorConstructor }`
+                                    // should add FUNCTION_SCOPED_VARIABLE to the global Iterator
+                                    // symbol, but the module-scoped `class Iterator` should not
+                                    // add CLASS.
+                                    if let Some(ref gaf) = global_aug_flags
+                                        && let Some(&gflags) =
+                                            gaf.get(lib_sym.escaped_name.as_str())
+                                    {
+                                        existing_mut.flags |= gflags;
+                                    }
                                 } else {
                                     existing_mut.flags |= lib_sym.flags;
                                     for &decl in &lib_sym.declarations {
                                         existing_mut
                                             .add_declaration(decl, lib_sym.first_declaration_span);
-                                        let arenas = self
-                                            .declaration_arenas
+                                        let arenas = Arc::make_mut(&mut self.declaration_arenas)
                                             .entry((existing_id, decl))
                                             .or_default();
                                         if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
@@ -206,14 +238,35 @@ impl BinderState {
                                         }
                                     }
                                 }
-                                // Update value_declaration if not set
-                                if existing_mut.value_declaration.is_none()
-                                    && lib_sym.value_declaration.is_some()
-                                {
-                                    existing_mut.set_value_declaration(
-                                        lib_sym.value_declaration,
-                                        lib_sym.value_declaration_span,
-                                    );
+                                // Update value_declaration if not set.
+                                // For external module libs, only use a value_declaration
+                                // that originates from `declare global`, not a module-
+                                // scoped class/function that happens to share the name.
+                                if existing_mut.value_declaration.is_none() {
+                                    if let Some(ref aug_nodes) = global_aug_nodes {
+                                        if let Some(augs) = lib_ctx
+                                            .binder
+                                            .global_augmentations
+                                            .get(&lib_sym.escaped_name)
+                                        {
+                                            for aug in augs {
+                                                if (aug.flags & symbol_flags::VALUE) != 0
+                                                    && aug_nodes.contains(&aug.node)
+                                                {
+                                                    existing_mut.set_value_declaration(
+                                                        aug.node,
+                                                        lib_sym.first_declaration_span,
+                                                    );
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    } else if lib_sym.value_declaration.is_some() {
+                                        existing_mut.set_value_declaration(
+                                            lib_sym.value_declaration,
+                                            lib_sym.value_declaration_span,
+                                        );
+                                    }
                                 }
                             }
                             existing_id
@@ -223,7 +276,7 @@ impl BinderState {
                             merged_by_name.insert(name_atom, new_id);
                             // Track declaration arenas for new symbol
                             for &decl in &lib_sym.declarations {
-                                self.declaration_arenas
+                                Arc::make_mut(&mut self.declaration_arenas)
                                     .entry((new_id, decl))
                                     .or_default()
                                     .push(Arc::clone(&lib_ctx.arena));
@@ -236,7 +289,7 @@ impl BinderState {
                         merged_by_name.insert(name_atom, new_id);
                         // Track declaration arenas for new symbol
                         for &decl in &lib_sym.declarations {
-                            self.declaration_arenas
+                            Arc::make_mut(&mut self.declaration_arenas)
                                 .entry((new_id, decl))
                                 .or_default()
                                 .push(Arc::clone(&lib_ctx.arena));
@@ -249,7 +302,7 @@ impl BinderState {
                     merged_by_name.insert(name_atom, new_id);
                     // Track declaration arenas for new symbol
                     for &decl in &lib_sym.declarations {
-                        self.declaration_arenas
+                        Arc::make_mut(&mut self.declaration_arenas)
                             .entry((new_id, decl))
                             .or_default()
                             .push(Arc::clone(&lib_ctx.arena));
