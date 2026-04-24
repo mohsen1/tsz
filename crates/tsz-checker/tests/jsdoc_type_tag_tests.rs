@@ -453,3 +453,65 @@ var props = {};
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+// ─── async arrow + JSDoc callable type (asyncArrowFunction_allowJs.ts) ───────
+
+/// Concise-body async arrow returning wrong type should produce exactly one TS2322.
+/// `/** @type {function(): string} */ const b = async () => 0`
+/// tsc anchors the error at the declaration (col 11 = `async …`), not the body.
+#[test]
+fn test_async_concise_arrow_jsdoc_callable_wrong_return_type() {
+    let source = r#"
+/** @type {function(): string} */
+const b = async () => 0
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        1,
+        "Expected exactly 1 TS2322 for async concise arrow returning number with @type {{function(): string}}, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Block-body async arrow returning wrong type: tsc emits TS2322 at the `return` statement,
+/// NOT a secondary outer-declaration error.
+/// `/** @type {function(): string} */ const c = async () => { return 0 }`
+#[test]
+fn test_async_block_body_arrow_jsdoc_callable_wrong_return_type_single_error() {
+    let source = r#"
+/** @type {function(): string} */
+const c = async () => {
+    return 0
+}
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        1,
+        "Expected exactly 1 TS2322 (at return stmt) for async block-body arrow with wrong return type, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Block-body async arrow returning the CORRECT type should produce NO TS2322.
+/// `/** @type {function(): string} */ const d = async () => { return "" }`
+#[test]
+fn test_async_block_body_arrow_jsdoc_callable_correct_return_type_no_error() {
+    let source = r#"
+/** @type {function(): string} */
+const d = async () => {
+    return ""
+}
+"#;
+    let diagnostics = check_js_with_libs(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        0,
+        "Expected 0 TS2322 for async block-body arrow correctly returning string, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}

@@ -1812,6 +1812,21 @@ impl<'a> CheckerState<'a> {
                 let original_type = annotated_return_type.unwrap_or(return_type);
                 self.unwrap_promise_type(original_type)
                     .unwrap_or(return_type)
+            } else if is_async_for_context
+                && has_contextual_return
+                && contextual_void_return_exception
+            {
+                // Contextual `() => void` for async callbacks: allow returning anything,
+                // the outer function-type assignability handles ergonomics.
+                TypeId::ANY
+            } else if is_async_for_context && has_contextual_return {
+                // For async functions with a non-void contextual return type (e.g., from
+                // `/** @type {function(): string} */ const c = async () => { return 0 }`),
+                // use the contextual return type directly as the expected body return type.
+                // The contextual return context was already unwrapped from Promise at
+                // line 1556-1557, so e.g. `string` from `function(): string` flows here
+                // and `check_return_statement` can report `number` is not `string`.
+                return_context_for_circularity.unwrap_or(TypeId::ANY)
             } else if is_async_for_context {
                 // For contextually-typed async functions (no explicit annotation),
                 // also unwrap Promise from the return type. For unions like

@@ -834,9 +834,10 @@ impl<'a> CheckerState<'a> {
                             }
                             let func = checker.ctx.arena.get_function(init_node)?;
                             let body_node = checker.ctx.arena.get(func.body)?;
-                            if body_node.kind == syntax_kind_ext::BLOCK {
-                                return Some(false);
-                            }
+                            // For block bodies, check if any TS2322/TS2339 was emitted
+                            // inside the block during the initializer check. If so, the
+                            // body already produced the canonical diagnostic and the outer
+                            // declaration-level check should be skipped.
                             Some(
                                 checker.ctx.diagnostics[init_snap.diagnostics_len..]
                                     .iter()
@@ -848,6 +849,36 @@ impl<'a> CheckerState<'a> {
                             )
                         })
                         .unwrap_or(false);
+                    // For async function initializers in JS files with a JSDoc callable
+                    // type (e.g. `/** @type {function(): string} */`), tsc checks the
+                    // body return statements against the raw JSDoc return type, not the
+                    // whole-function type at the declaration level. The async wrapper
+                    // (`() => Promise<T>`) can never be directly assignable to a non-async
+                    // JSDoc type (`() => T`), so the outer declaration check always fails
+                    // — but tsc deliberately skips it and relies on body-level checks.
+                    // This matches tsc's behavior for `b` (concise body) which is handled
+                    // by `function_initializer_body_has_error`, and extends it to `c`/`d`
+                    // (block bodies) where the body check fires via check_return_statement.
+                    let is_async_block_body_with_jsdoc_callable_type = initializer_is_function
+                        && jsdoc_declared_type.is_some()
+                        && checker.is_js_file()
+                        && checker
+                            .ctx
+                            .arena
+                            .get(var_decl.initializer)
+                            .and_then(|n| checker.ctx.arena.get_function(n))
+                            .is_some_and(|f| {
+                                f.is_async
+                                    && checker
+                                        .ctx
+                                        .arena
+                                        .get(f.body)
+                                        .is_some_and(|b| b.kind == syntax_kind_ext::BLOCK)
+                            })
+                        && crate::query_boundaries::common::is_callable_type(
+                            checker.ctx.types.as_type_database(),
+                            declared_type,
+                        );
                     // Check assignability (skip for 'any' since anything is assignable to any,
                     // and skip for TypeId::ERROR since the type annotation failed to resolve).
                     // Note: we intentionally do NOT use type_contains_error() here because it
@@ -929,6 +960,12 @@ impl<'a> CheckerState<'a> {
                                 if elaborated_elements {
                                     // Elaboration emitted per-element TS2322 errors on the specific
                                     // mismatching array/tuple elements. Skip the generic TS2322.
+                                } else if is_async_block_body_with_jsdoc_callable_type {
+                                    // Async function with block body and JSDoc callable type:
+                                    // tsc checks return statements against the JSDoc return type
+                                    // inside the body (via check_return_statement). Any TS2322
+                                    // was already emitted there. Skip the outer declaration check
+                                    // since `() => Promise<T>` can never match `() => T` directly.
                                 } else if initializer_is_function
                                     && !checker.is_assignable_to(checked_init_type, declared_type)
                                     && checker.try_elaborate_assignment_source_error(
