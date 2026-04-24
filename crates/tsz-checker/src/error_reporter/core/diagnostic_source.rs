@@ -1381,6 +1381,14 @@ impl<'a> CheckerState<'a> {
                 // reflects the source code literally and misses the semantic
                 // `| undefined` injection.
                 && (!formatted.contains("| undefined") || display.contains("| undefined"))
+                // Don't use annotation text for string intrinsic types when it
+                // differs from the formatted type. tsc collapses idempotent
+                // nesting (e.g. Uppercase<Uppercase<string>> → Uppercase<string>)
+                // at type creation time, so the annotation text may be stale.
+                && (!crate::query_boundaries::common::is_string_intrinsic_type(
+                    self.ctx.types,
+                    display_type,
+                ) || display.trim() == formatted)
             {
                 if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_type)
                     .is_some()
