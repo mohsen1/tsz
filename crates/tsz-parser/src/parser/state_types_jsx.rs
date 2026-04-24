@@ -384,8 +384,17 @@ impl ParserState {
 
     /// Parse qualified name rest: given a left name, parse `.Right.Rest` parts
     /// Handles: foo.Bar, A.B.C, etc.
-    pub(crate) fn parse_qualified_name_rest(&mut self, left: NodeIndex) -> NodeIndex {
+    ///
+    /// Returns `(qualified_name, jsdoc_type_arguments)`. When the dot is followed by
+    /// `<…>` (JSDoc-legacy `Foo.<T>` syntax), TS8020 is emitted and the type arguments
+    /// are bubbled up to the caller so the whole reference can be treated as `Foo<T>`
+    /// rather than a qualified-name namespace access (which would cascade into TS2702).
+    pub(crate) fn parse_qualified_name_rest(
+        &mut self,
+        left: NodeIndex,
+    ) -> (NodeIndex, Option<NodeList>) {
         let mut current = left;
+        let mut jsdoc_type_arguments: Option<NodeList> = None;
 
         while self.is_token(SyntaxKind::DotToken) {
             let start_pos = if let Some(node) = self.arena.get(current) {
@@ -394,69 +403,67 @@ impl ParserState {
                 self.token_pos()
             };
 
-            // Capture position right after the dot (before scanning to next token)
+            // Capture the span of the dot itself so JSDoc-legacy `Foo.<T>` diagnostics
+            // can anchor at the `.` (matching tsc) instead of the following `<`.
+            let dot_start = self.token_pos();
             let dot_end = self.token_end();
             self.next_token(); // consume .
+
+            // `Foo.<T>` is JSDoc-legacy syntax for `Foo<T>`.  Emit TS8020 at the `.`
+            // (matching tsc's anchor), consume the type arguments, and bubble them up
+            // to the caller instead of creating a `QualifiedName` — otherwise the
+            // checker sees `Foo.<synthetic>` and emits a cascading TS2702
+            // ("only refers to a type, but is being used as a namespace").
+            if self.is_token(SyntaxKind::LessThanToken) {
+                self.parse_error_at(
+                    dot_start,
+                    dot_end - dot_start,
+                    "JSDoc types can only be used inside documentation comments.",
+                    tsz_common::diagnostics::diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
+                );
+                jsdoc_type_arguments = Some(self.parse_type_arguments());
+                break;
+            }
 
             // Line break recovery: if there's a line break before the next token and it
             // looks like a new declaration (keyword followed by identifier on same line),
             // emit TS1003 and create a missing identifier instead of consuming the keyword.
             // This matches tsc's parseRightSideOfDot heuristic.
-            let right = if self.is_token(SyntaxKind::LessThanToken) {
-                let question_start = self.token_pos();
-                let question_end = self.token_end();
-                self.parse_error_at(
-                    question_start,
-                    question_end - question_start,
-                    "JSDoc types can only be used inside documentation comments.",
-                    tsz_common::diagnostics::diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS,
-                );
-                let type_arguments = self.parse_type_arguments();
-                self.arena.add_identifier(
-                    SyntaxKind::Identifier as u16,
-                    dot_end,
-                    dot_end,
-                    crate::parser::node::IdentifierData {
-                        atom: tsz_common::interner::Atom::NONE,
-                        escaped_text: String::new(),
-                        original_text: None,
-                        type_arguments: Some(type_arguments),
-                    },
-                )
-            } else if self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword() {
-                let snapshot = self.scanner.save_state();
-                let saved_token = self.current_token;
-                self.next_token();
-                let next_is_ident_on_same_line =
-                    !self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword();
-                self.scanner.restore_state(snapshot);
-                self.current_token = saved_token;
-                if next_is_ident_on_same_line {
-                    // Looks like a new declaration — emit TS1003 at the position
-                    // right after the dot (matching tsc's reportAtCurrentPosition)
-                    self.parse_error_at(
-                        dot_end,
-                        0,
-                        "Identifier expected.",
-                        tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
-                    );
-                    self.arena.add_identifier(
-                        SyntaxKind::Identifier as u16,
-                        dot_end,
-                        dot_end,
-                        crate::parser::node::IdentifierData {
-                            atom: tsz_common::interner::Atom::NONE,
-                            escaped_text: String::new(),
-                            original_text: None,
-                            type_arguments: None,
-                        },
-                    )
+            let right =
+                if self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword() {
+                    let snapshot = self.scanner.save_state();
+                    let saved_token = self.current_token;
+                    self.next_token();
+                    let next_is_ident_on_same_line =
+                        !self.scanner.has_preceding_line_break() && self.is_identifier_or_keyword();
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = saved_token;
+                    if next_is_ident_on_same_line {
+                        // Looks like a new declaration — emit TS1003 at the position
+                        // right after the dot (matching tsc's reportAtCurrentPosition)
+                        self.parse_error_at(
+                            dot_end,
+                            0,
+                            "Identifier expected.",
+                            tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                        );
+                        self.arena.add_identifier(
+                            SyntaxKind::Identifier as u16,
+                            dot_end,
+                            dot_end,
+                            crate::parser::node::IdentifierData {
+                                atom: tsz_common::interner::Atom::NONE,
+                                escaped_text: String::new(),
+                                original_text: None,
+                                type_arguments: None,
+                            },
+                        )
+                    } else {
+                        self.parse_identifier_name()
+                    }
                 } else {
                     self.parse_identifier_name()
-                }
-            } else {
-                self.parse_identifier_name()
-            };
+                };
             let end_pos = self.token_full_start();
 
             current = self.arena.add_qualified_name(
@@ -470,7 +477,7 @@ impl ParserState {
             );
         }
 
-        current
+        (current, jsdoc_type_arguments)
     }
 
     // =========================================================================
