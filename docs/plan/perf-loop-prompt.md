@@ -136,22 +136,34 @@ or branch with uncommitted work — only clean cargo caches.
 
 ## What's been shipped this campaign (track here)
 
-Architectural / Phase 0–1 / docs:
+### Architectural / docs:
 - #1007 — design: instantiate_type cross-call cache (revised after review)
 - #1011 — refresh: perf followup with 2026-04-23 state
 - #1051 — canonical loop prompt with architectural learnings + review constraints
-- **#1045 [open]** — Phase 1 step 1: `StableLocation` on `Symbol`
+- #1053 — loop prompt update: #1043 merge + Phase 2 finding + ops learnings
+- #1062 — loop prompt update: forbid idle waiting + concrete alt-work list
 
-Arc-share migrations (Phase 0 plumbing — eliminates per-file deep clones):
+### Phase 1 — STABILIZE IDENTITY (2026-04-24/25): **COMPLETE** ✅
+- **#1055** — Phase 1 step 1: `StableLocation` on `Symbol` (parallel to `NodeIndex`, populated in lockstep, 12 bytes, survives arena drop)
+- **#1066** — Phase 1 step 2: migrate `class_extends_any_base` from `NodeIndex` to `StableLocation`; introduce `CheckerContext::node_at_stable_location((file_idx, pos, end)) -> Option<(NodeIndex, &NodeArena)>` rehydration helper. **Phase 5 unblocks here** — user arenas can now be evicted because consumers can rehydrate `NodeIndex` on demand from a stable triple.
+
+### Arc-share migrations (Phase 0 plumbing — eliminates per-file deep clones):
 - **MERGED**: #932 lib_symbol_ids • #944 wildcard_reexports • #954 module_exports
 - **MERGED**: #960 lib_binders • #973 module_augmentations • #979 global_augmentations
-- **MERGED**: #986 symbol_arenas • **#1043 declaration_arenas + sym_to_decl_indices** (2026-04-24)
-- **#1039 [open]** — flow_nodes (CI green; just needs to land)
+- **MERGED**: #986 symbol_arenas • **#1039 flow_nodes** (2026-04-24)
+- **MERGED**: **#1043 declaration_arenas + sym_to_decl_indices** (2026-04-24)
+- **MERGED**: **#1064 resolved_modules** (2026-04-24) — eliminates ~120K String clones × N files
 
-Cache infra (Phase 4 prerequisites):
-- **#1040 [open]** — PR 1/4: canonical-pairs `TypeSubstitution`
+### Cache infra (Phase 4 prerequisites):
+- **#1040 MERGED** — PR 1/4: canonical-pairs `TypeSubstitution` (deterministic content-hashable form)
 
-Bench infra:
+### Solver hot-path optimizations:
+- **#1125 [open]** — `remove_subtypes_for_bct` name-fingerprint pre-filter: skip impossible subtype pairs in O(N²) loop without invoking `SubtypeChecker`. Conservative — only definitive negatives short-circuit. (Salvaged from stalled BCT agent.)
+
+### Profiling infra:
+- **#1065 MERGED** — `flame` Cargo profile (`debug=2, strip=false, codegen-units=1, lto="thin"`) for `samply` / `cargo flamegraph`.
+
+### Bench infra:
 - #988 partial JSON on OOM/TERM
 - #1004 parallelize build_cross_file_binders
 
@@ -170,8 +182,11 @@ infrastructure:
 Currently the skeleton is built **alongside** the legacy merge and only
 validated against it (debug-only). The remaining Phase 2 work is **migrating
 consumers off the legacy `MergedProgram` path** so user arenas can be
-evicted (Phase 5 prerequisite). That's substantial multi-PR work — the
-right next step after Phase 1 step 2 (consumer migration to `StableLocation`).
+evicted (Phase 5 prerequisite). With Phase 1 complete (`StableLocation` +
+`node_at_stable_location` rehydration helper landed in #1055/#1066), Phase 2
+consumers can use the same rehydration pattern. The next architectural
+target is to make ONE skeleton consumer arena-free — same proof-of-concept
+shape as Phase 1 step 2 PR #1066.
 
 ## Operational learnings (2026-04-24)
 
