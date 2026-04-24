@@ -1498,6 +1498,7 @@ impl MergedAugmentations {
                         tsz::binder::GlobalAugmentation::with_arena(
                             aug.node,
                             Arc::clone(&file.arena),
+                            aug.flags,
                         )
                     }));
             }
