@@ -104,7 +104,7 @@ impl<'a> DeclarationEmitter<'a> {
         // of the declaration output.
         if let Some(name_node) = self.arena.get(name_idx) {
             // String-literal module name: `declare module "some-module" { ... }`
-            if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            if name_node.is_string_literal() {
                 return true;
             }
             // `declare global { ... }` — the parser represents `global` as
@@ -510,7 +510,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Extract identifier names directly
-        if name_node.kind == SyntaxKind::Identifier as u16 {
+        if name_node.is_identifier() {
             let ident = self.arena.get_identifier(name_node)?;
             Some(ident.escaped_text.clone())
         } else {

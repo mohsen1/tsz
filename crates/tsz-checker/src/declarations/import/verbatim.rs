@@ -51,10 +51,10 @@ impl<'a> CheckerState<'a> {
         // symbol (no NAMESPACE_MODULE flag) whose own exports/members are
         // empty. Follow `import_module` to check the target module's
         // top-level exports for any runtime value before short-circuiting.
-        let is_namespace_style_alias = (sym.flags & symbol_flags::ALIAS) != 0
+        let is_namespace_style_alias = sym.has_any_flags(symbol_flags::ALIAS)
             && sym.import_module.is_some()
             && sym.import_name.as_deref() == Some("*");
-        if (sym.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) == 0
+        if !sym.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
             && !is_namespace_style_alias
         {
             return false;
@@ -62,7 +62,7 @@ impl<'a> CheckerState<'a> {
 
         let member_has_runtime_value = |member_id: tsz_binder::SymbolId| {
             binder.get_symbol(member_id).is_some_and(|member_sym| {
-                (member_sym.flags & symbol_flags::VALUE) != 0
+                member_sym.has_any_flags(symbol_flags::VALUE)
                     && !self.symbol_member_is_type_only(member_id, None)
             })
         };
@@ -102,7 +102,7 @@ impl<'a> CheckerState<'a> {
                 return exports.iter().any(|(_, &member_id)| {
                     target_binder
                         .get_symbol(member_id)
-                        .is_some_and(|member_sym| (member_sym.flags & symbol_flags::VALUE) != 0)
+                        .is_some_and(|member_sym| member_sym.has_any_flags(symbol_flags::VALUE))
                 });
             }
         }
@@ -320,7 +320,7 @@ impl<'a> CheckerState<'a> {
         let Some(sym) = target_binder.get_symbol(sym_id) else {
             return false;
         };
-        (sym.flags & symbol_flags::ALIAS) != 0
+        sym.has_any_flags(symbol_flags::ALIAS)
     }
 
     /// Check if a named import refers to a purely type-only entity.
@@ -401,7 +401,7 @@ impl<'a> CheckerState<'a> {
                         if candidate_name == "default"
                             && let Some(default_sym_id) = exports.get(candidate_name)
                             && let Some(default_sym) = target_binder.get_symbol(default_sym_id)
-                            && (default_sym.flags & symbol_flags::ALIAS) != 0
+                            && default_sym.has_any_flags(symbol_flags::ALIAS)
                             && default_sym.import_module.is_none()
                             && let Some(target_decl_idx) = default_sym.primary_declaration()
                             && let Some(target_decl_node) = target_arena.get(target_decl_idx)
@@ -480,7 +480,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym_id) = target_binder.file_locals.get(import_name)
                 && let Some(sym) = target_binder.get_symbol(sym_id)
             {
-                return (sym.flags & tsz_binder::symbol_flags::CONST_ENUM) != 0;
+                return sym.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM);
             }
         }
 
@@ -495,7 +495,7 @@ impl<'a> CheckerState<'a> {
                 // In module_exports mode, check if any declaration is in a .d.ts
                 // We check symbol flags: if it's CONST_ENUM and declared in the current
                 // binder's d.ts file context
-                if (sym.flags & tsz_binder::symbol_flags::CONST_ENUM) != 0 {
+                if sym.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM) {
                     // Check declarations to see if they come from ambient context
                     let all_ambient = sym.declarations.iter().all(|&decl_idx| {
                         self.ctx.arena.is_in_ambient_context(decl_idx)
@@ -517,7 +517,7 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
         let sym = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
         let Some(sym) = sym else { return false };
-        if (sym.flags & tsz_binder::symbol_flags::CONST_ENUM) == 0 {
+        if !sym.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM) {
             return false;
         }
 

@@ -1,8 +1,8 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::common::union_members;
 use crate::query_boundaries::flow as flow_boundary;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{AccessExprData, Node};
-use tsz_parser::parser::{NodeIndex, node_flags};
 use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId};
 
 impl<'a> FlowAnalyzer<'a> {
@@ -57,7 +57,7 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(narrowed);
         }
         if is_true_branch {
-            let optional_call = (cond_node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0;
+            let optional_call = cond_node.is_optional_chain();
             if optional_call && self.is_matching_reference(call.expression, target) {
                 return Some(flow_boundary::narrow_optional_chain(
                     self.interner.as_type_database(),
@@ -142,6 +142,6 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     const fn call_access_is_optional_chain(&self, node: &Node, access: &AccessExprData) -> bool {
-        access.question_dot_token || (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0
+        access.question_dot_token || node.is_optional_chain()
     }
 }

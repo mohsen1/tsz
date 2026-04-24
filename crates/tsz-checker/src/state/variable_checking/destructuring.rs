@@ -210,14 +210,34 @@ impl<'a> CheckerState<'a> {
         flow_boundary::add_undefined_for_indexed_access(self.ctx.types, ty)
     }
 
+    /// Returns true when the given binding pattern is the name of a function
+    /// parameter that has a default initializer (e.g. `function f([x, y] = [])
+    /// {}`). In that case tsc does not emit TS2493 for out-of-bounds element
+    /// access into the inferred default tuple — the binding elements become
+    /// implicitly any (TS7031) instead.
+    fn binding_pattern_in_parameter_with_default(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(ext) = self.ctx.arena.get_extended(pattern_idx) else {
+            return false;
+        };
+        let parent_idx = ext.parent;
+        let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::PARAMETER {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_parameter(parent_node)
+            .is_some_and(|param| param.initializer.is_some())
+    }
+
     pub(crate) fn normalize_parameter_binding_pattern_source_type(
         &self,
         pattern_idx: NodeIndex,
         parent_type: TypeId,
     ) -> TypeId {
-        if !self.ctx.strict_null_checks()
-            || matches!(parent_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
-        {
+        if !self.ctx.strict_null_checks() || parent_type.is_any_unknown_or_error() {
             return parent_type;
         }
 
@@ -975,9 +995,17 @@ impl<'a> CheckerState<'a> {
                     // Also skip when the index is in bounds — ERROR may just mean the
                     // element type itself is an error (e.g. from an unresolved property),
                     // not that the index is out of range.
+                    //
+                    // Also skip TS2493 when the binding pattern is a PARAMETER whose
+                    // type was inferred from a default initializer (e.g. `function
+                    // f([x, y] = []) {}`). tsc treats the binding elements as
+                    // implicitly any (TS7031) rather than tuple-out-of-bounds here.
+                    let in_parameter_with_default =
+                        self.binding_pattern_in_parameter_with_default(pattern_idx);
                     if !has_rest_tail
                         && element_data.initializer.is_none()
                         && element_index >= elems.len()
+                        && !in_parameter_with_default
                     {
                         let tuple_type_str = self.format_type(array_like);
                         self.error_at_node(
@@ -1992,7 +2020,7 @@ impl<'a> CheckerState<'a> {
                 // For elements with default initializers, use the default's type
                 // instead of `any` so the contextual type carries useful info
                 // (e.g., `{ f = (x: string) => x.length }` → f: (x: string) => number).
-                let name_kind = self.ctx.arena.get(name_idx).map(|n| n.kind);
+                let name_kind = self.ctx.arena.kind_at(name_idx);
                 let prop_type = if matches!(
                     name_kind,
                     Some(

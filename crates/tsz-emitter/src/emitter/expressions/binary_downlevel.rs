@@ -721,9 +721,7 @@ impl<'a> Printer<'a> {
             return false;
         };
 
-        node.kind == SyntaxKind::Identifier as u16
-            || node.kind == SyntaxKind::StringLiteral as u16
-            || node.kind == SyntaxKind::NumericLiteral as u16
+        node.is_identifier() || node.is_string_literal() || node.is_numeric_literal()
     }
 
     pub(in crate::emitter) fn is_simple_nullish_expression(&self, node_idx: NodeIndex) -> bool {
@@ -734,11 +732,11 @@ impl<'a> Printer<'a> {
         // Match tsc's isSimpleCopiableExpression: identifiers, keywords, and literals
         // are all safe to repeat without side effects.
         // Note: tsc does NOT unwrap parenthesized expressions here.
-        node.kind == SyntaxKind::Identifier as u16
+        node.is_identifier()
             || (node.kind >= SyntaxKind::BreakKeyword as u16
                 && node.kind <= SyntaxKind::DeferKeyword as u16)
-            || node.kind == SyntaxKind::NumericLiteral as u16
-            || node.kind == SyntaxKind::StringLiteral as u16
+            || node.is_numeric_literal()
+            || node.is_string_literal()
             || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
     }
 

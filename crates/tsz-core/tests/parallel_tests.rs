@@ -3673,7 +3673,7 @@ fn skeleton_validate_against_merged_shorthand_ambient() {
 
     let idx = program.skeleton_index.as_ref().unwrap();
     assert_eq!(
-        idx.shorthand_ambient_modules, program.shorthand_ambient_modules,
+        idx.shorthand_ambient_modules, *program.shorthand_ambient_modules,
         "skeleton and legacy shorthand_ambient_modules must match"
     );
     // Verify actual content
@@ -8446,8 +8446,9 @@ var e: Date = c.b();
         ..Default::default()
     };
 
-    // Use a binder with program-level declaration_arenas (filtered for non-local)
-    // to match the CLI path which uses create_binder_from_bound_file_with_augmentations.
+    // Use a binder that shares the program-level `declaration_arenas` map via
+    // `Arc::clone`. Matches the CLI path which uses
+    // `create_binder_from_bound_file_with_augmentations` after the Arc migration.
     let file1_bound = program
         .files
         .iter()
@@ -8459,16 +8460,8 @@ var e: Date = c.b();
         .position(|f| f.file_name == "file1.ts")
         .unwrap();
 
-    let declaration_arenas: crate::binder::state::DeclarationArenaMap = program
-        .declaration_arenas
-        .iter()
-        .filter_map(|(&(sym_id, decl_idx), arenas)| {
-            let has_non_local = arenas
-                .iter()
-                .any(|arena| !std::sync::Arc::ptr_eq(arena, &file1_bound.arena));
-            has_non_local.then(|| ((sym_id, decl_idx), arenas.clone()))
-        })
-        .collect();
+    let declaration_arenas = std::sync::Arc::clone(&program.declaration_arenas);
+    let sym_to_decl_indices = std::sync::Arc::clone(&program.sym_to_decl_indices);
 
     let mut file_locals = crate::binder::SymbolTable::new();
     if file1_idx < program.file_locals.len() {
@@ -8490,9 +8483,11 @@ var e: Date = c.b();
         crate::binder::state::BinderStateScopeInputs {
             scopes: file1_bound.scopes.clone(),
             node_scope_ids: file1_bound.node_scope_ids.clone(),
-            global_augmentations: file1_bound.global_augmentations.clone(),
-            module_augmentations: file1_bound.module_augmentations.clone(),
-            augmentation_target_modules: file1_bound.augmentation_target_modules.clone(),
+            global_augmentations: std::sync::Arc::new(file1_bound.global_augmentations.clone()),
+            module_augmentations: std::sync::Arc::new(file1_bound.module_augmentations.clone()),
+            augmentation_target_modules: std::sync::Arc::new(
+                file1_bound.augmentation_target_modules.clone(),
+            ),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file1_bound
                 .module_declaration_exports_publicly
@@ -8500,8 +8495,9 @@ var e: Date = c.b();
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
-            symbol_arenas: file1_bound.symbol_arenas.clone(),
+            symbol_arenas: std::sync::Arc::new(file1_bound.symbol_arenas.clone()),
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),

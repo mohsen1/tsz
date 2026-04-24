@@ -163,13 +163,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let mut decls = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decls.push(symbol.value_declaration);
-        }
-        decls.extend(symbol.declarations.iter().copied());
-
-        for decl_idx in decls {
+        for decl_idx in symbol.all_declarations() {
             if let Some(text) =
                 self.get_jsx_component_prop_annotation_text_from_declaration(decl_idx, prop_name)
             {
@@ -187,13 +181,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let mut decls = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decls.push(symbol.value_declaration);
-        }
-        decls.extend(symbol.declarations.iter().copied());
-
-        for decl_idx in decls {
+        for decl_idx in symbol.all_declarations() {
             if let Some(prop_decl) =
                 self.get_jsx_component_prop_declaration_from_declaration(decl_idx, prop_name)
             {
@@ -210,13 +198,7 @@ impl<'a> CheckerState<'a> {
         props_name: &str,
     ) -> Option<String> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let mut decls = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decls.push(symbol.value_declaration);
-        }
-        decls.extend(symbol.declarations.iter().copied());
-
-        for decl_idx in decls {
+        for decl_idx in symbol.all_declarations() {
             if let Some(display) =
                 self.get_jsx_component_props_display_text_from_declaration(decl_idx, props_name)
             {
@@ -234,7 +216,7 @@ impl<'a> CheckerState<'a> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
             && parent.is_some()
         {
             decl_idx = parent;
@@ -293,7 +275,7 @@ impl<'a> CheckerState<'a> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
             && parent.is_some()
         {
             decl_idx = parent;
@@ -366,7 +348,7 @@ impl<'a> CheckerState<'a> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
             && parent.is_some()
         {
             decl_idx = parent;
@@ -440,12 +422,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 };
                 let symbol = self.ctx.binder.get_symbol(target_sym_id)?;
-                let mut decls = Vec::new();
-                if symbol.value_declaration.is_some() {
-                    decls.push(symbol.value_declaration);
-                }
-                decls.extend(symbol.declarations.iter().copied());
-                for decl_idx in decls {
+                for decl_idx in symbol.all_declarations() {
                     if let Some(text) = self
                         .get_jsx_component_prop_annotation_text_from_declaration(
                             decl_idx, prop_name,
@@ -479,12 +456,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 };
                 let symbol = self.ctx.binder.get_symbol(target_sym_id)?;
-                let mut decls = Vec::new();
-                if symbol.value_declaration.is_some() {
-                    decls.push(symbol.value_declaration);
-                }
-                decls.extend(symbol.declarations.iter().copied());
-                for decl_idx in decls {
+                for decl_idx in symbol.all_declarations() {
                     if let Some(prop_decl) = self
                         .get_jsx_component_prop_declaration_from_declaration(decl_idx, prop_name)
                     {

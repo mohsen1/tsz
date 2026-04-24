@@ -153,11 +153,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Skip ambient enums (they use TS1066)
-        if self
-            .ctx
-            .arena
-            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.ctx.arena.is_declare(&enum_data.modifiers) {
             return;
         }
 
@@ -348,7 +344,7 @@ impl<'a> CheckerState<'a> {
         // returns the stored value (which may be undefined), but tsc treats enum
         // member references as "evaluated" — the TS18033 check was already done on
         // the member itself.
-        if symbol.flags & symbol_flags::ENUM_MEMBER != 0 {
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return Some(true);
         }
 

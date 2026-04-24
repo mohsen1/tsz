@@ -81,10 +81,7 @@ impl<'a> CheckerState<'a> {
         // `T[keyof T]["foo"]` in return types. Limited to declare functions to
         // avoid triggering side effects from type evaluation in function bodies.
         if let Some(func) = self.ctx.arena.get_function(node)
-            && self
-                .ctx
-                .arena
-                .has_modifier(&func.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+            && self.ctx.arena.is_declare(&func.modifiers)
             && func.type_annotation != tsz_parser::parser::NodeIndex::NONE
         {
             self.check_type_node(func.type_annotation);
@@ -959,11 +956,18 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(TypeId::ERROR)
             };
             if generator_base != TypeId::ERROR {
-                let any_gen = self
-                    .ctx
-                    .types
-                    .factory()
-                    .application(generator_base, vec![TypeId::ANY, TypeId::ANY, TypeId::ANY]);
+                // For the pre-body protocol check, the declared annotation has no
+                // extractable TYield (the post-body path handles the yield-bearing
+                // cases). TNext therefore defaults to `unknown`, matching tsc's
+                // `Generator<any, any, unknown>` in `function* g(): number {}` and
+                // aligning with the post-body synthesis in
+                // `check_generator_return_type_assignability`. Keeping the two
+                // synthesized types identical lets the (start, code) diagnostic
+                // dedup collapse the redundant emission.
+                let any_gen = self.ctx.types.factory().application(
+                    generator_base,
+                    vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
+                );
 
                 // Fast path: if the return type is already recognized as a valid generator type,
                 // we don't need to do the complex structural subtyping check that fails due to overloads.

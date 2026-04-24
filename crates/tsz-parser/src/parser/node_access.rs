@@ -61,6 +61,44 @@ impl NodeArena {
         }
     }
 
+    /// Get the source start position of a node by index. Returns `None` if
+    /// the index is `NodeIndex::NONE` or out of bounds. Inherent helper for
+    /// the common `arena.get(idx).map(|n| n.pos)` pattern.
+    #[inline]
+    #[must_use]
+    pub fn pos_at(&self, index: NodeIndex) -> Option<u32> {
+        self.get(index).map(|n| n.pos)
+    }
+
+    /// Get the source end position of a node by index. Returns `None` if
+    /// the index is `NodeIndex::NONE` or out of bounds. Inherent helper for
+    /// the common `arena.get(idx).map(|n| n.end)` pattern.
+    #[inline]
+    #[must_use]
+    pub fn end_at(&self, index: NodeIndex) -> Option<u32> {
+        self.get(index).map(|n| n.end)
+    }
+
+    /// Get the `(pos, end)` source range of a node by index. Returns `None`
+    /// if the index is `NodeIndex::NONE` or out of bounds. Inherent helper
+    /// for the common `arena.get(idx).map(|n| (n.pos, n.end))` pattern used
+    /// by emitter source-range plumbing and diagnostics.
+    #[inline]
+    #[must_use]
+    pub fn pos_end_at(&self, index: NodeIndex) -> Option<(u32, u32)> {
+        self.get(index).map(|n| (n.pos, n.end))
+    }
+
+    /// Get the syntax kind (raw `u16`) of a node by index. Returns `None` if
+    /// the index is `NodeIndex::NONE` or out of bounds. Inherent mirror of
+    /// [`NodeAccess::kind`] — lets callers skip the trait import when they
+    /// only need the kind.
+    #[inline]
+    #[must_use]
+    pub fn kind_at(&self, index: NodeIndex) -> Option<u16> {
+        self.get(index).map(|n| n.kind)
+    }
+
     /// Get extended info for a node
     #[inline]
     #[must_use]
@@ -83,6 +121,20 @@ impl NodeArena {
         }
     }
 
+    /// Get the parent index of a node via its extended info. Returns `None`
+    /// if the index is `NodeIndex::NONE` or out of bounds. Inherent helper
+    /// for the very common `arena.get_extended(idx).map(|ext| ext.parent)`
+    /// pattern used by ~140 parent-walk call sites across checker/emitter.
+    ///
+    /// A root node returns `Some(NodeIndex::NONE)`; callers that want to
+    /// distinguish "root" from "unknown" should check `is_none()` on the
+    /// inner index.
+    #[inline]
+    #[must_use]
+    pub fn parent_of(&self, index: NodeIndex) -> Option<NodeIndex> {
+        self.get_extended(index).map(|ext| ext.parent)
+    }
+
     /// Get identifier data for a node.
     /// Returns None if node is not an identifier or has no data.
     #[inline]
@@ -94,6 +146,22 @@ impl NodeArena {
                 || node.kind == SyntaxKind::PrivateIdentifier as u16)
         {
             self.identifiers.get(node.data_index as usize)
+        } else {
+            None
+        }
+    }
+
+    /// Get the owned text of an `Identifier` node. Returns `None` for any
+    /// other kind, including `PrivateIdentifier` — mirrors the common
+    /// caller-side pattern that pre-filters on `SyntaxKind::Identifier`
+    /// before extracting `escaped_text`.
+    #[inline]
+    #[must_use]
+    pub fn identifier_text_owned(&self, index: NodeIndex) -> Option<String> {
+        use tsz_scanner::SyntaxKind;
+        let node = self.get(index)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            self.get_identifier(node).map(|id| id.escaped_text.clone())
         } else {
             None
         }
@@ -513,7 +581,7 @@ impl NodeArena {
         };
         let mut flags = node.flags as u32;
         use super::flags::node_flags;
-        if (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) == 0
+        if !node_flags::is_block_scoped(flags)
             && let Some(ext) = self.get_extended(node_idx)
             && let Some(parent) = self.get(ext.parent)
             && parent.kind == VARIABLE_DECLARATION_LIST
@@ -1097,8 +1165,7 @@ impl NodeArena {
     #[inline]
     #[must_use]
     pub fn get_accessor(&self, node: &Node) -> Option<&AccessorData> {
-        use super::syntax_kind_ext::{GET_ACCESSOR, SET_ACCESSOR};
-        if node.has_data() && (node.kind == GET_ACCESSOR || node.kind == SET_ACCESSOR) {
+        if node.has_data() && node.is_accessor() {
             self.accessors.get(node.data_index as usize)
         } else {
             None
@@ -1836,6 +1903,14 @@ impl Node {
         self.kind == CLASS_DECLARATION
     }
 
+    /// Check if this is any class-like node (class declaration or class expression).
+    #[inline]
+    #[must_use]
+    pub const fn is_class_like(&self) -> bool {
+        use super::syntax_kind_ext::{CLASS_DECLARATION, CLASS_EXPRESSION};
+        matches!(self.kind, CLASS_DECLARATION | CLASS_EXPRESSION)
+    }
+
     /// Check if this is any kind of function-like node
     #[inline]
     #[must_use]
@@ -1850,6 +1925,21 @@ impl Node {
                 | GET_ACCESSOR
                 | SET_ACCESSOR
         )
+    }
+
+    /// Check if this is an anonymous function-valued expression
+    /// (`function () {}`, `function name() {}`, or `(a) => {}`).
+    #[inline]
+    #[must_use]
+    pub const fn is_function_expression_or_arrow(&self) -> bool {
+        matches!(self.kind, FUNCTION_EXPRESSION | ARROW_FUNCTION)
+    }
+
+    /// Check if this is a get or set accessor declaration.
+    #[inline]
+    #[must_use]
+    pub const fn is_accessor(&self) -> bool {
+        matches!(self.kind, GET_ACCESSOR | SET_ACCESSOR)
     }
 
     /// Check if this is a binding pattern (array or object destructuring)

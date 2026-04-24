@@ -131,7 +131,7 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {
             // TYPE includes: Interface, TypeLiteral, TypeParameter, TypeAlias, Class, Enum, EnumMember
-            return (symbol.flags & symbol_flags::TYPE) != 0;
+            return symbol.has_any_flags(symbol_flags::TYPE);
         }
         false
     }
@@ -153,6 +153,20 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+
+        // Each `import X = require("...")` statement reports TS2307 at its own
+        // site. Clear the per-module dedupe up front so that a second
+        // statement importing the same unresolved module (for example, an
+        // `import im2 = require("...")` inside a `declare module "m1"`
+        // augmentation whose outer file already imported the same name)
+        // still emits TS2307 — matching tsc's per-site behavior. The dedupe
+        // remains effective *within* a single statement to suppress
+        // cascading emissions.
+        if let Some(module_name) = self.get_require_module_specifier(import.module_specifier) {
+            self.ctx
+                .modules_with_ts2307_emitted
+                .remove(module_name.as_str());
+        }
 
         // TS1294: erasableSyntaxOnly — import equals declarations are not erasable.
         if self.ctx.compiler_options.erasable_syntax_only
@@ -309,7 +323,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let import_alias_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();
+            let import_alias_sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
             should_emit_module_not_found = if inside_namespace {
                 self.namespace_import_alias_is_referenced(
                     containing_module_node,
@@ -466,7 +480,7 @@ impl<'a> CheckerState<'a> {
         // with the same name and check if any non-import has VALUE flags.
         if let Some(ref name) = import_name {
             // Get the symbol for this import
-            let import_sym_id = self.ctx.binder.node_symbols.get(&stmt_idx.0).copied();
+            let import_sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
             // Find the enclosing scope of the import statement
             let import_scope = self
                 .ctx
@@ -576,8 +590,8 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
                     // Check if this symbol has value semantics
-                    let is_value = (sym.flags & symbol_flags::VALUE) != 0;
-                    let is_namespace = (sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+                    let is_value = sym.has_any_flags(symbol_flags::VALUE);
+                    let is_namespace = sym.has_any_flags(symbol_flags::NAMESPACE_MODULE);
 
                     // TS2300: duplicate `import =` aliases with the same name in the same scope.
                     // TypeScript reports this as duplicate identifier (not TS2440).
@@ -626,7 +640,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
                     });
 
-                    let is_type_alias = (sym.flags & symbol_flags::TYPE_ALIAS) != 0;
+                    let is_type_alias = sym.has_any_flags(symbol_flags::TYPE_ALIAS);
                     if import_has_value && (is_value || is_type_alias) && has_local_declaration {
                         let message = format_message(
                             diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
@@ -755,8 +769,26 @@ impl<'a> CheckerState<'a> {
             && !inside_namespace
             && !in_function
         {
+            // tsc anchors TS1202 at the outer `export` modifier when the
+            // import-equals declaration is the clause of an `export import X =
+            // require(...)` statement. tsz's parser splits these into an
+            // EXPORT_DECLARATION wrapping the inner IMPORT_EQUALS_DECLARATION,
+            // so the inner node's span starts at `import` (not `export`).
+            // Walk up to the parent export wrapper to preserve tsc's anchor.
+            let anchor_idx = self
+                .ctx
+                .arena
+                .get_extended(stmt_idx)
+                .map(|ext| ext.parent)
+                .filter(|&parent| {
+                    self.ctx
+                        .arena
+                        .get(parent)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::EXPORT_DECLARATION)
+                })
+                .unwrap_or(stmt_idx);
             self.error_at_node(
-                stmt_idx,
+                anchor_idx,
                 "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
                 diagnostic_codes::IMPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
             );
@@ -1090,14 +1122,14 @@ impl<'a> CheckerState<'a> {
                     if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     {
                         let is_namespace =
-                            (symbol.flags & tsz_binder::symbol_flags::NAMESPACE) != 0;
-                        let mut has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+                            symbol.has_any_flags(tsz_binder::symbol_flags::NAMESPACE);
+                        let mut has_value = symbol.has_any_flags(tsz_binder::symbol_flags::VALUE);
                         if has_value
-                            && (symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
-                            && (symbol.flags
-                                & (tsz_binder::symbol_flags::VALUE
-                                    & !tsz_binder::symbol_flags::VALUE_MODULE))
-                                == 0
+                            && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE_MODULE)
+                            && !symbol.has_any_flags(
+                                tsz_binder::symbol_flags::VALUE
+                                    & !tsz_binder::symbol_flags::VALUE_MODULE,
+                            )
                         {
                             has_value = symbol.declarations.iter().any(|&decl_idx| {
                                 self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
@@ -1297,7 +1329,7 @@ impl<'a> CheckerState<'a> {
         // import_module, so the per-symbol `is_type_only` check alone can't trace
         // through. Check the declaration's RHS for type-only references.
         // Also follow through export alias → local symbol chains.
-        if symbol.flags & tsz_binder::symbol_flags::ALIAS != 0 {
+        if symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             // Collect all symbols to check: the current symbol plus anything it aliases to
             let mut syms_to_check = vec![sym_id];
             let mut visited_resolve = AliasCycleTracker::new();
@@ -1770,12 +1802,12 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut has_value = (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0;
+        let mut has_value = symbol.has_any_flags(tsz_binder::symbol_flags::VALUE);
         if has_value
-            && (symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
-            && (symbol.flags
-                & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
-                == 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE_MODULE)
+            && !symbol.has_any_flags(
+                tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE,
+            )
         {
             has_value = symbol.declarations.iter().any(|&decl_idx| {
                 self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {

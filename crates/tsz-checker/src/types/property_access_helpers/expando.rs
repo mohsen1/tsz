@@ -16,10 +16,10 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn property_access_chain_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-        let node = arena.get(idx)?;
-        if node.kind == SyntaxKind::Identifier as u16 {
-            return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+        if let Some(text) = arena.identifier_text_owned(idx) {
+            return Some(text);
         }
+        let node = arena.get(idx)?;
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = arena.get_access_expr(node)?;
             let left = Self::property_access_chain_in_arena(arena, access.expression)?;
@@ -113,17 +113,16 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if (symbol.flags
-            & (symbol_flags::FUNCTION
+        if symbol.has_any_flags(
+            symbol_flags::FUNCTION
                 | symbol_flags::CLASS
                 | symbol_flags::VALUE_MODULE
-                | symbol_flags::NAMESPACE_MODULE))
-            != 0
-        {
+                | symbol_flags::NAMESPACE_MODULE,
+        ) {
             return true;
         }
 
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
             return false;
         }
 
@@ -143,8 +142,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+        init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
             || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
     }
@@ -587,7 +585,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(prop_name) = prop_name.as_deref()
                 && let Some(prototype_root_expr) = prototype_root_expr
-                && let Some(read_pos) = self.ctx.arena.get(property_access_idx).map(|n| n.pos)
+                && let Some(read_pos) = self.ctx.arena.pos_at(property_access_idx)
                 && self
                     .prior_js_prototype_object_literal_declares_property(
                         prototype_root_expr,
@@ -628,10 +626,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::BINARY_EXPRESSION => {
                             let Some(binary_node) = arena.get(decl_idx) else {
@@ -643,10 +640,9 @@ impl<'a> CheckerState<'a> {
                             if !self.is_assignment_operator(binary.operator_token) {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::VARIABLE_DECLARATION => {
                             let Some(var_decl) = arena.get_variable_declaration(node) else {
@@ -655,8 +651,7 @@ impl<'a> CheckerState<'a> {
                             let Some(init_node) = arena.get(var_decl.initializer) else {
                                 return false;
                             };
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            init_node.is_function_expression_or_arrow()
                         }
                         _ => false,
                     }
@@ -739,10 +734,7 @@ impl<'a> CheckerState<'a> {
                         .get(decl_idx)
                         .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
                         .and_then(|decl| self.ctx.arena.get(decl.initializer))
-                        .is_some_and(|init_node| {
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        })
+                        .is_some_and(|init_node| init_node.is_function_expression_or_arrow())
                 };
             if !is_declared_function_or_class && !is_callable_variable {
                 return false;
@@ -754,9 +746,16 @@ impl<'a> CheckerState<'a> {
             {
                 declaration_indices.push(symbol_value_declaration);
             }
-            for (&(entry_sym_id, decl_idx), _) in self.ctx.binder.declaration_arenas.iter() {
-                if entry_sym_id == sym_id && !declaration_indices.contains(&decl_idx) {
-                    declaration_indices.push(decl_idx);
+            // Previously this site iterated the entire `declaration_arenas` map
+            // filtering by `entry_sym_id == sym_id`. With the program-wide map
+            // now shared across all per-file binders via `Arc`, a full iteration
+            // would be O(N_program) per call; the `sym_to_decl_indices` secondary
+            // index collapses that to a point lookup.
+            if let Some(extra_indices) = self.ctx.binder.sym_to_decl_indices.get(&sym_id) {
+                for &decl_idx in extra_indices {
+                    if !declaration_indices.contains(&decl_idx) {
+                        declaration_indices.push(decl_idx);
+                    }
                 }
             }
 
@@ -799,10 +798,10 @@ impl<'a> CheckerState<'a> {
             arena: &tsz_parser::parser::node::NodeArena,
             idx: NodeIndex,
         ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            if let Some(text) = arena.identifier_text_owned(idx) {
+                return Some(text);
             }
+            let node = arena.get(idx)?;
             if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = arena.get_access_expr(node)?;
                 return root_identifier(arena, access.expression);
@@ -814,8 +813,8 @@ impl<'a> CheckerState<'a> {
             && let Some(root_name) = root_identifier(self.ctx.arena, object_expr_idx)
             && let Some(root_sym) = self.ctx.binder.file_locals.get(&root_name)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym)
-            && (root_symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
-                != 0
+            && root_symbol
+                .has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)
         {
             return true;
         }
@@ -870,7 +869,7 @@ impl<'a> CheckerState<'a> {
             && root_node.kind == SyntaxKind::Identifier as u16
             && let Some(root_sym_id) = self.resolve_identifier_symbol(root_idx)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
-            && (root_symbol.flags & symbol_flags::ALIAS) != 0
+            && root_symbol.has_any_flags(symbol_flags::ALIAS)
             && root_symbol.import_module.is_some()
         {
             return false;
@@ -919,7 +918,7 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|ident| ident.escaped_text == "prototype")
             && let Some(root_sym_id) = self.resolve_identifier_symbol(object_access.expression)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym_id)
-            && (root_symbol.flags & symbol_flags::ALIAS) != 0
+            && root_symbol.has_any_flags(symbol_flags::ALIAS)
             && root_symbol.import_module.is_some()
         {
             return false;
@@ -941,15 +940,17 @@ impl<'a> CheckerState<'a> {
                 .get_cross_file_symbol(sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(sym_id))
         {
-            let mut declaration_indices = symbol.declarations.to_vec();
-            if symbol.value_declaration.is_some()
-                && !declaration_indices.contains(&symbol.value_declaration)
-            {
-                declaration_indices.push(symbol.value_declaration);
-            }
-            for (&(entry_sym_id, decl_idx), _) in self.ctx.binder.declaration_arenas.iter() {
-                if entry_sym_id == sym_id && !declaration_indices.contains(&decl_idx) {
-                    declaration_indices.push(decl_idx);
+            let mut declaration_indices = symbol.all_declarations();
+            // Previously this site iterated the entire `declaration_arenas` map
+            // filtering by `entry_sym_id == sym_id`. With the program-wide map
+            // now shared across all per-file binders via `Arc`, a full iteration
+            // would be O(N_program) per call; the `sym_to_decl_indices` secondary
+            // index collapses that to a point lookup.
+            if let Some(extra_indices) = self.ctx.binder.sym_to_decl_indices.get(&sym_id) {
+                for &decl_idx in extra_indices {
+                    if !declaration_indices.contains(&decl_idx) {
+                        declaration_indices.push(decl_idx);
+                    }
                 }
             }
 
@@ -964,10 +965,7 @@ impl<'a> CheckerState<'a> {
                         .get(decl_idx)
                         .and_then(|decl_node| self.ctx.arena.get_variable_declaration(decl_node))
                         .and_then(|decl| self.ctx.arena.get(decl.initializer))
-                        .is_some_and(|init_node| {
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        })
+                        .is_some_and(|init_node| init_node.is_function_expression_or_arrow())
                 };
             let is_declared_function_or_class =
                 (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0;
@@ -1001,10 +999,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::BINARY_EXPRESSION => {
                             let Some(binary_node) = arena.get(decl_idx) else {
@@ -1016,10 +1013,9 @@ impl<'a> CheckerState<'a> {
                             if !self.is_assignment_operator(binary.operator_token) {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::VARIABLE_DECLARATION => {
                             let Some(var_decl) = arena.get_variable_declaration(node) else {
@@ -1028,8 +1024,7 @@ impl<'a> CheckerState<'a> {
                             let Some(init_node) = arena.get(var_decl.initializer) else {
                                 return false;
                             };
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            init_node.is_function_expression_or_arrow()
                         }
                         _ => false,
                     }

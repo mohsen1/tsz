@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let mut current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(node_idx);
         while let Some(parent_idx) = current {
             if parent_idx == ancestor_idx {
                 return true;
@@ -144,7 +144,7 @@ impl<'a> CheckerState<'a> {
         // In nested conditionals like `T extends A ? T extends B ? X<T> : ...`,
         // the effective constraint on T is the intersection A & B.
         let mut accumulated_extends: Vec<TypeId> = Vec::new();
-        let mut current = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(arg_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
@@ -230,7 +230,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a type argument is inside the FALSE branch of a conditional type
     /// where the check type is (or contains) the same type parameter.
     fn type_arg_is_in_conditional_false_branch_of_check_type(&self, arg_idx: NodeIndex) -> bool {
-        let mut current = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(arg_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;
@@ -595,7 +595,7 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         let mut sym_id = sym_id;
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::ALIAS != 0
+            && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
@@ -786,8 +786,6 @@ impl<'a> CheckerState<'a> {
             if self.is_assignable_to(type_arg, evaluated_constraint) {
                 continue;
             }
-            let widened_arg =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_arg);
             let error_anchor = type_args_list
                 .nodes
                 .get(i)
@@ -797,7 +795,7 @@ impl<'a> CheckerState<'a> {
                 error_anchor,
                 crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[
-                    &self.format_type_diagnostic(widened_arg),
+                    &self.format_type_diagnostic(type_arg),
                     &self.format_type_diagnostic(constraint),
                 ],
             );
@@ -927,6 +925,109 @@ impl<'a> CheckerState<'a> {
         }
 
         self.validate_type_args_against_params(&type_params, type_args_list);
+    }
+
+    /// Validate explicit type arguments on a JSX element (e.g. `<MyComp<Prop>>`).
+    ///
+    /// JSX elements with explicit type arguments behave like `new MyComp<Prop>()` for
+    /// class components and `MyComp<Prop>(props)` for function components. This method
+    /// validates the type argument count and constraints, emitting:
+    ///   - TS2558 when the count doesn't match the component's type parameter count.
+    ///   - TS2344 when a type argument doesn't satisfy its constraint.
+    ///
+    /// Returns `true` when the type argument count is wrong (TS2558 emitted), so the
+    /// caller can skip props-type checking for that element (tsc does not emit TS2322
+    /// for JSX elements that have a wrong type-argument arity).
+    pub(crate) fn validate_jsx_element_type_arguments(
+        &mut self,
+        component_type: TypeId,
+        type_args_list: &tsz_parser::parser::NodeList,
+        element_idx: NodeIndex,
+    ) -> bool {
+        let got = type_args_list.nodes.len();
+        if got == 0 {
+            return false;
+        }
+
+        // Resolve Lazy/Application types to expose Callable/Function shapes.
+        let resolved = {
+            let ev = self.evaluate_application_type(component_type);
+            let ev = self.evaluate_type_with_env(ev);
+            let r = self.resolve_lazy_type(ev);
+            if r != ev { r } else { ev }
+        };
+
+        // If the component has construct signatures (class component), validate against
+        // them — mirrors `validate_new_expression_type_arguments` for `new` expressions.
+        if let Some(shape) = query::callable_shape_for_type(self.ctx.types, resolved) {
+            if !shape.construct_signatures.is_empty() {
+                let type_arg_error_anchor =
+                    type_args_list.nodes.first().copied().unwrap_or(element_idx);
+                let matching: Vec<_> = shape
+                    .construct_signatures
+                    .iter()
+                    .filter(|sig| {
+                        let max = sig.type_params.len();
+                        let min = sig
+                            .type_params
+                            .iter()
+                            .filter(|tp| tp.default.is_none())
+                            .count();
+                        got >= min && got <= max
+                    })
+                    .collect();
+                // When multiple overloads match, skip validation (ambiguous).
+                if matching.len() > 1 {
+                    return false;
+                }
+                let type_params = if let Some(sig) = matching.first() {
+                    sig.type_params.clone()
+                } else {
+                    shape
+                        .construct_signatures
+                        .first()
+                        .map(|sig| sig.type_params.clone())
+                        .unwrap_or_default()
+                };
+
+                let max_expected = type_params.len();
+                let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
+
+                if type_params.is_empty() {
+                    if got > 0 {
+                        self.error_at_node_msg(
+                            type_arg_error_anchor,
+                            crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                            &["0", &got.to_string()],
+                        );
+                        return true;
+                    }
+                    return false;
+                }
+
+                if got < min_required || got > max_expected {
+                    let expected_str = if min_required == max_expected {
+                        max_expected.to_string()
+                    } else {
+                        format!("{min_required}-{max_expected}")
+                    };
+                    self.error_at_node_msg(
+                        type_arg_error_anchor,
+                        crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                        &[&expected_str, &got.to_string()],
+                    );
+                    return true;
+                }
+
+                // Count is correct — check constraints (TS2344).
+                self.validate_type_args_against_params(&type_params, type_args_list);
+                return false;
+            }
+        }
+
+        // Function component (call signatures): validate via call type-arg path.
+        let result = self.validate_call_type_arguments(resolved, type_args_list, element_idx);
+        result.count_mismatch
     }
 }
 

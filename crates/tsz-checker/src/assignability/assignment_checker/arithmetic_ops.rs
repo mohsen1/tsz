@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
         {
             // Check if the symbol is an enum (ENUM flags)
             use tsz_binder::symbol_flags;
-            if (symbol.flags & symbol_flags::ENUM) != 0 {
+            if symbol.has_any_flags(symbol_flags::ENUM) {
                 return true;
             }
         }

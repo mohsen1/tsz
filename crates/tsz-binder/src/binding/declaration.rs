@@ -27,14 +27,14 @@ impl BinderState {
     ) {
         if let Some(decl) = arena.get_variable_declaration(node) {
             let mut decl_flags = u32::from(node.flags);
-            if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
+            if !node_flags::is_let_or_const(decl_flags)
                 && let Some(ext) = arena.get_extended(idx)
                 && let Some(parent_node) = arena.get(ext.parent)
                 && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
             {
                 decl_flags |= u32::from(parent_node.flags);
             }
-            let is_block_scoped = (decl_flags & (node_flags::LET | node_flags::CONST)) != 0;
+            let is_block_scoped = node_flags::is_let_or_const(decl_flags);
             if let Some(name) = Self::get_identifier_name(arena, decl.name) {
                 // Determine if block-scoped (let/const) or function-scoped (var)
                 let flags = if is_block_scoped {
@@ -49,7 +49,7 @@ impl BinderState {
                 if self.in_module_augmentation
                     && let Some(ref module_spec) = self.current_augmented_module
                 {
-                    self.module_augmentations
+                    Arc::make_mut(&mut self.module_augmentations)
                         .entry(module_spec.clone())
                         .or_default()
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -59,10 +59,10 @@ impl BinderState {
                 // as global augmentations, just like interfaces and namespaces.
                 // This enables cross-file conflict detection with UMD exports.
                 if self.in_global_augmentation {
-                    self.global_augmentations
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(idx, flags));
                 }
 
                 let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
@@ -84,10 +84,10 @@ impl BinderState {
                 // This mirrors the interface hoisting at bind_interface_declaration.
                 if self.in_global_augmentation {
                     self.file_locals.set(name.to_string(), sym_id);
-                    self.global_augmentations
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(idx, flags));
                 }
             } else {
                 let flags = if is_block_scoped {
@@ -114,10 +114,10 @@ impl BinderState {
                         );
                         if self.in_global_augmentation {
                             self.file_locals.set(name.to_string(), sym_id);
-                            self.global_augmentations
+                            Arc::make_mut(&mut self.global_augmentations)
                                 .entry(name.to_string())
                                 .or_default()
-                                .push(crate::state::GlobalAugmentation::new(ident_idx));
+                                .push(crate::state::GlobalAugmentation::new(ident_idx, flags));
                         }
                     }
                 }
@@ -154,7 +154,7 @@ impl BinderState {
                 if self.in_module_augmentation
                     && let Some(ref module_spec) = self.current_augmented_module
                 {
-                    self.module_augmentations
+                    Arc::make_mut(&mut self.module_augmentations)
                         .entry(module_spec.clone())
                         .or_default()
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -616,7 +616,7 @@ impl BinderState {
                 if self.in_module_augmentation
                     && let Some(ref module_spec) = self.current_augmented_module
                 {
-                    self.module_augmentations
+                    Arc::make_mut(&mut self.module_augmentations)
                         .entry(module_spec.clone())
                         .or_default()
                         .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -831,10 +831,13 @@ impl BinderState {
             // If we're inside a global augmentation block, track this as an augmentation
             // that should merge with lib.d.ts symbols at type resolution time
             if self.in_global_augmentation {
-                self.global_augmentations
+                Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
-                    .push(crate::state::GlobalAugmentation::new(idx));
+                    .push(crate::state::GlobalAugmentation::new(
+                        idx,
+                        symbol_flags::INTERFACE,
+                    ));
             }
 
             // In script files (non-module files), top-level interface declarations that match
@@ -845,10 +848,13 @@ impl BinderState {
                 && !self.is_external_module
                 && Self::is_built_in_global_type(name)
             {
-                self.global_augmentations
+                Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
-                    .push(crate::state::GlobalAugmentation::new(idx));
+                    .push(crate::state::GlobalAugmentation::new(
+                        idx,
+                        symbol_flags::INTERFACE,
+                    ));
             }
 
             // Rule #44: Track module augmentation interfaces
@@ -856,7 +862,7 @@ impl BinderState {
             if self.in_module_augmentation
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -913,7 +919,7 @@ impl BinderState {
                 && sym_id.is_some()
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.augmentation_target_modules
+                Arc::make_mut(&mut self.augmentation_target_modules)
                     .insert(sym_id, module_spec.clone());
             }
 
@@ -940,17 +946,20 @@ impl BinderState {
             // If we're inside a global augmentation block, track this as an augmentation
             // that should merge with lib.d.ts symbols at type resolution time
             if self.in_global_augmentation {
-                self.global_augmentations
+                Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
-                    .push(crate::state::GlobalAugmentation::new(idx));
+                    .push(crate::state::GlobalAugmentation::new(
+                        idx,
+                        symbol_flags::TYPE_ALIAS,
+                    ));
             }
 
             // Rule #44: Track module augmentation type aliases
             if self.in_module_augmentation
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -1058,7 +1067,7 @@ impl BinderState {
             if self.in_module_augmentation
                 && let Some(ref module_spec) = self.current_augmented_module
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
@@ -1344,7 +1353,7 @@ impl BinderState {
         // If this is a lib symbol ID, check lib binders first to avoid
         // collision with local symbols at the same index
         if self.lib_symbol_ids.contains(&id) {
-            for lib_binder in &self.lib_binders {
+            for lib_binder in self.lib_binders.iter() {
                 if let Some(sym) = lib_binder.symbols.get(id) {
                     return Some(sym);
                 }
@@ -1352,7 +1361,7 @@ impl BinderState {
         }
 
         // Finally try lib binders for any remaining cases
-        for lib_binder in &self.lib_binders {
+        for lib_binder in self.lib_binders.iter() {
             if let Some(sym) = lib_binder.symbols.get(id) {
                 return Some(sym);
             }
@@ -1419,7 +1428,7 @@ impl BinderState {
         }
 
         // Legacy path: check lib binders directly (for backward compatibility)
-        for lib_binder in &self.lib_binders {
+        for lib_binder in self.lib_binders.iter() {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 return Some(sym_id);
             }
@@ -1455,7 +1464,7 @@ impl BinderState {
         }
 
         // Finally check our own lib binders
-        for lib_binder in &self.lib_binders {
+        for lib_binder in self.lib_binders.iter() {
             if let Some(sym_id) = lib_binder.file_locals.get(name) {
                 return Some(sym_id);
             }
@@ -1560,16 +1569,20 @@ impl BinderState {
         F: FnOnce(&mut Self),
     {
         let prev_flow = self.current_flow;
-        let start_flow = self.flow_nodes.alloc(flow_flags::START);
+        let start_flow = {
+            let flow_nodes = std::sync::Arc::make_mut(&mut self.flow_nodes);
+            let start_flow = flow_nodes.alloc(flow_flags::START);
 
-        // For closures (arrow functions and function expressions), capture the enclosing flow
-        // so that const/let variables can preserve narrowing from the outer scope
-        if capture_enclosing
-            && prev_flow.is_some()
-            && let Some(start_node) = self.flow_nodes.get_mut(start_flow)
-        {
-            start_node.antecedent.push(prev_flow);
-        }
+            // For closures (arrow functions and function expressions), capture the enclosing flow
+            // so that const/let variables can preserve narrowing from the outer scope
+            if capture_enclosing
+                && prev_flow.is_some()
+                && let Some(start_node) = flow_nodes.get_mut(start_flow)
+            {
+                start_node.antecedent.push(prev_flow);
+            }
+            start_flow
+        };
 
         // Save and clear return_targets so that return statements inside
         // non-IIFE functions don't redirect to an enclosing IIFE's return target.
@@ -1664,7 +1677,7 @@ impl BinderState {
                 }
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                if (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0 {
+                if node.is_optional_chain() {
                     return true;
                 }
                 if let Some(call) = arena.get_call_expr(node) {
@@ -2084,8 +2097,7 @@ impl BinderState {
                 if let Some(call) = arena.get_call_expr(node) {
                     self.bind_expression(arena, call.expression);
 
-                    let is_optional_call =
-                        (u32::from(node.flags) & node_flags::OPTIONAL_CHAIN) != 0;
+                    let is_optional_call = node.is_optional_chain();
                     if is_optional_call {
                         let after_callee = if self.continues_optional_chain(arena, idx)
                             || Self::is_optional_chain_access(arena, call.expression)
@@ -2267,15 +2279,14 @@ impl BinderState {
         }
 
         fn property_access_chain(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            if let Some(text) = arena.identifier_text_owned(idx) {
+                return Some(text);
             }
+            let node = arena.get(idx)?;
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = arena.get_access_expr(node)?;
                 let left = property_access_chain(arena, access.expression)?;
-                let right_node = arena.get(access.name_or_argument)?;
-                let right = arena.get_identifier(right_node)?.escaped_text.clone();
+                let right = arena.identifier_text_owned(access.name_or_argument)?;
                 return Some(format!("{left}.{right}"));
             }
             None
@@ -2346,7 +2357,7 @@ impl BinderState {
                     }
                 }
                 k if k == SyntaxKind::Identifier as u16 => {
-                    let name = arena.get_identifier(init_node)?.escaped_text.clone();
+                    let name = arena.identifier_text_owned(init_idx)?;
                     let next_sym = binder.file_locals.get(&name)?;
                     resolved_const_expando_key(binder, arena, next_sym, depth + 1)
                 }
@@ -2503,8 +2514,7 @@ impl BinderState {
                 return;
             };
             let has_type_annotation = var_decl.type_annotation.is_some();
-            let is_function_like = init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION;
+            let is_function_like = init_node.is_function_expression_or_arrow();
             let is_property_access_lhs =
                 lhs_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
             let is_expando_init = is_function_like
@@ -2740,7 +2750,7 @@ impl BinderState {
                 .and_then(|scope| {
                     if scope.kind == crate::ContainerKind::Module {
                         // Look up the namespace symbol from the scope's container node.
-                        self.node_symbols.get(&scope.container_node.0).copied()
+                        self.get_node_symbol(scope.container_node)
                     } else {
                         None
                     }

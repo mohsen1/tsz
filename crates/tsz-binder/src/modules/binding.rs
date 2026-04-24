@@ -5,8 +5,8 @@
 
 use crate::state::BinderState;
 use crate::{ContainerKind, Symbol, SymbolId, SymbolTable, symbol_flags};
+use std::sync::Arc;
 use tsz_parser::parser::node::{Node, NodeArena};
-use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -86,14 +86,13 @@ impl BinderState {
                 && let Some(ref module_spec) = self.current_augmented_module
                 && let Some(name) = Self::get_identifier_name(arena, module.name)
             {
-                self.module_augmentations
+                Arc::make_mut(&mut self.module_augmentations)
                     .entry(module_spec.clone())
                     .or_default()
                     .push(crate::state::ModuleAugmentation::new(name.to_string(), idx));
             }
 
-            let is_global_augmentation = u32::from(node.flags) & node_flags::GLOBAL_AUGMENTATION
-                != 0
+            let is_global_augmentation = node.is_global_augmentation()
                 || arena
                     .get(module.name)
                     .and_then(|name_node| {
@@ -159,7 +158,8 @@ impl BinderState {
                             // Shorthand ambient module: `declare module "*.json";` (no body)
                             // Even when classified as augmentation, a bodyless declaration
                             // is a shorthand that makes matching imports resolve to `any`.
-                            self.shorthand_ambient_modules.insert(module_specifier);
+                            Arc::make_mut(&mut self.shorthand_ambient_modules)
+                                .insert(module_specifier);
                         } else {
                             self.node_scope_ids
                                 .insert(module.body.0, self.current_scope_id);
@@ -218,10 +218,11 @@ impl BinderState {
                     .insert(idx.0, is_exported);
 
                 if self.in_global_augmentation {
-                    self.global_augmentations
+                    let aug_flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.clone())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(idx, aug_flags));
                 }
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
@@ -283,7 +284,7 @@ impl BinderState {
                     && let Some(lit) = arena.get_literal(name_node)
                     && !lit.text.is_empty()
                 {
-                    self.shorthand_ambient_modules.insert(lit.text.clone());
+                    Arc::make_mut(&mut self.shorthand_ambient_modules).insert(lit.text.clone());
                 }
             } else {
                 self.node_scope_ids
@@ -355,7 +356,7 @@ impl BinderState {
                 && let Some(exports) = symbol.exports.as_ref()
                 && !exports.is_empty()
             {
-                self.module_exports
+                Arc::make_mut(&mut self.module_exports)
                     .insert(module_specifier.clone(), exports.as_ref().clone());
             }
 

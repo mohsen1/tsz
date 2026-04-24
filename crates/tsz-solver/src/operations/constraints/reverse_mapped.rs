@@ -234,7 +234,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 is_class_prototype: false,
                 visibility: Visibility::Public,
                 parent_id: None,
-                declaration_order: 0,
+                // Preserve the source property's declaration order so the
+                // reverse-inferred candidate for T retains the original
+                // argument literal's ordering. Without this, re-interning
+                // rebuilds declaration_order from atom-id-sorted Vec
+                // positions, which later leaks into diagnostic type display
+                // (e.g. `{ y: "y"; x: number; }` instead of tsc's
+                // `{ x: number; y: "y"; }` for
+                // reverseMappedTypeLimitedConstraint.ts).
+                declaration_order: prop.declaration_order,
                 is_string_named: false,
             });
         }

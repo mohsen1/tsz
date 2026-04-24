@@ -1185,7 +1185,7 @@ impl<'a> CheckerState<'a> {
 
             if self.ctx.in_destructuring_target
                 && self.resolve_identifier_symbol_for_write(idx).is_none()
-                && let Some(parent_idx) = self.ctx.arena.get_extended(idx).map(|ext| ext.parent)
+                && let Some(parent_idx) = self.ctx.arena.parent_of(idx)
                 && let Some(parent_node) = self.ctx.arena.get(parent_idx)
                 && parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
                 && self
@@ -1422,8 +1422,8 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self
                 .get_cross_file_symbol(obj_sym)
                 .or_else(|| self.ctx.binder.get_symbol(obj_sym))
-            && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
-            && (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+            && symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
         {
             let symbol_declarations = symbol.declarations.clone();
             let declaration_is_function_value = |decl_idx: NodeIndex| -> bool {
@@ -1739,6 +1739,26 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeId::ANY
+    }
+
+    /// Prefer the merged method type (with all overloads) from `iface_type`
+    /// over the single-node `get_type_of_interface_member_simple` result.
+    ///
+    /// For `interface I { bar(): any; bar(): any; [s: string]: number; }`
+    /// this returns the Callable `{ (): any; (): any; }` that tsc displays
+    /// in TS2411, instead of just `() => any` from the first signature.
+    pub(crate) fn merged_method_signature_type(
+        &mut self,
+        iface_type: TypeId,
+        name: &str,
+        member_idx: NodeIndex,
+    ) -> TypeId {
+        if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
+            self.resolve_property_access_with_env(iface_type, name)
+        {
+            return type_id;
+        }
+        self.get_type_of_interface_member_simple(member_idx)
     }
 
     /// Get the type of an interface member.

@@ -10,7 +10,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     pub fn check_module_declaration(&mut self, module_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_binder::symbol_flags;
-        use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
@@ -123,7 +122,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // Only check the GLOBAL_AUGMENTATION flag set by the parser — a plain
         // `namespace global {}` in a non-module file is a regular namespace, not
         // a global augmentation.
-        let is_global_augmentation = (node.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0;
+        let is_global_augmentation = node.is_global_augmentation();
         // TS1280: Namespaces are not allowed in global script files when
         // isolatedModules is enabled. tsc emits a single diagnostic per file,
         // anchored on the first top-level namespace declaration.
@@ -307,7 +306,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // TS1234: An ambient module declaration is only allowed at the top level in a file.
                 // This fires when `declare module "string"` is inside a block or function body.
                 if !self.ctx.has_syntax_parse_errors {
-                    let decl_start = self.ctx.arena.get(module_idx).map(|n| n.pos).unwrap_or(0);
+                    let decl_start = self.ctx.arena.pos_at(module_idx).unwrap_or(0);
                     let start = if let Some(sf) = self.ctx.arena.source_files.first() {
                         let bytes = sf.text.as_bytes();
                         let mut pos = decl_start as usize;
@@ -403,7 +402,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .and_then(|ext| self.ctx.arena.get(ext.parent))
                     .filter(|p| p.kind == syntax_kind_ext::EXPORT_DECLARATION)
                     .map(|p| p.pos)
-                    .or_else(|| self.ctx.arena.get(module_idx).map(|n| n.pos))
+                    .or_else(|| self.ctx.arena.pos_at(module_idx))
                     .unwrap_or(name_node.pos);
                 // Skip leading whitespace/newlines to find actual keyword start
                 let start = if let Some(sf) = self.ctx.arena.source_files.first() {
@@ -771,35 +770,52 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                     | symbol_flags::CONST_ENUM
                                                     | symbol_flags::MODULE))
                                                 != 0;
-                                            let first_decl = symbol.declarations.first().copied();
-                                            let owner_arena =
-                                                self.ctx.get_arena_for_file(owner_idx as u32);
-                                            let owner_file = owner_arena
+                                            // Symbol declarations are arena-local to the
+                                            // symbol's binding file (`decl_file_idx`), which
+                                            // may differ from `owner_idx` — the exporting
+                                            // module that `resolve_export_in_file` landed on
+                                            // after walking `export * from "..."` re-exports.
+                                            // Use `decl_file_idx` when it disagrees so the
+                                            // node lookup happens in the correct arena. tsc
+                                            // anchors the partner TS2567 on the *original*
+                                            // class/interface/function declaration.
+                                            let decl_file_idx = if symbol.decl_file_idx != u32::MAX
+                                            {
+                                                symbol.decl_file_idx as usize
+                                            } else {
+                                                owner_idx
+                                            };
+                                            let decl_arena =
+                                                self.ctx.get_arena_for_file(decl_file_idx as u32);
+                                            let owner_file = decl_arena
                                                 .source_files
                                                 .first()
                                                 .map(|sf| sf.file_name.clone());
-                                            let existing_name_span = first_decl
-                                                .and_then(|d| owner_arena.get(d))
-                                                .and_then(|n| {
-                                                    use tsz_parser::parser::syntax_kind_ext;
+                                            // Search all declarations for one whose AST node
+                                            // lives in `decl_arena` and matches one of the
+                                            // declaration kinds we anchor TS2567 on.
+                                            use tsz_parser::parser::syntax_kind_ext;
+                                            let existing_name_span =
+                                                symbol.declarations.iter().find_map(|&d| {
+                                                    let n = decl_arena.get(d)?;
                                                     let name_idx = if n.kind
                                                         == syntax_kind_ext::CLASS_DECLARATION
                                                     {
-                                                        owner_arena.get_class(n).map(|c| c.name)
+                                                        decl_arena.get_class(n).map(|c| c.name)
                                                     } else if n.kind
                                                         == syntax_kind_ext::INTERFACE_DECLARATION
                                                     {
-                                                        owner_arena.get_interface(n).map(|i| i.name)
+                                                        decl_arena.get_interface(n).map(|i| i.name)
                                                     } else if n.kind
                                                         == syntax_kind_ext::FUNCTION_DECLARATION
                                                     {
-                                                        owner_arena.get_function(n).map(|f| f.name)
+                                                        decl_arena.get_function(n).map(|f| f.name)
                                                     } else {
                                                         None
-                                                    };
-                                                    name_idx.and_then(|nm| owner_arena.get(nm))
-                                                })
-                                                .map(|nm| (nm.pos, nm.end - nm.pos));
+                                                    }?;
+                                                    let nm = decl_arena.get(name_idx)?;
+                                                    Some((nm.pos, nm.end - nm.pos))
+                                                });
                                             let span = match (owner_file, existing_name_span) {
                                                 (Some(file), Some((pos, len))) => {
                                                     Some((file, pos, len))

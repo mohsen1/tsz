@@ -332,7 +332,7 @@ impl<'a> CheckerState<'a> {
                     let Some(symbol) = binder.get_symbol(sym_id) else {
                         continue;
                     };
-                    if (symbol.flags & symbol_flags::ENUM) == 0 {
+                    if !symbol.has_any_flags(symbol_flags::ENUM) {
                         continue;
                     }
                     let arena = self.ctx.get_arena_for_file(file_idx as u32);
@@ -547,9 +547,7 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                     if let Some(n) = self.ctx.arena.get(cur) {
-                        if n.kind == syntax_kind_ext::CLASS_DECLARATION
-                            || n.kind == syntax_kind_ext::CLASS_EXPRESSION
-                        {
+                        if n.is_class_like() {
                             found = true;
                             break;
                         }
@@ -869,9 +867,7 @@ impl<'a> CheckerState<'a> {
                     let Some(inner_node) = self.ctx.arena.get(current) else {
                         break;
                     };
-                    if inner_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || inner_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    {
+                    if inner_node.is_class_like() {
                         in_class = true;
                     }
                     if inner_node.kind == syntax_kind_ext::CONSTRUCTOR

@@ -452,8 +452,7 @@ impl<'a> Printer<'a> {
             };
             var_stmt.declarations.nodes.iter().any(|&decl_list_idx| {
                 self.arena.get(decl_list_idx).is_some_and(|decl_list_node| {
-                    (decl_list_node.flags as u32 & tsz_parser::parser::node_flags::AWAIT_USING)
-                        == tsz_parser::parser::node_flags::AWAIT_USING
+                    tsz_parser::parser::node_flags::is_await_using(decl_list_node.flags as u32)
                 })
             })
         });

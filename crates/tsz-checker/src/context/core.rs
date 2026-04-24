@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::module_resolution::module_specifier_candidates;
+use tsz_binder::symbols::StableLocation;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -744,8 +745,13 @@ impl<'a> CheckerContext<'a> {
 
     /// Set resolved module specifiers (module names that exist in the project).
     /// Used to suppress TS2307 errors for known modules.
-    pub fn set_resolved_modules(&mut self, modules: FxHashSet<String>) {
-        self.resolved_modules = Some(modules);
+    ///
+    /// Accepts either an owned `FxHashSet<String>` or an existing
+    /// `Arc<FxHashSet<String>>`. The production per-file CLI driver
+    /// shares the pre-bucketed set via `Arc::clone`; tests pass owned
+    /// sets and pay a single `Arc::new` wrapping.
+    pub fn set_resolved_modules(&mut self, modules: impl Into<Arc<FxHashSet<String>>>) {
+        self.resolved_modules = Some(modules.into());
     }
 
     /// Set resolved module errors map for cross-file import resolution.
@@ -869,6 +875,62 @@ impl<'a> CheckerContext<'a> {
                 .then(|| binders.get(idx).map(Arc::as_ref))
                 .flatten()
         })
+    }
+
+    /// Resolve a [`StableLocation`] to a concrete `(NodeIndex, &NodeArena)`
+    /// without going through [`tsz_binder::Symbol::value_declaration`] or
+    /// [`tsz_binder::Symbol::declarations`].
+    ///
+    /// This is the Phase 1 step-2 bridge helper for the
+    /// [global query graph architecture][plan]: consumers that used to read
+    /// `symbol.primary_declaration()` (a raw `NodeIndex`) can instead read
+    /// `symbol.stable_value_declaration` or `symbol.stable_declarations` and
+    /// rehydrate the `NodeIndex` on demand. The resolved arena survives
+    /// declaration-arena reshuffles because the lookup is driven by
+    /// `(file_idx, pos, end)` rather than arena-local index identity.
+    ///
+    /// Returns `None` when:
+    /// - `loc.is_known()` is false (pos/end both zero — unknown span),
+    /// - the requested arena is not available (`all_arenas` not populated
+    ///   and the location's `file_idx` is not the current file's), or
+    /// - no node in the resolved arena matches `(pos, end)` exactly.
+    ///
+    /// When `loc.file_idx == u32::MAX` (single-file binding or not yet
+    /// stamped), the current arena is used. This mirrors the fallback
+    /// behavior of [`Self::get_arena_for_file`] for `u32::MAX`.
+    ///
+    /// The scan is currently O(N) over `arena.nodes`. The only caller at
+    /// the moment (`CheckerState::class_extends_any_base`) is on the TS2551
+    /// "Did you mean?" diagnostic path, which is cold. A span-index can be
+    /// added later if hot paths migrate to this helper.
+    ///
+    /// [plan]: ../../../../../docs/plan/global-query-graph-architecture.md
+    pub fn node_at_stable_location(&self, loc: StableLocation) -> Option<(NodeIndex, &NodeArena)> {
+        if !loc.is_known() {
+            return None;
+        }
+        let arena = if loc.has_file_idx() {
+            // Only trust the stamped file_idx when we have the arena table
+            // to resolve against. If `all_arenas` is absent (single-file
+            // mode or cross-arena delegation not yet initialized), fall
+            // back to the current arena — same contract as
+            // `get_arena_for_file`.
+            if self.all_arenas.is_some() {
+                self.get_arena_for_file(loc.file_idx)
+            } else {
+                self.arena
+            }
+        } else {
+            // Unstamped: use the current arena. This matches how
+            // `class_extends_any_base` and similar legacy consumers
+            // resolved `symbol.primary_declaration()` against
+            // `self.ctx.arena`.
+            self.arena
+        };
+        let node_idx = arena.nodes.iter().enumerate().find_map(|(i, node)| {
+            (node.pos == loc.pos && node.end == loc.end).then_some(NodeIndex(i as u32))
+        })?;
+        Some((node_idx, arena))
     }
 
     /// Get the file index that owns a specific arena.
@@ -1009,7 +1071,7 @@ impl<'a> CheckerContext<'a> {
         if let Some(ref idx) = self.program_module_exports {
             return Self::lookup_any_file_key(module_key, idx);
         }
-        Self::lookup_any_file_key(module_key, &binder.module_exports)
+        Self::lookup_any_file_key(module_key, binder.module_exports.as_ref())
     }
 
     /// Like `module_exports_for_module` but tests existence only.
@@ -1847,7 +1909,7 @@ mod index_tests {
     #[test]
     fn global_module_augmentations_index_merges_across_binders() {
         let mut binder1 = BinderState::new();
-        binder1.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder1.module_augmentations).insert(
             "./module-a".to_string(),
             vec![ModuleAugmentation::new(
                 "MyInterface".to_string(),
@@ -1855,7 +1917,7 @@ mod index_tests {
             )],
         );
         let mut binder2 = BinderState::new();
-        binder2.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder2.module_augmentations).insert(
             "./module-a".to_string(),
             vec![ModuleAugmentation::new(
                 "MyOtherInterface".to_string(),
@@ -1877,11 +1939,11 @@ mod index_tests {
     #[test]
     fn global_module_augmentations_index_separates_module_specifiers() {
         let mut binder = BinderState::new();
-        binder.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder.module_augmentations).insert(
             "./module-a".to_string(),
             vec![ModuleAugmentation::new("Foo".to_string(), NodeIndex(10))],
         );
-        binder.module_augmentations.insert(
+        std::sync::Arc::make_mut(&mut binder.module_augmentations).insert(
             "./module-b".to_string(),
             vec![ModuleAugmentation::new("Bar".to_string(), NodeIndex(20))],
         );
@@ -1897,15 +1959,12 @@ mod index_tests {
     #[test]
     fn global_augmentation_targets_index_maps_module_to_symbols() {
         let mut binder1 = BinderState::new();
-        binder1
-            .augmentation_target_modules
+        std::sync::Arc::make_mut(&mut binder1.augmentation_target_modules)
             .insert(SymbolId(100), "./target".to_string());
         let mut binder2 = BinderState::new();
-        binder2
-            .augmentation_target_modules
+        std::sync::Arc::make_mut(&mut binder2.augmentation_target_modules)
             .insert(SymbolId(200), "./target".to_string());
-        binder2
-            .augmentation_target_modules
+        std::sync::Arc::make_mut(&mut binder2.augmentation_target_modules)
             .insert(SymbolId(201), "./other".to_string());
 
         let binders = vec![Arc::new(binder1), Arc::new(binder2)];

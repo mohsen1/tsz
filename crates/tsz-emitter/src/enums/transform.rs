@@ -128,10 +128,7 @@ impl<'a> EnumTransformer<'a> {
         };
 
         // Check for ambient (declare enum) - always erased
-        if self
-            .arena
-            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
-        {
+        if self.arena.is_declare(&enum_data.modifiers) {
             return true;
         }
 

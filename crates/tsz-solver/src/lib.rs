@@ -211,6 +211,7 @@ pub use diagnostics::builders::{
 };
 pub use diagnostics::format::TypeFormatter;
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
+pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
@@ -338,6 +339,9 @@ mod boxed_augmentation_tests;
 #[cfg(test)]
 #[path = "tests/classify_array_like_tests.rs"]
 mod classify_array_like_tests;
+#[cfg(test)]
+#[path = "tests/classify_contextual_literal_tests.rs"]
+mod classify_contextual_literal_tests;
 #[cfg(test)]
 #[path = "tests/classify_index_key_tests.rs"]
 mod classify_index_key_tests;

@@ -10,7 +10,7 @@ use crate::query_boundaries::flow_analysis::is_unit_type;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
-use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
 
@@ -962,7 +962,7 @@ impl<'a> FlowAnalyzer<'a> {
         if node.kind == syntax_kind_ext::CALL_EXPRESSION
             && let Some(call) = self.arena.get_call_expr(node)
         {
-            if (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0 {
+            if node.is_optional_chain() {
                 return true;
             }
             return self.contains_optional_chain(call.expression);
@@ -984,7 +984,7 @@ impl<'a> FlowAnalyzer<'a> {
         node: &tsz_parser::parser::node::Node,
         access: &tsz_parser::parser::node::AccessExprData,
     ) -> bool {
-        access.question_dot_token || (node.flags as u32 & node_flags::OPTIONAL_CHAIN) != 0
+        access.question_dot_token || node.is_optional_chain()
     }
 
     /// Check if `expr` is an optional chain (or typeof of one) that contains `target`
@@ -1105,7 +1105,7 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> Option<(SymbolId, NodeIndex)> {
         let sym_id = self.binder.resolve_identifier(self.arena, ident_idx)?;
         let symbol = self.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
             return None;
         }
         let mut decl_idx = symbol.primary_declaration()?;

@@ -438,13 +438,38 @@ from pathlib import Path
 index = int(sys.argv[1])
 count = int(sys.argv[2])
 baseline = Path("scripts/conformance/conformance-baseline.txt")
-lines = baseline.read_text(encoding="utf-8", errors="replace").splitlines()
 if count < 1:
     count = 1
 if index < 0 or index >= count:
     raise SystemExit(f"invalid conformance shard {index}/{count}")
-selected = [line for i, line in enumerate(lines) if i % count == index]
-passed = sum(1 for line in selected if line.startswith("PASS "))
+
+baseline_status = {}
+for line in baseline.read_text(encoding="utf-8", errors="replace").splitlines():
+    status, _, rest = line.partition(" ")
+    if status not in {"PASS", "FAIL", "XFAIL", "CRASH", "TIMEOUT"} or not rest:
+        continue
+    path = rest.split(" | ", 1)[0]
+    baseline_status[path] = status
+
+test_dir = Path("TypeScript/tests/cases")
+files = []
+for path in test_dir.rglob("*"):
+    if not path.is_file():
+        continue
+    path_str = path.as_posix()
+    if path.suffix not in {".ts", ".tsx", ".js", ".jsx"}:
+        continue
+    if path_str.endswith(".d.ts") or path_str.endswith(".d.mts"):
+        continue
+    if "/fourslash/" in path_str:
+        continue
+    if "APISample" in path_str or "APILibCheck" in path_str:
+        continue
+    files.append(path_str)
+
+files.sort()
+selected = [path for i, path in enumerate(files) if i % count == index]
+passed = sum(1 for path in selected if baseline_status.get(path) == "PASS")
 print(passed, len(selected))
 PY
 }
@@ -483,20 +508,23 @@ run_conformance() {
 
   grep -a 'FINAL RESULTS:' "$log_file" | tail -1 || true
 
-  local total_passed=0 total_tests=0
+  local total_passed=0 total_tests=0 skipped_tests=0
   if [[ -f "$last_run" ]]; then
     read -r total_passed total_tests < <(read_conformance_results "$last_run")
   fi
   total_passed="$(num_or_zero "$total_passed")"
   total_tests="$(num_or_zero "$total_tests")"
+  skipped_tests="$(awk '/^[[:space:]]*Skipped:/ { value=$2 } END { print value + 0 }' "$log_file")"
+  skipped_tests="$(num_or_zero "$skipped_tests")"
 
-  printf '{"rc":%s,"passed":%s,"total":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s}\n' \
-    "$rc" "$total_passed" "$total_tests" "$CONFORMANCE_WORKERS" \
+  printf '{"rc":%s,"passed":%s,"total":%s,"skipped":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s}\n' \
+    "$rc" "$total_passed" "$total_tests" "$skipped_tests" "$CONFORMANCE_WORKERS" \
     "$shard_index" "$shard_count" "$shard_offset" "$shard_max" "$shard_expected_passed" "$shard_expected_total" \
     > "$METRICS_DIR/conformance.json"
   echo "Conformance workers: ${CONFORMANCE_WORKERS}"
   echo "Conformance wrapper exit: ${rc}"
   echo "Conformance aggregate: ${total_passed}/${total_tests}"
+  echo "Conformance skipped: ${skipped_tests}"
 
   if [[ "$rc" -ne 0 ]]; then
     echo "error: conformance wrapper failed" >&2
@@ -505,8 +533,8 @@ run_conformance() {
   fi
 
   if [[ "$shard_count" -gt 1 ]]; then
-    if [[ "$shard_expected_total" -gt 0 && "$total_tests" -lt "$shard_expected_total" ]]; then
-      echo "error: conformance shard coverage is incomplete: ${total_tests} < ${shard_expected_total}" >&2
+    if [[ "$shard_expected_total" -gt 0 && $((total_tests + skipped_tests)) -lt "$shard_expected_total" ]]; then
+      echo "error: conformance shard coverage is incomplete: ${total_tests}+${skipped_tests} skipped < ${shard_expected_total}" >&2
       show_log_tail "$log_file"
       return 1
     fi

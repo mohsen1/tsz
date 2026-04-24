@@ -11,7 +11,6 @@ use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -165,7 +164,7 @@ impl<'a> CheckerState<'a> {
             if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
                 continue;
             }
-            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION == 0 {
+            if !stmt.is_global_augmentation() {
                 continue;
             }
             let Some(module) = arena.get_module(stmt) else {
@@ -204,7 +203,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Must NOT be a global augmentation
-            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION != 0 {
+            if stmt.is_global_augmentation() {
                 continue;
             }
             let Some(module) = arena.get_module(stmt) else {
@@ -245,7 +244,7 @@ impl<'a> CheckerState<'a> {
             if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
                 continue;
             }
-            if (stmt.flags as u32) & node_flags::GLOBAL_AUGMENTATION == 0 {
+            if !stmt.is_global_augmentation() {
                 continue;
             }
             let Some(module) = arena.get_module(stmt) else {
@@ -721,10 +720,7 @@ impl<'a> CheckerState<'a> {
 
         // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
         // statement has parse errors. Matches TSC: syntax errors take priority.
-        use tsz_parser::parser::node_flags;
-        let has_parse_errors =
-            (node.flags as u32 & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                || self.ctx.has_real_syntax_errors;
+        let has_parse_errors = node.this_or_subtree_has_error() || self.ctx.has_real_syntax_errors;
 
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
@@ -1525,38 +1521,20 @@ impl<'a> CheckerState<'a> {
     // Re-export Cycle Detection
     // =========================================================================
 
-    /// Check re-export chains for circular dependencies.
+    /// Walk the re-export chain rooted at `module_name`, guarding against
+    /// infinite recursion on circular chains.
+    ///
+    /// tsc does not emit a diagnostic for circular `export * from` chains —
+    /// it simply treats the cycle as contributing no transitive exports. This
+    /// walker exists purely to keep exported-symbol collection from spinning
+    /// forever on self/mutually-referential packages (e.g. a typesVersions
+    /// subfolder that re-exports from the package root and vice versa).
     pub(crate) fn check_reexport_chain_for_cycles(
         &mut self,
         module_name: &str,
         visited: &mut FxHashSet<String>,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
         if visited.contains(module_name) {
-            let cycle_path: Vec<&str> = visited
-                .iter()
-                .map(std::string::String::as_str)
-                .chain(std::iter::once(module_name))
-                .collect();
-            let cycle_str = cycle_path.join(" -> ");
-            let message = format!(
-                "{}: {}",
-                diagnostic_messages::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
-                cycle_str
-            );
-
-            // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
-            let module_key = module_name.to_string();
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error(
-                    0,
-                    0,
-                    message,
-                    diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
-                );
-            }
             return;
         }
 

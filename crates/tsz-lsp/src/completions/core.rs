@@ -704,8 +704,7 @@ impl<'a> Completions<'a> {
                 break;
             };
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.is_function_expression_or_arrow()
             {
                 if let Some(function) = self.arena.get_function(node)
                     && function.body.is_some()
@@ -757,9 +756,7 @@ impl<'a> Completions<'a> {
         let mut current = node_idx;
         for _ in 0..15 {
             if let Some(node) = self.arena.get(current)
-                && (node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    || node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
+                && (node.is_class_like() || node.kind == syntax_kind_ext::INTERFACE_DECLARATION)
             {
                 let start = node.pos as usize;
                 let end = node.end as usize;
@@ -788,8 +785,7 @@ impl<'a> Completions<'a> {
                 if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
                     return true;
                 }
-                if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                if node.is_class_like()
                     || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                     || node.kind == syntax_kind_ext::SOURCE_FILE
                 {

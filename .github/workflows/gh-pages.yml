@@ -1,0 +1,243 @@
+name: Deploy Website
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/tsz-website/**'
+      - 'docs/**/*.md'
+      - 'docs/architecture.html'
+      - 'AGENTS.md'
+      - '.github/workflows/gh-pages.yml'
+  # Disabled: CI completions create a nonstop stream of deploy triggers
+  # that cancel each other. Use schedule + manual dispatch instead.
+  # workflow_run:
+  #   workflows: ["CI"]
+  #   types: [completed]
+  #   branches: [main]
+  schedule:
+    - cron: '0 6 * * *'  # Daily at 6am UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  # Full benchmark suite is ~75 minutes — never cancel one in flight.
+  # The `check` job below also early-exits if another deploy is already
+  # running, so in-between commits during a run are dropped (not queued).
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.diff.outputs.should_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Skip if another deploy is already running
+        id: in_flight
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Bench is ~75 min. If another run is already in_progress we
+          # ignore this trigger entirely — when the running one finishes,
+          # the next *new* trigger gets to start fresh.
+          IN_FLIGHT=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/gh-pages.yml/runs?status=in_progress&per_page=20" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | length")
+          QUEUED=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/gh-pages.yml/runs?status=queued&per_page=20" \
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }} and .id < ${{ github.run_id }})] | length")
+          BUSY=$((IN_FLIGHT + QUEUED))
+          echo "Other deploy runs in_progress=${IN_FLIGHT} queued_before_us=${QUEUED}"
+          if [ "$BUSY" -gt 0 ]; then
+            echo "another deploy is busy — skipping this trigger"
+            echo "in_flight=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_flight=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for changes since last deploy
+        id: diff
+        run: |
+          # If another run is already busy, drop this trigger entirely.
+          if [ "${{ steps.in_flight.outputs.in_flight }}" = "true" ]; then
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Always deploy for non-schedule triggers
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # For schedule: check if there are new commits in the last 25 hours
+          if git log --since="25 hours ago" --oneline | grep -q .; then
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No changes since last deploy, skipping"
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  benchmark:
+    needs: check
+    if: needs.check.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          # bench-vs-tsgo.sh uses .target-bench/ for LTO builds — cache it
+          workspaces: ". -> .target-bench"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install hyperfine
+        run: |
+          wget -q https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
+          sudo dpkg -i hyperfine_1.18.0_amd64.deb
+
+      - name: Run benchmarks
+        # Run the full benchmark suite (no --quick) so the website renders
+        # all categories instead of the ~16-entry quick subset.
+        # `continue-on-error` so the upload step still runs when individual
+        # benches OOM the GitHub runner (e.g. `large-ts-repo`); the bench
+        # script's EXIT trap writes whatever rows DID complete to
+        # artifacts/bench-vs-tsgo-*.json before exiting.
+        run: ./scripts/bench/bench-vs-tsgo.sh --json
+        timeout-minutes: 75
+        continue-on-error: true
+
+      - name: Upload benchmark data
+        # `if: always()` so we still upload the partial JSON written by the
+        # bench script's EXIT trap when the runner kills the bench midway.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-data
+          path: artifacts/bench-vs-tsgo-*.json
+          retention-days: 7
+          if-no-files-found: warn
+
+  wasm:
+    needs: check
+    if: needs.check.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install wasm-opt (via binaryen)
+        run: sudo apt-get install -y binaryen
+
+      - name: Build WASM (web target)
+        run: |
+          cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
+          # wasm-opt currently produces a web build that fails during
+          # __wbindgen_init_externref_table in the playground runtime.
+          wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web --no-opt
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-web
+          path: pkg/web/
+          retention-days: 7
+
+  build:
+    needs: [check, benchmark, wasm]
+    if: ${{ always() && needs.check.outputs.should_deploy == 'true' && !cancelled() && needs.wasm.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Download latest CI metrics if triggered by CI workflow
+      - name: Download CI metrics
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          pattern: ci-metrics-*
+          merge-multiple: true
+          path: .ci-metrics
+        continue-on-error: true
+
+      - name: Download benchmark data
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-data
+          path: crates/tsz-website/data
+        continue-on-error: true
+
+      - name: Download WASM
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-web
+          path: pkg/web
+        continue-on-error: true
+
+      # Rename to expected filename
+      - name: Prepare benchmark data
+        run: |
+          if ls crates/tsz-website/data/bench-vs-tsgo-*.json 1>/dev/null 2>&1; then
+            mv crates/tsz-website/data/bench-vs-tsgo-*.json crates/tsz-website/data/benchmarks.json
+            echo "Benchmark data ready"
+          else
+            echo "No benchmark data available, will use sample data"
+          fi
+
+      - name: Install dependencies
+        run: cd crates/tsz-website && npm install
+
+      - name: Build website
+        run: cd crates/tsz-website && npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: crates/tsz-website/dist
+
+  deploy:
+    needs: build
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,6 +1,6 @@
 use super::super::Printer;
 use crate::transforms::private_fields_es5::get_private_field_name;
-use tsz_parser::parser::{NodeIndex, node::Node, node_flags, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -688,7 +688,7 @@ impl<'a> Printer<'a> {
     }
 
     const fn is_optional_chain(&self, node: &Node) -> bool {
-        (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0
+        node.is_optional_chain()
     }
 
     fn has_optional_call_token(

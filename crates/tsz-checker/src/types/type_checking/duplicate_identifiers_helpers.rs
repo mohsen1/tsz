@@ -320,7 +320,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(self.ctx.current_file_idx)
         };
 
-        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
+        for (module_spec, augmentations) in self.ctx.binder.module_augmentations.iter() {
             for augmentation in augmentations {
                 consider_augmentation(
                     module_spec,
@@ -344,7 +344,7 @@ impl<'a> CheckerState<'a> {
                 if augmenting_file_idx == self.ctx.current_file_idx {
                     continue;
                 }
-                for (module_spec, augmentations) in &binder.module_augmentations {
+                for (module_spec, augmentations) in binder.module_augmentations.iter() {
                     for augmentation in augmentations {
                         consider_augmentation(module_spec, augmenting_file_idx, augmentation);
                     }
@@ -1110,8 +1110,6 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
         flags: u32,
     ) -> bool {
-        use tsz_parser::parser::node_flags;
-
         if (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 || (flags & symbol_flags::VALUE) == 0
         {
             return false;
@@ -1130,15 +1128,14 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if parent.kind == syntax_kind_ext::MODULE_DECLARATION {
-                let is_global_augmentation =
-                    (u32::from(parent.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
-                        || self
-                            .ctx
-                            .arena
-                            .get_module(parent)
-                            .and_then(|module| self.ctx.arena.get(module.name))
-                            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                            .is_some_and(|ident| ident.escaped_text == "global");
+                let is_global_augmentation = parent.is_global_augmentation()
+                    || self
+                        .ctx
+                        .arena
+                        .get_module(parent)
+                        .and_then(|module| self.ctx.arena.get(module.name))
+                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                        .is_some_and(|ident| ident.escaped_text == "global");
                 if is_global_augmentation {
                     return true;
                 }
@@ -1274,7 +1271,6 @@ impl<'a> CheckerState<'a> {
         &self,
         name: &str,
     ) -> Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)> {
-        use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
@@ -1320,8 +1316,7 @@ impl<'a> CheckerState<'a> {
 
                 // Check for `declare global { ... }` containing variable declarations
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    let is_global = (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION)
-                        != 0
+                    let is_global = stmt_node.is_global_augmentation()
                         || arena
                             .get_module(stmt_node)
                             .and_then(|m| arena.get(m.name))
@@ -1675,7 +1670,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn first_current_file_global_import_equals_named(&self, name: &str) -> Option<NodeIndex> {
-        use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
         let source_file = self.ctx.arena.source_files.first()?;
@@ -1690,14 +1684,13 @@ impl<'a> CheckerState<'a> {
             let Some(module_decl) = self.ctx.arena.get_module(stmt_node) else {
                 continue;
             };
-            let is_global_augmentation =
-                (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
-                    || self
-                        .ctx
-                        .arena
-                        .get(module_decl.name)
-                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                        .is_some_and(|ident| ident.escaped_text == "global");
+            let is_global_augmentation = stmt_node.is_global_augmentation()
+                || self
+                    .ctx
+                    .arena
+                    .get(module_decl.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text == "global");
             if !is_global_augmentation {
                 continue;
             }

@@ -225,7 +225,6 @@ impl<'a> CheckerState<'a> {
                     let mut is_valid = true;
 
                     let mut current_idx = expr_idx;
-                    use tsz_parser::parser::flags::node_flags;
                     use tsz_parser::parser::syntax_kind_ext::*;
 
                     loop {
@@ -234,7 +233,7 @@ impl<'a> CheckerState<'a> {
                             break;
                         };
 
-                        if node.flags & (node_flags::OPTIONAL_CHAIN as u16) != 0 {
+                        if node.is_optional_chain() {
                             is_valid = false;
                             break;
                         }
@@ -267,7 +266,6 @@ impl<'a> CheckerState<'a> {
                     let mut is_valid = true;
 
                     let mut current_idx = expr_idx;
-                    use tsz_parser::parser::flags::node_flags;
                     use tsz_parser::parser::syntax_kind_ext::*;
 
                     loop {
@@ -276,7 +274,7 @@ impl<'a> CheckerState<'a> {
                             break;
                         };
 
-                        if node.flags & (node_flags::OPTIONAL_CHAIN as u16) != 0 {
+                        if node.is_optional_chain() {
                             is_valid = false;
                             break;
                         }
@@ -1409,8 +1407,7 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent) else {
                 return false;
             };
-            if (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            if (parent_node.is_class_like())
                 && self
                     .ctx
                     .binder
@@ -1632,9 +1629,7 @@ impl<'a> CheckerState<'a> {
         // Validate that the node at decl_idx actually matches the expected kind.
         // A mismatch means the declaration is in another file — no TDZ applies.
         if self.ctx.all_arenas.is_some() {
-            let kind_ok = (is_class
-                && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION))
+            let kind_ok = (is_class && (decl_node.is_class_like()))
                 || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION);
             if !kind_ok {
                 return;

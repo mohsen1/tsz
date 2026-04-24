@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS) {
             return None;
         }
 
@@ -87,7 +87,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol(export_equals_sym)
-            .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::ALIAS) != 0)
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS))
             .then(|| {
                 let mut visited_aliases = AliasCycleTracker::new();
                 self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
@@ -240,9 +240,9 @@ impl<'a> CheckerState<'a> {
                             });
                             symbol.escaped_name == identifier_text
                                 && has_class_decl
-                                && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
-                                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
-                                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                                && symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                                && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE)
+                                && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
                                 && (symbol.decl_file_idx == u32::MAX
                                     || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
                         })
@@ -259,9 +259,9 @@ impl<'a> CheckerState<'a> {
                     if self.ctx.is_js_file()
                         && self.ctx.should_resolve_jsdoc()
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
-                        && (symbol.flags & tsz_binder::symbol_flags::VARIABLE) != 0
-                        && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) == 0
+                        && symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                        && symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE)
+                        && !symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
                         && let Some(preferred_decl) = self.checked_js_constructor_value_declaration(
                             sym_id,
                             symbol.value_declaration,

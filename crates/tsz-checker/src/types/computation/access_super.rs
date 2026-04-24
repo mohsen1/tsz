@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
                 continue;
             };
-            if symbol.flags & symbol_flags::CLASS == 0 {
+            if !symbol.has_any_flags(symbol_flags::CLASS) {
                 continue;
             }
             // Same-file classes only — cross-file references have no runtime

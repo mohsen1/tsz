@@ -1713,6 +1713,79 @@ fn test_resolver_empty_types_field_uses_types_versions() {
 }
 
 #[test]
+fn test_resolver_relative_directory_applies_types_versions() {
+    // Regression: a relative import resolving into a package root (e.g. `../`
+    // from inside a typesVersions-redirected directory) must re-apply
+    // typesVersions from the package's package.json. Without this, tsz
+    // bypasses the redirect and resolves straight to the bare `types` entry,
+    // diverging from tsc. See the TypeScript conformance test
+    // `typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts`.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_relative_dir_types_versions");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules").join("ext").join("ts3.1")).unwrap();
+
+    fs::write(
+        dir.join("node_modules").join("ext").join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "types": "index",
+            "typesVersions": {
+                ">=3.1.0-0": { "*": ["ts3.1/*"] }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("ext").join("index.d.ts"),
+        "export interface A {}\nexport function fa(): A;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules")
+            .join("ext")
+            .join("ts3.1")
+            .join("index.d.ts"),
+        r#"export * from "../";"#,
+    )
+    .unwrap();
+
+    let options = crate::config::ResolvedCompilerOptions {
+        module_resolution: Some(crate::config::ModuleResolutionKind::Node),
+        types_versions_compiler_version: Some("3.1.0-dev".to_string()),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let containing = dir
+        .join("node_modules")
+        .join("ext")
+        .join("ts3.1")
+        .join("index.d.ts");
+    let result = resolver.resolve("../", &containing, Span::new(0, 4));
+
+    let resolved = result.expect("relative directory import should resolve");
+    // tsc applies typesVersions here, mapping `../` → ts3.1/index.d.ts (which
+    // loops back to the current file). The key invariant is that the bare
+    // `index.d.ts` is NOT selected when typesVersions matches.
+    let expected = dir
+        .join("node_modules")
+        .join("ext")
+        .join("ts3.1")
+        .join("index.d.ts")
+        .canonicalize()
+        .unwrap();
+    let actual = resolved.resolved_path.canonicalize().unwrap();
+    assert_eq!(
+        actual, expected,
+        "expected typesVersions to redirect `../` to ts3.1/index.d.ts, got {:?}",
+        resolved.resolved_path,
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_subpath_ambient_module_falls_back_to_types_entry() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_subpath_ambient_module");
@@ -2339,10 +2412,12 @@ fn test_lookup_extension_suggestion_tsx_react_uses_js() {
 
 #[test]
 fn test_lookup_cjs_esm_mismatch_classic_resolution() {
-    // TS2792: classic resolution should produce moduleResolution mismatch
+    // TS2792: classic resolution + a matching `node_modules/<pkg>` ancestor
+    // should produce moduleResolution mismatch hint.
     let dir = std::env::temp_dir().join("tsz_lookup_cjs_esm_mismatch");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("node_modules").join("nonexistent")).unwrap();
     std::fs::write(dir.join("src/index.ts"), "import 'nonexistent';").unwrap();
 
     let options = ResolvedCompilerOptions {
@@ -2366,7 +2441,7 @@ fn test_lookup_cjs_esm_mismatch_classic_resolution() {
     let error = result.error.expect("should have an error");
     assert_eq!(
         error.code, MODULE_RESOLUTION_MODE_MISMATCH,
-        "classic resolution should produce TS2792, got TS{}",
+        "classic resolution with matching node_modules/<pkg> should produce TS2792, got TS{}",
         error.code
     );
     assert!(
@@ -4007,10 +4082,64 @@ fn test_lookup_should_try_fallback_not_for_hard_failures() {
 
 #[test]
 fn test_lookup_classic_implied_resolution_upgrades_to_ts2792() {
-    // When implied_classic_resolution is true and the module is not found,
-    // lookup() should upgrade TS2307 -> TS2792.
+    // When implied_classic_resolution is true AND a node-style resolution
+    // would find the package (via ancestor `node_modules/<pkg>/`), lookup()
+    // upgrades TS2307 → TS2792 to suggest the nodenext hint.
+    //
+    // Without a matching node_modules entry the override MUST NOT fire — see
+    // `test_lookup_classic_implied_resolution_without_node_modules_keeps_ts2307`
+    // below for the gated case.
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_lookup_classic_ts2792");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(dir.join("node_modules").join("some-pkg")).unwrap();
+    fs::write(dir.join("index.ts"), "import 'some-pkg';").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        module_suffixes: vec![String::new()],
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+
+    let request = ModuleLookupRequest {
+        specifier: "some-pkg",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(8, 18),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: true,
+    };
+    let result = resolver.lookup(&request, |_, _| None, |_| false, None);
+    let outcome = result.classify();
+
+    assert!(!outcome.is_resolved);
+    let error = outcome.error.expect("Expected error for missing module");
+    assert_eq!(
+        error.code, MODULE_RESOLUTION_MODE_MISMATCH,
+        "Expected TS2792 for implied classic resolution with matching node_modules/<pkg>, got TS{}",
+        error.code
+    );
+    assert!(
+        error.message.contains("moduleResolution"),
+        "TS2792 message should suggest moduleResolution option"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_lookup_classic_implied_resolution_without_node_modules_keeps_ts2307() {
+    // When implied_classic_resolution is true but there is NO matching
+    // node_modules/<pkg> ancestor, switching to nodenext wouldn't actually
+    // resolve the specifier — tsc emits plain TS2307 in this case. Matches
+    // the `typeRootsFromNodeModulesInParentDirectory.ts` conformance test
+    // where the only "matching" entry is an ambient module declaration
+    // inside an unrelated @types/<foo> package.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_lookup_classic_ts2307_no_node_modules");
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("index.ts"), "import 'some-pkg';").unwrap();
@@ -4037,13 +4166,9 @@ fn test_lookup_classic_implied_resolution_upgrades_to_ts2792() {
     assert!(!outcome.is_resolved);
     let error = outcome.error.expect("Expected error for missing module");
     assert_eq!(
-        error.code, MODULE_RESOLUTION_MODE_MISMATCH,
-        "Expected TS2792 for implied classic resolution, got TS{}",
+        error.code, CANNOT_FIND_MODULE,
+        "Expected TS2307 when no matching node_modules/<pkg> exists under any ancestor, got TS{}",
         error.code
-    );
-    assert!(
-        error.message.contains("moduleResolution"),
-        "TS2792 message should suggest moduleResolution option"
     );
 
     let _ = fs::remove_dir_all(&dir);

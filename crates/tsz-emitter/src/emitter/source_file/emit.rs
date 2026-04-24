@@ -4,7 +4,6 @@ use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -328,7 +327,7 @@ impl<'a> Printer<'a> {
                 let Some(expr_node) = self.arena.get(expr_stmt.expression) else {
                     break;
                 };
-                if expr_node.kind != SyntaxKind::StringLiteral as u16 {
+                if !expr_node.is_string_literal() {
                     break; // non-string-literal ends the prologue zone
                 }
                 // Check the literal text
@@ -1160,7 +1159,7 @@ impl<'a> Printer<'a> {
                 && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
                 && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
                 && let Some(expr_node) = self.arena.get(expr_stmt.expression)
-                && expr_node.kind == SyntaxKind::StringLiteral as u16
+                && expr_node.is_string_literal()
             {
                 let is_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
                     lit.text == "use strict"
@@ -1259,7 +1258,7 @@ impl<'a> Printer<'a> {
                         .get_import_decl(stmt_node)
                         .and_then(|import_data| self.arena.get(import_data.module_specifier))
                         .is_some_and(|spec_node| {
-                            spec_node.kind == SyntaxKind::StringLiteral as u16
+                            spec_node.is_string_literal()
                                 || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                         })
                 } else {
@@ -1565,7 +1564,7 @@ impl<'a> Printer<'a> {
                 && stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
                 && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
                 && let Some(expr_node) = self.arena.get(expr_stmt.expression)
-                && expr_node.kind == SyntaxKind::StringLiteral as u16
+                && expr_node.is_string_literal()
             {
                 hoisted_var_byte_offset = self.writer.len();
                 hoisted_var_line = self.writer.current_line();

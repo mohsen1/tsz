@@ -2187,6 +2187,27 @@ impl ParserState {
         let import_clause_had_errors =
             self.parse_diagnostics.len() > diagnostics_before_import_clause;
 
+        // Namespace import yielded to statement recovery: bail out of import
+        // parsing without touching the remaining tokens so the outer statement
+        // parser can pick them up (e.g. `import * as while from "foo"` becomes
+        // a WhileStatement on `while from "foo"`, matching tsc's cascade).
+        if self.namespace_import_yielded_to_statement {
+            self.namespace_import_yielded_to_statement = false;
+            let end_pos = self.token_end();
+            return self.arena.add_import_decl(
+                syntax_kind_ext::IMPORT_DECLARATION,
+                start_pos,
+                end_pos,
+                ImportDeclData {
+                    modifiers,
+                    is_type_only: false,
+                    import_clause,
+                    module_specifier: NodeIndex::NONE,
+                    attributes: NodeIndex::NONE,
+                },
+            );
+        }
+
         // Parse module specifier
         let recovered_trailing_comma_before_from =
             !import_clause_had_errors && self.is_token(SyntaxKind::CommaToken);
@@ -2555,7 +2576,42 @@ impl ParserState {
         self.parse_expected(SyntaxKind::AsKeyword);
         // Namespace import names must still reject reserved words like `while`,
         // but allow contextual keywords such as `type`.
-        let name = self.parse_identifier();
+        //
+        // When the name slot holds a reserved word whose statement form is
+        // `kw ( expr )` (e.g. `import * as while from "foo"`), tsc emits
+        // TS1359 at the keyword and then lets statement recovery re-parse the
+        // keyword as the head of a statement, cascading the `'(' expected.` /
+        // `')' expected.` diagnostics onto the following tokens.
+        // Replicate that by emitting TS1359 here without consuming the token
+        // and signaling the import declaration to bail out of its own recovery.
+        let name = if self.is_reserved_word() && self.is_paren_statement_starter_reserved_word() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let name_pos = self.token_pos();
+            let name_end = self.token_end();
+            if self.should_report_error() {
+                let word = self.current_keyword_text();
+                self.parse_error_at_current_token(
+                    &format!(
+                        "Identifier expected. '{word}' is a reserved word that cannot be used here."
+                    ),
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            }
+            self.namespace_import_yielded_to_statement = true;
+            self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                name_pos,
+                name_end,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            )
+        } else {
+            self.parse_identifier()
+        };
         let end_pos = self.token_end();
 
         self.arena.add_named_imports(
@@ -2842,7 +2898,7 @@ impl ParserState {
             // `import { foo as "str" }` is invalid (string can't be a binding).
             // `import { "str" }` is invalid (string without alias can't be a binding).
             if let Some(name_node) = self.arena.get(name)
-                && name_node.kind == SyntaxKind::StringLiteral as u16
+                && name_node.is_string_literal()
             {
                 let name_start = name_node.pos;
                 let name_len = name_node.end.saturating_sub(name_node.pos);

@@ -2662,6 +2662,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
             wildcard_reexports_type_only: original_binder.wildcard_reexports_type_only.clone(),
             symbol_arenas: original_binder.symbol_arenas.clone(),
             declaration_arenas: original_binder.declaration_arenas.clone(),
+            sym_to_decl_indices: original_binder.sym_to_decl_indices.clone(),
             cross_file_node_symbols: original_binder.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: original_binder.shorthand_ambient_modules.clone(),
             modules_with_export_equals: original_binder.modules_with_export_equals.clone(),

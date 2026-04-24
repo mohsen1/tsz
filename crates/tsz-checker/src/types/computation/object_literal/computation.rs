@@ -342,6 +342,22 @@ impl<'a> CheckerState<'a> {
                                     | syntax_kind_ext::FUNCTION_EXPRESSION
                             )
                         });
+                    let initializer_is_function_expression = self
+                        .ctx
+                        .arena
+                        .get(prop.initializer)
+                        .is_some_and(|init_node| {
+                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                        });
+                    let initializer_is_local_js_prototype_function =
+                        initializer_is_function_expression
+                            && self.is_js_file()
+                            && self
+                                .js_prototype_owner_expression_for_node(prop.initializer)
+                                .and_then(|owner_expr| {
+                                    self.js_prototype_owner_function_target(owner_expr)
+                                })
+                                .is_some();
                     // JSDoc @type on object literal properties acts as the declared
                     // type for the property. When present:
                     // - The property type in the resulting object is the @type type
@@ -517,13 +533,6 @@ impl<'a> CheckerState<'a> {
                         // resolves to the object literal's type rather than `any`.
                         // Arrow functions inherit `this` from the enclosing scope, so they
                         // must NOT get a synthetic `this` push.
-                        let initializer_is_function_expression = self
-                            .ctx
-                            .arena
-                            .get(prop.initializer)
-                            .is_some_and(|init_node| {
-                                init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                            });
                         let mut pushed_prop_fn_this = false;
                         if initializer_is_function_expression
                             && marker_this_type.is_none()
@@ -561,7 +570,8 @@ impl<'a> CheckerState<'a> {
                                 .implicit_any_checked_closures
                                 .remove(&prop.initializer);
                         }
-                        if self.request_has_concrete_contextual_type(&property_request)
+                        if !initializer_is_local_js_prototype_function
+                            && self.request_has_concrete_contextual_type(&property_request)
                             && property_request.contextual_type != Some(TypeId::NEVER)
                         {
                             let spans = self.function_like_param_spans_for_node(prop.initializer);
@@ -1523,7 +1533,10 @@ impl<'a> CheckerState<'a> {
                             name: name_atom,
                             type_id: method_type,
                             write_type: method_type,
-                            optional: false,
+                            // A method shorthand may carry `?` — `{ a?() {} }` —
+                            // in which case the inferred property type must be
+                            // optional so the .d.ts emits `a?(): void`.
+                            optional: method.question_token,
                             readonly: false,
                             is_method: true, // Object literal methods should be bivariant
                             is_class_prototype: false,

@@ -1561,9 +1561,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut depth = 0;
         while current.is_some() && depth < 100 {
             let node = self.arena.get(current)?;
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if node.is_class_like() {
                 let class_data = self.arena.get_class(node)?;
                 let heritage_clauses = class_data.heritage_clauses.as_ref()?;
                 for &clause_idx in &heritage_clauses.nodes {
@@ -3876,10 +3874,7 @@ impl<'a> SignatureHelpProvider<'a> {
         call_kind: CallKind,
     ) -> Option<SignatureDocs> {
         let symbol = self.binder.get_symbol(symbol_id)?;
-        let mut decls = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
-            decls.insert(0, symbol.value_declaration);
-        }
+        let decls = symbol.all_declarations();
 
         let mut candidates = Vec::new();
         let mut fallback = None;
@@ -4149,13 +4144,8 @@ impl<'a> SignatureHelpProvider<'a> {
         let Some(symbol) = self.binder.get_symbol(sym_id) else {
             return Vec::new();
         };
-        let mut decls = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
-            decls.push(symbol.value_declaration);
-        }
-
         let mut class_decls = Vec::new();
-        for decl in decls {
+        for decl in symbol.all_declarations() {
             if decl.is_none() {
                 continue;
             }

@@ -249,7 +249,14 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        // Primary: scope-chain resolution (works for variables, parameters, etc.)
+        // Fallback: node_symbols direct lookup for declaration-site identifiers.
+        // Class property names are filtered out by scope-chain resolution (they're
+        // class members, not plain values), but `node_symbols` always maps every
+        // declaration-site name to its symbol — giving us the right symbol here.
+        let sym_id = self
+            .resolve_identifier_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.node_symbols.get(&expr_idx.0).copied())?;
         let symbol = self.get_cross_file_symbol(sym_id)?;
         let owner_binder = self
             .ctx
@@ -367,6 +374,20 @@ impl<'a> CheckerState<'a> {
                 return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
                     self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
                 });
+            }
+
+            // Class property declarations: `public scopeGetter: () => SymbolScope = null`
+            // The symbol's value_declaration is the PROPERTY_DECLARATION node itself.
+            // tsc shows the declared annotation text in TS2322 messages, not the
+            // evaluated type (which may be `() => error` for unresolved names).
+            if let Some(prop_decl) = decl_arena.get_property_decl(decl)
+                && prop_decl.type_annotation.is_some()
+            {
+                return node_text_in_arena(decl_arena, prop_decl.type_annotation).and_then(
+                    |text| {
+                        self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
+                    },
+                );
             }
         }
 
@@ -722,7 +743,7 @@ impl<'a> CheckerState<'a> {
 
         let constructor_name = format!("{base_name}Constructor");
         let constructor_type = self.resolve_lib_type_by_name(&constructor_name)?;
-        if matches!(constructor_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if constructor_type.is_unknown_or_error() {
             return None;
         }
 
@@ -1360,6 +1381,14 @@ impl<'a> CheckerState<'a> {
                 // reflects the source code literally and misses the semantic
                 // `| undefined` injection.
                 && (!formatted.contains("| undefined") || display.contains("| undefined"))
+                // Don't use annotation text for string intrinsic types when it
+                // differs from the formatted type. tsc collapses idempotent
+                // nesting (e.g. Uppercase<Uppercase<string>> → Uppercase<string>)
+                // at type creation time, so the annotation text may be stale.
+                && (!crate::query_boundaries::common::is_string_intrinsic_type(
+                    self.ctx.types,
+                    display_type,
+                ) || display.trim() == formatted)
             {
                 if crate::query_boundaries::common::enum_def_id(self.ctx.types, display_type)
                     .is_some()
@@ -1524,6 +1553,15 @@ impl<'a> CheckerState<'a> {
             // correctly produces namespace-qualified enum names.
             if crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_some() {
                 return self.format_assignability_type_for_message(target, source);
+            }
+            // When the evaluated display contains our internal "error" sentinel
+            // (from unresolved type names like `() => SymbolScope` where `SymbolScope`
+            // is not defined), prefer the declared annotation text. tsc shows the
+            // original annotation, not the evaluated error type.
+            // Only applies when the annotation itself does not contain "error" (which
+            // would indicate the user actually wrote a type named `error`).
+            if fallback.contains("error") && !display.contains("error") {
+                return self.format_annotation_like_type(&display);
             }
             return fallback;
         }

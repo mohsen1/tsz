@@ -583,7 +583,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let define_property_type = self.ctx.types.factory().object(props);
-        if matches!(base_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if base_type.is_unknown_or_error() {
             define_property_type
         } else {
             self.ctx
@@ -1024,7 +1024,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|idx| self.ctx.get_binder_for_file(idx))
                     .and_then(|binder| {
                         let sym = binder.get_symbol(export_equals_sym)?;
-                        if (sym.flags & symbol_flags::VALUE) != 0 {
+                        if sym.has_any_flags(symbol_flags::VALUE) {
                             return None;
                         }
                         let sym_name = sym.escaped_name.clone();
@@ -1039,7 +1039,7 @@ impl<'a> CheckerState<'a> {
                             .filter(|&mid| {
                                 binder
                                     .get_symbol(mid)
-                                    .is_some_and(|m| (m.flags & symbol_flags::VALUE) != 0)
+                                    .is_some_and(|m| m.has_any_flags(symbol_flags::VALUE))
                             })
                     })
                     .unwrap_or(export_equals_sym);

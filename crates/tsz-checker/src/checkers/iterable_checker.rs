@@ -943,7 +943,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn spread_iterability_error_anchor(&self, expr_idx: NodeIndex) -> NodeIndex {
-        let mut current = self.ctx.arena.get_extended(expr_idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(expr_idx);
         while let Some(parent_idx) = current {
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
                 break;

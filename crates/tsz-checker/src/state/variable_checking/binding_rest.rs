@@ -30,14 +30,29 @@ impl<'a> CheckerState<'a> {
         // Collect the names of all non-rest sibling properties in this binding pattern.
         let excluded = self.collect_non_rest_property_names(pattern_idx);
 
-        // For type parameters, preserve the generic identity.
-        // The rest of `T extends { a, b }` with `a` excluded is `Omit<T, "a">`,
-        // which we approximate as T itself. This preserves T in the function's
-        // inferred return type so that instantiation at call sites works correctly.
-        // Without this, rest resolves to a concrete object from the constraint,
-        // losing generic properties that only appear when T is instantiated.
+        // For type parameters, preserve the generic identity. `rest` of
+        // `T extends { a, b }` with `a` excluded is `Omit<T, "a">`. When the
+        // `Omit` lib alias is available and at least one sibling is excluded,
+        // construct `Omit<T, K>` so downstream spread analysis (e.g. TS2783
+        // overwrite detection) sees the correct set of known properties.
+        // When the lib alias isn't available (tests with no `lib.es5`) or there
+        // is no sibling to exclude, fall back to returning T unchanged so that
+        // the function's inferred return type still preserves T's identity.
         let is_type_param = query::type_parameter_constraint(self.ctx.types, parent_type).is_some();
         if is_type_param {
+            if !excluded.is_empty()
+                && let Some(omit_type) = self.resolve_lib_type_by_name("Omit")
+            {
+                let factory = self.ctx.types.factory();
+                let literal_ids: Vec<TypeId> =
+                    excluded.iter().map(|n| factory.literal_string(n)).collect();
+                let key_arg = if literal_ids.len() == 1 {
+                    literal_ids[0]
+                } else {
+                    factory.union(literal_ids)
+                };
+                return factory.application(omit_type, vec![parent_type, key_arg]);
+            }
             return parent_type;
         }
 

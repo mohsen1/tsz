@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
             && let Some(parent_node) = self.ctx.arena.get(ext.parent)
         {
             let parent_flags = parent_node.flags as u32;
-            if parent_flags & (node_flags::LET | node_flags::CONST) != 0 {
+            if node_flags::is_let_or_const(parent_flags) {
                 return;
             }
         } else {
@@ -107,7 +107,7 @@ impl<'a> CheckerState<'a> {
                 };
                 if let Some(sym_id) = scope.table.get(var_name)
                     && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-                    && sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                    && sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
                 {
                     found_block_scoped_symbol = Some(sym_id);
                     found_scope_kind = Some(scope.kind);
@@ -329,7 +329,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|parent| {
                 let flags = parent.flags as u32;
                 parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                    && (flags & (node_flags::LET | node_flags::CONST)) == 0
+                    && !node_flags::is_let_or_const(flags)
             });
         if !is_var {
             return false;
@@ -368,7 +368,7 @@ impl<'a> CheckerState<'a> {
         // Check if this scope has a symbol with BLOCK_SCOPED_VARIABLE flag for this name
         if let Some(sym_id) = scope.table.get(var_name)
             && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-            && (sym.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+            && sym.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE)
         {
             // The scope has a block-scoped binding for this name.
             // Check that this scope is NOT at function/module/source-file level

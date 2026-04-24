@@ -324,6 +324,12 @@ impl<'a> CheckerState<'a> {
         } else {
             self.resolve_type_for_property_access(type_id)
         };
+        // tsc applies `getReducedType` when displaying heritage instance types,
+        // so utility conditional applications like `InstanceType<typeof Foo>`
+        // render in their concrete form (`Foo`). Mirror that behaviour for
+        // mixin heritage display so `A & { context: InstanceType<typeof
+        // Context>; }` prints as `A & { context: Context; }` (override19.ts).
+        let display_type = self.simplify_heritage_instance_type_for_display(display_type);
         self.format_type(display_type)
     }
 
@@ -615,7 +621,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(symbol) =
                         self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_ref.0))
                     {
-                        symbol.flags & symbol_flags::ABSTRACT != 0
+                        symbol.has_any_flags(symbol_flags::ABSTRACT)
                     } else {
                         false
                     }
@@ -918,7 +924,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
 
         // Verify it's a class
-        (symbol.flags & symbol_flags::CLASS != 0).then_some(sym_id)
+        (symbol.has_any_flags(symbol_flags::CLASS)).then_some(sym_id)
     }
 
     /// Find ALL enclosing class symbols by walking up the AST parent chain.

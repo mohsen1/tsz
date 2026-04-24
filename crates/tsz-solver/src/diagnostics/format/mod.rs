@@ -1076,39 +1076,65 @@ impl<'a> TypeFormatter<'a> {
                     base_str.as_ref(),
                     "Iterable" | "IterableIterator" | "AsyncIterable" | "AsyncIterableIterator"
                 );
-                let def_type_params: Option<Vec<TypeParamInfo>> = if !should_elide_defaults {
-                    None
-                } else if let Some(TypeData::Lazy(def_id)) = base_key {
-                    self.def_store.and_then(|ds| ds.get_type_params(def_id))
-                } else if let Some(def_store) = self.def_store {
-                    def_store
-                        .find_def_for_type(app.base)
-                        .and_then(|id| def_store.get_type_params(id))
+                // Load the base's declared type parameters. We need them in two
+                // situations:
+                //   1) `should_elide_defaults` — trim trailing args that equal
+                //      their parameter defaults (for the 4 iterable globals).
+                //   2) `app.args.len() < params.len()` — pad missing trailing
+                //      args with their parameter defaults so tsc-style output
+                //      shows all args (e.g. `Iterator<string>` renders as
+                //      `Iterator<string, any, any>` when `TReturn = TNext = any`).
+                let def_type_params: Option<Vec<TypeParamInfo>> =
+                    if let Some(TypeData::Lazy(def_id)) = base_key {
+                        self.def_store.and_then(|ds| ds.get_type_params(def_id))
+                    } else if let Some(def_store) = self.def_store {
+                        def_store
+                            .find_def_for_type(app.base)
+                            .and_then(|id| def_store.get_type_params(id))
+                    } else {
+                        None
+                    };
+
+                // Build the display arg list, padding missing trailing args
+                // with their parameter defaults when available.
+                let display_args: Vec<TypeId> = if let Some(params) = def_type_params.as_ref()
+                    && params.len() > app.args.len()
+                {
+                    let mut out: Vec<TypeId> = app.args.to_vec();
+                    for param in params.iter().skip(app.args.len()) {
+                        // Only pad when the missing parameter carries a default;
+                        // stop at the first parameter without a default.
+                        let Some(default) = param.default else {
+                            break;
+                        };
+                        out.push(default);
+                    }
+                    out
                 } else {
-                    None
+                    app.args.to_vec()
                 };
 
                 let visible_arg_count = if let Some(params) = def_type_params.as_ref()
-                    && params.len() == app.args.len()
+                    && should_elide_defaults
+                    && params.len() == display_args.len()
                 {
-                    let mut n = app.args.len();
+                    let mut n = display_args.len();
                     while n > 0 {
                         let idx = n - 1;
                         let Some(default) = params[idx].default else {
                             break;
                         };
-                        if app.args[idx] != default {
+                        if display_args[idx] != default {
                             break;
                         }
                         n -= 1;
                     }
                     n
                 } else {
-                    app.args.len()
+                    display_args.len()
                 };
 
-                let args: Vec<Cow<'static, str>> = app
-                    .args
+                let args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
                     .map(|&arg| self.format(arg))

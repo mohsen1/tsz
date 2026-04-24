@@ -245,3 +245,69 @@ oub.b;
         "Expected no TS18046 ('is of type unknown') for index-signature reverse mapped inference, got: {codes:?}"
     );
 }
+
+#[test]
+fn reverse_mapped_preserves_source_property_declaration_order_in_ts2353() {
+    // Regression test for reverseMappedTypeLimitedConstraint.ts:
+    // the excess-property (TS2353) diagnostic must render the inferred
+    // target type with properties in the *source argument's declaration
+    // order*, not in atom-id order.
+    //
+    // tsc baseline: `{ x: number; y: "y"; }`
+    // tsz pre-fix:  `{ y: "y"; x: number; }` (atom-id order leaking through
+    //               `constrain_reverse_mapped_type` dropping declaration_order)
+    //
+    // The `checked_` call below triggers reverse-mapped inference for U
+    // through `{ [K in keyof U & keyof T]: U[K] }` with T = {x: number, y: string}
+    // and the argument adding an excess `z` property.
+    let code = r#"
+const checkType_ = <T>() => <U extends T>(value: { [K in keyof U & keyof T]: U[K] }) => value;
+const checked_ = checkType_<{x: number, y: string}>()({
+  x: 1 as number,
+  y: "y",
+  z: "z",
+});
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = crate::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let ts2353: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2353)
+        .collect();
+    assert!(
+        !ts2353.is_empty(),
+        "expected TS2353 excess-property diagnostic for `z`, got: {:#?}",
+        checker.ctx.diagnostics
+    );
+    let msg = ts2353[0].message_text.as_str();
+    // The target type must render `x` before `y` — matching the argument
+    // literal's declaration order (which flows through U's inferred shape).
+    let x_pos = msg
+        .find("x:")
+        .expect("x: must appear in target type display");
+    let y_pos = msg
+        .find("y:")
+        .expect("y: must appear in target type display");
+    assert!(
+        x_pos < y_pos,
+        "expected `x` to appear before `y` in TS2353 target type; got message: {msg}"
+    );
+    assert!(
+        msg.contains("{ x: number; y: \"y\"; }"),
+        "expected target type to match tsc baseline `{{ x: number; y: \"y\"; }}`, got message: {msg}"
+    );
+}

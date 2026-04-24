@@ -1016,8 +1016,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Stop at function boundaries (don't consider outer static blocks)
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.is_function_expression_or_arrow()
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
                     || node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -1113,8 +1112,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Stop at function boundaries
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.is_function_expression_or_arrow()
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
                 {
@@ -1143,8 +1141,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_this_in_class_member_computed_property_name(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, COMPUTED_PROPERTY_NAME,
-            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
-            METHOD_DECLARATION, SET_ACCESSOR,
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, METHOD_DECLARATION,
         };
         let mut current = idx;
         loop {
@@ -1164,8 +1161,7 @@ impl<'a> CheckerState<'a> {
                 || parent_node.kind == ARROW_FUNCTION
                 || parent_node.kind == METHOD_DECLARATION
                 || parent_node.kind == CONSTRUCTOR
-                || parent_node.kind == GET_ACCESSOR
-                || parent_node.kind == SET_ACCESSOR
+                || parent_node.is_accessor()
             {
                 return false;
             }
@@ -1220,7 +1216,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CALL_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION,
             COMPUTED_PROPERTY_NAME, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
-            GET_ACCESSOR, METHOD_DECLARATION, PROPERTY_DECLARATION, SET_ACCESSOR,
+            METHOD_DECLARATION, PROPERTY_DECLARATION,
         };
 
         // Determine whether this `super` is used as a call (`super()`).
@@ -1312,8 +1308,7 @@ impl<'a> CheckerState<'a> {
             // super is inside a valid class member body and TS2466 does not apply.
             if parent_node.kind == METHOD_DECLARATION
                 || parent_node.kind == CONSTRUCTOR
-                || parent_node.kind == GET_ACCESSOR
-                || parent_node.kind == SET_ACCESSOR
+                || parent_node.is_accessor()
                 || parent_node.kind == CLASS_STATIC_BLOCK_DECLARATION
                 || parent_node.kind == PROPERTY_DECLARATION
             {
@@ -1345,12 +1340,10 @@ impl<'a> CheckerState<'a> {
                 }
                 // Stop at function/class/interface boundaries
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.is_function_expression_or_arrow()
                     || node.kind == syntax_kind_ext::METHOD_DECLARATION
                     || node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    || node.is_class_like()
                     || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 {
                     return None;
@@ -1416,10 +1409,8 @@ impl<'a> CheckerState<'a> {
 
             // Stop at function/class/interface boundaries
             if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.is_function_expression_or_arrow()
+                || parent_node.is_class_like()
                 || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 || parent_node.kind == syntax_kind_ext::SOURCE_FILE
             {
@@ -1474,9 +1465,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Class: check extends vs implements, and declare modifier
-                if hc_parent.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || hc_parent.kind == syntax_kind_ext::CLASS_EXPRESSION
-                {
+                if hc_parent.is_class_like() {
                     // `implements` is always a type-only context
                     if let Some(heritage) = self.ctx.arena.get_heritage_clause(parent_node)
                         && heritage.token == SyntaxKind::ImplementsKeyword as u16
@@ -1506,10 +1495,8 @@ impl<'a> CheckerState<'a> {
 
             // Stop at function/class/interface boundaries
             if parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || parent_node.is_function_expression_or_arrow()
+                || parent_node.is_class_like()
                 || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
                 || parent_node.kind == syntax_kind_ext::SOURCE_FILE
             {

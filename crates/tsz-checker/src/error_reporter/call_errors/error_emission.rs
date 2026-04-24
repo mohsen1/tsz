@@ -346,8 +346,23 @@ impl<'a> CheckerState<'a> {
         let anchor_argument_from_mixed_failures = shared_argument_anchor.is_some()
             && !remaining_failures.is_empty()
             && remaining_failures_are_count_mismatches;
-        let anchor_argument_from_all_failures =
-            all_failures_are_argument_mismatches && shared_argument_anchor.is_some();
+        // When all overload failures share the same argument anchor but the
+        // failure messages disagree *and* the argument is an object literal,
+        // tsc treats the overload set — not the argument — as the culprit and
+        // anchors the top-level TS2769 at the callee. This covers cases like
+        // `v({s:"", n:0})` against `(x:{s:string}) | (x:{n:number})`, where
+        // each overload rejects a different excess property on the same
+        // literal. For non-object-literal arguments (e.g., `fn(true)` vs
+        // `(x:string)|(x:number)`), tsc still anchors at the argument.
+        let shared_argument_is_object_literal = shared_argument_anchor.is_some_and(|anchor_idx| {
+            self.ctx
+                .arena
+                .get(anchor_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+        });
+        let anchor_argument_from_all_failures = all_failures_are_argument_mismatches
+            && shared_argument_anchor.is_some()
+            && (!shared_argument_is_object_literal || identical_argument_failures);
         let raw_argument_anchor =
             shared_argument_anchor.or_else(|| self.first_call_argument_anchor(idx));
         let argument_anchor_is_callback = raw_argument_anchor

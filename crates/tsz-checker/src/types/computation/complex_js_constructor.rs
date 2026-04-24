@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
             let node = self.ctx.arena.get(value_decl)?;
 
             // Only handle plain JS function constructors (not classes).
-            if symbol.flags & symbol_flags::CLASS != 0
+            if symbol.has_any_flags(symbol_flags::CLASS)
                 && !self.declaration_is_checked_js_constructor_value_declaration(sym_id, value_decl)
             {
                 return None;
@@ -148,7 +148,7 @@ impl<'a> CheckerState<'a> {
         if body_idx.is_none() {
             return None;
         }
-        let func_node_idx = self.ctx.arena.get_extended(body_idx).map(|ext| ext.parent);
+        let func_node_idx = self.ctx.arena.parent_of(body_idx);
 
         // Build effective template/parameter data for JS generic constructors.
         let func_shape = crate::query_boundaries::common::function_shape_for_type(

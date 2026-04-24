@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(all_binders) = self.ctx.all_binders.as_ref() {
             for (augmenting_file_idx, binder) in all_binders.iter().enumerate() {
-                for (module_spec, augmentations) in &binder.module_augmentations {
+                for (module_spec, augmentations) in binder.module_augmentations.iter() {
                     for aug in augmentations {
                         consider_augmentation(module_spec, augmenting_file_idx, aug);
                     }
@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
             return resolved;
         }
 
-        for (module_spec, augmentations) in &self.ctx.binder.module_augmentations {
+        for (module_spec, augmentations) in self.ctx.binder.module_augmentations.iter() {
             for aug in augmentations {
                 consider_augmentation(module_spec, augmentation_owner_file_idx(aug), aug);
             }
@@ -298,7 +298,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol_with_libs(alias_sym_id, &lib_binders)?;
 
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return None;
         }
         let module_name = symbol.import_module.as_ref()?;
@@ -1482,7 +1482,6 @@ impl<'a> CheckerState<'a> {
         module_specifier: &str,
         decl_node: NodeIndex,
     ) {
-        use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
         // Only emit if report_unresolved_imports is enabled
@@ -1608,23 +1607,18 @@ impl<'a> CheckerState<'a> {
         // Check for specific resolution error from driver (TS2834, TS2835, TS2792, etc.)
         // The driver's ModuleResolver may have a more specific error code than TS2307.
         if let Some(error) = self.ctx.get_resolution_error(module_specifier) {
-            // For Node.js built-in modules, use TS2591 instead of TS2307
+            // For Node.js built-in modules, use TS2591 instead of TS2307.
+            //
+            // The resolver is the source of truth for TS2307 vs TS2792: it
+            // already applies tsc's "would node-style resolution help?" check
+            // before suggesting the nodenext hint. Don't re-derive TS2792 here
+            // from `implied_classic_resolution` — doing so would over-trigger
+            // the hint for specifiers where switching resolution modes
+            // wouldn't actually resolve them (e.g., ambient-only modules).
             let (error_message, error_code) = {
                 let (msg, code) = self.module_not_found_diagnostic(module_specifier);
                 if code != error.code {
                     (msg, code) // module_not_found_diagnostic upgraded to TS2591
-                } else if error.code
-                    == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
-                    && self.ctx.compiler_options.implied_classic_resolution
-                {
-                    use crate::diagnostics::{diagnostic_messages, format_message};
-                    (
-                        format_message(
-                            diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                            &[module_specifier],
-                        ),
-                        diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                    )
                 } else {
                     (error.message.clone(), error.code)
                 }
@@ -2134,7 +2128,7 @@ impl<'a> CheckerState<'a> {
             //   namespace a.b { class C {} } export = a.b;
             // where named imports should resolve via members on `a.b`.
             if let Some(export_equals_symbol) = lookup_symbol(export_equals_sym)
-                && (export_equals_symbol.flags & symbol_flags::ALIAS) != 0
+                && export_equals_symbol.has_any_flags(symbol_flags::ALIAS)
             {
                 if let Some(resolved_export_equals) =
                     self.resolve_alias_symbol(export_equals_sym, visited_aliases)
@@ -2145,13 +2139,7 @@ impl<'a> CheckerState<'a> {
 
                 // For `export = alias` where alias is an import-equals qualified
                 // name (`import x = a.b`), resolve the qualified target too.
-                let mut decl_candidates = export_equals_symbol.declarations.clone();
-                if export_equals_symbol.value_declaration.is_some()
-                    && !decl_candidates.contains(&export_equals_symbol.value_declaration)
-                {
-                    decl_candidates.push(export_equals_symbol.value_declaration);
-                }
-                for decl_idx in decl_candidates {
+                for decl_idx in export_equals_symbol.all_declarations() {
                     if !decl_idx.is_some() {
                         continue;
                     }

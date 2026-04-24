@@ -220,3 +220,68 @@ class C {
         "Expected TS1238 for generic decorator with incompatible call, got: {codes:?}"
     );
 }
+
+// === ES decorators (experimental_decorators: false) =======================
+//
+// ES decorators call the decorator factory with `(value, context)`.
+// A factory with zero parameters has no slot for `value`, so tsc flags
+// it as TS1238 even though a structural call would succeed by ignoring
+// the extra args. A factory requiring more than two parameters also
+// cannot be satisfied. 1 or 2 required parameters are fine.
+
+fn check_es_decorators(source: &str) -> Vec<u32> {
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+}
+
+#[test]
+fn ts1238_es_decorator_zero_arity_factory_emits_error() {
+    // `() => {}` has no parameter to receive the class target.
+    let codes = check_es_decorators("@(() => {})\nclass C {}\n");
+    assert!(
+        codes.contains(&1238),
+        "Expected TS1238 for zero-arity ES class decorator, got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts1238_es_decorator_one_or_two_required_params_no_error() {
+    for source in [
+        "@((a: any) => {})\nclass C {}\n",
+        "@((a: any, b: any) => {})\nclass C {}\n",
+    ] {
+        let codes = check_es_decorators(source);
+        assert!(
+            !codes.contains(&1238),
+            "Should not emit TS1238 for 1 or 2 required params, got: {codes:?} for {source}"
+        );
+    }
+}
+
+#[test]
+fn ts1238_es_decorator_too_many_required_params_emits_error() {
+    for source in [
+        "@((a: any, b: any, c: any) => {})\nclass C {}\n",
+        "@((a: any, b: any, c: any, ...d: any[]) => {})\nclass C {}\n",
+    ] {
+        let codes = check_es_decorators(source);
+        assert!(
+            codes.contains(&1238),
+            "Expected TS1238 for >2 required params, got: {codes:?} for {source}"
+        );
+    }
+}

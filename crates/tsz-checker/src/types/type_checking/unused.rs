@@ -1110,6 +1110,12 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        // Find the enclosing class of the member declaration.  Used below to
+        // scope string-literal element-access checks: `Test5["m1"]` in a
+        // completely different class must not be mistaken for a self-reference
+        // to `Test4.m1`.
+        let decl_enclosing_class = self.nearest_enclosing_class(decl_root);
+
         let mut saw_same_name_reference = false;
 
         for i in 0..self.ctx.arena.len() {
@@ -1121,6 +1127,50 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
+
+            // Also handle string-literal element-access references of the form
+            // `SomeClass["memberName"]` or `this["memberName"]`.  The identifier
+            // scan below only catches `SomeClass.memberName` / `this.memberName`;
+            // bracket notation uses a string literal, which is invisible to the
+            // identifier walk.  tsc treats a bracket-access self-call like
+            // `Test4["m2"](n - 1)` inside `m2`'s own body as a self-reference
+            // (still unused), while `Test5["m1"]()` from outside `m1` is a
+            // genuine external read.
+            if node.kind == SyntaxKind::StringLiteral as u16 {
+                let Some(lit) = self.ctx.arena.get_literal(node) else {
+                    continue;
+                };
+                if lit.text != name {
+                    continue;
+                }
+                // The string literal must be the argument of an element-access
+                // expression to be treated as a member reference.
+                let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                    continue;
+                };
+                let parent = ext.parent;
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    continue;
+                };
+                if parent_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                    continue;
+                }
+                // The element-access must be within the same class as the
+                // member declaration so that `Test5["m1"]()` (different class)
+                // is not confused with a self-reference to `Test4.m1`.
+                let access_enclosing_class = self.nearest_enclosing_class(parent);
+                if access_enclosing_class != decl_enclosing_class {
+                    continue; // different class → not a reference to this member
+                }
+                // If this element-access is outside the declaration body it is a
+                // genuine external reference → not self-reference-only.
+                if !self.node_is_within_declaration(parent, decl_root) {
+                    return false;
+                }
+                saw_same_name_reference = true;
+                continue;
+            }
+
             if node.kind != SyntaxKind::Identifier as u16 {
                 continue;
             }

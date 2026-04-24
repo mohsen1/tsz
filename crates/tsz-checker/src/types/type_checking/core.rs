@@ -317,22 +317,21 @@ impl<'a> CheckerState<'a> {
 
     // --- Private Identifier Validation ---
 
-    /// Check that a private identifier expression is valid.
+    /// Check that a private identifier used as the LHS of `in` is valid.
     ///
-    /// Validates that private field/property access is used correctly:
-    /// - The private identifier must be declared in a class
-    /// - The object type must be assignable to the declaring class type
-    /// - Emits appropriate errors for invalid private identifier usage
+    /// For `#field in expr`, tsc validates that:
+    /// 1. `#field` is declared in an enclosing class (TS2339 for typos, TS18016 for outside class)
+    /// 2. The RHS type is a valid object type (TS18046 for unknown, TS18047 for null — checked
+    ///    separately in `check_in_operator`)
     ///
-    // ## Parameters:
-    /// - `name_idx`: The private identifier node index
-    /// - `rhs_type`: The type of the object on which the private identifier is accessed
+    /// Note: tsc does NOT require the RHS to be assignable to the declaring class type.
+    /// `#field in {}` is valid even though `{}` is not assignable to `Foo`. The `in`
+    /// expression is a runtime ergonomic brand check that returns `boolean` — it never
+    /// directly accesses `#field` as a property.
     ///
-    /// ## Validation:
-    /// - Resolves private identifier symbols
-    /// - Checks if the object type is assignable to the declaring class
-    /// - Handles shadowed private members (from derived classes)
-    /// - Emits property does not exist errors for invalid access
+    /// ## Parameters:
+    /// - `name_idx`: The private identifier node index (direct LHS of `in`)
+    /// - `rhs_type`: The type of the RHS of `in` (used for error messages only)
     pub(crate) fn check_private_identifier_in_expression(
         &mut self,
         name_idx: NodeIndex,
@@ -348,9 +347,35 @@ impl<'a> CheckerState<'a> {
         let property_name = ident.escaped_text.clone();
 
         let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
+
         if symbols.is_empty() {
-            if saw_class_scope {
-                self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
+            if !saw_class_scope {
+                // TS18016: Private identifiers are not allowed outside class bodies.
+                // This fires when `#field in expr` is used outside any class.
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    name_idx,
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                    &[],
+                );
+            } else {
+                // Inside a class but private name not found — typo or wrong scope.
+                // TS2339: "Property '#fiel' does not exist on type 'any'."
+                // Note: tsc emits TS2339 even when RHS is `any`, bypassing the usual
+                // `any`-suppression logic. We emit directly here to avoid that suppression.
+                use crate::diagnostics::diagnostic_codes;
+                let rhs_str = if rhs_type == TypeId::ANY {
+                    "any"
+                } else {
+                    // Fall back to generic error for non-any types
+                    self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
+                    return;
+                };
+                self.error_at_node_msg(
+                    name_idx,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[&property_name, rhs_str],
+                );
             }
             return;
         }
@@ -362,58 +387,9 @@ impl<'a> CheckerState<'a> {
             self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
         }
 
-        // Evaluate for type checking but keep original for error messages.
-        // First resolve Lazy(DefId) types which can occur when the RHS class is still
-        // being resolved (circular reference fallback). Then evaluate Application types.
-        let resolved_rhs_type = self.resolve_lazy_type(rhs_type);
-        let evaluated_rhs_type = self.evaluate_application_type(resolved_rhs_type);
-        if evaluated_rhs_type == TypeId::ANY
-            || evaluated_rhs_type == TypeId::ERROR
-            || evaluated_rhs_type == TypeId::UNKNOWN
-        {
-            return;
-        }
-
-        let declaring_type = match self.private_member_declaring_type(symbols[0]) {
-            Some(ty) => ty,
-            None => {
-                if saw_class_scope {
-                    self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
-                }
-                return;
-            }
-        };
-
-        if !self.is_assignable_to(evaluated_rhs_type, declaring_type) {
-            // Symbol-based fallback: if both types reference the same underlying class,
-            // the brand check is valid even if TypeIds differ. This handles cases like
-            // nested static blocks where the class type may be represented by different
-            // TypeIds during resolution (e.g., from symbol_types cache vs
-            // class_constructor_type_cache).
-            let rhs_class_symbol = crate::query_boundaries::common::type_shape_symbol(
-                self.ctx.types,
-                evaluated_rhs_type,
-            );
-            let declaring_class_symbol =
-                crate::query_boundaries::common::type_shape_symbol(self.ctx.types, declaring_type);
-            if rhs_class_symbol.is_some()
-                && declaring_class_symbol.is_some()
-                && rhs_class_symbol == declaring_class_symbol
-            {
-                return;
-            }
-
-            let shadowed = symbols.iter().skip(1).any(|sym_id| {
-                self.private_member_declaring_type(*sym_id)
-                    .is_some_and(|ty| self.is_assignable_to(evaluated_rhs_type, ty))
-            });
-            if shadowed {
-                return;
-            }
-
-            // Use original rhs_type for error message to preserve nominal identity
-            self.error_property_not_exist_at(&property_name, rhs_type, name_idx);
-        }
+        // The private identifier is declared in an enclosing class and the RHS type
+        // checks pass — this is a valid ergonomic brand check. No further validation
+        // needed: tsc does NOT require the RHS to be assignable to the declaring type.
     }
 
     // --- Type Name Validation ---
@@ -1460,8 +1436,7 @@ impl<'a> CheckerState<'a> {
             // TS2492: Check if let/const declarations inside a catch block shadow
             // the catch clause variable. `var` is allowed (different scoping), but
             // `let`/`const` are not.
-            let is_let_or_const =
-                (flags_u32 & (node_flags::LET | node_flags::CONST)) != 0 && !is_using;
+            let is_let_or_const = node_flags::is_let_or_const(flags_u32) && !is_using;
             if is_let_or_const {
                 self.check_catch_clause_variable_redeclaration(
                     list_idx,

@@ -199,7 +199,7 @@ impl<'a> CheckerState<'a> {
             .resolve_qualified_symbol(node_idx)
             .or_else(|| self.ctx.resolve_type_to_symbol_id(ty))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return None;
         }
 
@@ -238,11 +238,7 @@ impl<'a> CheckerState<'a> {
             .filter(|arena| !std::ptr::eq(*arena, self.ctx.arena));
 
         if delegate_arena.is_none() {
-            let mut decl_candidates = symbol.declarations.clone();
-            if symbol.value_declaration.is_some() {
-                decl_candidates.push(symbol.value_declaration);
-            }
-            for decl_idx in decl_candidates {
+            for decl_idx in symbol.all_declarations() {
                 if decl_idx.is_none() {
                     continue;
                 }
@@ -307,7 +303,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<&'static str> {
         let symbol = self.get_cross_file_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ENUM_MEMBER) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return None;
         }
         let member_decl = if symbol.value_declaration.is_some() {
@@ -849,8 +845,7 @@ impl<'a> CheckerState<'a> {
         let children = self.ctx.arena.get_children(subtree);
         for child in children {
             if let Some(child_node) = self.ctx.arena.get(child)
-                && (child_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || child_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                && (child_node.is_function_expression_or_arrow()
                     || child_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
                 && self.func_shadows_symbol(child, sym_id)
             {

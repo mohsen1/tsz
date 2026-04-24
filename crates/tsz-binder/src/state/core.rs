@@ -46,7 +46,7 @@ impl BinderStateScopeInputs {
         Self {
             scopes,
             node_scope_ids,
-            flow_nodes: FlowNodeArena::new(),
+            flow_nodes: Arc::new(FlowNodeArena::new()),
             ..Self::default()
         }
     }
@@ -177,15 +177,16 @@ impl BinderState {
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
-            flow_nodes,
+            flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
             scope_chain: Vec::with_capacity(32),
             current_scope_idx: 0,
             node_symbols: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             module_declaration_exports_publicly: FxHashMap::default(),
-            symbol_arenas: FxHashMap::default(),
-            declaration_arenas: FxHashMap::default(),
+            symbol_arenas: Arc::new(FxHashMap::default()),
+            declaration_arenas: Arc::new(FxHashMap::default()),
+            sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::with_capacity_and_hasher(128, Default::default()),
             top_level_flow: FxHashMap::default(),
@@ -196,22 +197,22 @@ impl BinderState {
             node_scope_ids: FxHashMap::with_capacity_and_hasher(64, Default::default()),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
-            global_augmentations: FxHashMap::default(),
+            global_augmentations: Arc::new(FxHashMap::default()),
             in_global_augmentation: false,
-            module_augmentations: FxHashMap::default(),
+            module_augmentations: Arc::new(FxHashMap::default()),
             in_module_augmentation: false,
             current_augmented_module: None,
-            augmentation_target_modules: FxHashMap::default(),
-            lib_binders: Vec::new(),
-            lib_symbol_ids: FxHashSet::default(),
+            augmentation_target_modules: Arc::new(FxHashMap::default()),
+            lib_binders: Arc::new(Vec::new()),
+            lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
-            module_exports: FxHashMap::default(),
-            reexports: FxHashMap::default(),
-            wildcard_reexports: FxHashMap::default(),
-            wildcard_reexports_type_only: FxHashMap::default(),
+            module_exports: Arc::new(FxHashMap::default()),
+            reexports: Arc::new(FxHashMap::default()),
+            wildcard_reexports: Arc::new(FxHashMap::default()),
+            wildcard_reexports_type_only: Arc::new(FxHashMap::default()),
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
-            shorthand_ambient_modules: FxHashSet::default(),
+            shorthand_ambient_modules: Arc::new(FxHashSet::default()),
             modules_with_export_equals: FxHashSet::default(),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
@@ -243,15 +244,19 @@ impl BinderState {
         self.declared_modules.clear();
         self.is_external_module = false;
         self.is_strict_scope = false;
-        self.flow_nodes.clear();
-        self.unreachable_flow = self.flow_nodes.alloc(flow_flags::UNREACHABLE);
+        {
+            let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+            flow_nodes.clear();
+            self.unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
+        }
         self.current_flow = FlowNodeId::NONE;
         self.scope_chain.clear();
         self.current_scope_idx = 0;
         self.node_symbols.clear();
         self.module_declaration_exports_publicly.clear();
-        self.symbol_arenas.clear();
-        self.declaration_arenas.clear();
+        Arc::make_mut(&mut self.symbol_arenas).clear();
+        Arc::make_mut(&mut self.declaration_arenas).clear();
+        Arc::make_mut(&mut self.sym_to_decl_indices).clear();
         self.cross_file_node_symbols.clear();
         self.node_flow.clear();
         self.top_level_flow.clear();
@@ -262,17 +267,17 @@ impl BinderState {
         self.node_scope_ids.clear();
         self.current_scope_id = ScopeId::NONE;
         self.debugger.clear();
-        self.global_augmentations.clear();
+        Arc::make_mut(&mut self.global_augmentations).clear();
         self.in_global_augmentation = false;
-        self.module_augmentations.clear();
+        Arc::make_mut(&mut self.module_augmentations).clear();
         self.in_module_augmentation = false;
         self.current_augmented_module = None;
-        self.lib_binders.clear();
-        self.lib_symbol_ids.clear();
-        self.module_exports.clear();
-        self.reexports.clear();
-        self.wildcard_reexports.clear();
-        self.wildcard_reexports_type_only.clear();
+        Arc::make_mut(&mut self.lib_binders).clear();
+        Arc::make_mut(&mut self.lib_symbol_ids).clear();
+        Arc::make_mut(&mut self.module_exports).clear();
+        Arc::make_mut(&mut self.reexports).clear();
+        Arc::make_mut(&mut self.wildcard_reexports).clear();
+        Arc::make_mut(&mut self.wildcard_reexports_type_only).clear();
         self.resolved_export_cache
             .write()
             .expect("RwLock not poisoned")
@@ -281,7 +286,7 @@ impl BinderState {
             .write()
             .expect("RwLock not poisoned")
             .clear();
-        self.shorthand_ambient_modules.clear();
+        Arc::make_mut(&mut self.shorthand_ambient_modules).clear();
         self.modules_with_export_equals.clear();
         self.module_export_equals_non_module.clear();
         self.lib_symbols_merged = false;
@@ -346,6 +351,26 @@ impl BinderState {
         self.symbol_arenas.get(&sym_id)
     }
 
+    /// Resolve the arena that owns a declaration, falling back to a caller-provided
+    /// arena when no cross-file mapping exists.
+    ///
+    /// Callers frequently need the concrete `&NodeArena` that a declaration was
+    /// parsed into (e.g. to read its `kind`, children, or identifier text) and
+    /// want to default to the arena they are currently iterating over if the
+    /// declaration is purely local. This helper collapses the common
+    /// `get_arena_for_declaration(..).map_or(fallback, |arc| arc.as_ref())`
+    /// pattern into one call.
+    #[inline]
+    pub fn arena_for_declaration_or<'a>(
+        &'a self,
+        sym_id: SymbolId,
+        decl_idx: NodeIndex,
+        fallback: &'a NodeArena,
+    ) -> &'a NodeArena {
+        self.get_arena_for_declaration(sym_id, decl_idx)
+            .map_or(fallback, Arc::as_ref)
+    }
+
     /// Create a `BinderState` from pre-parsed lib data.
     ///
     /// This is used for loading pre-parsed lib files where we only have
@@ -394,15 +419,16 @@ impl BinderState {
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
-            flow_nodes,
+            flow_nodes: Arc::new(flow_nodes),
             current_flow: FlowNodeId::NONE,
             unreachable_flow,
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols,
             module_declaration_exports_publicly: FxHashMap::default(),
-            symbol_arenas: FxHashMap::default(),
-            declaration_arenas: FxHashMap::default(),
+            symbol_arenas: Arc::new(FxHashMap::default()),
+            declaration_arenas: Arc::new(FxHashMap::default()),
+            sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
@@ -413,22 +439,22 @@ impl BinderState {
             node_scope_ids: FxHashMap::default(),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
-            global_augmentations: FxHashMap::default(),
+            global_augmentations: Arc::new(FxHashMap::default()),
             in_global_augmentation: false,
-            module_augmentations: FxHashMap::default(),
+            module_augmentations: Arc::new(FxHashMap::default()),
             in_module_augmentation: false,
             current_augmented_module: None,
-            augmentation_target_modules: FxHashMap::default(),
-            lib_binders: Vec::new(),
-            lib_symbol_ids: FxHashSet::default(),
+            augmentation_target_modules: Arc::new(FxHashMap::default()),
+            lib_binders: Arc::new(Vec::new()),
+            lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
-            module_exports: FxHashMap::default(),
-            reexports: FxHashMap::default(),
-            wildcard_reexports: FxHashMap::default(),
-            wildcard_reexports_type_only: FxHashMap::default(),
+            module_exports: Arc::new(FxHashMap::default()),
+            reexports: Arc::new(FxHashMap::default()),
+            wildcard_reexports: Arc::new(FxHashMap::default()),
+            wildcard_reexports_type_only: Arc::new(FxHashMap::default()),
             resolved_export_cache: Default::default(),
             resolved_identifier_cache: Default::default(),
-            shorthand_ambient_modules: FxHashSet::default(),
+            shorthand_ambient_modules: Arc::new(FxHashSet::default()),
             modules_with_export_equals: FxHashSet::default(),
             module_export_equals_non_module: FxHashMap::default(),
             lib_symbols_merged: false,
@@ -491,6 +517,7 @@ impl BinderState {
             wildcard_reexports_type_only,
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols,
             shorthand_ambient_modules,
             modules_with_export_equals,
@@ -526,6 +553,7 @@ impl BinderState {
             module_declaration_exports_publicly,
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols,
             node_flow,
             top_level_flow: FxHashMap::default(),
@@ -542,8 +570,8 @@ impl BinderState {
             in_module_augmentation: false,
             current_augmented_module: None,
             augmentation_target_modules,
-            lib_binders: Vec::new(),
-            lib_symbol_ids: FxHashSet::default(),
+            lib_binders: Arc::new(Vec::new()),
+            lib_symbol_ids: Arc::new(FxHashSet::default()),
             lib_symbol_reverse_remap: FxHashMap::default(),
             module_exports,
             reexports,
@@ -754,7 +782,7 @@ impl BinderState {
             if stmt.kind != syntax_kind_ext::MODULE_DECLARATION {
                 continue;
             }
-            if (stmt.flags as u32) & tsz_parser::parser::node_flags::GLOBAL_AUGMENTATION != 0 {
+            if stmt.is_global_augmentation() {
                 return true;
             }
             let Some(module) = arena.get_module(stmt) else {
@@ -1018,7 +1046,7 @@ impl BinderState {
         }
 
         // Create START flow node for the file
-        let start_flow = self.flow_nodes.alloc(flow_flags::START);
+        let start_flow = Arc::make_mut(&mut self.flow_nodes).alloc(flow_flags::START);
         self.current_flow = start_flow;
         self.is_external_module = Self::source_file_is_external_module(arena, root);
 
@@ -1118,13 +1146,34 @@ impl BinderState {
     /// not already assigned by a multi-file merge). Lib symbols (tracked in
     /// `lib_symbol_ids`) are skipped to avoid overwriting their original
     /// file provenance.
+    ///
+    /// Also finalizes `StableLocation::file_idx` on every symbol's
+    /// `stable_declarations` and `stable_value_declaration`. During single-
+    /// file binding these stable locations are recorded with
+    /// `file_idx = u32::MAX`; this pass promotes them to the driver-assigned
+    /// index. This is Phase 1 plumbing for the
+    /// [global query graph architecture][plan]; the parallel `NodeIndex`
+    /// fields remain authoritative for existing consumers.
+    ///
+    /// [plan]: ../../../../docs/plan/global-query-graph-architecture.md
     fn stamp_file_idx(&mut self) {
         let idx = self.file_idx;
+        let lib_symbol_ids = &self.lib_symbol_ids;
 
         // Stamp symbols
         for sym in self.symbols.iter_mut() {
-            if sym.decl_file_idx == u32::MAX && !self.lib_symbol_ids.contains(&sym.id) {
+            let is_lib = lib_symbol_ids.contains(&sym.id);
+            if sym.decl_file_idx == u32::MAX && !is_lib {
                 sym.decl_file_idx = idx;
+            }
+            // Stable locations: only stamp entries that are still unassigned
+            // and only for non-lib symbols. Lib stable locations keep their
+            // own file provenance once it is assigned.
+            if !is_lib {
+                for stable in &mut sym.stable_declarations {
+                    stable.set_file_idx_if_unassigned(idx);
+                }
+                sym.stable_value_declaration.set_file_idx_if_unassigned(idx);
             }
         }
 
@@ -1151,7 +1200,9 @@ impl BinderState {
         // Collect all exports from all module-level symbols in this file
         // Start from any exports recorded during binding that intentionally do not create
         // file-local bindings (for example `export * as ns from "./mod"`).
-        let mut file_exports = self.module_exports.remove(file_name).unwrap_or_default();
+        let mut file_exports = Arc::make_mut(&mut self.module_exports)
+            .remove(file_name)
+            .unwrap_or_default();
         let mut export_equals_target: Option<SymbolId> = None;
 
         // Iterate through file_locals to find modules and their exports
@@ -1219,8 +1270,7 @@ impl BinderState {
         }
 
         if !file_exports.is_empty() {
-            self.module_exports
-                .insert(file_name.to_string(), file_exports);
+            Arc::make_mut(&mut self.module_exports).insert(file_name.to_string(), file_exports);
         }
     }
 
@@ -1364,12 +1414,7 @@ impl BinderState {
             return true;
         }
 
-        let mut declarations = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() && !declarations.contains(&symbol.value_declaration) {
-            declarations.push(symbol.value_declaration);
-        }
-
-        declarations.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             if decl_idx.is_none() {
                 return false;
             }
@@ -1408,12 +1453,7 @@ impl BinderState {
     fn compute_module_export_equals_non_module(&self, exports: &SymbolTable) -> Option<bool> {
         let export_assignment_targets = |sym: &Symbol| -> Vec<String> {
             let mut targets = Vec::new();
-            let mut declarations = sym.declarations.clone();
-            if sym.value_declaration.is_some() && !declarations.contains(&sym.value_declaration) {
-                declarations.push(sym.value_declaration);
-            }
-
-            for decl_idx in declarations {
+            for decl_idx in sym.all_declarations() {
                 if decl_idx.is_none() {
                     continue;
                 }
@@ -1492,10 +1532,13 @@ impl BinderState {
     /// Recompute `export =` non-module classification for all known module exports.
     pub fn recompute_module_export_equals_non_module(&mut self) {
         self.module_export_equals_non_module.clear();
-        for (module_name, exports) in self.module_exports.clone() {
-            if let Some(non_module) = self.compute_module_export_equals_non_module(&exports) {
+        // `Arc::clone` is cheap; the inner iteration borrows the shared map
+        // while we mutate `self.module_export_equals_non_module`.
+        let module_exports = Arc::clone(&self.module_exports);
+        for (module_name, exports) in module_exports.iter() {
+            if let Some(non_module) = self.compute_module_export_equals_non_module(exports) {
                 self.module_export_equals_non_module
-                    .insert(module_name, non_module);
+                    .insert(module_name.clone(), non_module);
             }
         }
     }
@@ -1563,7 +1606,7 @@ impl BinderState {
         // However, we keep lib_binders populated for backward compatibility
         // with any code that still iterates through them.
         for lib in lib_files {
-            self.lib_binders.push(Arc::clone(&lib.binder));
+            Arc::make_mut(&mut self.lib_binders).push(Arc::clone(&lib.binder));
         }
     }
 
@@ -1665,7 +1708,20 @@ impl BinderState {
             if let Some(sym_id) = self.node_symbols.remove(&node.0)
                 && let Some(sym) = self.symbols.get_mut(sym_id)
             {
-                sym.declarations.retain(|decl| *decl != node);
+                // Keep `declarations` and `stable_declarations` in lockstep —
+                // they share a positional invariant established in
+                // `Symbol::add_declaration`.
+                let mut i = 0;
+                while i < sym.declarations.len() {
+                    if sym.declarations[i] == node {
+                        sym.declarations.remove(i);
+                        if i < sym.stable_declarations.len() {
+                            sym.stable_declarations.remove(i);
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
                 sym.first_declaration_span = sym
                     .declarations
                     .first()
@@ -1674,10 +1730,14 @@ impl BinderState {
                     sym.value_declaration =
                         sym.declarations.first().copied().unwrap_or(NodeIndex::NONE);
                     sym.value_declaration_span = if sym.value_declaration.is_some() {
-                        arena.get(sym.value_declaration).map(|n| (n.pos, n.end))
+                        arena.pos_end_at(sym.value_declaration)
                     } else {
                         None
                     };
+                    sym.stable_value_declaration = crate::symbols::StableLocation::from_span(
+                        self.file_idx,
+                        sym.value_declaration_span,
+                    );
                 }
             }
         }

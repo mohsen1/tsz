@@ -183,9 +183,7 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
                 if let Some(n) = self.ctx.arena.get(cur) {
-                    if n.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || n.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    {
+                    if n.is_class_like() {
                         found = true;
                         break;
                     }

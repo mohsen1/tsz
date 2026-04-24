@@ -1478,8 +1478,12 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        // Merge base class instance properties (derived members take precedence)
-        if let Some(ref heritage_clauses) = class.heritage_clauses {
+        // Merge base class instance properties (derived members take precedence).
+        // In JS files, an empty @augments/@extends tag overrides the structural
+        // extends clause — tsc does not merge base-class properties in that case.
+        let skip_heritage_merge =
+            self.ctx.is_js_file() && self.has_empty_jsdoc_augments_tag(class_idx);
+        if !skip_heritage_merge && let Some(ref heritage_clauses) = class.heritage_clauses {
             for &clause_idx in &heritage_clauses.nodes {
                 let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                     continue;
@@ -1819,7 +1823,7 @@ impl<'a> CheckerState<'a> {
                 let Some(candidate_symbol) = self.get_cross_file_symbol(candidate_id) else {
                     continue;
                 };
-                if (candidate_symbol.flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+                if !candidate_symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE) {
                     continue;
                 }
 
@@ -2038,7 +2042,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = current_sym {
             let is_class_symbol = self
                 .get_symbol_globally(sym_id)
-                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::CLASS != 0);
+                .is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::CLASS));
             if is_class_symbol {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
                 self.ctx

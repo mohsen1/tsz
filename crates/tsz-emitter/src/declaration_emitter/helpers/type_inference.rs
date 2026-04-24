@@ -1132,6 +1132,33 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        // tsc orders union members by `TypeFlags` when printing: for the
+        // primitive intrinsics the rank is Any < Unknown < String < Number
+        // < Boolean < BigInt < Symbol. Our solver-inferred array-element
+        // union was otherwise rendered in construction order, so
+        // `var a = [1, "hello"]` printed as `(number | string)[]` instead
+        // of tsc's `(string | number)[]`. Apply a stable sort that reorders
+        // known primitives while keeping non-primitive members in their
+        // original relative order (a comparator that returns Equal for
+        // them preserves insertion order under a stable sort).
+        fn primitive_rank(name: &str) -> Option<u32> {
+            match name {
+                "any" => Some(1),
+                "unknown" => Some(2),
+                "string" => Some(4),
+                "number" => Some(8),
+                "boolean" => Some(16),
+                "bigint" => Some(64),
+                "symbol" => Some(4096),
+                "object" => Some(33_554_432),
+                _ => None,
+            }
+        }
+        distinct.sort_by(|a, b| match (primitive_rank(a), primitive_rank(b)) {
+            (Some(ra), Some(rb)) => ra.cmp(&rb),
+            _ => std::cmp::Ordering::Equal,
+        });
+
         let elem_text = if distinct.len() == 1 {
             distinct.pop()?
         } else {
@@ -1285,7 +1312,13 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(ret) = self.arena.get_return_statement(stmt_node) else {
                     return false;
                 };
-                let type_text = if let Some(text) = self
+                let type_text = if !ret.expression.is_some() {
+                    // `return;` with no expression contributes `void` to the
+                    // function's return type — tsc's inference for a bare
+                    // return is equivalent to `return undefined` with
+                    // widening to `void`. Matches declFileTypeAnnotationBuiltInType.
+                    "void".to_string()
+                } else if let Some(text) = self
                     .preferred_expression_type_text(ret.expression)
                     .filter(|text| !text.is_empty())
                 {
@@ -1443,11 +1476,16 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 let data = self.arena.get_shorthand_property(member_node)?;
+                // For `{ foo }` the value reference is the name identifier itself.
+                // For `{ foo = expr }` (CoverInitializedName) the assignment
+                // initializer holds the default value.
+                let initializer = if data.object_assignment_initializer == NodeIndex::NONE {
+                    data.name
+                } else {
+                    data.object_assignment_initializer
+                };
                 let type_text = self
-                    .preferred_object_member_initializer_type_text(
-                        data.object_assignment_initializer,
-                        depth,
-                    )
+                    .preferred_object_member_initializer_type_text(initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("{name}: {type_text}"))
             }
@@ -1519,13 +1557,38 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
             {
-                let interner = self.type_interner?;
-                let type_id = self.get_node_type_or_names(&[expr_idx])?;
-                let literal = tsz_solver::visitor::literal_value(interner, type_id)?;
-                Some(Self::format_property_name_literal_value(&literal, interner))
+                if let Some(interner) = self.type_interner
+                    && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
+                    && let Some(literal) = tsz_solver::visitor::literal_value(interner, type_id)
+                {
+                    return Some(Self::format_property_name_literal_value(&literal, interner));
+                }
+                // Fallback: an enum member access (e.g. `[E.A]`) is a valid
+                // property-name source even when the type cache hasn't
+                // produced a `Literal` form for it. Detecting it via the
+                // binder lets the caller keep method/getter syntax instead
+                // of degrading to `[E.A]: () => T`.
+                self.enum_member_access_name_text(expr_idx)
             }
             _ => None,
         }
+    }
+
+    /// If `expr_idx` is a value reference whose symbol is an enum member,
+    /// return the member's escaped name. This is used as a fallback to keep
+    /// method-like dts syntax for `[E.A]() {}` even when the type system
+    /// hasn't produced a literal type for the access expression.
+    pub(in crate::declaration_emitter) fn enum_member_access_name_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
+            return None;
+        }
+        Some(symbol.escaped_name.clone())
     }
 
     pub(in crate::declaration_emitter) fn format_property_name_literal_value(
@@ -2200,9 +2263,16 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(data) = self.arena.get_property_assignment(member_node) {
             return Some(data.initializer);
         }
-        self.arena
-            .get_shorthand_property(member_node)
-            .map(|data| data.object_assignment_initializer)
+        // Shorthand `{ foo }` has no separate initializer node; the value
+        // reference IS the name identifier. `{ foo = expr }` (CoverInitializedName)
+        // is the only shape where `object_assignment_initializer` is non-`NONE`.
+        self.arena.get_shorthand_property(member_node).map(|data| {
+            if data.object_assignment_initializer == NodeIndex::NONE {
+                data.name
+            } else {
+                data.object_assignment_initializer
+            }
+        })
     }
 
     pub(in crate::declaration_emitter) fn is_numeric_property_name_text(name: &str) -> bool {

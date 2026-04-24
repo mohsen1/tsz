@@ -5,6 +5,7 @@
 
 use crate::state::BinderState;
 use crate::{ContainerKind, SymbolTable, symbol_flags};
+use std::sync::Arc;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -233,10 +234,13 @@ impl BinderState {
                 // declare_symbol takes is_exported flag.
                 if self.in_global_augmentation {
                     self.file_locals.set(name.to_string(), sym_id);
-                    self.global_augmentations
+                    Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(
+                            idx,
+                            symbol_flags::ALIAS,
+                        ));
                 }
             }
         }
@@ -428,9 +432,7 @@ impl BinderState {
                                 (ctx.container_kind == ContainerKind::Module)
                                     .then_some(ctx.container_node)
                             })
-                            .and_then(|container_idx| {
-                                self.node_symbols.get(&container_idx.0).copied()
-                            });
+                            .and_then(|container_idx| self.get_node_symbol(container_idx));
 
                         for &spec_idx in &named.elements.nodes {
                             if let Some(spec_node) = arena.get(spec_idx)
@@ -617,7 +619,9 @@ impl BinderState {
                             }
 
                             // Now apply the mutable borrow to insert the mappings
-                            let file_reexports = self.reexports.entry(current_file).or_default();
+                            let file_reexports = Arc::make_mut(&mut self.reexports)
+                                .entry(current_file)
+                                .or_default();
                             for (exported, original, _) in export_mappings {
                                 file_reexports.insert(exported, (source_module.clone(), original));
                             }
@@ -703,7 +707,7 @@ impl BinderState {
                     } else {
                         // Regular namespace re-export — add to module exports
                         let current_file = self.debugger.current_file.clone();
-                        self.module_exports
+                        Arc::make_mut(&mut self.module_exports)
                             .entry(current_file)
                             .or_default()
                             .set(name.to_string(), sym_id);
@@ -727,11 +731,11 @@ impl BinderState {
                 if let Some(source_module) = module_name {
                     let current_file = self.debugger.current_file.clone();
                     // Add to wildcard_reexports list - a file can have multiple export * from
-                    self.wildcard_reexports
+                    Arc::make_mut(&mut self.wildcard_reexports)
                         .entry(current_file.clone())
                         .or_default()
                         .push(source_module.clone());
-                    self.wildcard_reexports_type_only
+                    Arc::make_mut(&mut self.wildcard_reexports_type_only)
                         .entry(current_file)
                         .or_default()
                         .push((source_module, export_type_only));

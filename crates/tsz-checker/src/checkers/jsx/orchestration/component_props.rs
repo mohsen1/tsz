@@ -245,7 +245,7 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         };
 
-        if (symbol.flags & tsz_binder::symbol_flags::CLASS) == 0
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
             && let Some(name) = self.get_identifier_text_from_idx(tag_name_idx)
         {
             let expando_props = self.collect_expando_properties_for_root(&name);
@@ -263,18 +263,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut decls = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decls.push(symbol.value_declaration);
-        }
-        decls.extend(symbol.declarations.iter().copied());
-
-        for mut decl_idx in decls {
+        for mut decl_idx in symbol.all_declarations() {
             let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
             if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
                 && parent.is_some()
             {
                 decl_idx = parent;
@@ -490,22 +484,16 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(intrinsic_elements_sym_id, &lib_binders)?;
-        let mut declarations = Vec::new();
-        if symbol.value_declaration.is_some() {
-            declarations.push(symbol.value_declaration);
-        }
-        declarations.extend(symbol.declarations.iter().copied());
-
         let tag_literal =
             crate::query_boundaries::common::create_string_literal_type(self.ctx.types, tag);
         let mut candidates = Vec::new();
 
-        for mut decl_idx in declarations {
+        for mut decl_idx in symbol.all_declarations() {
             let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
             };
             if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
                 && parent.is_some()
             {
                 decl_idx = parent;

@@ -56,7 +56,7 @@ impl<'a> CheckerState<'a> {
                             // if the alias body references Promise. This handles cases
                             // like `type MyPromise<T> = Promise<T>` where the Application
                             // base is the alias, not the underlying Promise interface.
-                            if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                            if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                                 return self.type_alias_resolves_to_promise(sym_id, symbol);
                             }
                         }
@@ -329,23 +329,19 @@ impl<'a> CheckerState<'a> {
             return Some(awaited);
         }
 
-        // Fallback for generic applications where complex unwrapping failed.
-        // This preserves type parameters from generic applications even when we can't
-        // verify Promise-likeness. For cases like `Task<T>` where unwrapping
-        // fails, we return `T` instead of falling back to None/full type.
-        if let query::PromiseTypeKind::Application { args, .. } =
-            query::classify_promise_type(self.ctx.types, return_type)
-        {
-            // If we have type arguments, return the first one as a fallback.
-            // This preserves generic type parameters even when Promise verification fails.
-            if let Some(&first_arg) = args.first() {
-                return Some(first_arg);
-            }
-        }
-
         // If we can't extract the type argument from a Promise-like type,
         // return None instead of ANY/UNKNOWN (consistent with Task 4-6 changes)
-        // This allows the caller (await expressions) to use UNKNOWN as fallback
+        // This allows the caller (await expressions) to use UNKNOWN as fallback.
+        //
+        // A previous "fallback for generic applications" path unconditionally
+        // returned `args.first()` for *any* generic Application whose base
+        // wasn't identified as Promise-like. That caused `await
+        // Promise<Box<T>>` to unwrap to `T` (via a second fallback on
+        // `Box<T>`) instead of stopping at `Box<T>` — producing false TS2339s
+        // like `Property 'data' does not exist on type 'number'` for
+        // `interface Box<T> { data: T }`. Removed: if a type isn't recognized
+        // as Promise-like, the await loop must stop rather than assume the
+        // first type argument is the awaited payload.
         None
     }
 
@@ -455,11 +451,11 @@ impl<'a> CheckerState<'a> {
             return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
         }
 
-        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return self.promise_like_type_argument_from_alias(sym_id, args, visited_aliases);
         }
 
-        if symbol.flags & symbol_flags::CLASS != 0 {
+        if symbol.has_any_flags(symbol_flags::CLASS) {
             return self.promise_like_type_argument_from_class_in_arena(
                 sym_id,
                 args,
@@ -911,7 +907,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+                        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
                             return false; // Type alias — uncertain, use syntactic fallback
                         }
                         return true; // Class/interface — definitively not Promise
@@ -977,7 +973,7 @@ impl<'a> CheckerState<'a> {
                 {
                     // Avoid infinite loops
                     if let Some(body_symbol) = self.ctx.binder.get_symbol(body_sym_id)
-                        && body_symbol.flags & symbol_flags::TYPE_ALIAS != 0
+                        && body_symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
                     {
                         return self.type_alias_resolves_to_promise(body_sym_id, body_symbol);
                     }
@@ -1201,17 +1197,36 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a name refers to a Generator-like type.
     fn is_generator_like_name(name: &str) -> bool {
-        matches!(
-            name,
+        Self::generator_like_priority(name) > 0
+    }
+
+    /// Priority of a Generator-like name for heritage-based iteration-type
+    /// extraction. Higher wins.
+    ///
+    /// tsc derives a type's iteration types from its `[Symbol.iterator]()`
+    /// method, which only exists on `Iterable`-family types. When a type
+    /// extends both an `Iterable`-family and an `Iterator`-family type
+    /// (e.g. `interface BadGenerator extends Iterator<number>,
+    /// Iterable<string> {}`), the `[Symbol.iterator]()` method comes from
+    /// the `Iterable<T>` side, so `T` determines the yield type — regardless
+    /// of source order. We encode that by giving Iterable-family names a
+    /// higher priority than Iterator-family names.
+    fn generator_like_priority(name: &str) -> u8 {
+        match name {
+            // Iterable-family — expose `[Symbol.iterator]()`, so their first
+            // type argument is the true iteration type.
             "Generator"
-                | "AsyncGenerator"
-                | "Iterator"
-                | "AsyncIterator"
-                | "IterableIterator"
-                | "AsyncIterableIterator"
-                | "Iterable"
-                | "AsyncIterable"
-        )
+            | "AsyncGenerator"
+            | "IterableIterator"
+            | "AsyncIterableIterator"
+            | "Iterable"
+            | "AsyncIterable" => 2,
+            // Iterator-family — do not expose `[Symbol.iterator]()` by
+            // themselves; their first type argument is only the iteration
+            // type when no Iterable-family heritage is present.
+            "Iterator" | "AsyncIterator" => 1,
+            _ => 0,
+        }
     }
 
     /// Resolve through interface/class heritage clauses to extract a specific type argument
@@ -1269,6 +1284,14 @@ impl<'a> CheckerState<'a> {
     /// Heritage types are `ExpressionWithTypeArguments` nodes (e.g., `Iterator<0, 1, 2>`).
     /// We check syntactically if the heritage expression names a generator-like type,
     /// then extract the type argument at the requested index using `get_type_from_type_node`.
+    ///
+    /// When a type extends multiple generator-like bases at the same level
+    /// (e.g. `extends Iterator<number>, Iterable<string>`), tsc derives the
+    /// iteration type from `[Symbol.iterator]()`, which only exists on the
+    /// Iterable-family side. We mirror that by collecting all direct matches
+    /// and returning the highest-priority one (see
+    /// `generator_like_priority`), falling back to transitive heritage only
+    /// when no direct generator-like base is present.
     fn find_generator_arg_in_heritage(
         &mut self,
         heritage_clauses: &Option<tsz_parser::parser::base::NodeList>,
@@ -1276,6 +1299,8 @@ impl<'a> CheckerState<'a> {
         depth: u32,
     ) -> Option<TypeId> {
         let heritage_clauses = heritage_clauses.as_ref()?;
+
+        let mut best_direct: Option<(u8, Option<TypeId>)> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -1302,23 +1327,60 @@ impl<'a> CheckerState<'a> {
                 let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
                     continue;
                 };
-                if let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                    && Self::is_generator_like_name(&ident.escaped_text)
-                {
-                    // Found generator-like heritage. Extract the type arg at arg_index.
-                    if let Some(type_args) = &type_arguments {
-                        if arg_index < type_args.nodes.len() {
-                            return Some(self.get_type_from_type_node(type_args.nodes[arg_index]));
+                if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+                    let priority = Self::generator_like_priority(&ident.escaped_text);
+                    if priority > 0 {
+                        // Direct generator-like heritage — record a candidate
+                        // for this arg_index. Higher priority wins; ties
+                        // keep the earliest match (source order).
+                        if best_direct.is_none_or(|(p, _)| priority > p) {
+                            let extracted = if let Some(type_args) = &type_arguments {
+                                if arg_index < type_args.nodes.len() {
+                                    Some(self.get_type_from_type_node(type_args.nodes[arg_index]))
+                                } else if arg_index == 1 && type_args.nodes.len() == 1 {
+                                    // Single type arg: TReturn defaults to `any`.
+                                    Some(TypeId::ANY)
+                                } else {
+                                    // Generator-like but missing the requested arg.
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            best_direct = Some((priority, extracted));
                         }
-                        // arg_index == 1 with only 1 arg: TReturn defaults to `any`
-                        if arg_index == 1 && type_args.nodes.len() == 1 {
-                            return Some(TypeId::ANY);
-                        }
+                        continue;
                     }
-                    return None; // Generator-like but missing the requested arg
                 }
+            }
+        }
 
-                // Non-generator heritage type — resolve its type and recurse through its heritage
+        if let Some((_, extracted)) = best_direct {
+            return extracted;
+        }
+
+        // No direct generator-like heritage at this level — recurse through
+        // transitive heritage as a fallback.
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+
+                let expr_idx = if let Some(expr_data) = self.ctx.arena.get_expr_type_args(type_node)
+                {
+                    expr_data.expression
+                } else {
+                    type_idx
+                };
+
                 let heritage_base_type = self.get_type_of_node(expr_idx);
                 if heritage_base_type != TypeId::ERROR
                     && let Some(result) = self.resolve_generator_arg_from_heritage(
@@ -1476,11 +1538,23 @@ impl<'a> CheckerState<'a> {
         });
         if let Some(base) = lazy_base {
             let yield_t = yield_type.unwrap_or(TypeId::ANY);
+            // TNext defaults to `unknown` when the declared return type has no
+            // extractable TYield (i.e., isn't Generator-like). This matches tsc:
+            // `function* g(): number {}` reports `Generator<any, any, unknown>`.
+            // When the declared return type IS Generator-like (provides TYield),
+            // tsc uses `any` for TNext — e.g. `function* g(): BadGenerator {}`
+            // (heritage Iterator<number>, Iterable<string>) reports
+            // `Generator<string, any, any>`.
+            let next_t = if yield_type.is_some() {
+                TypeId::ANY
+            } else {
+                TypeId::UNKNOWN
+            };
             let inferred_gen = self
                 .ctx
                 .types
                 .factory()
-                .application(base, vec![yield_t, TypeId::ANY, TypeId::ANY]);
+                .application(base, vec![yield_t, TypeId::ANY, next_t]);
             self.ensure_relation_input_ready(inferred_gen);
             self.ensure_relation_input_ready(declared_return_type);
             self.check_assignable_or_report(inferred_gen, declared_return_type, error_node);

@@ -1020,3 +1020,77 @@ fn test_accessor_keyword_preserved_on_class_field() {
         "static accessor keyword should be preserved: {output}"
     );
 }
+
+#[test]
+fn test_object_literal_shorthand_function_emits_typeof() {
+    // Regression: shorthand `{ doSomethingWithKeys }` where the value is a
+    // function symbol must emit `typeof doSomethingWithKeys`, not the
+    // expanded function signature. Mirrors tsc's
+    // declarationEmitIndexTypeArray baseline.
+    let output = emit_dts_with_binding(
+        r#"
+function doSomethingWithKeys<T>(...keys: (keyof T)[]) { }
+
+const utilityFunctions = {
+  doSomethingWithKeys
+};
+"#,
+    );
+    assert!(
+        output.contains("typeof doSomethingWithKeys"),
+        "shorthand property referencing a function value must emit `typeof`: {output}"
+    );
+    assert!(
+        !output.contains("doSomethingWithKeys: <T>"),
+        "expanded generic signature should not appear in place of typeof: {output}"
+    );
+}
+
+#[test]
+fn test_const_enum_computed_method_name_keeps_method_syntax() {
+    // Regression: a class method with a const-enum-member computed name
+    // (e.g. `[G.A]() {}`) must emit method syntax (`[G.A](): void;`),
+    // not property syntax (`[G.A]: () => void;`). The dts predicate that
+    // chooses syntax was reading the type cache for a `Literal` form;
+    // the binder's `ENUM_MEMBER` symbol flag is now consulted as a
+    // fallback so we keep method syntax even when the type system
+    // shapes the access as the enum-member type rather than the literal.
+    let output = emit_dts_with_binding(
+        r#"
+const enum G { A = 1, B = 2 }
+class C {
+    [G.A]() { }
+    get [G.B]() { return true; }
+    set [G.B](x: number) { }
+}
+"#,
+    );
+    assert!(
+        output.contains("[G.A](): "),
+        "const enum computed method must keep method syntax: {output}"
+    );
+    assert!(
+        !output.contains("[G.A]: () =>"),
+        "must not degrade to property syntax for const enum computed method: {output}"
+    );
+}
+
+#[test]
+fn test_arrow_initializer_preserves_typeof_in_param_annotation() {
+    // Regression: a `const f = (x: typeof something) => ...` must preserve
+    // the `typeof something` in the inferred dts parameter type. The
+    // type-printer path collapses TypeQuery into the resolved value type,
+    // so we route through the AST-based function-initializer path when any
+    // parameter annotation contains a `typeof`.
+    let output = emit_dts_with_binding(
+        r#"
+declare function foo(n: number): number;
+
+const printFn = (action: typeof foo) => { action(1); };
+"#,
+    );
+    assert!(
+        output.contains("typeof foo"),
+        "arrow parameter `typeof X` must be preserved in dts: {output}"
+    );
+}

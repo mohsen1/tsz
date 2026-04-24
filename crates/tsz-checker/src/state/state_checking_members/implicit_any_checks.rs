@@ -122,12 +122,9 @@ impl<'a> CheckerState<'a> {
         // tsc always emits TS7019 for rest parameters even when related parse errors exist
         // (e.g., TS1047 "rest can't be optional" for `...arg?`, TS1014 "rest not last"
         // for `...x, y`). The empty-name check below still catches truly malformed rest params.
-        use tsz_parser::parser::node_flags;
         if !param.dot_dot_dot_token {
             if let Some(name_node) = self.ctx.arena.get(param.name) {
-                let flags = name_node.flags as u32;
-                if ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
+                if (name_node.this_node_has_error() || name_node.this_or_subtree_has_error())
                     && !preserve_on_strict_mode_parse_error
                 {
                     return;
@@ -138,8 +135,7 @@ impl<'a> CheckerState<'a> {
                 // param.name's parent is ParameterDeclaration; its parent is the function/arrow
                 let param_decl = ext.parent;
                 if let Some(param_node) = self.ctx.arena.get(param_decl) {
-                    let flags = param_node.flags as u32;
-                    if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
+                    if param_node.this_or_subtree_has_error()
                         && !preserve_on_strict_mode_parse_error
                     {
                         return;
@@ -148,9 +144,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(param_ext) = self.ctx.arena.get_extended(param_decl)
                     && let Some(func_node) = self.ctx.arena.get(param_ext.parent)
                 {
-                    let flags = func_node.flags as u32;
-                    if (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                        && !preserve_on_strict_mode_parse_error
+                    if func_node.this_or_subtree_has_error() && !preserve_on_strict_mode_parse_error
                     {
                         return;
                     }
@@ -337,7 +331,7 @@ impl<'a> CheckerState<'a> {
                 function_idx = Some(idx);
                 break;
             }
-            current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            current = self.ctx.arena.parent_of(idx);
         }
 
         let Some(function_idx) = function_idx else {

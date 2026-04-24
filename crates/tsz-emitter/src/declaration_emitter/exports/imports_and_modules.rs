@@ -210,9 +210,7 @@ impl<'a> DeclarationEmitter<'a> {
         // separately inside `should_emit_public_api_module`.
         if !is_exported
             && self.public_api_filter_enabled()
-            && self
-                .arena
-                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            && self.arena.is_declare(&module.modifiers)
         {
             let is_identifier_namespace = self
                 .arena
@@ -239,6 +237,30 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if !self.should_emit_public_api_module(is_exported, module.name) {
+            return;
+        }
+
+        // Elide empty, non-exported, non-declare inner namespaces nested
+        // inside another non-ambient namespace, when nothing references them.
+        // tsc emits nothing for `namespace A { }` in that position: the body
+        // has no declarations to contribute to the type surface, and nothing
+        // depends on it by name. Used by declFileWithInternalModuleNameConflicts*
+        // where an empty inner `namespace A { }` exists only for source-level
+        // name resolution.
+        //
+        // Keep the namespace when:
+        //   - it's exported
+        //   - the source carried `declare`
+        //   - we're inside an ambient/`declare` namespace (ambient contexts
+        //     preserve structure — e.g. declarationEmitLocalClassHasRequiredDeclare)
+        //   - it's referenced by an exported member (e.g.
+        //     aliasInaccessibleModule: `export import X = N` keeps `namespace N`)
+        if !is_exported
+            && !self.arena.is_declare(&module.modifiers)
+            && self.inside_non_ambient_namespace
+            && self.is_module_body_effectively_empty(module.body)
+            && !self.is_ns_member_used_by_exports(module_idx)
+        {
             return;
         }
 
@@ -349,9 +371,7 @@ impl<'a> DeclarationEmitter<'a> {
             // A namespace is ambient if it has `declare`, or if the source
             // is a .d.ts file, or if it's nested inside an ambient namespace
             // (but NOT if it's nested inside a non-ambient namespace).
-            let is_ambient_ns = self
-                .arena
-                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+            let is_ambient_ns = self.arena.is_declare(&module.modifiers)
                 || self.source_is_declaration_file
                 || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
             if is_ambient_ns {
@@ -394,9 +414,7 @@ impl<'a> DeclarationEmitter<'a> {
                 // body when there is a mix of exported and non-exported
                 // members (the "scope-fix marker").
                 // Use emission-time tracking instead of source analysis.
-                let is_ambient_module = self
-                    .arena
-                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                let is_ambient_module = self.arena.is_declare(&module.modifiers)
                     || self.source_is_declaration_file
                     || (prev_inside_declare_namespace && !prev_inside_non_ambient_namespace);
 
@@ -429,6 +447,25 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_line();
+    }
+
+    /// True when a module body walks down to an empty block (or is missing
+    /// entirely). Dotted name chains like `namespace A.B.C { }` recurse
+    /// through nested `ModuleDeclaration` bodies until the inner
+    /// `ModuleBlock` is reached; every level must be empty.
+    fn is_module_body_effectively_empty(&self, body_idx: NodeIndex) -> bool {
+        if !body_idx.is_some() {
+            return true;
+        }
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return true;
+        };
+        if let Some(nested) = self.arena.get_module(body_node) {
+            return self.is_module_body_effectively_empty(nested.body);
+        }
+        self.arena
+            .get_module_block(body_node)
+            .is_none_or(|block| block.statements.as_ref().is_none_or(|s| s.nodes.is_empty()))
     }
 
     pub(crate) fn emit_import_equals_declaration(
@@ -1099,11 +1136,23 @@ impl<'a> DeclarationEmitter<'a> {
                         // In non-ambient namespaces, non-exported declarations
                         // are only emitted in .d.ts if they are referenced by
                         // exported members (via used_symbols). Namespace
-                        // declarations are always visible.
+                        // declarations are normally visible, but an empty
+                        // non-exported inner namespace is elided by
+                        // `emit_module_declaration_with_export` (it has no
+                        // members to contribute and no reason to appear in
+                        // the type surface); matching that elision here
+                        // prevents the elided decl from triggering a false
+                        // mixed-export scope-marker.
                         if non_ambient {
-                            if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                                || self.is_ns_member_used_by_exports(stmt_idx)
-                            {
+                            let counts_as_non_exported =
+                                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                                    self.arena.get_module(stmt_node).is_none_or(|m| {
+                                        !self.is_module_body_effectively_empty(m.body)
+                                    })
+                                } else {
+                                    self.is_ns_member_used_by_exports(stmt_idx)
+                                };
+                            if counts_as_non_exported {
                                 has_non_exported = true;
                             }
                         } else {

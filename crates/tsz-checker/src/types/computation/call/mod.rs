@@ -686,7 +686,7 @@ impl<'a> CheckerState<'a> {
         // For direct calls on `never` (e.g., `f()` where `f: never`), emit TS2349.
         if callee_type == TypeId::NEVER {
             let is_method_call = matches!(
-                self.ctx.arena.get(callee_expr).map(|n| n.kind),
+                self.ctx.arena.kind_at(callee_expr),
                 Some(
                     syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                         | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION

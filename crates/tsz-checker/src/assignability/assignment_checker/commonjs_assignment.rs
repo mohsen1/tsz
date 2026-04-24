@@ -124,6 +124,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        if self.source_file_has_esm_syntax() {
+            return false;
+        }
+
         let target_idx = self.ctx.arena.skip_parenthesized(target_idx);
         let Some(target_node) = self.ctx.arena.get(target_idx) else {
             return false;
@@ -844,5 +848,28 @@ impl<'a> CheckerState<'a> {
 
         self.error_property_not_exist_at(&prop_name, direct_export_type, access.name_or_argument);
         true
+    }
+
+    fn source_file_has_esm_syntax(&self) -> bool {
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            if stmt_idx.is_none() {
+                continue;
+            }
+            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
+                _ => {}
+            }
+        }
+        false
     }
 }

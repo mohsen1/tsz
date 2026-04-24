@@ -27,7 +27,6 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
         let contextual_type = request.contextual_type;
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -227,7 +226,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut nullish_cause = None;
-        if (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0 {
+        if node.is_optional_chain() {
             // Evaluate the callee type to resolve Application/Lazy types before
             // splitting nullish members. Without this, `Transform1<T>` stays as an
             // unevaluated Application and split_nullish_type can't see its union members.
@@ -365,7 +364,7 @@ impl<'a> CheckerState<'a> {
 
         // Overload candidates need signature-specific contextual typing.
         let force_bivariant_callbacks = matches!(
-            self.ctx.arena.get(unwrapped_callee).map(|n| n.kind),
+            self.ctx.arena.kind_at(unwrapped_callee),
             Some(
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION

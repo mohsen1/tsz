@@ -253,23 +253,13 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
-            let use_2792 = self.ctx.compiler_options.implied_classic_resolution
-                || matches!(
-                    self.ctx.compiler_options.module,
-                    ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System | ModuleKind::None
-                );
-            if use_2792
-                && error.code
-                    == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
-            {
-                return (
-                    format_message(
-                        diagnostic_messages::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                        &[module_name],
-                    ),
-                    diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O,
-                );
-            }
+            // The resolver is the single source of truth for the TS2307 vs
+            // TS2792 choice: it probes for a matching `node_modules/<pkg>`
+            // ancestor before suggesting the nodenext hint, matching tsc's
+            // "would switching moduleResolution actually help?" gate. We no
+            // longer re-derive the code here from `implied_classic_resolution`
+            // alone — that produced TS2792 hints even for specifiers (like
+            // ambient-only modules) where nodenext wouldn't resolve them.
             return (error.message.clone(), error.code);
         }
 
@@ -336,7 +326,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(export_equals_sym, &lib_binders)
-            && (sym.flags & symbol_flags::ALIAS) != 0
+            && sym.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited = AliasCycleTracker::new();
             let Some(resolved_sym) = self.resolve_alias_symbol(export_equals_sym, &mut visited)
@@ -353,17 +343,17 @@ impl<'a> CheckerState<'a> {
         };
 
         // tsc checks: !(symbol.flags & (SymbolFlags.Module | SymbolFlags.Variable))
-        let is_module_or_variable = (target.flags
-            & (symbol_flags::MODULE
+        let is_module_or_variable = target.has_any_flags(
+            symbol_flags::MODULE
                 | symbol_flags::FUNCTION_SCOPED_VARIABLE
-                | symbol_flags::BLOCK_SCOPED_VARIABLE))
-            != 0;
+                | symbol_flags::BLOCK_SCOPED_VARIABLE,
+        );
 
         // Namespace imports (`import * as X from "mod"`) resolve back to their
         // alias symbol rather than the module symbol.  They represent the entire
         // module namespace, so treat them as module-like for TS2497 purposes.
         if !is_module_or_variable
-            && (target.flags & symbol_flags::ALIAS) != 0
+            && target.has_any_flags(symbol_flags::ALIAS)
             && target.import_module.is_some()
             && target.import_name.as_deref() == Some("*")
         {
@@ -378,8 +368,6 @@ impl<'a> CheckerState<'a> {
         statements: &[NodeIndex],
         ident_name: &str,
     ) -> Option<NodeIndex> {
-        use tsz_parser::parser::node_flags;
-
         let mut matching_namespace_export = None;
         let mut matching_global_augmentation = None;
 
@@ -406,14 +394,13 @@ impl<'a> CheckerState<'a> {
             let Some(module_decl) = self.ctx.arena.get_module(stmt_node) else {
                 continue;
             };
-            let is_global_augmentation =
-                (u32::from(stmt_node.flags) & node_flags::GLOBAL_AUGMENTATION) != 0
-                    || self
-                        .ctx
-                        .arena
-                        .get(module_decl.name)
-                        .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                        .is_some_and(|ident| ident.escaped_text == "global");
+            let is_global_augmentation = stmt_node.is_global_augmentation()
+                || self
+                    .ctx
+                    .arena
+                    .get(module_decl.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text == "global");
             if !is_global_augmentation || !module_decl.body.is_some() {
                 continue;
             }
@@ -496,7 +483,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_symbol_with_libs(export_equals_sym, &lib_binders)
-            && (export_sym.flags & symbol_flags::ALIAS) != 0
+            && export_sym.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             self.resolve_alias_symbol(export_equals_sym, &mut visited_aliases)
@@ -517,15 +504,8 @@ impl<'a> CheckerState<'a> {
 
         // For `export = alias` where `alias` comes from `import alias = Namespace`,
         // resolve the namespace target explicitly so named imports can see members.
-        if (target_symbol.flags & symbol_flags::ALIAS) != 0 {
-            let mut decl_candidates = target_symbol.declarations.clone();
-            if target_symbol.value_declaration.is_some()
-                && !decl_candidates.contains(&target_symbol.value_declaration)
-            {
-                decl_candidates.push(target_symbol.value_declaration);
-            }
-
-            for decl_idx in decl_candidates {
+        if target_symbol.has_any_flags(symbol_flags::ALIAS) {
+            for decl_idx in target_symbol.all_declarations() {
                 if !decl_idx.is_some() {
                     continue;
                 }

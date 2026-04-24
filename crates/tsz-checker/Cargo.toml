@@ -32,8 +32,48 @@ stacker = "0.1.23"
 web-time = { workspace = true }
 
 [[test]]
+name = "generator_annotation_mismatch_display_tests"
+path = "tests/generator_annotation_mismatch_display_tests.rs"
+
+[[test]]
+name = "generator_return_type_widening_tests"
+path = "tests/generator_return_type_widening_tests.rs"
+
+[[test]]
+name = "async_return_widening_tests"
+path = "tests/async_return_widening_tests.rs"
+
+[[test]]
+name = "ts2567_augmentation_enum_cross_arena_decl_tests"
+path = "tests/ts2567_augmentation_enum_cross_arena_decl_tests.rs"
+
+[[test]]
+name = "await_generic_non_promise_no_false_ts2339_tests"
+path = "tests/await_generic_non_promise_no_false_ts2339_tests.rs"
+
+[[test]]
+name = "ts2449_parameter_decorator_no_tdz_tests"
+path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
+
+[[test]]
+name = "ts1210_arguments_param_in_class_tests"
+path = "tests/ts1210_arguments_param_in_class_tests.rs"
+
+[[test]]
+name = "ts2307_per_site_dedup_tests"
+path = "tests/ts2307_per_site_dedup_tests.rs"
+
+[[test]]
+name = "ts2769_anchor_disagreeing_overloads_tests"
+path = "tests/ts2769_anchor_disagreeing_overloads_tests.rs"
+
+[[test]]
 name = "ts1362_false_positive_tests"
 path = "tests/ts1362_false_positive_tests.rs"
+
+[[test]]
+name = "ts1361_chain_attribution_tests"
+path = "tests/ts1361_chain_attribution_tests.rs"
 
 [[test]]
 name = "ts1238_tests"
@@ -78,6 +118,10 @@ path = "tests/control_flow_type_guard_tests.rs"
 [[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
+
+[[test]]
+name = "ts2322_property_decl_annotation_tests"
+path = "tests/ts2322_property_decl_annotation_tests.rs"
 
 [[test]]
 name = "spread_rest_tests"
@@ -260,6 +304,10 @@ name = "ts2344_self_referential_interface_constraint"
 path = "tests/ts2344_self_referential_interface_constraint.rs"
 
 [[test]]
+name = "ts2344_literal_type_message"
+path = "tests/ts2344_literal_type_message.rs"
+
+[[test]]
 name = "promise_constructor_capability_tests"
 path = "tests/promise_constructor_capability_tests.rs"
 
@@ -294,6 +342,22 @@ path = "tests/ts2364_import_meta_assignment_tests.rs"
 [[test]]
 name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
+
+[[test]]
+name = "jsdoc_augments_empty_tests"
+path = "tests/jsdoc_augments_empty_tests.rs"
+
+[[test]]
+name = "jsdoc_extends_constraint_tests"
+path = "tests/jsdoc_extends_constraint_tests.rs"
+
+[[test]]
+name = "override_intersection_display_tests"
+path = "tests/override_intersection_display_tests.rs"
+
+[[test]]
+name = "ts2451_cross_file_augmentation_tests"
+path = "tests/ts2451_cross_file_augmentation_tests.rs"
 
 [lints]
 workspace = true

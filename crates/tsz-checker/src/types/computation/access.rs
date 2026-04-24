@@ -39,7 +39,7 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
             // A call can be optional in two ways:
             // 1. The callee itself is optional: `o?.b()` -> callee `o?.b` has question_dot_token
             // 2. The call has an optional token: `o.b?.()` -> call node has OPTIONAL_CHAIN flag
-            if (node.flags as u32) & tsz_parser::parser::node_flags::OPTIONAL_CHAIN != 0 {
+            if node.is_optional_chain() {
                 return true;
             }
             if let Some(call) = arena.get_call_expr(node) {
@@ -729,12 +729,12 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(expr_name)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        let is_merged = (symbol.flags & symbol_flags::MODULE) != 0
-                            && (symbol.flags
-                                & (symbol_flags::CLASS
+                        let is_merged = symbol.has_any_flags(symbol_flags::MODULE)
+                            && symbol.has_any_flags(
+                                symbol_flags::CLASS
                                     | symbol_flags::FUNCTION
-                                    | symbol_flags::REGULAR_ENUM))
-                                != 0;
+                                    | symbol_flags::REGULAR_ENUM,
+                            );
 
                         if is_merged
                             && let Some(exports) = symbol.exports.as_ref()
@@ -751,6 +751,31 @@ impl<'a> CheckerState<'a> {
                 {
                     result_type = Some(member_type);
                     use_index_signature_check = false;
+                    // Mark class member symbols as referenced for unused-variable tracking.
+                    // `resolve_namespace_value_member` handles class static members via the
+                    // Callable path (constructor type property lookup). Mark the corresponding
+                    // binder symbol so noUnusedLocals does not falsely report it as unused.
+                    // Skip write context: `Foo["key"] = expr` is not a read.
+                    let is_write_target = self.property_access_is_direct_write_target(idx);
+                    if !is_write_target {
+                        if let Some((class_idx, _)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                            && let Some(&class_sym_id) =
+                                self.ctx.binder.node_symbols.get(&class_idx.0)
+                            && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                            && let Some(ref members) = class_symbol.members
+                            && let Some(member_sym_id) = members.get(name)
+                        {
+                            self.ctx
+                                .referenced_symbols
+                                .borrow_mut()
+                                .insert(member_sym_id);
+                            self.ctx
+                                .referenced_as_property
+                                .borrow_mut()
+                                .insert(member_sym_id);
+                        }
+                    }
                 }
             }
 
@@ -992,6 +1017,40 @@ impl<'a> CheckerState<'a> {
                         None
                     } else {
                         use_index_signature_check = false;
+                        // Mark class member symbols as referenced for unused-variable tracking.
+                        // Element access like `Foo["key"]` reads member `key` on class `Foo`.
+                        // Without this, private members accessed via bracket notation are falsely
+                        // reported as unused (TS6133) because the solver's property resolution
+                        // pipeline never marks binder symbols.
+                        //
+                        // Skip when the access is the direct LHS of an assignment
+                        // (`Foo["key"] = expr`) — writes don't count as reads for noUnusedLocals.
+                        // The `this[key]` case is handled separately above for union types;
+                        // this branch handles the single-property-name case for class identifiers.
+                        let is_write_target = self.property_access_is_direct_write_target(idx);
+                        if !is_write_target {
+                            let class_result = self.resolve_class_for_access(
+                                access.expression,
+                                object_type_for_access,
+                            );
+                            if let Some((class_idx, _is_static)) = class_result
+                                && let Some(&class_sym_id) =
+                                    self.ctx.binder.node_symbols.get(&class_idx.0)
+                                && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                                && let Some(ref members) = class_symbol.members
+                            {
+                                if let Some(member_sym_id) = members.get(&property_name) {
+                                    self.ctx
+                                        .referenced_symbols
+                                        .borrow_mut()
+                                        .insert(member_sym_id);
+                                    self.ctx
+                                        .referenced_as_property
+                                        .borrow_mut()
+                                        .insert(member_sym_id);
+                                }
+                            }
+                        }
                         // In write context (assignment target), prefer the setter type.
                         Some(effective_write_result(type_id, write_type))
                     }

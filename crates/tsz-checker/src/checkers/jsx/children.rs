@@ -240,13 +240,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        let mut decls = Vec::new();
-        if symbol.value_declaration.is_some() {
-            decls.push(symbol.value_declaration);
-        }
-        decls.extend(symbol.declarations.iter().copied());
-
-        for decl_idx in decls {
+        for decl_idx in symbol.all_declarations() {
             if let Some(text) = self.jsx_children_declared_type_text_from_declaration(decl_idx) {
                 return Some(text);
             }
@@ -262,7 +256,7 @@ impl<'a> CheckerState<'a> {
         let mut decl_idx = decl_idx;
         let mut decl_node = self.ctx.arena.get(decl_idx)?;
         if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-            && let Some(parent) = self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            && let Some(parent) = self.ctx.arena.parent_of(decl_idx)
             && parent.is_some()
         {
             decl_idx = parent;
@@ -774,7 +768,8 @@ impl<'a> CheckerState<'a> {
             .and_then(|sym_id| {
                 let lib_binders = self.get_lib_binders();
                 let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                ((symbol.flags & tsz_binder::symbol_flags::CLASS) != 0)
+                symbol
+                    .has_any_flags(tsz_binder::symbol_flags::CLASS)
                     .then(|| self.class_instance_type_from_symbol(sym_id))
                     .flatten()
             });

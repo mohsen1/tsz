@@ -881,12 +881,11 @@ impl<'a> CheckerState<'a> {
                 // our parser but by tsc's checker, so they set has_parse_errors in our
                 // pipeline but shouldn't suppress TS2695. Only suppress when the binary
                 // expression itself has structural parse errors (e.g., `(a, new)`).
-                let node_has_parse_error = self.ctx.arena.get(node_idx).is_some_and(|n| {
-                    use tsz_parser::parser::node_flags;
-                    let flags = n.flags as u32;
-                    (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                        || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                });
+                let node_has_parse_error = self
+                    .ctx
+                    .arena
+                    .get(node_idx)
+                    .is_some_and(|n| n.this_node_has_error() || n.this_or_subtree_has_error());
                 // Also suppress TS2695 when the comma expression is inside a bare
                 // block statement (not a function/method body).  This matches tsc's
                 // behavior: `{ a, b } = fn()` is parsed as a block followed by `=`,
@@ -2252,10 +2251,61 @@ impl<'a> CheckerState<'a> {
         right_idx: NodeIndex,
         right_type: TypeId,
     ) -> TypeId {
-        if let Some(left_node) = self.ctx.arena.get(left_idx)
-            && left_node.kind == SyntaxKind::PrivateIdentifier as u16
-        {
-            self.check_private_identifier_in_expression(left_idx, right_idx, right_type);
+        // TS1451: Private identifiers must be the direct LHS of `in`, not wrapped
+        // in parentheses. `(#field) in v` is invalid — #field is a standalone expression.
+        // Skip through parens to find if the LHS contains a private identifier.
+        let left_stripped = self.ctx.arena.skip_parenthesized_and_assertions(left_idx);
+        let left_node_kind = self
+            .ctx
+            .arena
+            .get(left_stripped)
+            .map(|n| n.kind)
+            .unwrap_or(0);
+        if left_node_kind == SyntaxKind::PrivateIdentifier as u16 && left_stripped != left_idx {
+            // TS1451: private identifier wrapped in parens is a standalone expression
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                left_stripped,
+                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_ONLY_ALLOWED_IN_CLASS_BODIES_AND_MAY_ONLY_BE_USED_AS_PAR,
+                &[],
+            );
+        } else if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
+            // Direct private identifier as LHS — validate it
+            self.check_private_identifier_in_expression(left_stripped, right_idx, right_type);
+        }
+
+        // TS18047/TS18049: RHS of `in` must not be possibly null (or null|undefined).
+        // When strict null checks is enabled and the RHS includes null, emit TS18047.
+        // tsc only emits this when there is a name for the expression (identifier etc.).
+        if self.ctx.compiler_options.strict_null_checks && right_type != TypeId::UNKNOWN {
+            let (_, nullish_cause) = self.split_nullish_type(right_type);
+            if let Some(cause) = nullish_cause {
+                // Only emit for null-involving cases (not pure undefined).
+                // TS18047 = "is possibly null", TS18049 = "is possibly null or undefined"
+                let includes_null = cause == TypeId::NULL
+                    || (cause != TypeId::UNDEFINED
+                        && crate::query_boundaries::common::union_members(self.ctx.types, cause)
+                            .is_some_and(|members| members.contains(&TypeId::NULL)));
+                if includes_null {
+                    let name = self.expression_text(right_idx);
+                    if let Some(ref name) = name {
+                        use crate::diagnostics::diagnostic_codes;
+                        let code = if cause == TypeId::NULL {
+                            diagnostic_codes::IS_POSSIBLY_NULL
+                        } else {
+                            diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+                        };
+                        self.emit_render_request(
+                            right_idx,
+                            crate::error_reporter::DiagnosticRenderRequest::simple_msg(
+                                code,
+                                &[name],
+                            ),
+                        );
+                    }
+                    return TypeId::BOOLEAN;
+                }
+            }
         }
 
         if right_type == TypeId::UNKNOWN {

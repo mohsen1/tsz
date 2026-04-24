@@ -1448,6 +1448,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_jsdoc_extends_tag_type_arguments(class_idx);
+        self.check_jsdoc_extends_tag_type_argument_constraints(class_idx);
         self.check_missing_jsdoc_extends_type_arguments(class_idx, class_data);
 
         // Get the actual extends clause base class name
@@ -1515,7 +1516,28 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if jsdoc_type_name.is_empty() {
-                    continue;
+                    // Empty @extends/@augments tag (e.g. `/** @augments */`):
+                    // emit TS1003 + TS8023 at the position right after the tag keyword.
+                    let error_pos = comment.pos + after as u32;
+
+                    self.ctx.error(
+                        error_pos,
+                        1,
+                        diagnostic_messages::IDENTIFIER_EXPECTED.to_string(),
+                        diagnostic_codes::IDENTIFIER_EXPECTED,
+                    );
+
+                    let message = format_message(
+                        diagnostic_messages::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                        &[tag, "", &actual_name],
+                    );
+                    self.ctx.error(
+                        error_pos,
+                        1,
+                        message,
+                        diagnostic_codes::JSDOC_DOES_NOT_MATCH_THE_EXTENDS_CLAUSE,
+                    );
+                    return;
                 }
 
                 // Strip type arguments: "Foo<Bar>" → "Foo"

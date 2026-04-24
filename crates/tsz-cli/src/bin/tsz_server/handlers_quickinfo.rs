@@ -840,8 +840,7 @@ impl Server {
                     let mut fn_cursor = arena.get_extended(current)?.parent;
                     while fn_cursor.is_some() {
                         let fn_node = arena.get(fn_cursor)?;
-                        if fn_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                            || fn_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        if fn_node.is_function_expression_or_arrow()
                             || fn_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                         {
                             let function = arena.get_function(fn_node)?;

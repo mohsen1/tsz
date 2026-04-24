@@ -189,7 +189,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .binder
                         .get_symbol(sym_id)
-                        .map(|s| s.flags & tsz_binder::symbol_flags::VALUE != 0)
+                        .map(|s| s.has_any_flags(tsz_binder::symbol_flags::VALUE))
                 })
                 .unwrap_or(false);
             if !has_value_shadow {
@@ -211,8 +211,8 @@ impl<'a> CheckerState<'a> {
                                 // Accept VALUE symbols and non-type-only ALIAS symbols
                                 // (e.g., `import * as E from "mod"` provides a runtime
                                 // namespace object).
-                                (s.flags & tsz_binder::symbol_flags::VALUE != 0)
-                                    || ((s.flags & tsz_binder::symbol_flags::ALIAS != 0)
+                                s.has_any_flags(tsz_binder::symbol_flags::VALUE)
+                                    || (s.has_any_flags(tsz_binder::symbol_flags::ALIAS)
                                         && !s.is_type_only)
                             })
                     })
@@ -298,7 +298,13 @@ impl<'a> CheckerState<'a> {
                     .and_then(|sym| sym.declarations.first().copied());
                 if let Some(decl_node) = decl_node {
                     let decl_fn = self.find_enclosing_function(decl_node);
-                    if ref_fn != decl_fn {
+                    // TS7005 should only fire when the closure is in a position where
+                    // the type is still ambiguous (i.e., the capture occurs before the
+                    // last assignment). Use the same guard as the first emission so
+                    // closures created after the last assignment don't get TS7005.
+                    if ref_fn != decl_fn
+                        && self.should_emit_pending_implicit_any_capture_diagnostic(idx, sym_id)
+                    {
                         emit_ts7005 = true;
                     }
                 }
@@ -720,8 +726,8 @@ impl<'a> CheckerState<'a> {
                             .get_symbol_with_libs(sid, &lib_binders)
                             .is_some_and(|s| {
                                 sid != sym_id
-                                    && ((s.flags & tsz_binder::symbol_flags::VALUE) != 0
-                                        || ((s.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                                    && (s.has_any_flags(tsz_binder::symbol_flags::VALUE)
+                                        || (s.has_any_flags(tsz_binder::symbol_flags::ALIAS)
                                             && !s.is_type_only))
                             })
                     })
@@ -1072,8 +1078,8 @@ impl<'a> CheckerState<'a> {
                     self.get_type_of_symbol(sym_id)
                 }
             } else if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & symbol_flags::ENUM) != 0
-                && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+                && symbol.has_any_flags(symbol_flags::ENUM)
+                && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
             {
                 self.enum_object_type(sym_id)
                     .inspect(|&enum_obj| {

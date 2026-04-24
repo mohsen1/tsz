@@ -508,7 +508,7 @@ impl<'a> Completions<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<tsz_binder::SymbolId> {
-        if let Some(sym_id) = self.binder.node_symbols.get(&expr_idx.0).copied() {
+        if let Some(sym_id) = self.binder.get_node_symbol(expr_idx) {
             return Some(sym_id);
         }
 
@@ -548,9 +548,7 @@ impl<'a> Completions<'a> {
                 return None;
             }
             let parent = self.arena.get(ext.parent)?;
-            if parent.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent.is_class_like() {
                 let class = self.arena.get_class(parent)?;
                 let heritage = class.heritage_clauses.as_ref()?;
                 for &clause_idx in &heritage.nodes {
@@ -1527,9 +1525,7 @@ impl<'a> Completions<'a> {
         let mut current = node_idx;
         while current.is_some() {
             let node = self.arena.get(current)?;
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if node.is_class_like() {
                 return Some(current);
             }
             // Stop at regular function boundaries — `function() {}` resets

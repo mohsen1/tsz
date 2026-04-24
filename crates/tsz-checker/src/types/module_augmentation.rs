@@ -1057,7 +1057,7 @@ impl<'a> CheckerState<'a> {
 
         // Check current binder
 
-        for (&aug_sym_id, aug_module) in &self.ctx.binder.augmentation_target_modules {
+        for (&aug_sym_id, aug_module) in self.ctx.binder.augmentation_target_modules.iter() {
             if aug_module == module_spec
                 && let Some(aug_sym) = self.ctx.binder.get_symbol(aug_sym_id)
                 && aug_sym.escaped_name == interface_name
@@ -1081,7 +1081,7 @@ impl<'a> CheckerState<'a> {
         } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
             // Fallback: O(N) scan when index is not available
             for binder in all_binders.iter() {
-                for (&aug_sym_id, aug_module) in &binder.augmentation_target_modules {
+                for (&aug_sym_id, aug_module) in binder.augmentation_target_modules.iter() {
                     if aug_module == module_spec
                         && let Some(aug_sym) = binder.get_symbol(aug_sym_id)
                         && aug_sym.escaped_name == interface_name

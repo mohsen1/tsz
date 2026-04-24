@@ -1395,11 +1395,11 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(TypeId::ANY);
             let return_type = self
                 .get_generator_return_type_argument(shape.return_type)
-                .filter(|ty| !matches!(*ty, TypeId::UNKNOWN | TypeId::ERROR))
+                .filter(|ty| !ty.is_unknown_or_error())
                 .unwrap_or(TypeId::VOID);
             let next_type = self
                 .get_generator_next_type_argument(shape.return_type)
-                .filter(|ty| !matches!(*ty, TypeId::UNKNOWN | TypeId::ERROR))
+                .filter(|ty| !ty.is_unknown_or_error())
                 .unwrap_or(TypeId::ANY);
             format!(
                 "{generator_name}<{}, {}, {}>",
@@ -1877,7 +1877,7 @@ impl<'a> CheckerState<'a> {
         raw_param_type: TypeId,
     ) -> bool {
         let mut child = arg_idx;
-        let Some(mut current) = self.ctx.arena.get_extended(arg_idx).map(|ext| ext.parent) else {
+        let Some(mut current) = self.ctx.arena.parent_of(arg_idx) else {
             return false;
         };
 

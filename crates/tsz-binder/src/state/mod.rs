@@ -24,6 +24,17 @@ use tsz_parser::parser::node::NodeArena;
 /// for the common single-arena case.
 pub type DeclarationArenaMap = FxHashMap<(SymbolId, NodeIndex), SmallVec<[Arc<NodeArena>; 1]>>;
 
+/// Secondary index from `SymbolId` to every `NodeIndex` that appears as a
+/// declaration key for that symbol in the program-wide `DeclarationArenaMap`.
+///
+/// Used by checker paths that previously iterated the entire
+/// `declaration_arenas` map filtering by `entry_sym_id == sym_id` to discover
+/// additional declaration indices for a symbol. With the program-wide
+/// `Arc<DeclarationArenaMap>` shared across all per-file binders, a full
+/// iteration would be `O(N_program)` per query instead of `O(N_file)`; this
+/// index collapses those queries to a point lookup.
+pub type SymToDeclIndicesMap = FxHashMap<SymbolId, SmallVec<[NodeIndex; 4]>>;
+
 /// Map from arena pointer (as `usize`) to that arena's `node_symbols` mapping.
 /// Enables cross-file declaration resolution: when a symbol has declarations in
 /// multiple arenas, the checker can look up the correct `node_symbols` for each
@@ -35,6 +46,12 @@ pub(crate) const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 pub type ReexportTarget = (String, Option<String>);
 pub type FileReexports = FxHashMap<String, ReexportTarget>;
 pub type FileReexportsMap = FxHashMap<String, FileReexports>;
+/// Per-file map of `export * from "X"` source modules.
+/// Maps `current_file` -> `Vec<source_module>`.
+pub type WildcardReexportsMap = FxHashMap<String, Vec<String>>;
+/// Type-only provenance aligned with [`WildcardReexportsMap`].
+/// Maps `current_file` -> `Vec<(source_module, is_type_only)>`.
+pub type WildcardReexportsTypeOnlyMap = FxHashMap<String, Vec<(String, bool)>>;
 type ExportCache = FxHashMap<(String, String), Option<SymbolId>>;
 type IdentifierCache = FxHashMap<(usize, u32), Option<SymbolId>>;
 /// Wrapper around `RwLock` that implements `Clone` by cloning the inner data.
@@ -153,21 +170,30 @@ pub struct GlobalAugmentation {
     pub node: NodeIndex,
     /// The arena containing this declaration (None = current file's arena, Some = cross-file)
     pub arena: Option<Arc<NodeArena>>,
+    /// Symbol flags this augmentation contributes (e.g., INTERFACE for interface declarations,
+    /// `FUNCTION_SCOPED_VARIABLE` for `var` declarations). Used during lib merging to selectively
+    /// merge only flags from `declare global` blocks in external module lib files.
+    pub flags: u32,
 }
 
 impl GlobalAugmentation {
     /// Create a new global augmentation without arena context (during binding).
     #[must_use]
-    pub const fn new(node: NodeIndex) -> Self {
-        Self { node, arena: None }
+    pub const fn new(node: NodeIndex, flags: u32) -> Self {
+        Self {
+            node,
+            arena: None,
+            flags,
+        }
     }
 
     /// Create a new global augmentation with arena context (during merge).
     #[must_use]
-    pub const fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
+    pub const fn with_arena(node: NodeIndex, arena: Arc<NodeArena>, flags: u32) -> Self {
         Self {
             node,
             arena: Some(arena),
+            flags,
         }
     }
 }
@@ -228,8 +254,18 @@ pub struct BinderState {
     /// Whether the current scope is in strict mode (via "use strict" directive or --alwaysStrict).
     /// In strict mode, function declarations inside blocks are block-scoped, not hoisted.
     pub(crate) is_strict_scope: bool,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// Wrapped in `Arc` so per-file binders constructed by the CLI driver
+    /// can share a single file's flow graph via `Arc::clone` instead of
+    /// deep-cloning `Vec<FlowNode>` (each `FlowNode` carries its own
+    /// `Vec<FlowNodeId>` antecedents, so the clone is allocation-heavy).
+    /// The driver builds ~2×N per-file binders (cross-file lookup +
+    /// per-file checking), so N-file projects previously paid 2N deep
+    /// clones of their flow graphs. Mutations during binding go through
+    /// `Arc::make_mut`, which is zero-cost while the refcount is 1
+    /// (always the case during a single binder's construction).
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Current flow node
     pub(crate) current_flow: FlowNodeId,
     /// Unreachable flow node
@@ -242,14 +278,30 @@ pub struct BinderState {
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
-    /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena)
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena).
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
     /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
     /// This is needed when a symbol (like Array) is declared across multiple lib files.
     /// Uses `SmallVec` to handle cross-arena `NodeIndex` collisions: when two lib files have
     /// their interface declaration at the same `NodeIndex`, both arenas are stored.
-    pub declaration_arenas: DeclarationArenaMap,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning or per-file filtering. Mutations
+    /// during binding go through `Arc::make_mut` (zero-cost when refcount=1,
+    /// which is always during a single binder's construction).
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
+    /// Secondary index from `SymbolId` to the set of `NodeIndex`es that appear
+    /// as declaration keys for that symbol in `declaration_arenas`. Built once
+    /// at merge time and shared via `Arc`. Enables checker paths that need to
+    /// enumerate every declaration index registered for a symbol (previously
+    /// done by iterating the whole `declaration_arenas` map) to do a point
+    /// lookup instead of an `O(N_program)` scan.
+    pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
     /// Enables resolving type references in cross-file interface declarations.
     pub cross_file_node_symbols: CrossFileNodeSymbols,
@@ -280,7 +332,11 @@ pub struct BinderState {
     // ===== Global Augmentations =====
     /// Tracks interface/type declarations inside `declare global` blocks that should
     /// merge with lib.d.ts symbols. Maps interface name to augmentation declarations.
-    pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
+    pub global_augmentations: Arc<FxHashMap<String, Vec<GlobalAugmentation>>>,
 
     /// Flag indicating we're currently binding inside a `declare global` block
     pub(crate) in_global_augmentation: bool,
@@ -288,7 +344,12 @@ pub struct BinderState {
     // ===== Module Augmentations (Rule #44) =====
     /// Tracks interface/type declarations inside `declare module 'x'` blocks that should
     /// merge with the target module's symbols. Maps module specifier to augmentations.
-    pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file augmentation map can be shared
+    /// across N per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when the refcount is 1, which is always
+    /// during binding).
+    pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
 
     /// Flag indicating we're currently binding inside a module augmentation block
     pub(crate) in_module_augmentation: bool,
@@ -301,16 +362,29 @@ pub struct BinderState {
     /// self-referential augmentation interfaces (e.g., `interface Foo { self: Foo }` inside
     /// `declare module "./m"` should resolve Foo to the merged interface, not just the
     /// augmentation-local one).
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning. Mutations go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always during binding).
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
 
     /// Lib binders for automatic lib symbol resolution.
     /// When `get_symbol()` doesn't find a symbol locally, it checks these lib binders.
-    pub lib_binders: Vec<Arc<Self>>,
+    pub lib_binders: Arc<Vec<Arc<Self>>>,
 
     /// Symbol IDs that originated from lib files.
     /// Used by `get_symbol()` to check `lib_binders` first for these IDs,
     /// avoiding collision with local symbols at the same index.
-    pub lib_symbol_ids: FxHashSet<SymbolId>,
+    ///
+    /// Stored as `Arc` so per-file binders constructed by the CLI driver
+    /// can share the merged lib symbol set without deep-cloning the
+    /// underlying `FxHashSet` for every file. On large projects this set
+    /// holds thousands of symbol IDs, and the driver builds 12K+ per-file
+    /// binders (cross-file lookup + per-file checking) — N deep clones
+    /// add up. Mutations during binding go through `Arc::make_mut`,
+    /// which is essentially free while refcount=1 (always the case
+    /// during a single binder's construction).
+    pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
 
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`).
     /// This allows Phase 2 of `merge_bind_results` to find the Phase 1 global ID for each
@@ -319,21 +393,30 @@ pub struct BinderState {
 
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
 
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
     /// Example: ("./a.ts", "foo", "./b.ts") means a.ts re-exports "foo" from b.ts
-    pub reexports: FileReexportsMap,
+    pub reexports: Arc<FileReexportsMap>,
 
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
     /// A file can have multiple wildcard re-exports (e.g., `export * from 'a'; export * from 'b'`)
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    ///
+    /// `Arc`-wrapped so the cross-file merge can hand a single shared
+    /// allocation to every per-file `BinderState` via `Arc::clone`
+    /// instead of deep-cloning the underlying `FxHashMap` for each of
+    /// N per-file binders. Mutations during binding go through
+    /// `Arc::make_mut` (zero-cost when refcount=1, which is always
+    /// during binding).
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
     /// Tracks whether wildcard re-export entries are type-only.
     /// Maps `current_file` -> Vec of (`source_module`, `is_type_only`).
     /// This captures `export type * from './module'` chains during import resolution.
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
+    ///
+    /// Same `Arc` rationale as `wildcard_reexports`.
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
 
     /// Cache for resolved exports to avoid repeated lookups through re-export chains.
     /// Key: (`module_specifier`, `export_name`) -> resolved `SymbolId` (or None if not found)
@@ -349,7 +432,7 @@ pub struct BinderState {
 
     /// Shorthand ambient modules: modules declared with just `declare module "xxx"` (no body)
     /// Imports from these modules should resolve to `any` type
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
 
     /// Modules that use `export =` syntax (CommonJS-style exports)
     /// Used by the import checker to validate require-style imports
@@ -790,20 +873,21 @@ pub struct ResolutionStats {
 pub struct BinderStateScopeInputs {
     pub scopes: Vec<Scope>,
     pub node_scope_ids: FxHashMap<u32, ScopeId>,
-    pub global_augmentations: FxHashMap<String, Vec<GlobalAugmentation>>,
-    pub module_augmentations: FxHashMap<String, Vec<ModuleAugmentation>>,
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    pub global_augmentations: Arc<FxHashMap<String, Vec<GlobalAugmentation>>>,
+    pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
-    pub reexports: FileReexportsMap,
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
-    pub declaration_arenas: DeclarationArenaMap,
+    pub reexports: Arc<FileReexportsMap>,
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
+    pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     pub cross_file_node_symbols: CrossFileNodeSymbols,
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     pub modules_with_export_equals: FxHashSet<String>,
-    pub flow_nodes: FlowNodeArena,
+    pub flow_nodes: Arc<FlowNodeArena>,
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,

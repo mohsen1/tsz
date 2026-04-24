@@ -2,7 +2,7 @@ use super::{JsxEmit, ModuleKind, Printer};
 use crate::output::source_writer::SourcePosition;
 use crate::safe_slice;
 use tsz_parser::parser::node::{Node, NodeAccess};
-use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -130,7 +130,7 @@ impl<'a> Printer<'a> {
                 if let Some(access) = self.arena.get_access_expr(inner) {
                     access.question_dot_token
                 } else {
-                    (inner.flags as u32) & node_flags::OPTIONAL_CHAIN != 0
+                    inner.is_optional_chain()
                 }
             } else {
                 false
@@ -819,7 +819,7 @@ impl<'a> Printer<'a> {
             return access.question_dot_token;
         }
         // Check for CallExpression with OPTIONAL_CHAIN flag
-        (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0
+        node.is_optional_chain()
     }
 
     // =========================================================================

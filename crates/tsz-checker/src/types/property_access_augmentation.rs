@@ -397,23 +397,17 @@ impl<'a> CheckerState<'a> {
             arena: &tsz_parser::parser::node::NodeArena,
             idx: NodeIndex,
         ) -> Option<String> {
-            let node = arena.get(idx)?;
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return arena.get_identifier(node).map(|id| id.escaped_text.clone());
+            if let Some(text) = arena.identifier_text_owned(idx) {
+                return Some(text);
             }
+            let node = arena.get(idx)?;
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = arena.get_access_expr(node)?;
-                let name_node = arena.get(access.name_or_argument)?;
-                return arena
-                    .get_identifier(name_node)
-                    .map(|id| id.escaped_text.clone());
+                return arena.identifier_text_owned(access.name_or_argument);
             }
             if node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 let name = arena.get_qualified_name(node)?;
-                let right = arena.get(name.right)?;
-                return arena
-                    .get_identifier(right)
-                    .map(|id| id.escaped_text.clone());
+                return arena.identifier_text_owned(name.right);
             }
             None
         }

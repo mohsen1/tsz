@@ -28,7 +28,10 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
-use crate::binder::state::{BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap};
+use crate::binder::state::{
+    BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap, SymToDeclIndicesMap,
+    WildcardReexportsMap, WildcardReexportsTypeOnlyMap,
+};
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -303,7 +306,7 @@ fn synthesize_json_bind_result(file_name: String, source_text: String) -> BindRe
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-        lib_binders: Vec::new(),
+        lib_binders: Arc::new(Vec::new()),
         lib_arenas: Vec::new(),
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -477,15 +480,17 @@ pub struct BindResult {
     /// Ambient module declarations by specifier
     pub declared_modules: FxHashSet<String>,
     /// Module exports keyed by specifier or file name
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     /// Node-to-symbol mapping
     pub node_symbols: FxHashMap<u32, SymbolId>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
-    /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    pub declaration_arenas: DeclarationArenaMap,
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
+    /// Declaration-to-arena mapping for precise cross-file declaration lookup.
+    /// `Arc`-wrapped end-to-end so merging the per-file `BinderState.declaration_arenas`
+    /// (also `Arc`) into the final `MergedProgram` does not require deep cloning.
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
     /// Persistent scopes for stateless checking
     pub scopes: Vec<Scope>,
     /// Map from AST node to scope ID
@@ -493,32 +498,45 @@ pub struct BindResult {
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Shorthand ambient modules (`declare module "foo"` without body)
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
-    pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
+    pub global_augmentations: Arc<FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>>,
     /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
     /// Maps module specifier -> [`ModuleAugmentation`]
-    pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
+    pub module_augmentations: Arc<FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>>,
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
-    pub reexports: Reexports,
+    pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// `Arc`-wrapped to mirror `BinderState.wildcard_reexports`; the
+    /// final `MergedProgram` builds its own `Arc` once and shares it
+    /// with every per-file `BinderState` via `Arc::clone`.
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
     /// Wildcard re-export type-only provenance aligned with `wildcard_reexports`.
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     /// Lib binders for global type resolution (Array, String, etc.)
     /// These are merged from lib.d.ts files and enable cross-file symbol lookup
-    pub lib_binders: Vec<Arc<BinderState>>,
+    pub lib_binders: Arc<Vec<Arc<BinderState>>>,
     /// Arenas corresponding to each `lib_binder` (same order/length as `lib_binders`).
     /// Used by `merge_bind_results_ref` to populate `declaration_arenas` for lib symbols.
     pub lib_arenas: Vec<Arc<NodeArena>>,
-    /// Symbol IDs that originated from lib files (pre-merge local IDs)
-    pub lib_symbol_ids: FxHashSet<SymbolId>,
+    /// Symbol IDs that originated from lib files (pre-merge local IDs).
+    /// `Arc`-wrapped so the merge can move it into the per-file
+    /// `BinderState.lib_symbol_ids` (also `Arc`) without deep-cloning.
+    pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`)
     pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// can share the underlying `FlowNodeArena` via `Arc::clone` (atomic
+    /// increment) instead of deep-cloning `Vec<FlowNode>` — each
+    /// `FlowNode` owns a `Vec<FlowNodeId>` antecedents, so the deep clone
+    /// was allocation-heavy on large projects. Mutations during binding
+    /// go through `Arc::make_mut` (free when refcount=1, the case during
+    /// a single file's binding).
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
@@ -584,7 +602,7 @@ impl BindResult {
         }
 
         // module_exports
-        for (k, v) in &self.module_exports {
+        for (k, v) in self.module_exports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += std::mem::size_of::<SymbolTable>();
             size += v.len() * (32 + std::mem::size_of::<SymbolId>());
@@ -623,18 +641,18 @@ impl BindResult {
         }
 
         // shorthand_ambient_modules
-        for s in &self.shorthand_ambient_modules {
+        for s in self.shorthand_ambient_modules.iter() {
             size += s.capacity() + std::mem::size_of::<u64>();
         }
 
         // global_augmentations
-        for (k, v) in &self.global_augmentations {
+        for (k, v) in self.global_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::GlobalAugmentation>();
         }
 
         // module_augmentations
-        for (k, v) in &self.module_augmentations {
+        for (k, v) in self.module_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::ModuleAugmentation>();
             for aug in v {
@@ -648,7 +666,7 @@ impl BindResult {
         }
 
         // reexports (FxHashMap<String, FxHashMap<String, (String, Option<String>)>>)
-        for (k, inner) in &self.reexports {
+        for (k, inner) in self.reexports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for (ik, (s1, s2)) in inner {
                 size += ik.capacity() + s1.capacity() + 8;
@@ -659,7 +677,7 @@ impl BindResult {
         }
 
         // wildcard_reexports
-        for (k, v) in &self.wildcard_reexports {
+        for (k, v) in self.wildcard_reexports.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for s in v {
                 size += s.capacity();
@@ -667,7 +685,7 @@ impl BindResult {
         }
 
         // wildcard_reexports_type_only
-        for (k, v) in &self.wildcard_reexports_type_only {
+        for (k, v) in self.wildcard_reexports_type_only.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for (s, _) in v {
                 size += s.capacity() + 1;
@@ -792,7 +810,7 @@ pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> 
                 reexports: binder.reexports,
                 wildcard_reexports: binder.wildcard_reexports,
                 wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-                lib_binders: Vec::new(), // No libs in this path
+                lib_binders: Arc::new(Vec::new()), // No libs in this path
                 lib_arenas: Vec::new(),
                 lib_symbol_ids: binder.lib_symbol_ids,
                 lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -847,7 +865,7 @@ pub fn parse_and_bind_single(file_name: String, source_text: String) -> BindResu
         reexports: binder.reexports,
         wildcard_reexports: binder.wildcard_reexports,
         wildcard_reexports_type_only: binder.wildcard_reexports_type_only,
-        lib_binders: Vec::new(), // No libs in this path
+        lib_binders: Arc::new(Vec::new()), // No libs in this path
         lib_arenas: Vec::new(),
         lib_symbol_ids: binder.lib_symbol_ids,
         lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
@@ -1397,8 +1415,16 @@ pub struct BoundFile {
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
     pub augmentation_target_modules: FxHashMap<SymbolId, String>,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver can
+    /// share this file's flow graph via `Arc::clone` (atomic increment)
+    /// instead of deep-cloning the underlying `Vec<FlowNode>` (each
+    /// `FlowNode` owns a `Vec<FlowNodeId>` antecedents). The driver builds
+    /// ~2×N per-file binders (cross-file lookup + per-file checking), so
+    /// on N-file projects this previously cost 2N deep clones of the
+    /// per-file flow graph.
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
@@ -1472,13 +1498,13 @@ impl BoundFile {
         }
 
         // global_augmentations
-        for (k, v) in &self.global_augmentations {
+        for (k, v) in self.global_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::GlobalAugmentation>();
         }
 
         // module_augmentations
-        for (k, v) in &self.module_augmentations {
+        for (k, v) in self.module_augmentations.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             size += v.capacity() * std::mem::size_of::<crate::binder::ModuleAugmentation>();
             for aug in v {
@@ -1551,11 +1577,25 @@ pub struct MergedProgram {
     pub files: Vec<BoundFile>,
     /// Global symbol arena (all symbols from all files, with remapped IDs)
     pub symbols: SymbolArena,
-    /// Symbol-to-arena mapping for declaration lookup (legacy, stores last arena)
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    /// Symbol-to-arena mapping for declaration lookup (legacy, stores last arena).
+    ///
+    /// Wrapped in `Arc` so per-file checker binders can share the merged map
+    /// via `Arc::clone` (O(1)) instead of building a per-file derived map.
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
-    pub declaration_arenas: DeclarationArenaMap,
+    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration.
+    ///
+    /// `Arc`-wrapped so per-file `BinderState.declaration_arenas` reconstruction
+    /// is a cheap atomic increment instead of iterating the entire program-wide
+    /// map per file. On large projects this map holds ~100K entries and the
+    /// CLI driver builds ~12K per-file binders; the previous per-file materialization
+    /// iterated ~100K entries × ~12K binders ≈ 1.2B entry visits at startup.
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
+    /// Secondary index: `SymbolId` → every `NodeIndex` that appears as a
+    /// declaration key for that symbol. Built once at merge time so checker
+    /// paths that need to enumerate a symbol's declarations can do a point
+    /// lookup instead of iterating the program-wide `declaration_arenas`.
+    pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
     /// Enables resolving type references in cross-file interface declarations.
     pub cross_file_node_symbols: CrossFileNodeSymbols,
@@ -1566,23 +1606,32 @@ pub struct MergedProgram {
     /// Ambient module declarations across all files
     pub declared_modules: FxHashSet<String>,
     /// Shorthand ambient modules (`declare module "foo"` without body) - imports from these are `any`
-    pub shorthand_ambient_modules: FxHashSet<String>,
+    pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Module exports: maps file name (or module specifier) to its exported symbols
     /// This enables cross-file module resolution: import { X } from './file' can find X's symbol
-    pub module_exports: FxHashMap<String, SymbolTable>,
+    /// `Arc`-wrapped so per-file `BinderState` reconstruction is a cheap atomic
+    /// increment instead of a deep clone of the merged map.
+    pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     /// Re-exports: tracks `export { x } from 'module'` declarations
     /// Maps (`current_file`, `exported_name`) -> (`source_module`, `original_name`)
-    pub reexports: Reexports,
+    pub reexports: Arc<Reexports>,
     /// Wildcard re-exports: tracks `export * from 'module'` declarations
     /// Maps `current_file` -> Vec of `source_modules`
-    pub wildcard_reexports: FxHashMap<String, Vec<String>>,
+    /// `Arc`-wrapped so per-file `BinderState` reconstruction is a
+    /// cheap atomic increment instead of a deep clone of the merged
+    /// `FxHashMap`. Mutations during binding go through `Arc::make_mut`.
+    pub wildcard_reexports: Arc<WildcardReexportsMap>,
     /// Wildcard re-export type-only provenance per entry.
-    pub wildcard_reexports_type_only: FxHashMap<String, Vec<(String, bool)>>,
+    pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     /// Lib binders for global type resolution (Array, String, Promise, etc.)
     /// These contain symbols from lib.d.ts files and enable resolution of built-in types
-    pub lib_binders: Vec<Arc<BinderState>>,
-    /// Global symbol IDs that originated from lib files (remapped to global arena IDs)
-    pub lib_symbol_ids: FxHashSet<SymbolId>,
+    pub lib_binders: Arc<Vec<Arc<BinderState>>>,
+    /// Global symbol IDs that originated from lib files (remapped to global arena IDs).
+    /// `Arc`-wrapped so the CLI driver can install the same set into
+    /// every per-file `BinderState.lib_symbol_ids` via `Arc::clone`
+    /// (cheap atomic increment) instead of deep-cloning the
+    /// `FxHashSet` for each of N per-file binders.
+    pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
     /// Global type interner - shared across all threads for type deduplication
     pub type_interner: TypeInterner,
     /// Alias partners: maps `TYPE_ALIAS` `SymbolId` → `ALIAS` `SymbolId` for merged type+namespace exports.
@@ -2388,7 +2437,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         shorthand_ambient_modules.extend(result.shorthand_ambient_modules.iter().cloned());
 
         // Merge reexports from this file
-        for (file_name, file_reexports) in &result.reexports {
+        for (file_name, file_reexports) in result.reexports.iter() {
             let entry = reexports.entry(file_name.clone()).or_default();
             for (export_name, mapping) in file_reexports {
                 entry.insert(export_name.clone(), mapping.clone());
@@ -2396,7 +2445,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         // Merge wildcard reexports from this file
-        for (file_name, source_modules) in &result.wildcard_reexports {
+        for (file_name, source_modules) in result.wildcard_reexports.iter() {
             let entry = wildcard_reexports.entry(file_name.clone()).or_default();
             let type_only_entry = wildcard_reexports_type_only
                 .entry(file_name.clone())
@@ -2565,7 +2614,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         // Track remapped lib symbol IDs for unused-checking exclusion
-        for &old_lib_id in &result.lib_symbol_ids {
+        for &old_lib_id in result.lib_symbol_ids.iter() {
             if let Some(&new_id) = id_remap.get(&old_lib_id) {
                 global_lib_symbol_ids.insert(new_id);
             }
@@ -2573,7 +2622,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
         // Copy symbol_arenas entries from user file, remapping IDs
         // This propagates lib symbol arena mappings that were created during merge_lib_symbols
-        for (&old_sym_id, arena) in &result.symbol_arenas {
+        for (&old_sym_id, arena) in result.symbol_arenas.iter() {
             if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
                 symbol_arenas
                     .entry(new_sym_id)
@@ -2586,7 +2635,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // in Phase 1 from the original lib binder. The per-file binder has duplicate
         // arenas for the same declarations (from merge_lib_contexts_into_binder),
         // which would cause interface members to be lowered multiple times.
-        for (&(old_sym_id, decl_idx), arenas) in &result.declaration_arenas {
+        for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
             if result.lib_symbol_ids.contains(&old_sym_id) {
                 continue;
             }
@@ -2739,7 +2788,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             module_exports.insert(result.file_name.clone(), exports);
         }
 
-        for (module_key, exports_table) in &result.module_exports {
+        for (module_key, exports_table) in result.module_exports.iter() {
             let remapped = remap_symbol_table(exports_table, &id_remap);
             if !remapped.is_empty() {
                 merge_symbol_table(
@@ -2920,6 +2969,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     updated.is_umd_export = old_sym.is_umd_export;
                     // Track which file this symbol was declared in for TDZ cross-file detection
                     updated.decl_file_idx = file_idx as u32;
+                    // Finalize file index on stable declaration locations that
+                    // were recorded by per-file binders with `u32::MAX` (the
+                    // parallel pipeline does not call `BinderState::set_file_idx`
+                    // before binding). This keeps the Phase 1 stable-location
+                    // invariants consistent with `decl_file_idx`.
+                    let stamped = file_idx as u32;
+                    for stable in &mut updated.stable_declarations {
+                        stable.set_file_idx_if_unassigned(stamped);
+                    }
+                    updated
+                        .stable_value_declaration
+                        .set_file_idx_if_unassigned(stamped);
                     updated.exports = old_sym
                         .exports
                         .as_ref()
@@ -3129,7 +3190,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         file_locals_list.push(remapped_file_locals);
 
         let mut remapped_declaration_arenas: DeclarationArenaMap = FxHashMap::default();
-        for (&(old_sym_id, decl_idx), arenas) in &result.declaration_arenas {
+        for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
             if result.lib_symbol_ids.contains(&old_sym_id) {
                 continue;
             }
@@ -3150,7 +3211,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             .collect();
 
         let mut remapped_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>> = FxHashMap::default();
-        for (&old_sym_id, arena) in &result.symbol_arenas {
+        for (&old_sym_id, arena) in result.symbol_arenas.iter() {
             if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
                 let has_non_local_decl = symbols_with_non_local_declarations.contains(&new_sym_id);
                 if has_non_local_decl || !Arc::ptr_eq(arena, &result.arena) {
@@ -3192,7 +3253,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             scopes: remapped_scopes,
             node_scope_ids: result.node_scope_ids.clone(),
             parse_diagnostics: result.parse_diagnostics.clone(),
-            global_augmentations: result.global_augmentations.clone(),
+            global_augmentations: (*result.global_augmentations).clone(),
             module_augmentations,
             augmentation_target_modules: result
                 .augmentation_target_modules
@@ -3253,22 +3314,34 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         &type_interner,
     ));
 
+    // Build the secondary `sym_to_decl_indices` index over the program-wide
+    // `declaration_arenas`. Checker paths that previously iterated every entry
+    // filtering by `entry_sym_id == sym_id` use this to do a point lookup.
+    let mut sym_to_decl_indices: SymToDeclIndicesMap = FxHashMap::default();
+    for &(sym_id, decl_idx) in declaration_arenas.keys() {
+        sym_to_decl_indices
+            .entry(sym_id)
+            .or_default()
+            .push(decl_idx);
+    }
+
     MergedProgram {
         files,
         symbols: global_symbols,
-        symbol_arenas,
-        declaration_arenas,
+        symbol_arenas: Arc::new(symbol_arenas),
+        declaration_arenas: Arc::new(declaration_arenas),
+        sym_to_decl_indices: Arc::new(sym_to_decl_indices),
         cross_file_node_symbols,
         globals,
         file_locals: file_locals_list,
         declared_modules,
-        shorthand_ambient_modules,
-        module_exports,
-        reexports,
-        wildcard_reexports,
-        wildcard_reexports_type_only,
-        lib_binders,
-        lib_symbol_ids: global_lib_symbol_ids,
+        shorthand_ambient_modules: Arc::new(shorthand_ambient_modules),
+        module_exports: Arc::new(module_exports),
+        reexports: Arc::new(reexports),
+        wildcard_reexports: Arc::new(wildcard_reexports),
+        wildcard_reexports_type_only: Arc::new(wildcard_reexports_type_only),
+        lib_binders: Arc::new(lib_binders),
+        lib_symbol_ids: Arc::new(global_lib_symbol_ids),
         type_interner,
         alias_partners,
         semantic_defs,
@@ -3874,7 +3947,11 @@ fn build_lib_bound_file_for_interface_checks(
         );
     }
 
-    let mut declaration_arenas = program.declaration_arenas.clone();
+    // Deep-clone the program-wide `declaration_arenas` into a mutable map so
+    // we can add user-global-interface entries below. `program.declaration_arenas`
+    // is `Arc`-shared; dereferencing before `.clone()` produces an owned inner
+    // map without disturbing the shared data.
+    let mut declaration_arenas: DeclarationArenaMap = (*program.declaration_arenas).clone();
     add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
 
     BoundFile {
@@ -3882,7 +3959,7 @@ fn build_lib_bound_file_for_interface_checks(
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
         node_symbols,
-        symbol_arenas: program.symbol_arenas.clone(),
+        symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: FxHashMap::default(),
         scopes: Vec::new(),
@@ -3891,7 +3968,7 @@ fn build_lib_bound_file_for_interface_checks(
         global_augmentations: FxHashMap::default(),
         module_augmentations: FxHashMap::default(),
         augmentation_target_modules: FxHashMap::default(),
-        flow_nodes: FlowNodeArena::default(),
+        flow_nodes: Arc::new(FlowNodeArena::default()),
         node_flow: FxHashMap::default(),
         switch_clause_to_switch: FxHashMap::default(),
         is_external_module: lib_file.binder.is_external_module,
@@ -4634,6 +4711,7 @@ impl SharedBinderData {
                         crate::binder::GlobalAugmentation::with_arena(
                             aug.node,
                             Arc::clone(&file.arena),
+                            aug.flags,
                         )
                     }));
             }
@@ -4647,14 +4725,30 @@ impl SharedBinderData {
     }
 }
 
-/// Create a `BinderState` from a `BoundFile` for type checking
+/// Create a `BinderState` from a `BoundFile` for type checking.
+///
+/// This path is retained for tsz-core callers that want the legacy per-file
+/// subset of `declaration_arenas` (only non-local, non-lib-originated entries,
+/// as captured in `BoundFile.declaration_arenas`). The CLI driver uses its own
+/// path (`create_binder_from_bound_file_with_augmentations`) which shares the
+/// program-wide map via `Arc::clone` — see the perf follow-up doc §3.2.
 pub fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
-    let declaration_arenas = file.declaration_arenas.clone();
-    let symbol_arenas = file.symbol_arenas.clone();
+    let declaration_arenas = Arc::new(file.declaration_arenas.clone());
+    // The per-file subset is small; build a local `sym_to_decl_indices` from it
+    // so consumers that go through the secondary index still see the same set.
+    let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
+    for &(sym_id, decl_idx) in declaration_arenas.keys() {
+        sym_to_decl_indices_local
+            .entry(sym_id)
+            .or_default()
+            .push(decl_idx);
+    }
+    let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
+    let symbol_arenas = Arc::new(file.symbol_arenas.clone());
 
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
@@ -4681,9 +4775,9 @@ pub fn create_binder_from_bound_file(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: file.global_augmentations.clone(),
-            module_augmentations: file.module_augmentations.clone(),
-            augmentation_target_modules: file.augmentation_target_modules.clone(),
+            global_augmentations: Arc::new(file.global_augmentations.clone()),
+            module_augmentations: Arc::new(file.module_augmentations.clone()),
+            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
@@ -4691,6 +4785,7 @@ pub fn create_binder_from_bound_file(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
@@ -4749,8 +4844,19 @@ pub fn create_binder_from_bound_file_with_shared(
     file_idx: usize,
     _shared: &SharedBinderData,
 ) -> BinderState {
-    let declaration_arenas = file.declaration_arenas.clone();
-    let symbol_arenas = file.symbol_arenas.clone();
+    // Keep the legacy per-file subset behavior here (see `create_binder_from_bound_file`):
+    // these paths are used by `check_files_parallel` and tests that expect the
+    // binder's `declaration_arenas` to exclude lib-originated symbols.
+    let declaration_arenas = Arc::new(file.declaration_arenas.clone());
+    let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
+    for &(sym_id, decl_idx) in declaration_arenas.keys() {
+        sym_to_decl_indices_local
+            .entry(sym_id)
+            .or_default()
+            .push(decl_idx);
+    }
+    let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
+    let symbol_arenas = Arc::new(file.symbol_arenas.clone());
 
     let mut file_locals = SymbolTable::new();
     if file_idx < program.file_locals.len() {
@@ -4772,9 +4878,9 @@ pub fn create_binder_from_bound_file_with_shared(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: file.global_augmentations.clone(),
-            module_augmentations: file.module_augmentations.clone(),
-            augmentation_target_modules: file.augmentation_target_modules.clone(),
+            global_augmentations: Arc::new(file.global_augmentations.clone()),
+            module_augmentations: Arc::new(file.module_augmentations.clone()),
+            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
@@ -4782,6 +4888,7 @@ pub fn create_binder_from_bound_file_with_shared(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),

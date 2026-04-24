@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl_flags = arena.get_variable_declaration_flags(decl_idx);
-                if (decl_flags & (node_flags::LET | node_flags::CONST)) != 0 {
+                if node_flags::is_let_or_const(decl_flags) {
                     Some(symbol_flags::BLOCK_SCOPED_VARIABLE)
                 } else {
                     Some(symbol_flags::FUNCTION_SCOPED_VARIABLE)
@@ -295,7 +295,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
         };
-        if symbol.flags & symbol_flags::VARIABLE == 0 || !symbol.value_declaration.is_some() {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) || !symbol.value_declaration.is_some() {
             return;
         }
         let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {

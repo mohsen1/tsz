@@ -15,15 +15,28 @@ pub(crate) struct PrototypeMembers {
 }
 
 impl<'a> CheckerState<'a> {
-    fn shallow_object_literal_method_type(&mut self, method_idx: NodeIndex) -> TypeId {
+    fn shallow_object_literal_callable_type(&mut self, callable_idx: NodeIndex) -> TypeId {
         use tsz_solver::{CallSignature, CallableShape, ParamInfo};
 
-        let Some(method_node) = self.ctx.arena.get(method_idx) else {
+        let Some(callable_node) = self.ctx.arena.get(callable_idx) else {
             return TypeId::ANY;
         };
-        let Some(method) = self.ctx.arena.get_method_decl(method_node) else {
-            return TypeId::ANY;
-        };
+        let (parameters, type_parameters, return_type_node) =
+            if let Some(method) = self.ctx.arena.get_method_decl(callable_node) {
+                (
+                    method.parameters.clone(),
+                    method.type_parameters.clone(),
+                    method.type_annotation,
+                )
+            } else if let Some(func) = self.ctx.arena.get_function(callable_node) {
+                (
+                    func.parameters.clone(),
+                    func.type_parameters.clone(),
+                    func.type_annotation,
+                )
+            } else {
+                return TypeId::ANY;
+            };
 
         let mut jsdoc_type_param_updates = Vec::new();
         let mut func_jsdoc = None;
@@ -32,8 +45,8 @@ impl<'a> CheckerState<'a> {
         let mut type_params = Vec::new();
 
         if self.is_js_file() {
-            func_jsdoc = self.get_jsdoc_for_function(method_idx);
-            comment_start = self.get_jsdoc_comment_pos_for_function(method_idx);
+            func_jsdoc = self.get_jsdoc_for_function(callable_idx);
+            comment_start = self.get_jsdoc_comment_pos_for_function(callable_idx);
             jsdoc_param_names = func_jsdoc
                 .as_ref()
                 .map(|jsdoc| {
@@ -44,7 +57,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or_default();
 
-            if method.type_parameters.is_none() {
+            if type_parameters.is_none() {
                 let factory = self.ctx.types.factory();
                 for (name, is_const) in func_jsdoc
                     .as_ref()
@@ -67,12 +80,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let (declared_type_params, type_param_updates) =
-            self.push_type_parameters(&method.type_parameters);
+            self.push_type_parameters(&type_parameters);
         if type_params.is_empty() {
             type_params = declared_type_params;
         }
-        let params = method
-            .parameters
+        let params = parameters
             .nodes
             .iter()
             .enumerate()
@@ -110,8 +122,8 @@ impl<'a> CheckerState<'a> {
                 })
             })
             .collect();
-        let return_type = if method.type_annotation.is_some() {
-            self.get_type_from_type_node(method.type_annotation)
+        let return_type = if return_type_node.is_some() {
+            self.get_type_from_type_node(return_type_node)
         } else if let Some(jsdoc) = func_jsdoc.as_ref() {
             self.resolve_jsdoc_return_type(jsdoc).unwrap_or(TypeId::ANY)
         } else {
@@ -218,7 +230,7 @@ impl<'a> CheckerState<'a> {
                 // object literal methods are harvested while synthesizing the instance
                 // type for the same constructor, so contextual `this` reconstruction
                 // can recurse back into this collector and overflow the stack.
-                let rhs_type = self.shallow_object_literal_method_type(elem_idx);
+                let rhs_type = self.shallow_object_literal_callable_type(elem_idx);
                 method_bindings.push((
                     prop_name_atom,
                     tsz_solver::PropertyInfo {
@@ -261,7 +273,19 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let prop_name_atom = self.ctx.types.intern_string(&prop_name_str);
-            let rhs_type = self.get_type_of_node(prop.initializer);
+            let initializer_is_function_expression = self
+                .ctx
+                .arena
+                .get(prop.initializer)
+                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_EXPRESSION);
+            let (rhs_type, is_method) = if initializer_is_function_expression {
+                (
+                    self.shallow_object_literal_callable_type(prop.initializer),
+                    true,
+                )
+            } else {
+                (self.get_type_of_node(prop.initializer), false)
+            };
             method_bindings.push((
                 prop_name_atom,
                 tsz_solver::PropertyInfo {
@@ -270,7 +294,7 @@ impl<'a> CheckerState<'a> {
                     write_type: rhs_type,
                     optional: false,
                     readonly: false,
-                    is_method: false,
+                    is_method,
                     is_class_prototype: false,
                     visibility: tsz_solver::Visibility::Public,
                     parent_id: Some(parent_sym),
@@ -868,7 +892,7 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier(self.ctx.arena, expr_idx)
             .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
         if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
@@ -910,7 +934,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.ctx.binder.get_node_symbol(expr_idx))
             .or_else(|| self.resolve_qualified_symbol(expr_idx))?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::CLASS == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
 
@@ -997,7 +1021,7 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(sym_id) = callable_shape.symbol
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && (symbol.flags & symbol_flags::ABSTRACT) != 0
+                && symbol.has_any_flags(symbol_flags::ABSTRACT)
             {
                 return true;
             }
@@ -1006,7 +1030,7 @@ impl<'a> CheckerState<'a> {
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id)
             && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.flags & symbol_flags::TYPE_ALIAS != 0
+            && symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && let Some(body_type) = def.body
         {
@@ -1016,7 +1040,7 @@ impl<'a> CheckerState<'a> {
         match query::classify_for_abstract_check(self.ctx.types, type_id) {
             query::AbstractClassCheckKind::TypeQuery(sym_ref) => {
                 if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0))
-                    && symbol.flags & symbol_flags::ABSTRACT != 0
+                    && symbol.has_any_flags(symbol_flags::ABSTRACT)
                 {
                     return true;
                 }

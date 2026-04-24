@@ -183,8 +183,7 @@ impl<'a> AsyncES5Transformer<'a> {
             recover_await_default,
             type_annotation,
         ) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.is_function_expression_or_arrow()
         {
             if let Some(func) = self.arena.get_function(node) {
                 let name = if func.name.is_none() {
@@ -804,8 +803,7 @@ impl<'a> AsyncES5Transformer<'a> {
             return Some(idx);
         }
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.is_function_expression_or_arrow()
         {
             return None;
         }
@@ -1327,8 +1325,7 @@ impl<'a> AsyncES5Transformer<'a> {
         // Don't recurse into nested functions
         // This check must happen before recursing into any children
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.is_function_expression_or_arrow()
         {
             return false;
         }

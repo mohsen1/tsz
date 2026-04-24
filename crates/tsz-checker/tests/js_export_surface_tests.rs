@@ -41,8 +41,7 @@ fn check_commonjs_two_files(
 
     let file_a_exports = binder_a.module_exports.get(producer_name).cloned();
     if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_b.module_exports)
             .insert(module_specifier.to_string(), exports.clone());
     }
 
@@ -356,8 +355,7 @@ fn inspect_commonjs_two_file_consumer_symbol(
 
     let file_a_exports = binder_a.module_exports.get(producer_name).cloned();
     if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_b.module_exports)
             .insert(module_specifier.to_string(), exports.clone());
     }
 

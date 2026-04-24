@@ -325,7 +325,7 @@ impl Server {
                 let Some(symbol_node) = arena.get(symbol_idx) else {
                     continue;
                 };
-                if symbol_node.kind != SyntaxKind::StringLiteral as u16 {
+                if !symbol_node.is_string_literal() {
                     continue;
                 }
                 let text = Self::unquote(&Self::node_text_opt(source_text, symbol_node)?);
@@ -482,7 +482,7 @@ impl Server {
             let Some(node) = arena.get(node_idx) else {
                 continue;
             };
-            if node.kind != SyntaxKind::StringLiteral as u16 {
+            if !node.is_string_literal() {
                 continue;
             }
             let in_import = Self::find_ancestor_of_kind(
@@ -536,7 +536,7 @@ impl Server {
             let Some(node) = arena.get(node_idx) else {
                 continue;
             };
-            if node.kind != SyntaxKind::StringLiteral as u16 {
+            if !node.is_string_literal() {
                 continue;
             }
             if node.end <= node.pos.saturating_add(1) {
@@ -580,7 +580,7 @@ impl Server {
         let mut fallback: Option<String> = None;
         for symbol_idx in [spec.property_name, spec.name] {
             let node = arena.get(symbol_idx)?;
-            if node.kind != SyntaxKind::StringLiteral as u16 {
+            if !node.is_string_literal() {
                 continue;
             }
             let text = arena.get_literal_text(symbol_idx)?.to_string();
@@ -742,7 +742,7 @@ impl Server {
                         let Some(symbol_node) = arena.get(string_symbol_idx) else {
                             continue;
                         };
-                        if symbol_node.kind != SyntaxKind::StringLiteral as u16 {
+                        if !symbol_node.is_string_literal() {
                             continue;
                         }
                         let Some(text) = arena.get_literal_text(string_symbol_idx) else {
@@ -770,7 +770,7 @@ impl Server {
                         };
                         if counterpart_idx.is_some()
                             && let Some(counterpart_node) = arena.get(counterpart_idx)
-                            && (counterpart_node.kind == SyntaxKind::Identifier as u16
+                            && (counterpart_node.is_identifier()
                                 || counterpart_node.kind == SyntaxKind::PrivateIdentifier as u16)
                         {
                             out.push(tsz_common::position::Location::new(
@@ -800,7 +800,7 @@ impl Server {
                             let Some(symbol_node) = arena.get(symbol_idx) else {
                                 continue;
                             };
-                            if symbol_node.kind != SyntaxKind::StringLiteral as u16 {
+                            if !symbol_node.is_string_literal() {
                                 continue;
                             }
                             let Some(text) = arena.get_literal_text(symbol_idx) else {
@@ -828,7 +828,7 @@ impl Server {
                             };
                             if counterpart_idx.is_some()
                                 && let Some(counterpart_node) = arena.get(counterpart_idx)
-                                && (counterpart_node.kind == SyntaxKind::Identifier as u16
+                                && (counterpart_node.is_identifier()
                                     || counterpart_node.kind
                                         == SyntaxKind::PrivateIdentifier as u16)
                             {
@@ -894,9 +894,7 @@ impl Server {
                         let Some(right_node) = arena.get(spec.name) else {
                             continue;
                         };
-                        if left_node.kind != SyntaxKind::StringLiteral as u16
-                            || right_node.kind != SyntaxKind::StringLiteral as u16
-                        {
+                        if !left_node.is_string_literal() || !right_node.is_string_literal() {
                             continue;
                         }
                         let Some(left_text) = arena.get_literal_text(spec.property_name) else {
@@ -1155,7 +1153,7 @@ impl Server {
         // canonical declaration (`foo` in the example above).
         let node_idx = tsz::lsp::utils::find_node_at_or_before_offset(arena, offset, source_text);
         let node = arena.get(node_idx)?;
-        if node.kind != SyntaxKind::StringLiteral as u16 {
+        if !node.is_string_literal() {
             return None;
         }
         let specifier_idx = Self::find_ancestor_of_kind(
@@ -1183,7 +1181,7 @@ impl Server {
         let spec = arena.get_specifier(spec_node)?;
         let local_node_idx = if spec.property_name.is_some() {
             let prop = arena.get(spec.property_name)?;
-            if prop.kind != SyntaxKind::StringLiteral as u16 {
+            if !prop.is_string_literal() {
                 Some(spec.property_name)
             } else {
                 None
@@ -1193,7 +1191,7 @@ impl Server {
         }
         .or_else(|| {
             let name_node = arena.get(spec.name)?;
-            if name_node.kind != SyntaxKind::StringLiteral as u16 {
+            if !name_node.is_string_literal() {
                 Some(spec.name)
             } else {
                 None

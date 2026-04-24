@@ -27,17 +27,15 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .arena
                 .get(contextual_init)
-                .is_some_and(
-                    |init_node| match self.ctx.arena.get(pattern_idx).map(|n| n.kind) {
-                        Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
-                            init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                        }
-                        Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
-                            init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        }
-                        _ => false,
-                    },
-                );
+                .is_some_and(|init_node| match self.ctx.arena.kind_at(pattern_idx) {
+                    Some(kind) if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    }
+                    Some(kind) if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                        init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    }
+                    _ => false,
+                });
 
         if !supports_pattern_context {
             return TypingRequest::NONE;
@@ -118,7 +116,7 @@ impl<'a> CheckerState<'a> {
             {
                 let flags = other_parent.flags as u32;
                 use tsz_parser::parser::node_flags;
-                if (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) != 0 {
+                if node_flags::is_block_scoped(flags) {
                     return false;
                 }
             }
@@ -319,7 +317,7 @@ impl<'a> CheckerState<'a> {
 
             // tsc points TS1255/TS1263/TS1264 at the `!` token itself, which is
             // immediately after the variable name node (name_node.end, length 1).
-            let excl_pos = self.ctx.arena.get(var_decl.name).map(|n| n.end);
+            let excl_pos = self.ctx.arena.end_at(var_decl.name);
 
             // TS1255: ! is not permitted in ambient context (declare let/var/const)
             if self.is_ambient_declaration(decl_idx) {
@@ -837,7 +835,20 @@ impl<'a> CheckerState<'a> {
                             let func = checker.ctx.arena.get_function(init_node)?;
                             let body_node = checker.ctx.arena.get(func.body)?;
                             if body_node.kind == syntax_kind_ext::BLOCK {
-                                return Some(false);
+                                // For block-body functions, check if the body
+                                // already emitted TS2322 (e.g., from return
+                                // statement checks against a contextual return
+                                // type). When it did, the outer assignment-level
+                                // TS2322 is redundant.
+                                return Some(
+                                    checker.ctx.diagnostics[init_snap.diagnostics_len..]
+                                        .iter()
+                                        .any(|diag| {
+                                            diag.start >= body_node.pos
+                                                && diag.start < body_node.end
+                                                && matches!(diag.code, 2322 | 2339)
+                                        }),
+                                );
                             }
                             Some(
                                 checker.ctx.diagnostics[init_snap.diagnostics_len..]
@@ -931,6 +942,23 @@ impl<'a> CheckerState<'a> {
                                 if elaborated_elements {
                                     // Elaboration emitted per-element TS2322 errors on the specific
                                     // mismatching array/tuple elements. Skip the generic TS2322.
+                                } else if function_initializer_body_has_error {
+                                    // The function initializer already produced the canonical body
+                                    // diagnostic (for example on an expression-bodied arrow or
+                                    // block-body function with return statement errors). Skip
+                                    // the redundant outer assignment TS2322 and elaboration.
+                                } else if initializer_is_function
+                                    && jsdoc_declared_type.is_some()
+                                    && checker.async_function_jsdoc_return_type_suppression(
+                                        checked_init_type,
+                                        declared_type,
+                                    )
+                                {
+                                    // Async function with JSDoc non-Promise return type:
+                                    // tsc reports TS1064 for the async/return-type mismatch
+                                    // and checks body return statements, but does NOT emit
+                                    // TS2322 at the assignment level for the Promise wrapping
+                                    // difference.
                                 } else if initializer_is_function
                                     && !checker.is_assignable_to(checked_init_type, declared_type)
                                     && checker.try_elaborate_assignment_source_error(
@@ -940,10 +968,6 @@ impl<'a> CheckerState<'a> {
                                 {
                                     // Function initializer return elaboration emitted the canonical
                                     // nested TS2322 for a mismatching returned literal/expression.
-                                } else if function_initializer_body_has_error {
-                                    // The function initializer already produced the canonical body
-                                    // diagnostic (for example on an expression-bodied arrow). Skip
-                                    // the redundant outer assignment TS2322.
                                 } else {
                                     // Run excess property check first for object literal
                                     // initializers. In tsc, TS2353 (excess property) takes
@@ -1533,7 +1557,7 @@ impl<'a> CheckerState<'a> {
             // TS7022: Structural circularity — `var a = { f: a }`.
             // TS7023: Return-type circularity — `var f = () => f()` or
             //         `var f = function() { return f(); }`.
-            let init_kind = self.ctx.arena.get(var_decl.initializer).map(|n| n.kind);
+            let init_kind = self.ctx.arena.kind_at(var_decl.initializer);
             let is_direct_deferred_initializer = init_kind.is_some_and(|kind| {
                 matches!(
                     kind,
@@ -1727,7 +1751,7 @@ impl<'a> CheckerState<'a> {
             {
                 let flags = parent.flags as u32;
                 use tsz_parser::parser::node_flags;
-                (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) != 0
+                node_flags::is_block_scoped(flags)
             } else {
                 false
             };
@@ -1880,7 +1904,7 @@ impl<'a> CheckerState<'a> {
                                 // (interfaces, type aliases) occupy a different declaration
                                 // space and never conflict with var declarations.
                                 use tsz_binder::symbols::symbol_flags;
-                                if lib_sym.flags & symbol_flags::VALUE == 0 {
+                                if !lib_sym.has_any_flags(symbol_flags::VALUE) {
                                     continue;
                                 }
                                 for &lib_decl in &lib_sym.declarations {
@@ -1963,10 +1987,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 let flags = other_parent.flags as u32;
                                 use tsz_parser::parser::node_flags;
-                                if (flags
-                                    & (node_flags::LET | node_flags::CONST | node_flags::USING))
-                                    != 0
-                                {
+                                if node_flags::is_block_scoped(flags) {
                                     continue;
                                 }
                             }
@@ -2199,12 +2220,7 @@ impl<'a> CheckerState<'a> {
                                     {
                                         let other_flags = other_parent.flags as u32;
                                         use tsz_parser::parser::node_flags;
-                                        if (other_flags
-                                            & (node_flags::LET
-                                                | node_flags::CONST
-                                                | node_flags::USING))
-                                            != 0
-                                        {
+                                        if node_flags::is_block_scoped(other_flags) {
                                             continue; // block-scoped, skip
                                         }
                                     }
@@ -2410,6 +2426,31 @@ impl<'a> CheckerState<'a> {
                     name_node.kind,
                 );
             }
+        }
+    }
+
+    /// Check whether an async function initializer's type differs from the
+    /// declared JSDoc type only because of Promise wrapping on the return type.
+    /// When that is the case, tsc reports TS1064 (async return type must be
+    /// Promise) but suppresses the assignment-level TS2322.
+    pub(crate) fn async_function_jsdoc_return_type_suppression(
+        &mut self,
+        init_type: TypeId,
+        declared_type: TypeId,
+    ) -> bool {
+        let init_return =
+            crate::query_boundaries::common::return_type_for_type(self.ctx.types, init_type);
+        let declared_return =
+            crate::query_boundaries::common::return_type_for_type(self.ctx.types, declared_type);
+        let (Some(init_ret), Some(decl_ret)) = (init_return, declared_return) else {
+            return false;
+        };
+        // Check if the init return type is Promise<T> where T is assignable
+        // to the declared return type.
+        if let Some(unwrapped) = self.unwrap_promise_type(init_ret) {
+            self.is_assignable_to(unwrapped, decl_ret)
+        } else {
+            false
         }
     }
 }

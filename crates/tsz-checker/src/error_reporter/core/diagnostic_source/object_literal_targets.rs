@@ -28,8 +28,7 @@ impl<'a> CheckerState<'a> {
                             parent.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
                     if is_object_literal_property {
-                        object_literal_idx =
-                            self.ctx.arena.get_extended(current).map(|ext| ext.parent);
+                        object_literal_idx = self.ctx.arena.parent_of(current);
                         property_elem = Some(current);
                         break;
                     }
@@ -146,10 +145,7 @@ impl<'a> CheckerState<'a> {
         let contextual_target = raw_call_param_property_target
             .or(object_property_target)
             .or(property_diag_target)?;
-        if matches!(
-            contextual_target,
-            TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-        ) {
+        if contextual_target.is_any_unknown_or_error() {
             return None;
         }
 

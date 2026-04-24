@@ -427,9 +427,7 @@ impl<'a> CheckerState<'a> {
             let is_class = symbol.has_any_flags(symbol_flags::CLASS);
             let is_enum = symbol.has_any_flags(symbol_flags::ENUM);
             let is_var = symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE);
-            let kind_ok = (is_class
-                && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION))
+            let kind_ok = (is_class && (decl_node.is_class_like()))
                 || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION)
                 || (is_var
                     && (decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
@@ -589,6 +587,21 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if node.kind == syntax_kind_ext::DECORATOR {
+                // Parameter decorators evaluate at a different time than
+                // class/method/accessor/property decorators and therefore
+                // are NOT in the class-definition TDZ. tsc does not report
+                // TS2449 for `@dec(C)` on a constructor/method parameter of
+                // class `C` (see
+                // `useBeforeDeclaration_classDecorators.2.ts` constructor /
+                // `method2` cases), even though the identical expression on
+                // a method or property decorator would fire. Detect the
+                // parameter-decorator case and bail out.
+                if let Some(decorator_ext) = self.ctx.arena.get_extended(current)
+                    && let Some(decorator_parent) = self.ctx.arena.get(decorator_ext.parent)
+                    && decorator_parent.kind == syntax_kind_ext::PARAMETER
+                {
+                    return false;
+                }
                 // Found a decorator. Check if it belongs to the class declaration
                 // or one of its members by walking up to see if we reach decl_idx.
                 let mut ancestor = current;

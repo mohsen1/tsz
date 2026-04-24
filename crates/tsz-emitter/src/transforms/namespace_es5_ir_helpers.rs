@@ -707,7 +707,7 @@ pub(super) fn collect_qualified_name_parts(
 ) -> Option<Vec<String>> {
     let node = arena.get(name_idx)?;
 
-    if node.kind == SyntaxKind::Identifier as u16 {
+    if node.is_identifier() {
         if let Some(id) = arena.get_identifier(node) {
             return Some(vec![id.escaped_text.clone()]);
         }

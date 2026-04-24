@@ -12,6 +12,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// A JSDoc template parameter: `(name, has_default, constraint_expr)`.
+type JsDocTemplateParam = (String, bool, Option<String>);
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_jsdoc_extends_tag_type_arguments(&mut self, class_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -88,6 +91,325 @@ impl<'a> CheckerState<'a> {
             .error(type_pos, base_name.len() as u32, message, code);
     }
 
+    /// Validate JSDoc `@extends` type arguments against their type-parameter
+    /// constraints. Emits TS2344 when a supplied argument does not satisfy
+    /// the constraint declared on the target's `@template {Constraint} Name`.
+    pub(crate) fn check_jsdoc_extends_tag_type_argument_constraints(
+        &mut self,
+        class_idx: NodeIndex,
+    ) {
+        let Some((_tag, type_expr, type_pos)) =
+            self.attached_jsdoc_extends_or_augments_tag(class_idx)
+        else {
+            return;
+        };
+        let type_expr = type_expr.trim();
+        let Some(angle_idx) = type_expr.find('<') else {
+            return;
+        };
+        if !type_expr.ends_with('>') {
+            return;
+        }
+        let base_name = type_expr[..angle_idx].trim().to_string();
+        if base_name.is_empty() {
+            return;
+        }
+
+        let inner = &type_expr[angle_idx + 1..type_expr.len() - 1];
+        let inner_base_offset = (angle_idx + 1) as u32;
+        let args: Vec<(String, u32)> = Self::split_jsdoc_type_arguments_with_offsets(inner)
+            .into_iter()
+            .map(|(s, o)| (s.to_string(), o))
+            .collect();
+        if args.is_empty() {
+            return;
+        }
+
+        let Some(params) = self.resolve_jsdoc_extends_target_template_params(&base_name) else {
+            return;
+        };
+        if params.is_empty() {
+            return;
+        }
+        let max_expected = params.len();
+        let min_required = params
+            .iter()
+            .filter(|(_, has_default, _)| !*has_default)
+            .count();
+        if args.len() < min_required || args.len() > max_expected {
+            return;
+        }
+
+        for ((_name, _has_default, constraint_expr), (arg_raw, arg_rel_offset)) in
+            params.iter().zip(args.iter())
+        {
+            let Some(constraint_expr) = constraint_expr else {
+                continue;
+            };
+            let constraint_opt = self
+                .jsdoc_type_from_expression(constraint_expr)
+                .or_else(|| self.resolve_jsdoc_type_str(constraint_expr));
+            let Some(constraint) = constraint_opt else {
+                continue;
+            };
+            let cleaned = Self::normalize_jsdoc_type_fragment(arg_raw);
+            if cleaned.is_empty() {
+                continue;
+            }
+            let Some(arg_type) = self.resolve_jsdoc_type_str(&cleaned) else {
+                continue;
+            };
+
+            let evaluated_arg = self.evaluate_type_for_assignability(arg_type);
+            let evaluated_constraint = self.evaluate_type_for_assignability(constraint);
+            if !self.jsdoc_extends_object_violates_constraint(evaluated_arg, evaluated_constraint) {
+                continue;
+            }
+
+            let arg_display = self.format_type_diagnostic(arg_type);
+            let constraint_display = self.format_type_diagnostic(constraint);
+            let message = format!(
+                "Type '{arg_display}' does not satisfy the constraint '{constraint_display}'."
+            );
+            let arg_source_pos = type_pos + inner_base_offset + *arg_rel_offset;
+            let length = arg_raw.len() as u32;
+            self.ctx.error(
+                arg_source_pos,
+                length,
+                message,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            );
+        }
+    }
+
+    /// Return `true` if `arg_ty` fails the object-shape constraint `constraint_ty`.
+    /// Compares each required constraint property against the argument's
+    /// matching property. Missing required properties and incompatible
+    /// property types both count as violations.
+    fn jsdoc_extends_object_violates_constraint(
+        &mut self,
+        arg_ty: TypeId,
+        constraint_ty: TypeId,
+    ) -> bool {
+        let arg_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, arg_ty);
+        let constraint_shape =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, constraint_ty);
+        let (Some(arg_shape), Some(constraint_shape)) = (arg_shape, constraint_shape) else {
+            return false;
+        };
+        let arg_props: rustc_hash::FxHashMap<_, _> =
+            arg_shape.properties.iter().map(|p| (p.name, p)).collect();
+        for constraint_prop in &constraint_shape.properties {
+            let Some(arg_prop) = arg_props.get(&constraint_prop.name) else {
+                if !constraint_prop.optional {
+                    return true;
+                }
+                continue;
+            };
+            let arg_eval = self.evaluate_type_for_assignability(arg_prop.type_id);
+            let constraint_eval = self.evaluate_type_for_assignability(constraint_prop.type_id);
+            if !self.is_assignable_to(arg_eval, constraint_eval) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Split a JSDoc type argument list (the text between `<` and `>`) at
+    /// top-level commas, returning each fragment with its byte offset in the
+    /// input so the emitter can anchor diagnostics at the original source
+    /// position.
+    fn split_jsdoc_type_arguments_with_offsets(type_args: &str) -> Vec<(&str, u32)> {
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        let mut angle_depth = 0usize;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+
+        for (idx, ch) in type_args.char_indices() {
+            match ch {
+                '<' => angle_depth += 1,
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                ',' if angle_depth == 0
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0 =>
+                {
+                    let part = &type_args[start..idx];
+                    if !part.trim().is_empty() {
+                        parts.push((part, start as u32));
+                    }
+                    start = idx + ch.len_utf8();
+                }
+                _ => {}
+            }
+        }
+
+        let tail = &type_args[start..];
+        if !tail.trim().is_empty() {
+            parts.push((tail, start as u32));
+        }
+
+        parts
+    }
+
+    /// Normalize a raw JSDoc type fragment by stripping `\n *` line
+    /// continuations and collapsing surrounding whitespace. Input like
+    /// `{\n *     a: string,\n *     b: string\n * }` becomes
+    /// `{ a: string, b: string }`, parseable as a single object-literal type.
+    fn normalize_jsdoc_type_fragment(raw: &str) -> String {
+        let mut out = String::with_capacity(raw.len());
+        let mut last_was_space = false;
+        let mut at_line_start = false;
+        for ch in raw.chars() {
+            if ch == '\n' || ch == '\r' {
+                at_line_start = true;
+                if !last_was_space && !out.is_empty() {
+                    out.push(' ');
+                    last_was_space = true;
+                }
+                continue;
+            }
+            if at_line_start && ch.is_whitespace() {
+                continue;
+            }
+            if at_line_start && ch == '*' {
+                at_line_start = false;
+                continue;
+            }
+            at_line_start = false;
+            if ch.is_whitespace() {
+                if !last_was_space && !out.is_empty() {
+                    out.push(' ');
+                    last_was_space = true;
+                }
+                continue;
+            }
+            out.push(ch);
+            last_was_space = false;
+        }
+        out.trim().to_string()
+    }
+
+    /// For a class/interface referenced from a JSDoc `@extends` tag, return
+    /// its type parameters as `(name, has_default, constraint_expr)` tuples.
+    /// `constraint_expr` is the textual JSDoc constraint from
+    /// `@template {Constraint} Name` on the target's declaration or `None`
+    /// when unconstrained or declared without a JSDoc constraint.
+    fn resolve_jsdoc_extends_target_template_params(
+        &mut self,
+        base_name: &str,
+    ) -> Option<Vec<JsDocTemplateParam>> {
+        use tsz_binder::symbol_flags;
+
+        let sym_id = self.ctx.binder.file_locals.get(base_name).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbols()
+                .find_all_by_name(base_name)
+                .iter()
+                .copied()
+                .find(|&candidate| {
+                    let mut visited_aliases = AliasCycleTracker::new();
+                    let resolved = self
+                        .resolve_alias_symbol(candidate, &mut visited_aliases)
+                        .unwrap_or(candidate);
+                    self.ctx.binder.get_symbol(resolved).is_some_and(|symbol| {
+                        (symbol.flags
+                            & (symbol_flags::TYPE_ALIAS
+                                | symbol_flags::CLASS
+                                | symbol_flags::INTERFACE
+                                | symbol_flags::ENUM))
+                            != 0
+                    })
+                })
+        })?;
+
+        let decl_idx = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .and_then(|symbol| symbol.declarations.first().copied())?;
+
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = self.ctx.arena.get(decl_idx)?;
+        let jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text)?;
+        let parsed = Self::parse_jsdoc_template_params_with_constraints(&jsdoc);
+        if parsed.is_empty() {
+            None
+        } else {
+            Some(parsed)
+        }
+    }
+
+    /// Parse `@template [{Constraint}] Name[,Name…]` lines from a JSDoc
+    /// comment. Supports the `{Constraint}` prefix with balanced-brace
+    /// matching so object-literal constraints (`{Foo: {...}}`) are captured
+    /// intact. Names sharing a line share the constraint.
+    fn parse_jsdoc_template_params_with_constraints(jsdoc: &str) -> Vec<JsDocTemplateParam> {
+        let mut out: Vec<JsDocTemplateParam> = Vec::new();
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let Some(rest) = trimmed.strip_prefix("@template") else {
+                continue;
+            };
+            let mut rest = rest.trim_start();
+
+            let constraint = if rest.starts_with('{') {
+                let body = &rest[1..];
+                let mut depth = 1usize;
+                let mut close = None;
+                for (idx, ch) in body.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(idx);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let Some(close) = close else { continue };
+                let expr = body[..close].trim().to_string();
+                rest = body[close + 1..].trim_start();
+                if expr.is_empty() { None } else { Some(expr) }
+            } else {
+                None
+            };
+
+            for token in rest.split([',', ' ', '\t']) {
+                let name = token.trim();
+                if name.is_empty() || name == "const" {
+                    continue;
+                }
+                if !name
+                    .chars()
+                    .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                {
+                    break;
+                }
+                if out.iter().any(|(existing, _, _)| existing == name) {
+                    continue;
+                }
+                out.push((name.to_string(), false, constraint.clone()));
+            }
+        }
+        out
+    }
+
     pub(crate) fn check_missing_jsdoc_extends_type_arguments(
         &mut self,
         class_idx: NodeIndex,
@@ -121,7 +443,7 @@ impl<'a> CheckerState<'a> {
             || self.is_well_known_lib_type_name(&name)
             || self
                 .get_cross_file_symbol(heritage_sym)
-                .is_some_and(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::VARIABLE))
         {
             return;
         }
@@ -203,9 +525,28 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let rest_offset = rest.as_ptr() as usize - comment_text.as_ptr() as usize;
-                if rest.starts_with('{') {
-                    let close = rest.find('}')?;
-                    let raw = &rest[1..close];
+                if let Some(inner) = rest.strip_prefix('{') {
+                    // Walk brace-balanced so nested `{...}` inside the
+                    // annotation (e.g. `@extends {A<{x:number}>}`) are kept
+                    // intact. The previous `rest.find('}')` truncated at the
+                    // inner closing `}` and silently dropped the remainder.
+                    let mut depth = 1usize;
+                    let mut close = None;
+                    for (idx, ch) in inner.char_indices() {
+                        match ch {
+                            '{' => depth += 1,
+                            '}' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    close = Some(idx);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    let close = close?;
+                    let raw = &inner[..close];
                     let type_expr = raw.trim();
                     if type_expr.is_empty() {
                         continue;
@@ -262,6 +603,59 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Returns `true` when the class has a JSDoc `@augments`/`@extends` tag
+    /// whose type argument is empty (e.g. `/** @augments */`).  tsc treats
+    /// such a tag as an invalid override of the structural `extends` clause,
+    /// which prevents base-class property merging.
+    pub(crate) fn has_empty_jsdoc_augments_tag(&self, class_idx: NodeIndex) -> bool {
+        let sf = match self.ctx.arena.source_files.first() {
+            Some(sf) => sf,
+            None => return false,
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = match self.ctx.arena.get(class_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
+        let leading = get_leading_comments_from_cache(comments, node.pos, source_text);
+        let comment = match leading.last() {
+            Some(c) => c,
+            None => return false,
+        };
+        if !is_jsdoc_comment(comment, source_text) {
+            return false;
+        }
+
+        let comment_text = comment.get_text(source_text);
+        for tag in ["augments", "extends"] {
+            let needle = format!("@{tag}");
+            for (match_pos, _) in comment_text.match_indices(&needle) {
+                let after = match_pos + needle.len();
+                if after >= comment_text.len() {
+                    return true;
+                }
+                let next_ch = comment_text[after..]
+                    .chars()
+                    .next()
+                    .expect("after < len checked above");
+                if next_ch.is_ascii_alphanumeric() {
+                    continue;
+                }
+                if self
+                    .attached_jsdoc_extends_or_augments_tag(class_idx)
+                    .is_none()
+                {
+                    return true;
+                }
+                return false;
+            }
+        }
+        false
     }
 
     fn type_params_for_jsdoc_extends_name(

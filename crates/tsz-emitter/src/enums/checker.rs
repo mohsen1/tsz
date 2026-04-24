@@ -74,9 +74,7 @@ impl<'a> EnumChecker<'a> {
         let is_const = self
             .arena
             .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
-        let is_ambient = self
-            .arena
-            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword);
+        let is_ambient = self.arena.is_declare(&enum_data.modifiers);
 
         // Evaluate enum values
         let mut evaluator = EnumEvaluator::new(self.arena);

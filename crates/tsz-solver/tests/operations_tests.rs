@@ -622,6 +622,41 @@ fn test_get_contextual_signature_with_compat_checker_matches_call_evaluator() {
 }
 
 #[test]
+fn test_get_contextual_signature_union_ignores_noncallable_and_constructor_members_when_call_exists()
+ {
+    let interner = TypeInterner::new();
+    let props_type = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        TypeId::STRING,
+    )]);
+    let call_member = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(props_type)],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let construct_member = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(props_type)],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: true,
+        is_method: false,
+    });
+    let contextual = interner.union(vec![call_member, construct_member, TypeId::STRING]);
+
+    let sig = CallEvaluator::<CompatChecker>::get_contextual_signature(&interner, contextual)
+        .expect("expected contextual signature from callable union member");
+    assert_eq!(sig.params.len(), 1);
+    assert_eq!(sig.params[0].type_id, props_type);
+    assert!(!sig.is_constructor);
+}
+
+#[test]
 fn test_call_rest_parameter_allows_zero_args() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -3541,6 +3576,99 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
 }
 
 #[test]
+fn test_infer_generic_function_from_union_call_or_construct_argument() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let value_type = interner.union(vec![
+        interner.literal_string("A"),
+        interner.literal_string("B"),
+    ]);
+    let exact_props = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        value_type,
+    )]);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let target_call = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(t_type)],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target_construct = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(t_type)],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: true,
+        is_method: false,
+    });
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("type")),
+                type_id: interner.union(vec![target_call, target_construct, TypeId::STRING]),
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("props")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let source_call = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(exact_props)],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let source_construct = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(exact_props)],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: true,
+        is_method: false,
+    });
+    let jsx_element_constructor = interner.union(vec![source_call, source_construct]);
+
+    let result = infer_generic_function(
+        &interner,
+        &mut checker,
+        &func,
+        &[jsx_element_constructor, exact_props],
+    );
+    assert_eq!(result, exact_props);
+}
+
+#[test]
 fn test_infer_generic_final_argument_check_uses_non_strict_assignability() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
@@ -6226,8 +6354,15 @@ fn test_infer_generic_number_index_from_optional_property() {
     )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // In tsc, optional properties do not contribute `undefined` to index signature inference.
-    assert_eq!(result, TypeId::NUMBER);
+    // tsc inference infers T = number from the optional property, but the
+    // overall assignment `{ 0?: number }` → `{ [k: number]: T }` errors
+    // because NUMBER index signatures preserve the implicit `| undefined`
+    // contributed by the optional flag and `number | undefined` is not
+    // assignable to `number`. `infer_generic_function` returns ERROR when
+    // the call fails its final assignability check (matching tsc's TS2322
+    // emission on this case — see
+    // `optionalPropertyAssignableToStringIndexSignature.ts`).
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -6696,9 +6831,13 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // Index signature candidates use union semantics: T and U get unions of all
-    // matching property types, so the call succeeds (no assignability failure).
-    assert_ne!(result, TypeId::ERROR);
+    // Inference picks up T from the numeric-named prop and U from the string
+    // index, but the overall call fails its final assignability check because
+    // the optional numeric property `0?: string` contributes `string | undefined`
+    // to the NUMBER-index compatibility check and is not assignable to the
+    // inferred `T = string`. Matches tsc's TS2322 on the `probablyArray =
+    // numberLiteralKeys` case in optionalPropertyAssignableToStringIndexSignature.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]

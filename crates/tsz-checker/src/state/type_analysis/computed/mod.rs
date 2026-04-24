@@ -391,7 +391,7 @@ impl<'a> CheckerState<'a> {
                     && target_sym_id != sym_id
                     && let Some(target_symbol) = self.get_symbol_globally(target_sym_id)
                 {
-                    if (target_symbol.flags & symbol_flags::CLASS) != 0 {
+                    if target_symbol.has_any_flags(symbol_flags::CLASS) {
                         let target_type = self.get_type_of_symbol(target_sym_id);
                         // Also cache the instance type so type-position references
                         // (`let x: Observable<number>`) continue to work.
@@ -714,10 +714,9 @@ impl<'a> CheckerState<'a> {
                             if !self.is_assignment_operator(binary.operator_token) {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                             let Some(ext) = arena.get_extended(decl_idx) else {
@@ -738,10 +737,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 return false;
                             }
-                            arena.get(binary.right).is_some_and(|rhs| {
-                                rhs.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                    || rhs.kind == syntax_kind_ext::ARROW_FUNCTION
-                            })
+                            arena
+                                .get(binary.right)
+                                .is_some_and(|rhs| rhs.is_function_expression_or_arrow())
                         }
                         syntax_kind_ext::VARIABLE_DECLARATION => {
                             let Some(var_decl) = arena.get_variable_declaration(node) else {
@@ -750,8 +748,7 @@ impl<'a> CheckerState<'a> {
                             let Some(init_node) = arena.get(var_decl.initializer) else {
                                 return false;
                             };
-                            init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            init_node.is_function_expression_or_arrow()
                         }
                         _ => false,
                     }
@@ -803,9 +800,16 @@ impl<'a> CheckerState<'a> {
             if value_decl.is_some() && !declaration_indices.contains(&value_decl) {
                 declaration_indices.push(value_decl);
             }
-            for (&(entry_sym_id, decl_idx), _) in self.ctx.binder.declaration_arenas.iter() {
-                if entry_sym_id == sym_id && !declaration_indices.contains(&decl_idx) {
-                    declaration_indices.push(decl_idx);
+            // Previously this site iterated the entire `declaration_arenas` map
+            // filtering by `entry_sym_id == sym_id`. With the program-wide map
+            // now shared across all per-file binders via `Arc`, a full iteration
+            // would be O(N_program) per call; the `sym_to_decl_indices` secondary
+            // index collapses that to a point lookup.
+            if let Some(extra_indices) = self.ctx.binder.sym_to_decl_indices.get(&sym_id) {
+                for &decl_idx in extra_indices {
+                    if !declaration_indices.contains(&decl_idx) {
+                        declaration_indices.push(decl_idx);
+                    }
                 }
             }
 

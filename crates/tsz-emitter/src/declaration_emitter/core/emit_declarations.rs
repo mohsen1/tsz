@@ -742,9 +742,17 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     None
                 };
-                // If solver returned `any` but the function body clearly returns void,
-                // prefer void (the solver's `any` is a fallback, not an actual inference)
-                if effective_return_type_id == tsz_solver::types::TypeId::ANY
+                // If solver returned `any` OR `undefined` but the function body clearly
+                // returns void (every control-flow exit is a bare `return;` or falls
+                // off the end), prefer void. tsc's rule: an unannotated function whose
+                // only return is `return;` (no expression) has return type `void`, not
+                // `undefined` — the solver approximates it as `undefined` from the
+                // runtime value, which we widen to `void` here. Matches
+                // declFileTypeAnnotationBuiltInType.
+                let solver_undefined_or_any = effective_return_type_id
+                    == tsz_solver::types::TypeId::ANY
+                    || effective_return_type_id == tsz_solver::types::TypeId::UNDEFINED;
+                if solver_undefined_or_any
                     && func_body.is_some()
                     && self.body_returns_void(func_body)
                 {
@@ -1117,14 +1125,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let is_static = if let Some(prop) = self.arena.get_property_decl(member_node) {
-                self.arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                self.arena.is_static(&prop.modifiers)
             } else if let Some(method) = self.arena.get_method_decl(member_node) {
-                self.arena
-                    .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
+                self.arena.is_static(&method.modifiers)
             } else if let Some(accessor) = self.arena.get_accessor(member_node) {
-                self.arena
-                    .has_modifier(&accessor.modifiers, SyntaxKind::StaticKeyword)
+                self.arena.is_static(&accessor.modifiers)
             } else {
                 false
             };

@@ -8,7 +8,6 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::flags::node_flags;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -532,7 +531,7 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    if u32::from(parent_node.flags) & node_flags::GLOBAL_AUGMENTATION != 0 {
+                    if parent_node.is_global_augmentation() {
                         return true;
                     }
                     if let Some(module_decl) = arena.get_module(parent_node)
@@ -1153,7 +1152,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let value_type = self.type_of_value_symbol_by_name(name);
-        if !matches!(value_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if !value_type.is_unknown_or_error() {
             return None;
         }
 

@@ -72,6 +72,36 @@ fn object_type_multiline_readonly_property() {
     assert_eq!(result, "{\n    readonly primaryPath: any;\n}");
 }
 
+/// Regression: `readonly [...T]` must print with the tuple spread preserved,
+/// not collapsed to `readonly T`. Mirrors tsc diagnostic output for variadic
+/// tuple parameters like `r: readonly [...T]` in
+/// `conformance/types/tuple/variadicTuples1.ts`.
+#[test]
+fn readonly_spread_tuple_prints_spread_syntax() {
+    use tsz_solver::types::{TupleElement, TypeData, TypeParamInfo};
+
+    let interner = tsz_solver::TypeInterner::new();
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    }));
+
+    let spread_tuple = interner.tuple(vec![TupleElement {
+        type_id: t_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    let readonly_spread = interner.intern(TypeData::ReadonlyType(spread_tuple));
+
+    let printer = TypePrinter::new(&interner);
+    assert_eq!(printer.print_type(spread_tuple), "[...T]");
+    assert_eq!(printer.print_type(readonly_spread), "readonly [...T]");
+}
+
 #[test]
 fn object_type_nested_multiline() {
     let interner = tsz_solver::TypeInterner::new();

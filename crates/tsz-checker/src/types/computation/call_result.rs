@@ -213,7 +213,7 @@ impl<'a> CheckerState<'a> {
         let has_mappable_param = source_fn.params.iter().zip(target_fn.params.iter()).any(
             |(source_param, target_param)| {
                 let target_type = target_param.type_id;
-                if matches!(target_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+                if target_type.is_any_unknown_or_error() {
                     return false;
                 }
                 common::collect_all_types(self.ctx.types, source_param.type_id)
@@ -1121,7 +1121,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .def_to_symbol_id(def_id)
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| (symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS) != 0)
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
         })
     }
 }

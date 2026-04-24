@@ -355,26 +355,43 @@ impl<'a> CheckerState<'a> {
         } else {
             // Component: resolve as variable expression
             // The tag name is a reference to a component (function or class)
-            let component_type = self.compute_type_of_node(tag_name_idx);
+            let raw_component_type = self.compute_type_of_node(tag_name_idx);
 
             // If the JSX element has explicit type arguments (e.g., <Component<T>>),
-            // instantiate the component type with the provided arguments.
+            // validate the count and constraints first (TS2558/TS2344), then instantiate.
             // For function types (SFCs), directly instantiate the function's type params.
             // For other types (class components, type aliases), create an Application type.
-            let component_type = if let Some(ref type_args_nodes) = jsx_opening.type_arguments {
-                let type_args: Vec<TypeId> = type_args_nodes
-                    .nodes
-                    .iter()
-                    .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                    .collect();
-                if !type_args.is_empty() {
-                    self.instantiate_jsx_component_with_type_args(component_type, &type_args)
+            //
+            // `type_arg_count_mismatch` is true when TS2558 was emitted; in that case we
+            // skip attribute checking because tsc does not emit TS2322 for JSX elements
+            // with the wrong type-argument arity.
+            let (component_type, has_explicit_type_args, type_arg_count_mismatch) =
+                if let Some(ref type_args_nodes) = jsx_opening.type_arguments {
+                    let count_mismatch = self.validate_jsx_element_type_arguments(
+                        raw_component_type,
+                        type_args_nodes,
+                        idx,
+                    );
+                    let type_args: Vec<TypeId> = type_args_nodes
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect();
+                    if !type_args.is_empty() {
+                        (
+                            self.instantiate_jsx_component_with_type_args(
+                                raw_component_type,
+                                &type_args,
+                            ),
+                            true,
+                            count_mismatch,
+                        )
+                    } else {
+                        (raw_component_type, false, false)
+                    }
                 } else {
-                    component_type
-                }
-            } else {
-                component_type
-            };
+                    (raw_component_type, false, false)
+                };
             let declared_component_type =
                 self.get_jsx_identifier_declared_type(tag_name_idx, component_type);
             let prefer_declared_component_type = matches!(
@@ -501,8 +518,60 @@ impl<'a> CheckerState<'a> {
             let jsx_element_expr_type = self.get_jsx_element_type_for_check();
             let reported_factory_arity =
                 self.check_jsx_sfc_factory_arity(resolved_component_type, tag_name_idx);
-            let recovered_props = if reported_factory_arity {
+            // When explicit type arguments were provided with a wrong arity (TS2558
+            // already emitted), skip attribute checking entirely — tsc does not emit
+            // TS2322 for JSX elements with a type-argument arity mismatch.
+            //
+            // When explicit type arguments are present and the arity is correct, bypass
+            // the normal props-inference path and substitute the explicit type args
+            // directly into the construct/call signature.  This gives the concrete props
+            // type (e.g. `Prop = {a: number, b: string}`) so TS2322 fires when an
+            // attribute value doesn't match.
+            let recovered_props = if reported_factory_arity || type_arg_count_mismatch {
                 None
+            } else if has_explicit_type_args {
+                // Re-collect the explicit type arg TypeIds (already validated above).
+                let explicit_type_args: Vec<TypeId> = jsx_opening
+                    .type_arguments
+                    .as_ref()
+                    .map(|targs| {
+                        targs
+                            .nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // For class components (construct signatures), use the dedicated helper
+                // that substitutes explicit type args into the construct signature.
+                let explicit_props = self.get_jsx_class_props_with_explicit_type_args(
+                    component_metadata_type,
+                    &explicit_type_args,
+                );
+                if let Some(props_type) = explicit_props {
+                    let props_type = self
+                        .apply_jsx_library_managed_attributes(component_metadata_type, props_type);
+                    Some((props_type, false))
+                } else {
+                    // For SFC components (call signatures), `component_type` is the
+                    // already-instantiated function — extract props from it directly.
+                    self.recover_jsx_component_props_type(
+                        jsx_opening.attributes,
+                        component_type,
+                        Some(idx),
+                        request,
+                    )
+                    // Last resort: fall back to the metadata type (generic inference).
+                    .or_else(|| {
+                        self.recover_jsx_component_props_type(
+                            jsx_opening.attributes,
+                            component_metadata_type,
+                            Some(idx),
+                            request,
+                        )
+                    })
+                }
             } else {
                 self.recover_jsx_component_props_type(
                     jsx_opening.attributes,
@@ -1078,7 +1147,7 @@ impl<'a> CheckerState<'a> {
 
         let (import_module, import_name, escaped_name, decl_idx) =
             if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
-                if (symbol.flags & symbol_flags::ALIAS) == 0 {
+                if !symbol.has_any_flags(symbol_flags::ALIAS) {
                     return Some(sym_id);
                 }
                 (
@@ -1090,7 +1159,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 let lib_binders = self.get_lib_binders();
                 let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-                if (symbol.flags & symbol_flags::ALIAS) == 0 {
+                if !symbol.has_any_flags(symbol_flags::ALIAS) {
                     return Some(sym_id);
                 }
                 (

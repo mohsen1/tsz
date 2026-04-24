@@ -1049,10 +1049,7 @@ impl<'a> CheckerState<'a> {
                     } = result
                     {
                         if mismatch_recovery_return.is_none()
-                            && !matches!(
-                                fallback_return,
-                                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-                            )
+                            && !fallback_return.is_any_unknown_or_error()
                             && !crate::query_boundaries::common::is_type_deeply_any(
                                 self.ctx.types,
                                 fallback_return,

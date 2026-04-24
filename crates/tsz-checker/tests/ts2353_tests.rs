@@ -833,6 +833,66 @@ foo({x: 1});
     );
 }
 
+/// Tests for multi-discriminant narrowing in excess property checks.
+/// When an object literal has multiple discriminant properties, tsc applies
+/// ALL of them sequentially to narrow the union before checking excess properties.
+#[test]
+fn multi_discriminant_excess_property_check_applies_all_discriminants() {
+    // Repro from TypeScript#32657 / conformance test excessPropertyCheckWithMultipleDiscriminants
+    // Two discriminants: p1 narrows to [member0, member2], then p2 further narrows to [member2].
+    let source = r#"
+type DisjointDiscriminants = { p1: 'left'; p2: true; p3: number } | { p1: 'right'; p2: false; p4: string } | { p1: 'left'; p2: boolean };
+
+const a: DisjointDiscriminants = {
+    p1: 'left',
+    p2: false,
+    p3: 42,
+    p4: "hello"
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(!ts2353.is_empty(), "Expected TS2353, got: {diags:?}");
+    // After multi-discriminant narrowing: p1='left' and p2=false narrows to
+    // { p1: 'left'; p2: boolean } only. p3 is the first excess property in that member.
+    let msg = &ts2353[0].1;
+    assert!(
+        msg.contains("'p3'"),
+        "Expected excess property 'p3' (narrowed by both p1+p2 discriminants), got: {msg}"
+    );
+    // The display type should reference only the narrowed member
+    assert!(
+        msg.contains("p2: boolean") || msg.contains("boolean"),
+        "Expected display type to reflect discriminant-narrowed member, got: {msg}"
+    );
+}
+
+#[test]
+fn multi_discriminant_first_discriminant_only_case() {
+    // When only one discriminant applies (p1='right' narrows to a single member),
+    // excess check uses that single member.
+    let source = r#"
+type DisjointDiscriminants = { p1: 'left'; p2: true; p3: number } | { p1: 'right'; p2: false; p4: string } | { p1: 'left'; p2: boolean };
+
+const c: DisjointDiscriminants = {
+    p1: 'right',
+    p2: false,
+    p3: 42,
+    p4: "hello"
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(!ts2353.is_empty(), "Expected TS2353, got: {diags:?}");
+    // p1='right' narrows to { p1: 'right'; p2: false; p4: string } only.
+    // p3 is excess in that member.
+    let msg = &ts2353[0].1;
+    assert!(
+        msg.contains("'p3'"),
+        "Expected excess property 'p3' for the right-narrowed member, got: {msg}"
+    );
+}
+
 #[test]
 fn intersection_with_index_signatures_nested_excess_property() {
     // When target is an intersection of types with string index signatures,

@@ -95,7 +95,7 @@ impl<'a> Printer<'a> {
         decl_list: &tsz_parser::parser::node::VariableData,
         flags: u32,
     ) {
-        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let using_async = node_flags::is_await_using(flags);
 
         // When a block-level using wrapper is already active (block_using_env is set),
         // just emit the __addDisposableResource calls inline as `var d1 = ..., d2 = ...;`.
@@ -1413,7 +1413,7 @@ impl<'a> Printer<'a> {
             let unwrapped_name = self.unwrap_parenthesized_binding_pattern(elem.name);
             #[cfg(not(target_arch = "wasm32"))]
             if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-                let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
+                let elem_kind = self.arena.kind_at(elem.name).unwrap_or(0);
                 tracing::debug!(
                     "downlevel-bp-element index={} elem_name={:?} unwrapped={:?} kind={}",
                     index,
@@ -1423,7 +1423,7 @@ impl<'a> Printer<'a> {
                 );
                 tracing::debug!(
                     "downlevel-bp-kind-bytes: elem={} unwrapped={}",
-                    self.arena.get(unwrapped_name).map(|n| n.kind).unwrap_or(0),
+                    self.arena.kind_at(unwrapped_name).unwrap_or(0),
                     SyntaxKind::Identifier as u16
                 );
             }

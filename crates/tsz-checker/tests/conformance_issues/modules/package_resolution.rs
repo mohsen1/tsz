@@ -653,8 +653,7 @@ fn compile_ambient_module_and_consumer_get_diagnostics(
 
     let ambient_exports = binder_a.module_exports.get(module_spec).cloned();
     if let Some(exports) = &ambient_exports {
-        binder_b
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_b.module_exports)
             .insert(module_spec.to_string(), exports.clone());
     }
 
@@ -729,8 +728,7 @@ new x.F();
 
     let file_a_exports = binder_a.module_exports.get("a.js").cloned();
     if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_b.module_exports)
             .insert("./a.js".to_string(), exports.clone());
     }
 
@@ -825,8 +823,7 @@ inst[x.S];
 
     let file_a_exports = binder_a.module_exports.get("a.js").cloned();
     if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_b.module_exports)
             .insert("./a.js".to_string(), exports.clone());
     }
 

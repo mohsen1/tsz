@@ -414,7 +414,7 @@ impl<'a> Printer<'a> {
             return;
         }
         // Only strip `var`, not `let`/`const`
-        let is_var = (init_node.flags as u32 & (node_flags::LET | node_flags::CONST)) == 0;
+        let is_var = !node_flags::is_let_or_const(init_node.flags as u32);
         if !is_var {
             self.emit(initializer);
             return;
@@ -1011,7 +1011,7 @@ impl<'a> Printer<'a> {
         if (flags & node_flags::USING) == 0 {
             return None;
         }
-        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let using_async = node_flags::is_await_using(flags);
         let decl_list = self.arena.get_variable(init_node)?;
         if decl_list.declarations.nodes.len() != 1 {
             return None;
@@ -1197,7 +1197,7 @@ impl<'a> Printer<'a> {
     ) {
         let init_node = self.arena.get(loop_stmt.initializer).unwrap();
         let flags = init_node.flags as u32;
-        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let using_async = node_flags::is_await_using(flags);
         let decl_list = self.arena.get_variable(init_node).unwrap();
         let (env_name, error_name, result_name) = self.next_disposable_env_names();
 

@@ -69,8 +69,7 @@ pub(crate) fn compile_two_files_get_diagnostics_with_options(
     // Merge module exports: copy a.ts exports into b.ts's binder for cross-file resolution
     let file_a_exports = binder_a.module_exports.get("a.ts").cloned();
     if let Some(exports) = &file_a_exports {
-        binder_b
-            .module_exports
+        std::sync::Arc::make_mut(&mut binder_b.module_exports)
             .insert(module_spec.to_string(), exports.clone());
     }
 

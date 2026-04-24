@@ -152,8 +152,25 @@ fn test_node_access_trait() {
     assert!(!arena.exists(NodeIndex::NONE));
 
     assert_eq!(arena.kind(ident_idx), Some(SyntaxKind::Identifier as u16));
+    assert_eq!(
+        arena.kind_at(ident_idx),
+        Some(SyntaxKind::Identifier as u16)
+    );
+    assert_eq!(arena.kind_at(NodeIndex::NONE), None);
     assert_eq!(arena.pos_end(ident_idx), Some((10, 20)));
     assert_eq!(arena.get_identifier_text(ident_idx), Some("testVar"));
+    assert_eq!(
+        arena.identifier_text_owned(ident_idx),
+        Some("testVar".to_string())
+    );
+    assert_eq!(arena.identifier_text_owned(NodeIndex::NONE), None);
+
+    assert_eq!(arena.pos_at(ident_idx), Some(10));
+    assert_eq!(arena.end_at(ident_idx), Some(20));
+    assert_eq!(arena.pos_end_at(ident_idx), Some((10, 20)));
+    assert_eq!(arena.pos_at(NodeIndex::NONE), None);
+    assert_eq!(arena.end_at(NodeIndex::NONE), None);
+    assert_eq!(arena.pos_end_at(NodeIndex::NONE), None);
 
     // Test NodeInfo
     let info = arena.node_info(ident_idx).expect("node info should exist");
@@ -231,6 +248,12 @@ fn test_parent_mapping() {
         binary_extended.parent.is_none(),
         "Binary expression should have no parent (it's the root)"
     );
+
+    // `parent_of` inherent helper mirrors `get_extended(..).map(|ext| ext.parent)`
+    assert_eq!(arena.parent_of(left_ident), Some(binary_expr));
+    assert_eq!(arena.parent_of(right_ident), Some(binary_expr));
+    assert_eq!(arena.parent_of(binary_expr), Some(NodeIndex::NONE));
+    assert_eq!(arena.parent_of(NodeIndex::NONE), None);
 }
 
 #[test]

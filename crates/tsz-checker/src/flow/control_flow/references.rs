@@ -689,7 +689,7 @@ impl<'a> FlowAnalyzer<'a> {
         visited: &mut Vec<SymbolId>,
     ) -> Option<SymbolId> {
         let symbol = self.binder.get_symbol(sym_id)?;
-        if symbol.flags & symbol_flags::ALIAS == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return Some(sym_id);
         }
         if visited.contains(&sym_id) {

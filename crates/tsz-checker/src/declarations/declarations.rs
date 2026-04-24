@@ -449,9 +449,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             let Some(parent) = self.ctx.arena.get(parent_idx) else {
                 return false;
             };
-            if parent.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent.is_class_like() {
                 return true;
             }
             current = parent_idx;
@@ -838,7 +836,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             if let Some(sym_id) = self.ctx.binder.get_node_symbol(enum_idx)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             {
-                let current_pos = self.ctx.arena.get(enum_idx).map(|n| n.pos).unwrap_or(0);
+                let current_pos = self.ctx.arena.pos_at(enum_idx).unwrap_or(0);
                 for &decl_idx in &symbol.declarations {
                     let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                         continue;
@@ -1311,7 +1309,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     fn resolve_imported_const_target(&self, sym_id: SymbolId) -> Option<SymbolId> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
             return Some(sym_id);
         }
         let module_specifier = symbol.import_module.as_ref()?;

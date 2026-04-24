@@ -1264,9 +1264,7 @@ impl<'a> LoweringPass<'a> {
                             && self
                                 .arena
                                 .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
-                            && !self
-                                .arena
-                                .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                            && !self.arena.is_declare(&var_stmt.modifiers)
                         {
                             return true;
                         }
@@ -1276,9 +1274,7 @@ impl<'a> LoweringPass<'a> {
                             && self
                                 .arena
                                 .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                            && !self
-                                .arena
-                                .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                            && !self.arena.is_declare(&func.modifiers)
                         {
                             return true;
                         }
@@ -1288,9 +1284,7 @@ impl<'a> LoweringPass<'a> {
                             && self
                                 .arena
                                 .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
-                            && !self
-                                .arena
-                                .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
+                            && !self.arena.is_declare(&class.modifiers)
                         {
                             return true;
                         }
@@ -1300,9 +1294,7 @@ impl<'a> LoweringPass<'a> {
                             && self
                                 .arena
                                 .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
-                            && !self
-                                .arena
-                                .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                            && !self.arena.is_declare(&enum_decl.modifiers)
                             && !self.has_const_modifier(&enum_decl.modifiers)
                         {
                             return true;
@@ -1313,9 +1305,7 @@ impl<'a> LoweringPass<'a> {
                             && self
                                 .arena
                                 .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
-                            && !self
-                                .arena
-                                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+                            && !self.arena.is_declare(&module.modifiers)
                         {
                             return true;
                         }

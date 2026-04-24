@@ -145,8 +145,8 @@ impl<'a> CallHierarchyProvider<'a> {
 
         let name_idx = self.get_function_name_idx(func_idx);
         let target_symbol_id = name_idx
-            .and_then(|idx| self.binder.node_symbols.get(&idx.0).copied())
-            .or_else(|| self.binder.node_symbols.get(&func_idx.0).copied());
+            .and_then(|idx| self.binder.get_node_symbol(idx))
+            .or_else(|| self.binder.get_node_symbol(func_idx));
         let target_namespace_hint = self.enclosing_namespace_name(func_idx);
         let target_member_container_hint = self.member_container_hint_for_callable(func_idx);
         let target_is_member_like =
@@ -647,8 +647,7 @@ impl<'a> CallHierarchyProvider<'a> {
             let parent = ext.parent;
             if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
-                && (parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                && (parent_node.is_class_like())
                 && let Some(class_decl) = self.arena.get_class(parent_node)
                 && class_decl.name == node_idx
                 && let Some(ctor_idx) = self.class_constructor_node(parent)
@@ -843,9 +842,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 return None;
             }
             let parent_node = self.arena.get(parent)?;
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent_node.is_class_like() {
                 let class_decl = self.arena.get_class(parent_node)?;
                 if class_decl.name.is_some() {
                     return self.get_identifier_text(class_decl.name);
@@ -874,9 +871,7 @@ impl<'a> CallHierarchyProvider<'a> {
             if parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 return Some(parent);
             }
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent_node.is_class_like() {
                 return None;
             }
             current = parent;
@@ -908,9 +903,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 return None;
             }
             let parent_node = self.arena.get(parent)?;
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent_node.is_class_like() {
                 return Some(parent);
             }
             current = parent;
@@ -1077,9 +1070,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 return None;
             }
             let parent_node = self.arena.get(parent)?;
-            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
+            if parent_node.is_class_like() {
                 return Some(parent);
             }
             if parent_node.is_function_like()
@@ -1541,9 +1532,7 @@ impl<'a> CallHierarchyProvider<'a> {
     ) -> Option<CallHierarchyItem> {
         let node = self.arena.get(decl_idx)?;
 
-        if node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
+        if node.is_class_like() {
             let mut selection_range =
                 node_range(self.arena, self.line_map, self.source_text, decl_idx);
             if let Some(class_decl) = self.arena.get_class(node)
@@ -1598,7 +1587,7 @@ impl<'a> CallHierarchyProvider<'a> {
             .modifiers
             .as_ref()
             .and_then(|mods| mods.nodes.first().copied())
-            .and_then(|mod_idx| self.arena.get(mod_idx).map(|n| n.pos))
+            .and_then(|mod_idx| self.arena.pos_at(mod_idx))
             .unwrap_or(class_node.pos);
         if class_node.pos > 0 {
             let bytes = self.source_text.as_bytes();
@@ -1630,9 +1619,7 @@ impl<'a> CallHierarchyProvider<'a> {
             return Some(item);
         }
         let caller_node = self.arena.get(caller_idx)?;
-        if caller_node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || caller_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-        {
+        if caller_node.is_class_like() {
             let class_decl = self.arena.get_class(caller_node)?;
             let class_name = self.get_identifier_text(class_decl.name)?;
             return self.make_call_hierarchy_item_for_declaration(caller_idx, &class_name);
@@ -1678,8 +1665,7 @@ impl<'a> CallHierarchyProvider<'a> {
             }
         }
 
-        if (node.kind == syntax_kind_ext::CLASS_DECLARATION
-            || node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+        if (node.is_class_like())
             && let Some(ctor_idx) = self.class_constructor_node(decl_idx)
         {
             return Some(ctor_idx);

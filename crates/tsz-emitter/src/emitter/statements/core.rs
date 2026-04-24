@@ -850,7 +850,7 @@ impl<'a> Printer<'a> {
         decl_list: &tsz_parser::parser::node::VariableData,
         flags: u32,
     ) {
-        let using_async = (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING;
+        let using_async = node_flags::is_await_using(flags);
         let (env_name, error_name, result_name) = self.next_disposable_env_names();
 
         let initialized_decls: Vec<_> = decl_list

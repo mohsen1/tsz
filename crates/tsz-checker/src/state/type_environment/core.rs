@@ -37,7 +37,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
-        if symbol.flags & symbol_flags::ENUM == 0 {
+        if !symbol.has_any_flags(symbol_flags::ENUM) {
             return None;
         }
 
@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        let is_const_enum = symbol.flags & symbol_flags::CONST_ENUM != 0;
+        let is_const_enum = symbol.has_any_flags(symbol_flags::CONST_ENUM);
         let flags = if is_const_enum {
             tsz_solver::ObjectFlags::CONST_ENUM
         } else {
@@ -1403,7 +1403,7 @@ impl<'a> CheckerState<'a> {
 
         let mut sym_id = sym_id;
         if let Some(symbol) = self.get_symbol_globally(sym_id)
-            && symbol.flags & symbol_flags::ALIAS != 0
+            && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
             if let Some(target) = self.resolve_alias_symbol(sym_id, &mut visited_aliases) {
@@ -1722,14 +1722,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn count_required_type_params_from_ast(&self, sym_id: SymbolId) -> Option<usize> {
         let symbol = self.get_symbol_globally(sym_id)?;
         let flags = symbol.flags;
-        let decl_candidates: Vec<_> =
-            if symbol.value_declaration != tsz_parser::parser::NodeIndex::NONE {
-                std::iter::once(symbol.value_declaration)
-                    .chain(symbol.declarations.iter().copied())
-                    .collect()
-            } else {
-                symbol.declarations.clone()
-            };
+        let decl_candidates = symbol.all_declarations();
 
         // Track the minimum required count across all declarations.
         // For merged interfaces (e.g., local `interface Generator<T>` merged with
@@ -1782,14 +1775,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let flags = symbol.flags;
-        let decl_candidates: Vec<_> =
-            if symbol.value_declaration != tsz_parser::parser::NodeIndex::NONE {
-                std::iter::once(symbol.value_declaration)
-                    .chain(symbol.declarations.iter().copied())
-                    .collect()
-            } else {
-                symbol.declarations.clone()
-            };
+        let decl_candidates = symbol.all_declarations();
 
         for decl_idx in decl_candidates {
             if let Some(names) = Self::type_param_names_in_arena(

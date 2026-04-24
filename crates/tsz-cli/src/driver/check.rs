@@ -572,7 +572,13 @@ pub(super) fn collect_diagnostics(
     // (~120 K total entries) that ballooned into ~700 M hashset
     // iterations across all checkers; the per-file checker scaled with
     // the size of the WHOLE program rather than its own import count.
-    let resolved_modules_per_file: Arc<Vec<rustc_hash::FxHashSet<String>>> = Arc::new({
+    // Per-file `Arc<FxHashSet<String>>` so the per-file checker can share
+    // the bucketed set via `Arc::clone` into `ctx.resolved_modules` without
+    // a deep copy of the contents. On 6086 files × avg 20 specifiers this
+    // avoids ~120K `String` clones + hashset insertions at the per-file
+    // `check_file_for_parallel` entry. Build the owned buckets first, then
+    // wrap each in `Arc::new` in one pass.
+    let resolved_modules_per_file: Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>> = Arc::new({
         let _span = tracing::info_span!(
             "bucket_resolved_modules_per_file",
             files = program.files.len()
@@ -586,7 +592,7 @@ pub(super) fn collect_diagnostics(
                 set.insert(specifier.clone());
             }
         }
-        by_file
+        by_file.into_iter().map(Arc::new).collect()
     });
 
     // Pre-compute per-file TS7016 diagnostics for CJS require() calls.
@@ -741,14 +747,15 @@ pub(super) fn collect_diagnostics(
     // cross-file lookup binders can share the single allocation instead of
     // each deep-cloning a copy. Cross-file consumers read these via
     // `ctx.reexports_for_file` / `wildcard_reexports_for_file`.
-    let program_reexports = Arc::new(program.reexports.clone());
-    let program_wildcard_reexports = Arc::new(program.wildcard_reexports.clone());
-    let program_wildcard_reexports_type_only =
-        Arc::new(program.wildcard_reexports_type_only.clone());
-    // Same rationale for `program.module_exports`: the merged map is the
-    // authoritative cross-file exports table; wrap once, share via `Arc`
-    // to avoid N deep-clones into per-file cross-file lookup binders.
-    let program_module_exports = Arc::new(program.module_exports.clone());
+    // `program.reexports` is already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
+    let program_reexports = Arc::clone(&program.reexports);
+    // `program.wildcard_reexports` and `program.wildcard_reexports_type_only`
+    // are already `Arc`-wrapped on `MergedProgram`; cheap atomic clone.
+    let program_wildcard_reexports = Arc::clone(&program.wildcard_reexports);
+    let program_wildcard_reexports_type_only = Arc::clone(&program.wildcard_reexports_type_only);
+    // `program.module_exports` is already `Arc`-wrapped on `MergedProgram`;
+    // cheap atomic clone for ProjectEnv install.
+    let program_module_exports = Arc::clone(&program.module_exports);
     // Same rationale for `program.cross_file_node_symbols`: the outer
     // map is `FxHashMap<usize, Arc<…>>` (~24 bytes * N_files for the
     // entries plus hash overhead). Cloning into every one of N per-file
@@ -1197,11 +1204,12 @@ pub(super) fn collect_diagnostics(
             checker.ctx.file_is_esm = project_env.file_is_esm_map.get(&file.file_name).copied();
 
             // Use the per-file pre-bucketed map; see the parallel path for the
-            // O(N²) → O(1) rationale.
-            let resolved_modules: rustc_hash::FxHashSet<String> = resolved_modules_per_file
+            // O(N²) → O(1) rationale. `Arc::clone` here is a single atomic
+            // increment — no deep copy of the contents.
+            let resolved_modules: Arc<rustc_hash::FxHashSet<String>> = resolved_modules_per_file
                 .get(file_idx)
                 .cloned()
-                .unwrap_or_default();
+                .unwrap_or_else(|| Arc::new(rustc_hash::FxHashSet::default()));
             checker.ctx.resolved_modules = Some(resolved_modules);
             // TSC suppresses many semantic diagnostics across the whole program when any
             // file has a real syntax parse error; mirror that behavior using the program-level
@@ -1256,7 +1264,8 @@ pub(super) fn collect_diagnostics(
                 .filter(|d| is_real_syntax_error(d.code))
                 .map(|d| d.start)
                 .collect();
-            let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
+            let filtered_parse_diagnostics =
+                filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
             let is_js = is_js_file(Path::new(&file.file_name));
             let mut file_diagnostics = Vec::new();
             // For JS files, suppress TypeScript-grammar parser diagnostics.
@@ -1540,13 +1549,10 @@ fn propagate_module_export_maps(
         let target_file_name = &program.files[current_target_idx].file_name;
 
         if let Some(exports) = program.module_exports.get(target_file_name).cloned() {
-            binder
-                .module_exports
-                .insert(current_specifier.clone(), exports);
+            Arc::make_mut(&mut binder.module_exports).insert(current_specifier.clone(), exports);
         }
         if let Some(wildcards) = program.wildcard_reexports.get(target_file_name).cloned() {
-            binder
-                .wildcard_reexports
+            Arc::make_mut(&mut binder.wildcard_reexports)
                 .insert(current_specifier.clone(), wildcards.clone());
         }
         if let Some(type_only_flags) = program
@@ -1554,14 +1560,11 @@ fn propagate_module_export_maps(
             .get(target_file_name)
             .cloned()
         {
-            binder
-                .wildcard_reexports_type_only
+            Arc::make_mut(&mut binder.wildcard_reexports_type_only)
                 .insert(current_specifier.clone(), type_only_flags);
         }
         if let Some(reexports) = program.reexports.get(target_file_name).cloned() {
-            binder
-                .reexports
-                .insert(current_specifier.clone(), reexports);
+            Arc::make_mut(&mut binder.reexports).insert(current_specifier.clone(), reexports);
         }
 
         if let Some(source_modules) = program.wildcard_reexports.get(target_file_name).cloned() {
@@ -1699,7 +1702,7 @@ pub(super) struct CheckFileForParallelContext<'a> {
     /// `resolved_module_specifiers` set, which made each per-file checker
     /// scale with the size of the WHOLE program rather than its own
     /// import count.
-    resolved_modules_per_file: &'a Arc<Vec<rustc_hash::FxHashSet<String>>>,
+    resolved_modules_per_file: &'a Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
     shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
     /// Shared cross-file query cache for multi-file projects.
     /// Eliminates redundant type evaluations and relation checks across files.
@@ -1781,10 +1784,13 @@ pub(super) fn check_file_for_parallel<'a>(
     // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
     // re-filtering the program-wide cross-file set per file. The bucketed
     // version is built once in `collect_diagnostics` and shared via `Arc`.
-    let resolved_modules: FxHashSet<String> = resolved_modules_per_file
+    // Per-file `Arc::clone` is a single atomic increment — no deep copy of
+    // the `FxHashSet<String>` contents. Saves ~120K string clones on the
+    // 6086-file large-ts-repo fixture.
+    let resolved_modules: Arc<FxHashSet<String>> = resolved_modules_per_file
         .get(file_idx)
         .cloned()
-        .unwrap_or_default();
+        .unwrap_or_else(|| Arc::new(FxHashSet::default()));
 
     // apply_to (below) installs the project-wide shared DefinitionStore and
     // warms the per-file caches from it. Use the deferred constructor so we
@@ -1850,7 +1856,8 @@ pub(super) fn check_file_for_parallel<'a>(
         .filter(|d| is_real_syntax_error(d.code))
         .map(|d| d.start)
         .collect();
-    let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
+    let filtered_parse_diagnostics =
+        filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
     let is_js = is_js_file(Path::new(&file.file_name));
 
     // For JS files, suppress parser diagnostics. tsc's parser is lenient
@@ -2642,7 +2649,12 @@ fn build_lib_bound_file_for_interface_checks(
         );
     }
 
-    let mut declaration_arenas = program.declaration_arenas.clone();
+    // Deep-clone the program-wide `declaration_arenas` into the per-call map
+    // so we can mutate it below. `program.declaration_arenas` is an `Arc`-shared
+    // map; `Arc::clone().as_ref().clone()` gets us an owned copy of the inner
+    // `DeclarationArenaMap` without disturbing the shared data.
+    let mut declaration_arenas: tsz::binder::state::DeclarationArenaMap =
+        (*program.declaration_arenas).clone();
     add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
 
     tsz::parallel::BoundFile {
@@ -2650,7 +2662,7 @@ fn build_lib_bound_file_for_interface_checks(
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
         node_symbols,
-        symbol_arenas: program.symbol_arenas.clone(),
+        symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: FxHashMap::default(),
         scopes: Vec::new(),
@@ -2659,7 +2671,7 @@ fn build_lib_bound_file_for_interface_checks(
         global_augmentations: FxHashMap::default(),
         module_augmentations: FxHashMap::default(),
         augmentation_target_modules: FxHashMap::default(),
-        flow_nodes: tsz::binder::FlowNodeArena::default(),
+        flow_nodes: std::sync::Arc::new(tsz::binder::FlowNodeArena::default()),
         node_flow: FxHashMap::default(),
         switch_clause_to_switch: FxHashMap::default(),
         is_external_module: lib_file.binder.is_external_module,

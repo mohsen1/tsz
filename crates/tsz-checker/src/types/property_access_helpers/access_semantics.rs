@@ -147,7 +147,7 @@ impl<'a> CheckerState<'a> {
             return Some(flow);
         }
 
-        let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+        let mut current = self.ctx.arena.parent_of(idx);
         while let Some(parent) = current {
             if parent.is_none() {
                 break;
@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
             if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
                 return Some(flow);
             }
-            current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+            current = self.ctx.arena.parent_of(parent);
         }
 
         None
@@ -227,7 +227,7 @@ impl<'a> CheckerState<'a> {
             if self.is_scope_owner_kind(node.kind) {
                 return node_idx;
             }
-            current = self.ctx.arena.get_extended(node_idx).map(|ext| ext.parent);
+            current = self.ctx.arena.parent_of(node_idx);
         }
         NodeIndex::NONE
     }
@@ -261,8 +261,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let mut current = property_access_idx;
         loop {
-            let Some(parent_idx) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
-            else {
+            let Some(parent_idx) = self.ctx.arena.parent_of(current) else {
                 return false;
             };
             let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
@@ -320,7 +319,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Only check class declarations
-        if (symbol.flags & symbol_flags::CLASS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return false;
         }
 
@@ -407,7 +406,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+        if !symbol.has_any_flags(symbol_flags::VARIABLE) {
             return false;
         }
 

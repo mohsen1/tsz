@@ -67,7 +67,7 @@ impl<'a> Printer<'a> {
             return true;
         };
         node.kind == SyntaxKind::ThisKeyword as u16
-            || node.kind == SyntaxKind::Identifier as u16
+            || node.is_identifier()
             || node.kind == SyntaxKind::SuperKeyword as u16
     }
 
@@ -212,7 +212,7 @@ impl<'a> Printer<'a> {
                         return None;
                     }
                     let expr_node = self.arena.get(expression)?;
-                    if expr_node.kind != SyntaxKind::Identifier as u16 {
+                    if !expr_node.is_identifier() {
                         return None;
                     }
                     let ident = self.arena.get_identifier(expr_node)?;

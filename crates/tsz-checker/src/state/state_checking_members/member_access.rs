@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
                         .is_some_and(|name| name == property_name)
                 {
                     let mut rhs_type = self.get_type_of_node(bin.right);
-                    if matches!(rhs_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                    if rhs_type.is_any_unknown_or_error()
                         && let Some(name_idx) = self.this_access_name_node(bin.right)
                         && let Some(ref_name) = self.get_property_name(name_idx)
                         && ref_name != property_name
@@ -347,12 +347,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut decl_nodes = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() {
-            decl_nodes.push(symbol.value_declaration);
-        }
-
-        decl_nodes.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 return false;
             };
@@ -374,12 +369,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let mut decl_nodes = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() {
-            decl_nodes.push(symbol.value_declaration);
-        }
-
-        decl_nodes.into_iter().any(|decl_idx| {
+        symbol.all_declarations().into_iter().any(|decl_idx| {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 return false;
             };

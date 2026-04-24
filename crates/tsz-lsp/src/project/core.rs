@@ -407,7 +407,7 @@ impl ProjectFile {
             b.declaration_arenas.len() * (std::mem::size_of::<(SymbolId, NodeIndex)>() + 32 + 8);
 
         // global_augmentations
-        for (k, v) in &b.global_augmentations {
+        for (k, v) in b.global_augmentations.iter() {
             size += k.capacity() + 8;
             size += v.capacity() * std::mem::size_of::<tsz_binder::GlobalAugmentation>();
         }

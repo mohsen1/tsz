@@ -289,7 +289,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     && !export_decl.is_type_only
                     && !self.is_inside_namespace_declaration(export_idx)
                 {
-                    let clause_kind = self.ctx.arena.get(clause_idx).map(|n| n.kind);
+                    let clause_kind = self.ctx.arena.kind_at(clause_idx);
                     let clause_is_value_decl = clause_kind.is_some_and(|k| {
                         k == syntax_kind_ext::FUNCTION_DECLARATION
                             || k == syntax_kind_ext::CLASS_DECLARATION
@@ -1124,7 +1124,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     if let Some(list_node) = self.ctx.arena.get(list_idx) {
                         let flags = list_node.flags as u32;
                         // Check USING first — AWAIT_USING (6) includes CONST bit
-                        if (flags & node_flags::AWAIT_USING) == node_flags::AWAIT_USING {
+                        if node_flags::is_await_using(flags) {
                             Some("await using")
                         } else if flags & node_flags::USING != 0 {
                             Some("using")
@@ -1216,7 +1216,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check if the parent is a valid module-element context (SourceFile or ModuleBlock).
         // For import-equals inside `export import X = N;`, the direct parent is
         // EXPORT_DECLARATION — look through it to the grandparent.
-        let parent_idx = self.ctx.arena.get_extended(stmt_idx).map(|ext| ext.parent);
+        let parent_idx = self.ctx.arena.parent_of(stmt_idx);
         let parent_kind = parent_idx
             .and_then(|p| self.ctx.arena.get(p))
             .map(|p| p.kind);
@@ -1370,7 +1370,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check if the parent is a valid context for `declare`
         let is_valid_context = {
-            let parent_idx = self.ctx.arena.get_extended(stmt_idx).map(|ext| ext.parent);
+            let parent_idx = self.ctx.arena.parent_of(stmt_idx);
             let parent_kind = parent_idx
                 .and_then(|p| self.ctx.arena.get(p))
                 .map(|p| p.kind);

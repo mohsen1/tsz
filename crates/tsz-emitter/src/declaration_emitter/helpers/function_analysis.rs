@@ -84,9 +84,7 @@ impl<'a> DeclarationEmitter<'a> {
                     return None;
                 }
                 let init_node = self.arena.get(decl.initializer)?;
-                if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                {
+                if init_node.is_function_expression_or_arrow() {
                     Some(decl.initializer)
                 } else {
                     None
@@ -1118,6 +1116,23 @@ impl<'a> DeclarationEmitter<'a> {
                 (same_name && func.body.is_some() && func.parameters.nodes.len() == 1)
                     .then_some(func)
             })
+    }
+
+    /// True when `expr_idx` is a bare `globalThis` identifier. Used by variable
+    /// declaration emit to render `const x = globalThis` as `: typeof globalThis`
+    /// — without this check, the solver's fallback gives the emit path only
+    /// `any`, dropping the `globalThis` information tsc preserves in .d.ts.
+    pub(in crate::declaration_emitter) fn initializer_is_global_this_identifier(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        let Some(ident) = self.arena.get_identifier(node) else {
+            return false;
+        };
+        ident.escaped_text == "globalThis"
     }
 
     pub(in crate::declaration_emitter) fn is_import_meta_url_expression(

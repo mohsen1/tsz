@@ -353,7 +353,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let body_kind = self.ctx.arena.get(alias.type_node).map(|n| n.kind);
+        let body_kind = self.ctx.arena.kind_at(alias.type_node);
         let variance_supported = body_kind.is_some_and(|kind| {
             kind == syntax_kind_ext::TYPE_LITERAL
                 || kind == syntax_kind_ext::FUNCTION_TYPE

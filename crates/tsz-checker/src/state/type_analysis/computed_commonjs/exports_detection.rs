@@ -40,7 +40,7 @@ impl<'a> CheckerState<'a> {
 
         let sym_id = self.resolve_identifier_symbol_without_tracking(rhs_expr)?;
         let symbol = self.get_symbol_globally(sym_id)?;
-        if (symbol.flags & symbol_flags::CLASS) == 0 {
+        if !symbol.has_any_flags(symbol_flags::CLASS) {
             return None;
         }
 
@@ -725,10 +725,8 @@ impl<'a> CheckerState<'a> {
             };
             // Don't cross function/class boundaries
             if child_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || child_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || child_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || child_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || child_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || child_node.is_function_expression_or_arrow()
+                || child_node.is_class_like()
             {
                 continue;
             }

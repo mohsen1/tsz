@@ -99,6 +99,123 @@ pub mod symbol_flags {
 }
 
 // =============================================================================
+// Stable Location
+// =============================================================================
+
+/// A file-stable pointer to an AST declaration.
+///
+/// `StableLocation` identifies a declaration *without* requiring its owning
+/// `NodeArena` to be resident in memory. It combines a stable driver-assigned
+/// file index with the source span `(pos, end)` of the declaration node. A
+/// re-parse of the same file will produce the same span, so
+/// `StableLocation`s survive arena drop/rehydrate cycles — unlike the raw
+/// `NodeIndex` values currently stored on `Symbol`, whose meaning depends on
+/// the exact arena that produced them.
+///
+/// This is the Phase 1 foundation for the
+/// [global query graph architecture][plan]: it lets future work resolve
+/// symbols, `DefId`s, and cross-file references by `(file_idx, span)` pairs
+/// instead of cloned `Arc<NodeArena>` handles. Consumers continue to use the
+/// parallel `NodeIndex` fields today; migrating them is handled by follow-up
+/// PRs.
+///
+/// Size: `#[repr(C)]` with three `u32` fields is 12 bytes and `Copy`.
+///
+/// ## Invariants
+/// - `file_idx == u32::MAX` indicates "unassigned". Single-file binding paths
+///   populate stable locations with `file_idx = u32::MAX`; the driver later
+///   stamps the concrete file index via
+///   [`BinderState::stamp_file_idx`][stamp].
+/// - When both `pos` and `end` are `0`, the stable location is
+///   unavailable/unknown and should be treated as `None` by consumers. Use
+///   [`StableLocation::is_known`] to distinguish.
+/// - `pos <= end` is expected for any known location.
+///
+/// [plan]: ../../../docs/plan/global-query-graph-architecture.md
+/// [stamp]: crate::state::BinderState::stamp_file_idx
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StableLocation {
+    /// Driver-assigned file index. `u32::MAX` means "not yet stamped".
+    pub file_idx: u32,
+    /// Byte offset of the declaration's start in the source file.
+    pub pos: u32,
+    /// Byte offset of the declaration's end (exclusive) in the source file.
+    pub end: u32,
+}
+
+impl StableLocation {
+    /// Sentinel value representing an unknown/unset stable location.
+    pub const NONE: Self = Self {
+        file_idx: u32::MAX,
+        pos: 0,
+        end: 0,
+    };
+
+    /// Construct a stable location from a concrete file index and span.
+    #[inline]
+    #[must_use]
+    pub const fn new(file_idx: u32, pos: u32, end: u32) -> Self {
+        Self { file_idx, pos, end }
+    }
+
+    /// Construct a stable location with an unassigned file index.
+    /// The binder uses this shape during single-file binding and defers
+    /// file-index assignment to [`crate::state::BinderState::stamp_file_idx`].
+    #[inline]
+    #[must_use]
+    pub const fn with_unassigned_file(pos: u32, end: u32) -> Self {
+        Self {
+            file_idx: u32::MAX,
+            pos,
+            end,
+        }
+    }
+
+    /// Construct a stable location from an optional span, preserving the
+    /// `NONE` sentinel when the span is unavailable.
+    #[inline]
+    #[must_use]
+    pub const fn from_span(file_idx: u32, span: Option<(u32, u32)>) -> Self {
+        match span {
+            Some((pos, end)) => Self { file_idx, pos, end },
+            None => Self::NONE,
+        }
+    }
+
+    /// True when the location has been populated with a real source span.
+    /// A `StableLocation` with `pos == 0 && end == 0` is treated as unknown.
+    #[inline]
+    #[must_use]
+    pub const fn is_known(&self) -> bool {
+        self.pos != 0 || self.end != 0
+    }
+
+    /// True when the file index has been stamped by the driver.
+    #[inline]
+    #[must_use]
+    pub const fn has_file_idx(&self) -> bool {
+        self.file_idx != u32::MAX
+    }
+
+    /// Stamp the file index if it is currently unassigned. No-op otherwise.
+    /// Used by [`crate::state::BinderState::stamp_file_idx`] to finalize
+    /// stable locations after the driver has assigned a file index.
+    #[inline]
+    pub const fn set_file_idx_if_unassigned(&mut self, file_idx: u32) {
+        if self.file_idx == u32::MAX {
+            self.file_idx = file_idx;
+        }
+    }
+}
+
+impl Default for StableLocation {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+// =============================================================================
 // Symbol
 // =============================================================================
 
@@ -130,10 +247,27 @@ pub struct Symbol {
     pub escaped_name: String,
     /// Declarations associated with this symbol
     pub declarations: Vec<NodeIndex>,
+    /// File-stable locations parallel to [`Self::declarations`].
+    ///
+    /// Each entry is a `(file_idx, pos, end)` triple that survives arena
+    /// drop/rehydrate. This is the Phase 1 plumbing for the
+    /// [global query graph architecture][plan]; consumers still read
+    /// `declarations` (of `NodeIndex`) today. Populated in lockstep with
+    /// `declarations` at every binding site, so `stable_declarations.len()
+    /// == declarations.len()` is a hard invariant.
+    ///
+    /// [plan]: ../../../docs/plan/global-query-graph-architecture.md
+    pub stable_declarations: Vec<StableLocation>,
     /// Stable source span of the first declaration, if known.
     pub first_declaration_span: Option<(u32, u32)>,
     /// First value declaration of the symbol
     pub value_declaration: NodeIndex,
+    /// File-stable location parallel to [`Self::value_declaration`].
+    ///
+    /// Phase 1 plumbing for re-parse-safe identity. Populated whenever
+    /// `value_declaration` is set. Defaults to [`StableLocation::NONE`] when
+    /// no value declaration has been recorded.
+    pub stable_value_declaration: StableLocation,
     /// Stable source span of the value declaration, if known.
     pub value_declaration_span: Option<(u32, u32)>,
     /// Parent symbol (for nested symbols)
@@ -172,8 +306,10 @@ impl Symbol {
             flags,
             escaped_name: name,
             declarations: Vec::new(),
+            stable_declarations: Vec::new(),
             first_declaration_span: None,
             value_declaration: NodeIndex::NONE,
+            stable_value_declaration: StableLocation::NONE,
             value_declaration_span: None,
             parent: SymbolId::NONE,
             id,
@@ -201,9 +337,23 @@ impl Symbol {
     }
 
     /// Record a declaration and its stable source span.
+    ///
+    /// Also populates the parallel [`Self::stable_declarations`] entry so
+    /// that arena-less consumers (see Phase 1 of the
+    /// [global query graph plan][plan]) can identify the declaration by
+    /// `(file_idx, pos, end)`. At bind time the file index is left
+    /// unassigned (`u32::MAX`); the driver later stamps it via
+    /// [`crate::state::BinderState::stamp_file_idx`].
+    ///
+    /// [plan]: ../../../docs/plan/global-query-graph-architecture.md
     pub fn add_declaration(&mut self, declaration: NodeIndex, span: Option<(u32, u32)>) {
         if !self.declarations.contains(&declaration) {
             self.declarations.push(declaration);
+            // Invariant: `stable_declarations` parallels `declarations`.
+            // Push the stable span in lockstep so index-based iteration over
+            // the two vectors stays aligned.
+            self.stable_declarations
+                .push(StableLocation::from_span(u32::MAX, span));
         }
         if self.first_declaration_span.is_none() {
             self.first_declaration_span = span;
@@ -211,6 +361,9 @@ impl Symbol {
     }
 
     /// Record the symbol's value declaration and stable source span.
+    ///
+    /// Also updates [`Self::stable_value_declaration`] so arena-less
+    /// consumers can recover the declaration after arena eviction.
     pub const fn set_value_declaration(
         &mut self,
         declaration: NodeIndex,
@@ -218,6 +371,7 @@ impl Symbol {
     ) {
         self.value_declaration = declaration;
         self.value_declaration_span = span;
+        self.stable_value_declaration = StableLocation::from_span(u32::MAX, span);
         if self.first_declaration_span.is_none() {
             self.first_declaration_span = span;
         }
@@ -231,6 +385,25 @@ impl Symbol {
         self.value_declaration
             .into_option()
             .or_else(|| self.declarations.first().copied())
+    }
+
+    /// All unique declarations for this symbol, with `value_declaration` first
+    /// (when set), then entries from `declarations` that are not equal to
+    /// `value_declaration`. Each unique declaration appears exactly once.
+    #[must_use]
+    pub fn all_declarations(&self) -> Vec<NodeIndex> {
+        let value_decl = self.value_declaration.into_option();
+        let mut out =
+            Vec::with_capacity(self.declarations.len() + usize::from(value_decl.is_some()));
+        if let Some(v) = value_decl {
+            out.push(v);
+        }
+        for d in &self.declarations {
+            if Some(*d) != value_decl {
+                out.push(*d);
+            }
+        }
+        out
     }
 }
 
@@ -582,5 +755,79 @@ impl SymbolArena {
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sym() -> Symbol {
+        Symbol::new(SymbolId(0), 0, String::new())
+    }
+
+    #[test]
+    fn all_declarations_empty_returns_empty() {
+        let s = sym();
+        assert!(s.all_declarations().is_empty());
+    }
+
+    #[test]
+    fn all_declarations_only_declarations() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.add_declaration(NodeIndex(2), None);
+        assert_eq!(s.all_declarations(), vec![NodeIndex(1), NodeIndex(2)]);
+    }
+
+    #[test]
+    fn all_declarations_only_value_declaration() {
+        let mut s = sym();
+        s.set_value_declaration(NodeIndex(5), None);
+        assert_eq!(s.all_declarations(), vec![NodeIndex(5)]);
+    }
+
+    #[test]
+    fn all_declarations_value_first_then_others_no_duplicate() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.add_declaration(NodeIndex(2), None);
+        s.set_value_declaration(NodeIndex(2), None);
+        // value_declaration should appear first, and not be duplicated.
+        assert_eq!(s.all_declarations(), vec![NodeIndex(2), NodeIndex(1)]);
+    }
+
+    #[test]
+    fn all_declarations_value_not_in_declarations() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.add_declaration(NodeIndex(2), None);
+        s.set_value_declaration(NodeIndex(9), None);
+        assert_eq!(
+            s.all_declarations(),
+            vec![NodeIndex(9), NodeIndex(1), NodeIndex(2)]
+        );
+    }
+
+    #[test]
+    fn primary_declaration_prefers_value_declaration() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(1), None);
+        s.set_value_declaration(NodeIndex(9), None);
+        assert_eq!(s.primary_declaration(), Some(NodeIndex(9)));
+    }
+
+    #[test]
+    fn primary_declaration_falls_back_to_first() {
+        let mut s = sym();
+        s.add_declaration(NodeIndex(3), None);
+        s.add_declaration(NodeIndex(4), None);
+        assert_eq!(s.primary_declaration(), Some(NodeIndex(3)));
+    }
+
+    #[test]
+    fn primary_declaration_none_when_empty() {
+        let s = sym();
+        assert_eq!(s.primary_declaration(), None);
     }
 }

@@ -178,6 +178,88 @@ fn spread_type_param_constrained_to_string_is_invalid() {
     assert!(!is_valid_spread_type(&db, tp_id));
 }
 
+#[test]
+fn spread_index_access_uses_base_constraint_before_validation() {
+    // `T["text"]` where `T extends { text: string }` resolves to a primitive
+    // base constraint and is invalid for object rest, while `T["object"]`
+    // resolves to an object constraint and remains valid.
+    let db = TypeInterner::new();
+    let text = db.intern_string("text");
+    let object = db.intern_string("object");
+    let object_type = db.object(vec![]);
+    let constraint = db.object(vec![
+        PropertyInfo {
+            name: text,
+            type_id: TypeId::STRING,
+            write_type: TypeId::STRING,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+        },
+        PropertyInfo {
+            name: object,
+            type_id: object_type,
+            write_type: object_type,
+            optional: false,
+            readonly: false,
+            is_method: false,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 1,
+            is_string_named: false,
+        },
+    ]);
+    let tp = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let tp_id = db.type_param(tp);
+
+    let text_access = db.index_access(tp_id, db.literal_string("text"));
+    assert!(!is_valid_spread_type(&db, text_access));
+
+    let object_access = db.index_access(tp_id, db.literal_string("object"));
+    assert!(is_valid_spread_type(&db, object_access));
+}
+
+#[test]
+fn spread_keyof_type_param_is_invalid() {
+    // `keyof T` is a property-key primitive union, not an object-like source.
+    let db = TypeInterner::new();
+    let prop = db.intern_string("prop");
+    let constraint = db.object(vec![PropertyInfo {
+        name: prop,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+    }]);
+    let tp = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let tp_id = db.type_param(tp);
+    let keyof_tp = db.keyof(tp_id);
+
+    assert!(!is_valid_spread_type(&db, keyof_tp));
+}
+
 // =============================================================================
 // Template literal types and string intrinsics (not spreadable)
 // =============================================================================
