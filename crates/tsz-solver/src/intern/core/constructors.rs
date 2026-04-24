@@ -1386,11 +1386,21 @@ impl TypeInterner {
     }
 
     /// Build a string intrinsic (`Uppercase`, `Lowercase`, etc.) marker.
+    ///
+    /// Same-kind nesting is collapsed: `Uppercase<Uppercase<T>>` → `Uppercase<T>`
+    /// because each intrinsic is idempotent on its own output.
     pub fn string_intrinsic(
         &self,
         kind: crate::types::StringIntrinsicKind,
         type_arg: TypeId,
     ) -> TypeId {
+        if let Some(crate::types::TypeData::StringIntrinsic {
+            kind: inner_kind, ..
+        }) = self.lookup(type_arg)
+            && kind == inner_kind
+        {
+            return type_arg;
+        }
         self.intern(TypeData::StringIntrinsic { kind, type_arg })
     }
 

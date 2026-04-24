@@ -1149,6 +1149,15 @@ pub enum ContextualLiteralAllowKind {
     Application,
     /// Mapped type - needs evaluation
     Mapped,
+    /// Deferred conditional - check both branches.
+    /// Matches tsc's `isLiteralOfContextualType` which recurses through
+    /// `getConstraintOfConditionalType` (approximately `true_type | false_type`).
+    /// If the conditional could evaluate, the checker should prefer that; this
+    /// variant is the fallback when evaluation doesn't make progress.
+    Conditional {
+        true_type: TypeId,
+        false_type: TypeId,
+    },
     /// Template literal type - always allows string literals (pattern matching check
     /// happens later during assignability). This prevents premature widening of string
     /// literals like `"*hello*"` to `string` when the target is `` `*${string}*` ``.
@@ -1178,6 +1187,13 @@ pub fn classify_for_contextual_literal(
         }
         TypeData::Application(_) => ContextualLiteralAllowKind::Application,
         TypeData::Mapped(_) => ContextualLiteralAllowKind::Mapped,
+        TypeData::Conditional(cond_id) => {
+            let cond = db.conditional_type(cond_id);
+            ContextualLiteralAllowKind::Conditional {
+                true_type: cond.true_type,
+                false_type: cond.false_type,
+            }
+        }
         TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. } => {
             ContextualLiteralAllowKind::TemplateLiteral
         }

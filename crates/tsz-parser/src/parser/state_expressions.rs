@@ -1606,19 +1606,20 @@ impl ParserState {
                     self.parse_unary_expression()
                 };
                 if operand.is_none() {
-                    if is_update_operator {
-                        // For `++`/`--` with no operand (e.g., `a++ ++;`), emit TS1109
-                        // unconditionally. Bypass should_report_error() because `++;`
-                        // is a distinct syntactic unit — the TS1109 must not be
-                        // suppressed by a prior TS1005 for `';' expected` at `++`.
-
-                        self.parse_error_at_current_token(
-                            "Expression expected.",
-                            diagnostic_codes::EXPRESSION_EXPECTED,
-                        );
-                    } else {
-                        self.error_expression_expected();
-                    }
+                    // When a prefix unary operator has no operand, emit TS1109 at
+                    // the current position unconditionally. tsc emits this via
+                    // parsePrimaryExpression's default case -> createMissingNode,
+                    // which uses only exact-position dedup (no distance-based
+                    // suppression). Bypass should_report_error() so a prior
+                    // TS1005 at the operator itself (e.g. `,` expected at `~` in
+                    // `var a = q~;`) does not swallow the distinct missing-operand
+                    // error. parse_error_at already dedupes at the same position,
+                    // so this won't double up when the recursive call already
+                    // reported at the same token.
+                    self.parse_error_at_current_token(
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
                 }
                 let end_pos = self.token_end();
 

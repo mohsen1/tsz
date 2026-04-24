@@ -356,6 +356,17 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
+            // Deferred conditional: check both branches. Matches tsc's
+            // `isLiteralOfContextualType` recursing through the conditional's
+            // default constraint (approximately `true_type | false_type`).
+            // Reached when earlier evaluation couldn't resolve the conditional.
+            ContextualLiteralAllowKind::Conditional {
+                true_type,
+                false_type,
+            } => {
+                self.contextual_type_allows_literal_inner(true_type, literal_type, visited)
+                    || self.contextual_type_allows_literal_inner(false_type, literal_type, visited)
+            }
             ContextualLiteralAllowKind::NotAllowed => false,
         }
     }
@@ -1790,4 +1801,48 @@ fn is_boolean_context_for_boolean_literal(ctx_type: TypeId, literal_type: TypeId
         return false;
     }
     literal_type == TypeId::BOOLEAN_TRUE || literal_type == TypeId::BOOLEAN_FALSE
+}
+
+#[cfg(test)]
+mod deferred_conditional_literal_tests {
+    use crate::test_utils::check_source_codes;
+
+    /// Assigning a string literal to a deferred conditional whose false branch
+    /// is that exact literal must NOT widen the source to `string`. Matches
+    /// tsc's `isLiteralOfContextualType` recursing through conditional types.
+    ///
+    /// ```ts
+    /// type Foo<T> = T extends true ? string : "a";
+    /// function test<T>(x: Foo<T>) {
+    ///   x = "a"; // ok — both branches accept "a"
+    /// }
+    /// ```
+    #[test]
+    fn literal_preserved_when_target_is_deferred_conditional_with_literal_branch() {
+        let codes = check_source_codes(
+            r#"type Foo<T> = T extends true ? string : "a";
+               function test<T>(x: Foo<T>) {
+                 x = "a";
+               }"#,
+        );
+        assert!(
+            !codes.contains(&2322),
+            "Should not emit TS2322 when assigning matching literal to deferred conditional: {codes:?}"
+        );
+    }
+
+    /// Sanity check: assigning a non-matching `string` value still errors.
+    #[test]
+    fn deferred_conditional_still_errors_on_widened_source() {
+        let codes = check_source_codes(
+            r#"type Foo<T> = T extends true ? "b" : "a";
+               function test<T>(x: Foo<T>, s: string) {
+                 x = s;
+               }"#,
+        );
+        assert!(
+            codes.contains(&2322),
+            "Should emit TS2322 when assigning a `string` value to a literal-only deferred conditional: {codes:?}"
+        );
+    }
 }

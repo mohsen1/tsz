@@ -4867,3 +4867,149 @@ class Text extends Component<{{}}, {{}}> {{
          type has no construct or call signatures, got: {diags:?}"
     );
 }
+
+// =============================================================================
+// JSX explicit type arguments: TS2558, TS2344, TS2322
+// =============================================================================
+
+/// Helper that wraps `jsx_diagnostics` but returns only unique error codes.
+fn jsx_codes(source: &str) -> Vec<u32> {
+    let diags = jsx_diagnostics(source);
+    let mut codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
+    codes.sort_unstable();
+    codes.dedup();
+    codes
+}
+
+#[test]
+fn test_jsx_explicit_type_args_correct_count_and_types_no_error() {
+    // <MyComp<{a: number, b: string}> a={10} b="hi" /> — fully correct
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class MyComp<P> extends Object {{
+    props: P;
+}}
+let x = <MyComp<{{a: number, b: string}}> a={{10}} b="hi" />;
+"#
+    );
+    let codes = jsx_codes(&source);
+    assert!(
+        !codes.contains(&2322),
+        "TS2322 should NOT fire when attribute types match the explicit type arg, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2558),
+        "TS2558 should NOT fire with the correct number of type args, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_explicit_type_args_attribute_type_mismatch_emits_ts2322() {
+    // <MyComp<{a: number, b: string}> a={10} b={20} /> — b is number, not string
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Prop {{ a: number; b: string }}
+declare class MyComp<P> extends Object {{
+    props: P;
+}}
+let x = <MyComp<Prop> a={{10}} b={{20}} />;
+"#
+    );
+    let codes = jsx_codes(&source);
+    assert!(
+        codes.contains(&2322),
+        "TS2322 should fire when attribute type doesn't match the explicit type arg; \
+         b is 'number' but declared 'string', got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_explicit_type_args_too_many_emits_ts2558() {
+    // <MyComp<Prop, Prop> /> — MyComp has 1 type param, got 2
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Prop {{ a: number }}
+declare class MyComp<P> extends Object {{
+    props: P;
+}}
+let x = <MyComp<Prop, Prop> a={{10}} />;
+"#
+    );
+    let codes = jsx_codes(&source);
+    assert!(
+        codes.contains(&2558),
+        "TS2558 should fire when too many type arguments are provided, got: {codes:?}"
+    );
+    // tsc does NOT emit TS2322 when there is a type-arg arity mismatch.
+    assert!(
+        !codes.contains(&2322),
+        "TS2322 should NOT fire when the type-arg arity is wrong (TS2558 already fired), \
+         got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_explicit_type_args_constraint_violation_emits_ts2344() {
+    // <MyComp2<Prop> /> where MyComp2<P extends {a: string}> and Prop = {a: number}
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Prop {{ a: number; b: string }}
+declare class MyComp2<P extends {{ a: string }}> extends Object {{
+    props: P;
+}}
+let x = <MyComp2<Prop> a={{10}} b="hi" />;
+"#
+    );
+    let codes = jsx_codes(&source);
+    assert!(
+        codes.contains(&2344),
+        "TS2344 should fire when a type argument violates its constraint, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_explicit_type_args_defaulted_params_ok() {
+    // <MyComp2<{a: string}, {b: string}> a="hi" b="hi" /> — 2 args for 1-2 param class
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare class MyComp2<P extends {{ a: string }}, P2 = {{}}> extends Object {{
+    props: P;
+}}
+let x = <MyComp2<{{a: string}}, {{b: string}}> a="hi" />;
+"#
+    );
+    let codes = jsx_codes(&source);
+    assert!(
+        !codes.contains(&2558),
+        "TS2558 should NOT fire when using a defaulted 2nd type param, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2322),
+        "TS2322 should NOT fire for correct attribute value, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_explicit_type_args_too_many_with_defaults_emits_ts2558() {
+    // <MyComp2<A, B, C> /> — MyComp2 has at most 2 type params, got 3
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Prop {{ a: string }}
+declare class MyComp2<P extends {{ a: string }}, P2 = {{}}> extends Object {{
+    props: P;
+}}
+let x = <MyComp2<{{a: string}}, {{b: string}}, Prop> a="hi" />;
+"#
+    );
+    let codes = jsx_codes(&source);
+    assert!(
+        codes.contains(&2558),
+        "TS2558 should fire when more type args are given than the max (1-2), got: {codes:?}"
+    );
+}

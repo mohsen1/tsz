@@ -64,6 +64,40 @@ fn parse_default_import_followed_by_from_reports_missing_named_bindings() {
 }
 
 #[test]
+fn parse_namespace_import_with_while_yields_to_while_statement_recovery() {
+    // `import * as while from "foo"` — `while` is a reserved word. tsc emits
+    // TS1359 at the keyword and then re-parses `while from "foo"` as a
+    // WhileStatement, cascading `'(' expected.` at `from` and `')' expected.`
+    // at `"foo"`. Make sure we match that cascade.
+    let (parser, _root) = parse_source("import * as while from \"foo\"\n");
+    let diags = parser.get_diagnostics();
+
+    const TS1359: u32 =
+        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+
+    // TS1359 at `while` (byte offset 12 on line 1).
+    assert!(
+        diags.iter().any(|d| d.code == TS1359 && d.start == 12),
+        "expected TS1359 at `while` (col 13), got {diags:?}"
+    );
+    // TS1005 `'(' expected.` at `from` (byte offset 18).
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.start == 18 && d.message.contains("'('")),
+        "expected TS1005 `'(' expected.` at `from` (col 19), got {diags:?}"
+    );
+    // TS1005 `')' expected.` at `"foo"` (byte offset 23).
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.start == 23 && d.message.contains("')'")),
+        "expected TS1005 `')' expected.` at `\"foo\"` (col 24), got {diags:?}"
+    );
+}
+
+#[test]
 fn parse_trailing_comma_before_from_recovers_as_next_statement() {
     let (parser, _root) = parse_source("import { a }, from \"m\";");
     let diags = parser.get_diagnostics();
@@ -646,5 +680,73 @@ fn import_async_equals_still_works() {
     assert!(
         codes.is_empty(),
         "import async = require('mod') should parse cleanly, got {codes:?}"
+    );
+}
+
+// === ES Decorator misplacement tests (tsc parity) ===
+
+/// `abstract @dec class C {}` at statement level should emit TS1434
+/// "Unexpected keyword or identifier." at the 'abstract' position.
+/// tsc treats `abstract @dec class` as invalid — `abstract` is an expression
+/// and `@dec class` can't follow without a semicolon.
+#[test]
+fn abstract_at_statement_level_before_decorator_emits_ts1434() {
+    let (parser, _root) = parse_source("abstract @dec class C {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "expected TS1434 for `abstract @dec class`, got {codes:?}"
+    );
+}
+
+/// `export abstract @dec class C {}` should emit:
+///   TS1128 "Declaration or statement expected." at the 'export' position
+///   TS1434 "Unexpected keyword or identifier." at the 'abstract' position
+#[test]
+fn export_abstract_before_decorator_emits_ts1128_and_ts1434() {
+    let (parser, _root) = parse_source("export abstract @dec class C {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
+        "expected TS1128 for `export abstract @dec class`, got {codes:?}"
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "expected TS1434 for `export abstract @dec class`, got {codes:?}"
+    );
+}
+
+/// `export default abstract @dec class C {}` should emit TS1005 "';' expected."
+/// at the '@' position, because 'abstract' is parsed as an expression identifier
+/// and '@' is not a valid continuation without a semicolon.
+#[test]
+fn export_default_abstract_before_decorator_emits_ts1005() {
+    let (parser, _root) = parse_source("export default abstract @dec class C {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPECTED),
+        "expected TS1005 (';' expected) for `export default abstract @dec class`, got {codes:?}"
+    );
+}
+
+/// `abstract class C {}` should still parse cleanly (no errors).
+#[test]
+fn abstract_class_parses_cleanly() {
+    let (parser, _root) = parse_source("abstract class C {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.is_empty(),
+        "abstract class C {{}} should parse cleanly, got {codes:?}"
+    );
+}
+
+/// `export abstract class C {}` should still parse cleanly (no errors).
+#[test]
+fn export_abstract_class_parses_cleanly() {
+    let (parser, _root) = parse_source("export abstract class C {}");
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.is_empty(),
+        "export abstract class C {{}} should parse cleanly, got {codes:?}"
     );
 }

@@ -1066,7 +1066,12 @@ pub struct CheckerContext<'a> {
     pub current_file_idx: usize,
 
     /// Resolved module specifiers for this file (multi-file CLI mode).
-    pub resolved_modules: Option<FxHashSet<String>>,
+    ///
+    /// Wrapped in `Arc` so the CLI per-file driver can share the
+    /// pre-bucketed `resolved_modules_per_file[file_idx]` entry without
+    /// deep-cloning the `FxHashSet<String>` contents per file. Child
+    /// checkers (cross-arena delegation) bump the refcount.
+    pub resolved_modules: Option<Arc<FxHashSet<String>>>,
 
     /// Track value exports declared in module augmentations for duplicate detection.
     /// Keyed by a canonical module key (resolved file index or specifier).

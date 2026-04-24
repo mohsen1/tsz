@@ -1464,3 +1464,30 @@ const a = f({ d: [] });
         "const type param with empty array should not produce false TS2322. Got: {diags:#?}"
     );
 }
+
+// ─── Symbol-keyed property exclusion from string-index inference ─────────────
+
+#[test]
+fn object_values_with_symbol_keyed_intersection_no_false_ts2345() {
+    // Regression: calling a function that expects T with a value inferred from
+    // Object.values on a type that has both a unique-symbol property and a
+    // string index signature must NOT include the symbol property value type
+    // in the inferred T.
+    //
+    // Previously `true` was included in T from `{ [sym]?: true }`, causing
+    // a false TS2345 where tsc emits none.
+    //
+    // Reproduces: unionTypeInference.ts repro from #32752
+    let source = r#"
+declare const sym: unique symbol;
+type WithSym<T> = { [sym]?: true } & T;
+declare function f<T>(x: WithSym<{ [s: string]: T }>): T;
+declare const input: WithSym<{ [s: string]: string }>;
+const result: string = f(input);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2345 || *code == 2322),
+        "symbol property in intersection must not cause false type error. Got: {diags:#?}"
+    );
+}

@@ -193,17 +193,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // TSC emits TS4104 when a readonly array/tuple is assigned to a mutable
         // array/tuple target. This check must happen before structural analysis —
         // readonly-to-mutable is the primary failure reason and short-circuits further
-        // elaboration. When the target is a type parameter constrained to an array/tuple
-        // (e.g. `T extends unknown[]`), tsc also emits TS4104.
-        if readonly_inner_type(self.interner, resolved_source).is_some()
+        // elaboration. When the target is a type parameter (not a concrete
+        // array/tuple), the short-circuit depends on the source: readonly plain
+        // arrays may still produce TS4104 via the existing constraint heuristic,
+        // but a readonly source whose inner is a *tuple* (e.g. `readonly [...T]`)
+        // must fall through to structural analysis so the tsc-parity TS2322 path
+        // can report it — see variadicTuples1.ts:160 where `t: T` (target is a
+        // type parameter) gets TS2322, while `m: [...T]` on line 162 gets TS4104.
+        if let Some(readonly_source_inner) = readonly_inner_type(self.interner, resolved_source)
             && readonly_inner_type(self.interner, resolved_target).is_none()
         {
             let is_mutable_array_or_tuple = array_element_type(self.interner, resolved_target)
                 .is_some()
                 || tuple_list_id(self.interner, resolved_target).is_some();
-            // For type parameters (e.g. T extends unknown[]), check if the constraint
-            // is a mutable array/tuple — tsc emits TS4104 in that case too.
+            let source_inner_is_tuple =
+                tuple_list_id(self.interner, readonly_source_inner).is_some();
             let is_type_param_with_array_constraint = !is_mutable_array_or_tuple
+                && !source_inner_is_tuple
                 && is_type_parameter(self.interner, resolved_target)
                 && crate::visitor::type_param_info(self.interner, resolved_target)
                     .and_then(|info| info.constraint)

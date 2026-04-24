@@ -2139,13 +2139,7 @@ impl<'a> CheckerState<'a> {
 
                 // For `export = alias` where alias is an import-equals qualified
                 // name (`import x = a.b`), resolve the qualified target too.
-                let mut decl_candidates = export_equals_symbol.declarations.clone();
-                if export_equals_symbol.value_declaration.is_some()
-                    && !decl_candidates.contains(&export_equals_symbol.value_declaration)
-                {
-                    decl_candidates.push(export_equals_symbol.value_declaration);
-                }
-                for decl_idx in decl_candidates {
+                for decl_idx in export_equals_symbol.all_declarations() {
                     if !decl_idx.is_some() {
                         continue;
                     }

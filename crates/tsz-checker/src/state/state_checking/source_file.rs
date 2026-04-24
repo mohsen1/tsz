@@ -573,13 +573,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let mut candidate_decls = symbol.declarations.clone();
-        if symbol.value_declaration.is_some() {
-            candidate_decls.push(symbol.value_declaration);
-        }
-
+        let mut candidate_decls = symbol.all_declarations();
         candidate_decls.sort_unstable_by_key(|node| node.0);
-        candidate_decls.dedup();
 
         for decl_idx in candidate_decls {
             let Some(node) = self.ctx.arena.get(decl_idx) else {

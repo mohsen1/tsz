@@ -4471,5 +4471,222 @@ function test(someDerived: Derived1 | Derived2) {
 }
 
 // ============================================================================
+// NARROWING PAST LAST ASSIGNMENT TESTS
+// ============================================================================
+
+/// Test: `let` variable narrowed past its last assignment is treated as
+/// effectively const for closure purposes (tsc's "narrowing past last assignment").
+///
+/// When a `let` variable has its last assignment BEFORE a closure is created,
+/// and no assignments happen inside nested closures, the closure should see the
+/// narrowed type — not the full declared union.
+///
+/// This corresponds to tsc's `isPastLastAssignment()` + `isEffectivelyConst()` logic.
+///
+/// Regression: tsz was emitting TS18048 ("'i' is possibly 'undefined'") on `i + 1`
+/// because `let i: number | undefined; i = 0;` left the type as `number | undefined`
+/// inside the returned arrow, even though i's last assignment (to 0) predates the
+/// arrow function expression.
+#[test]
+fn test_let_narrowing_past_last_assignment_in_closure() {
+    use tsz_common::checker_options::CheckerOptions;
+
+    // Analogous to tsc's f10() in narrowingPastLastAssignment.ts:
+    //   function f10() {
+    //       let i: number | undefined;
+    //       i = 0;
+    //       return (k: number) => k === i + 1;
+    //   }
+    // Expected: no TS18048 on `i + 1` — i is effectively 0 (number) at the closure.
+    let source = r#"
+function f10() {
+    let i: number | undefined;
+    i = 0;
+    return (k: number) => k === i + 1;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let interner = TypeInterner::new();
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let mut state = CheckerState::new(arena, &binder, &interner, "test.ts".to_string(), options);
+    state.check_source_file(root);
+
+    // TS18048 should NOT be emitted — `i` is narrowed to `number` past last assignment
+    let ts18048_errors: Vec<_> = state
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18048)
+        .collect();
+    assert!(
+        ts18048_errors.is_empty(),
+        "Expected no TS18048 errors for 'let i narrowed past last assignment' but got {}: {:?}",
+        ts18048_errors.len(),
+        ts18048_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Test: `let` with null-check narrowing before a closure.
+///
+/// When `let foo = possiblyNull(); if (foo == null) { foo = []; }` assigns a
+/// non-null value inside a guard, then the subsequent closure sees `foo` as
+/// the narrowed non-null type.
+///
+/// Regression: tsz emitted TS18048 ("'foo' is possibly 'undefined'") on
+/// `foo.push(v)` inside the forEach callback because the closure saw the
+/// declared type `Array<number> | undefined` rather than the narrowed `Array<number>`.
+#[test]
+fn test_let_narrowing_past_last_assignment_with_null_guard() {
+    use tsz_common::checker_options::CheckerOptions;
+
+    // Analogous to f12() in narrowingPastLastAssignment.ts:
+    //   function f12() {
+    //       const fooMap: Map<string, Array<number>> = new Map();
+    //       const values = [1, 2, 3, 4, 5];
+    //       let foo = fooMap.get("a");
+    //       if (foo == null) { foo = []; }
+    //       values.forEach(v => foo.push(v));
+    //   }
+    // Expected: no TS18048 on `foo.push(v)`
+    let source = r#"
+function f12() {
+    let foo: Array<number> | undefined = undefined;
+    if (foo == null) {
+        foo = [];
+    }
+    const values = [1, 2, 3];
+    values.forEach((v: number) => foo.push(v));
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let interner = TypeInterner::new();
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let mut state = CheckerState::new(arena, &binder, &interner, "test.ts".to_string(), options);
+    state.check_source_file(root);
+
+    // TS18048 should NOT be emitted — `foo` is narrowed to Array<number> at the closure
+    let ts18048_errors: Vec<_> = state
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 18048)
+        .collect();
+    assert!(
+        ts18048_errors.is_empty(),
+        "Expected no TS18048 for 'let foo narrowed past last assignment' but got {}: {:?}",
+        ts18048_errors.len(),
+        ts18048_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Test: implicit-any `let` variable with two closures — only the FIRST closure
+/// (before the last assignment) should get TS7005; the SECOND (after the last
+/// assignment) should not, because the type is now known to be `number`.
+///
+/// Regression: tsz was emitting TS7005 for BOTH closures because the
+/// `reported_implicit_any_vars` path didn't re-check whether the capture
+/// point is past the last assignment.
+#[test]
+fn test_implicit_any_let_second_closure_no_ts7005() {
+    use tsz_common::checker_options::CheckerOptions;
+
+    // Analogous to f6() in narrowingPastLastAssignment.ts:
+    //   function f6() {
+    //       let x;              // TS7034 here
+    //       x = "abc";
+    //       action(() => { x }); // TS7005 here (before x=42)
+    //       x = 42;
+    //       action(() => { x /* number */ }); // NO TS7005 here
+    //   }
+    let source = r#"
+function action(f: Function) {}
+function f6() {
+    let x;
+    x = "abc";
+    action(() => { x });
+    x = 42;
+    action(() => { x });
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let interner = TypeInterner::new();
+    let options = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let mut state = CheckerState::new(arena, &binder, &interner, "test.ts".to_string(), options);
+    state.check_source_file(root);
+
+    // TS7034 should fire at the declaration (let x)
+    let ts7034_errors: Vec<_> = state
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7034)
+        .collect();
+    assert_eq!(
+        ts7034_errors.len(),
+        1,
+        "Expected exactly 1 TS7034 error but got {}: {:?}",
+        ts7034_errors.len(),
+        ts7034_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+
+    // TS7005 should fire at exactly 1 closure usage (the first one, before x=42)
+    let ts7005_errors: Vec<_> = state
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 7005)
+        .collect();
+    assert_eq!(
+        ts7005_errors.len(),
+        1,
+        "Expected exactly 1 TS7005 error (only the first closure) but got {}: {:?}",
+        ts7005_errors.len(),
+        ts7005_errors
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+// ============================================================================
 // FAILING TESTS - These tests FAIL to demonstrate the bugs exist
 // ============================================================================

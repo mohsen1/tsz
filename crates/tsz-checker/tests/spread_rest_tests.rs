@@ -712,6 +712,45 @@ let o2: { b: number } = test(o1);
 }
 
 #[test]
+fn test_generic_rest_respread_before_explicit_property_no_false_ts2783() {
+    // Regression: when destructuring a generic parameter with rest, the rest
+    // type should reflect that the destructured siblings are excluded. Spreading
+    // `rest` AFTER an explicit property with a sibling name should not trigger
+    // TS2783, because the excluded property cannot appear in `rest`.
+    //
+    // Before the fix, `rest` was approximated as `T` itself, so the spread's
+    // known-property analysis (derived from T's constraint) would claim `a` is
+    // required — producing a false TS2783 on the earlier `a: 'hello'`.
+    // After the fix, `rest` is `Omit<T, 'a'>`, which evaluates to a set of
+    // properties that excludes 'a'.
+    //
+    // The fix depends on the `Omit` lib alias, so this test inlines a minimal
+    // `Omit` declaration (rather than loading lib.es5) to remain an independent
+    // unit test of the binding-rest computation.
+    let source = r#"
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Exclude<T, U> = T extends U ? never : T;
+
+function test<T extends { a: string, b: string }>(obj: T): T {
+    let { a, ...rest } = obj;
+    return { a: 'hello', ...rest } as T;
+}
+"#;
+    let diagnostics = check_source(source);
+    let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
+    assert_eq!(
+        ts2783_count,
+        0,
+        "Expected no TS2783 for generic rest re-spread; got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_object_rest_excludes_private_class_members() {
     let source = r#"
 class C {

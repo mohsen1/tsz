@@ -12,6 +12,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// A JSDoc template parameter: `(name, has_default, constraint_expr)`.
+type JsDocTemplateParam = (String, bool, Option<String>);
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_jsdoc_extends_tag_type_arguments(&mut self, class_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -195,11 +198,8 @@ impl<'a> CheckerState<'a> {
         let (Some(arg_shape), Some(constraint_shape)) = (arg_shape, constraint_shape) else {
             return false;
         };
-        let arg_props: rustc_hash::FxHashMap<_, _> = arg_shape
-            .properties
-            .iter()
-            .map(|p| (p.name, p))
-            .collect();
+        let arg_props: rustc_hash::FxHashMap<_, _> =
+            arg_shape.properties.iter().map(|p| (p.name, p)).collect();
         for constraint_prop in &constraint_shape.properties {
             let Some(arg_prop) = arg_props.get(&constraint_prop.name) else {
                 if !constraint_prop.optional {
@@ -307,7 +307,7 @@ impl<'a> CheckerState<'a> {
     fn resolve_jsdoc_extends_target_template_params(
         &mut self,
         base_name: &str,
-    ) -> Option<Vec<(String, bool, Option<String>)>> {
+    ) -> Option<Vec<JsDocTemplateParam>> {
         use tsz_binder::symbol_flags;
 
         let sym_id = self.ctx.binder.file_locals.get(base_name).or_else(|| {
@@ -356,10 +356,8 @@ impl<'a> CheckerState<'a> {
     /// comment. Supports the `{Constraint}` prefix with balanced-brace
     /// matching so object-literal constraints (`{Foo: {...}}`) are captured
     /// intact. Names sharing a line share the constraint.
-    fn parse_jsdoc_template_params_with_constraints(
-        jsdoc: &str,
-    ) -> Vec<(String, bool, Option<String>)> {
-        let mut out: Vec<(String, bool, Option<String>)> = Vec::new();
+    fn parse_jsdoc_template_params_with_constraints(jsdoc: &str) -> Vec<JsDocTemplateParam> {
+        let mut out: Vec<JsDocTemplateParam> = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
             let Some(rest) = trimmed.strip_prefix("@template") else {
@@ -527,12 +525,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let rest_offset = rest.as_ptr() as usize - comment_text.as_ptr() as usize;
-                if rest.starts_with('{') {
+                if let Some(inner) = rest.strip_prefix('{') {
                     // Walk brace-balanced so nested `{...}` inside the
                     // annotation (e.g. `@extends {A<{x:number}>}`) are kept
                     // intact. The previous `rest.find('}')` truncated at the
                     // inner closing `}` and silently dropped the remainder.
-                    let inner = &rest[1..];
                     let mut depth = 1usize;
                     let mut close = None;
                     for (idx, ch) in inner.char_indices() {
@@ -606,6 +603,59 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Returns `true` when the class has a JSDoc `@augments`/`@extends` tag
+    /// whose type argument is empty (e.g. `/** @augments */`).  tsc treats
+    /// such a tag as an invalid override of the structural `extends` clause,
+    /// which prevents base-class property merging.
+    pub(crate) fn has_empty_jsdoc_augments_tag(&self, class_idx: NodeIndex) -> bool {
+        let sf = match self.ctx.arena.source_files.first() {
+            Some(sf) => sf,
+            None => return false,
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = match self.ctx.arena.get(class_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
+        let leading = get_leading_comments_from_cache(comments, node.pos, source_text);
+        let comment = match leading.last() {
+            Some(c) => c,
+            None => return false,
+        };
+        if !is_jsdoc_comment(comment, source_text) {
+            return false;
+        }
+
+        let comment_text = comment.get_text(source_text);
+        for tag in ["augments", "extends"] {
+            let needle = format!("@{tag}");
+            for (match_pos, _) in comment_text.match_indices(&needle) {
+                let after = match_pos + needle.len();
+                if after >= comment_text.len() {
+                    return true;
+                }
+                let next_ch = comment_text[after..]
+                    .chars()
+                    .next()
+                    .expect("after < len checked above");
+                if next_ch.is_ascii_alphanumeric() {
+                    continue;
+                }
+                if self
+                    .attached_jsdoc_extends_or_augments_tag(class_idx)
+                    .is_none()
+                {
+                    return true;
+                }
+                return false;
+            }
+        }
+        false
     }
 
     fn type_params_for_jsdoc_extends_name(

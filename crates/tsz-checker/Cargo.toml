@@ -52,6 +52,10 @@ name = "await_generic_non_promise_no_false_ts2339_tests"
 path = "tests/await_generic_non_promise_no_false_ts2339_tests.rs"
 
 [[test]]
+name = "ts2449_parameter_decorator_no_tdz_tests"
+path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
+
+[[test]]
 name = "ts1210_arguments_param_in_class_tests"
 path = "tests/ts1210_arguments_param_in_class_tests.rs"
 
@@ -114,6 +118,10 @@ path = "tests/control_flow_type_guard_tests.rs"
 [[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
+
+[[test]]
+name = "ts2322_property_decl_annotation_tests"
+path = "tests/ts2322_property_decl_annotation_tests.rs"
 
 [[test]]
 name = "spread_rest_tests"
@@ -334,6 +342,10 @@ path = "tests/ts2364_import_meta_assignment_tests.rs"
 [[test]]
 name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
+
+[[test]]
+name = "jsdoc_augments_empty_tests"
+path = "tests/jsdoc_augments_empty_tests.rs"
 
 [[test]]
 name = "jsdoc_extends_constraint_tests"
