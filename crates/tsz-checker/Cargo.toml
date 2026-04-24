@@ -351,5 +351,9 @@ path = "tests/jsdoc_extends_constraint_tests.rs"
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
 
+[[test]]
+name = "ts2451_cross_file_augmentation_tests"
+path = "tests/ts2451_cross_file_augmentation_tests.rs"
+
 [lints]
 workspace = true
