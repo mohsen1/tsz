@@ -5013,3 +5013,79 @@ let x = <MyComp2<{{a: string}}, {{b: string}}, Prop> a="hi" />;
         "TS2558 should fire when more type args are given than the max (1-2), got: {codes:?}"
     );
 }
+
+// =============================================================================
+// Class component with primitive constructor parameter — no ElementAttributesProperty
+// (tsxElementResolution10 parity)
+// =============================================================================
+
+/// JSX namespace with NO `ElementAttributesProperty` — tsc uses first constructor param as props type.
+const JSX_NO_ELEMENT_ATTRS_PREAMBLE: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+}
+"#;
+
+#[test]
+fn test_jsx_class_constructor_primitive_param_no_elem_attrs_prop_emits_ts2322_at_tag() {
+    // When JSX.ElementAttributesProperty is absent, tsc uses the first constructor
+    // parameter as the props type even when it is a primitive (e.g. `string`).
+    // The synthesized attrs object `{ x: number }` is then checked against `string`
+    // → TS2322 must be anchored at the tag name (col 2), NOT per-attribute (col 7).
+    let source = format!(
+        r#"
+{JSX_NO_ELEMENT_ATTRS_PREAMBLE}
+interface Obj1type {{
+    new(n: string): any;
+}}
+declare var Obj1: Obj1type;
+<Obj1 x={{1}} />;
+"#
+    );
+    // Obj1 returns `any` → no TS2322 expected (any swallows attribute checks).
+    let codes = jsx_codes(&source);
+    assert!(
+        !codes.contains(&2322),
+        "TS2322 should NOT fire for class component that returns `any`, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_jsx_class_constructor_primitive_param_no_elem_attrs_prop_obj_return_emits_ts2322() {
+    // Class component with `new(n: string): { render(): any }` and no ElementAttributesProperty.
+    // tsc uses first param (`string`) as props type → `{ x: number }` not assignable to `string`.
+    // TS2322 must be at tag position (whole-object), not per-attribute.
+    let source = format!(
+        r#"
+{JSX_NO_ELEMENT_ATTRS_PREAMBLE}
+interface Obj2type {{
+    new(n: string): {{ render(): any }};
+}}
+declare var Obj2: Obj2type;
+<Obj2 x={{1}} render={{2}} />;
+"#
+    );
+    let diags = jsx_diagnostics_with_pos(&source);
+    let ts2322_diags: Vec<_> = diags.iter().filter(|(code, _, _)| *code == 2322).collect();
+    assert!(
+        !ts2322_diags.is_empty(),
+        "TS2322 should fire for class component with primitive param and mismatched attrs, got: {diags:?}"
+    );
+    // Verify the message includes the whole attrs object (not a single attribute)
+    let msg = &ts2322_diags[0].2;
+    assert!(
+        msg.contains("{ x: number; render: number; }")
+            || msg.contains("not assignable to type 'string'"),
+        "TS2322 message should show whole attrs object vs string, got: {msg:?}"
+    );
+    // Verify x appears before render (declaration order preserved)
+    if msg.contains("{ x: number; render: number; }") {
+        let x_pos = msg.find("x: number").unwrap_or(usize::MAX);
+        let render_pos = msg.find("render: number").unwrap_or(usize::MAX);
+        assert!(
+            x_pos < render_pos,
+            "Property 'x' should appear before 'render' in TS2322 message (declaration order), got: {msg:?}"
+        );
+    }
+}
