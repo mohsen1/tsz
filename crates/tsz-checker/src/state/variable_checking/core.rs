@@ -835,7 +835,20 @@ impl<'a> CheckerState<'a> {
                             let func = checker.ctx.arena.get_function(init_node)?;
                             let body_node = checker.ctx.arena.get(func.body)?;
                             if body_node.kind == syntax_kind_ext::BLOCK {
-                                return Some(false);
+                                // For block-body functions, check if the body
+                                // already emitted TS2322 (e.g., from return
+                                // statement checks against a contextual return
+                                // type). When it did, the outer assignment-level
+                                // TS2322 is redundant.
+                                return Some(
+                                    checker.ctx.diagnostics[init_snap.diagnostics_len..]
+                                        .iter()
+                                        .any(|diag| {
+                                            diag.start >= body_node.pos
+                                                && diag.start < body_node.end
+                                                && matches!(diag.code, 2322 | 2339)
+                                        }),
+                                );
                             }
                             Some(
                                 checker.ctx.diagnostics[init_snap.diagnostics_len..]
@@ -929,6 +942,23 @@ impl<'a> CheckerState<'a> {
                                 if elaborated_elements {
                                     // Elaboration emitted per-element TS2322 errors on the specific
                                     // mismatching array/tuple elements. Skip the generic TS2322.
+                                } else if function_initializer_body_has_error {
+                                    // The function initializer already produced the canonical body
+                                    // diagnostic (for example on an expression-bodied arrow or
+                                    // block-body function with return statement errors). Skip
+                                    // the redundant outer assignment TS2322 and elaboration.
+                                } else if initializer_is_function
+                                    && jsdoc_declared_type.is_some()
+                                    && checker.async_function_jsdoc_return_type_suppression(
+                                        checked_init_type,
+                                        declared_type,
+                                    )
+                                {
+                                    // Async function with JSDoc non-Promise return type:
+                                    // tsc reports TS1064 for the async/return-type mismatch
+                                    // and checks body return statements, but does NOT emit
+                                    // TS2322 at the assignment level for the Promise wrapping
+                                    // difference.
                                 } else if initializer_is_function
                                     && !checker.is_assignable_to(checked_init_type, declared_type)
                                     && checker.try_elaborate_assignment_source_error(
@@ -938,10 +968,6 @@ impl<'a> CheckerState<'a> {
                                 {
                                     // Function initializer return elaboration emitted the canonical
                                     // nested TS2322 for a mismatching returned literal/expression.
-                                } else if function_initializer_body_has_error {
-                                    // The function initializer already produced the canonical body
-                                    // diagnostic (for example on an expression-bodied arrow). Skip
-                                    // the redundant outer assignment TS2322.
                                 } else {
                                     // Run excess property check first for object literal
                                     // initializers. In tsc, TS2353 (excess property) takes
@@ -2400,6 +2426,31 @@ impl<'a> CheckerState<'a> {
                     name_node.kind,
                 );
             }
+        }
+    }
+
+    /// Check whether an async function initializer's type differs from the
+    /// declared JSDoc type only because of Promise wrapping on the return type.
+    /// When that is the case, tsc reports TS1064 (async return type must be
+    /// Promise) but suppresses the assignment-level TS2322.
+    pub(crate) fn async_function_jsdoc_return_type_suppression(
+        &mut self,
+        init_type: TypeId,
+        declared_type: TypeId,
+    ) -> bool {
+        let init_return =
+            crate::query_boundaries::common::return_type_for_type(self.ctx.types, init_type);
+        let declared_return =
+            crate::query_boundaries::common::return_type_for_type(self.ctx.types, declared_type);
+        let (Some(init_ret), Some(decl_ret)) = (init_return, declared_return) else {
+            return false;
+        };
+        // Check if the init return type is Promise<T> where T is assignable
+        // to the declared return type.
+        if let Some(unwrapped) = self.unwrap_promise_type(init_ret) {
+            self.is_assignable_to(unwrapped, decl_ret)
+        } else {
+            false
         }
     }
 }
