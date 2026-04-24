@@ -33,5 +33,9 @@ path = "tests/flow_tests.rs"
 name = "scopes_tests"
 path = "tests/scopes_tests.rs"
 
+[[test]]
+name = "lib_merge_external_module_tests"
+path = "tests/lib_merge_external_module_tests.rs"
+
 [lints]
 workspace = true

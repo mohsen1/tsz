@@ -218,10 +218,11 @@ impl BinderState {
                     .insert(idx.0, is_exported);
 
                 if self.in_global_augmentation {
+                    let aug_flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
                     Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.clone())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(idx, aug_flags));
                 }
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
