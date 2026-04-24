@@ -2327,6 +2327,9 @@ fn expr_prefix_update_repeated_operator_same_line_anchors_inner_update() {
 
 #[test]
 fn object_spread_invalid_asterisk_recovers_to_operand_expression() {
+    // `let o8 = { ...*o };` — `*` at the start of the spread operand is a
+    // binary operator with a missing LHS. tsc's recovery produces a
+    // BinaryExpression (missing * o), and we match that tree shape.
     let source = "let o8 = { ...*o };";
     let (parser, root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
@@ -2358,12 +2361,25 @@ fn object_spread_invalid_asterisk_recovers_to_operand_expression() {
     assert_eq!(spread.kind, syntax_kind_ext::SPREAD_ASSIGNMENT);
     let spread_data = arena.get_spread(spread).expect("spread data");
     let operand = arena.get(spread_data.expression).expect("spread operand");
+    // Match tsc: the `*` is consumed as a binary operator with a missing LHS.
+    // The right-hand operand is the identifier `o`.
     assert_eq!(
         operand.kind,
-        SyntaxKind::Identifier as u16,
-        "recovery should keep the identifier operand after skipping the stray `*`"
+        syntax_kind_ext::BINARY_EXPRESSION,
+        "expected BinaryExpression for `*o` recovery, got kind={}",
+        operand.kind
     );
-    assert_eq!(node_text(arena, source, spread_data.expression), "o");
+    let binary = arena
+        .get_binary_expr(operand)
+        .expect("binary expression data");
+    assert_eq!(
+        binary.operator_token,
+        SyntaxKind::AsteriskToken as u16,
+        "operator should be `*`"
+    );
+    let right = arena.get(binary.right).expect("binary right");
+    assert_eq!(right.kind, SyntaxKind::Identifier as u16);
+    assert_eq!(node_text(arena, source, binary.right), "o");
 }
 
 #[test]
