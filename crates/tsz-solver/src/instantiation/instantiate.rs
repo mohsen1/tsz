@@ -18,6 +18,7 @@ use crate::types::{
     TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
 /// Maximum depth for recursive type instantiation.
@@ -192,6 +193,38 @@ impl TypeSubstitution {
     /// This is useful for building new substitutions based on existing ones.
     pub const fn map(&self) -> &FxHashMap<Atom, TypeId> {
         &self.map
+    }
+
+    /// Produce the canonical, content-hashable form of this substitution.
+    ///
+    /// Returns a `SmallVec` of `(name, type_id)` pairs sorted by `Atom`.
+    /// Sorting removes insertion-order dependence — the underlying
+    /// `FxHashMap` does not iterate in a deterministic order, so two maps
+    /// with the same contents but different insertion sequences would
+    /// otherwise produce different iteration shapes.
+    ///
+    /// PR 1 of the `instantiate_type` cross-call cache
+    /// (`docs/plan/perf-instantiate-type-cache-design.md`). The returned
+    /// form is the eventual cache key seed; PR 2 will key
+    /// `QueryCache::instantiation_cache` on an `Arc<[(Atom, TypeId)]>`
+    /// built directly from this output. Substitution *interning* (a
+    /// `u32` handle) intentionally does **not** live here — the cache
+    /// lifetime is owned by `QueryCache`, not the global `TypeInterner`.
+    ///
+    /// Most substitutions have 1-4 entries (matching the shape of the
+    /// existing `application_eval_cache`), so the `SmallVec<[_; 4]>`
+    /// inline buffer avoids a heap allocation for the common case.
+    #[must_use]
+    pub fn canonical_pairs(&self) -> SmallVec<[(Atom, TypeId); 4]> {
+        let mut pairs: SmallVec<[(Atom, TypeId); 4]> = self
+            .map
+            .iter()
+            .map(|(&name, &type_id)| (name, type_id))
+            .collect();
+        // Keys are unique (`FxHashMap`), so sorting by `Atom` alone is
+        // enough to canonicalize. `Atom` is `Ord` (u32 newtype).
+        pairs.sort_unstable_by_key(|(name, _)| *name);
+        pairs
     }
 }
 

@@ -64,6 +64,40 @@ fn parse_default_import_followed_by_from_reports_missing_named_bindings() {
 }
 
 #[test]
+fn parse_namespace_import_with_while_yields_to_while_statement_recovery() {
+    // `import * as while from "foo"` — `while` is a reserved word. tsc emits
+    // TS1359 at the keyword and then re-parses `while from "foo"` as a
+    // WhileStatement, cascading `'(' expected.` at `from` and `')' expected.`
+    // at `"foo"`. Make sure we match that cascade.
+    let (parser, _root) = parse_source("import * as while from \"foo\"\n");
+    let diags = parser.get_diagnostics();
+
+    const TS1359: u32 =
+        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+
+    // TS1359 at `while` (byte offset 12 on line 1).
+    assert!(
+        diags.iter().any(|d| d.code == TS1359 && d.start == 12),
+        "expected TS1359 at `while` (col 13), got {diags:?}"
+    );
+    // TS1005 `'(' expected.` at `from` (byte offset 18).
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.start == 18 && d.message.contains("'('")),
+        "expected TS1005 `'(' expected.` at `from` (col 19), got {diags:?}"
+    );
+    // TS1005 `')' expected.` at `"foo"` (byte offset 23).
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == TS1005 && d.start == 23 && d.message.contains("')'")),
+        "expected TS1005 `')' expected.` at `\"foo\"` (col 24), got {diags:?}"
+    );
+}
+
+#[test]
 fn parse_trailing_comma_before_from_recovers_as_next_statement() {
     let (parser, _root) = parse_source("import { a }, from \"m\";");
     let diags = parser.get_diagnostics();

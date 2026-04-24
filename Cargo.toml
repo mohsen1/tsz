@@ -111,5 +111,28 @@ inherits = "dev"
 opt-level = 2
 debug = true
 
+# Profile-friendly release build for `samply`, `cargo flamegraph`,
+# or `dtrace`-based tools. Keep full DWARF debug info and symbols so
+# leaf frames resolve to Rust function names. Use:
+#
+#   cargo build --profile flame --bin tsz
+#   samply record --save-only -o /tmp/prof.json -- <path>/flame/tsz ...
+#   samply load /tmp/prof.json   # interactive, requires GUI
+#
+# Or piped through `inferno` for a flamegraph SVG:
+#
+#   samply record --save-only --output-format=collapsed -o /tmp/prof.txt \
+#     -- <path>/flame/tsz ...
+#   cat /tmp/prof.txt | inferno-flamegraph > flame.svg
+#
+# NOTE: keeping debug info means the binary is ~2-3× larger than the
+# stripped `dist` build. That's fine for local profiling; don't ship it.
+[profile.flame]
+inherits = "release"
+debug = 2             # full DWARF debug info
+strip = false         # keep symbols
+codegen-units = 1     # single codegen unit: function boundaries match source
+lto = "thin"          # match `dist-fast` for representative hot-path shape
+
 [profile.bench]
 lto = "thin"

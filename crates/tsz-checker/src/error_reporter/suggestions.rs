@@ -68,6 +68,25 @@ impl<'a> CheckerState<'a> {
     ///
     /// In that case TypeScript treats unknown member accesses as `any` and does not
     /// surface typo suggestions (TS2551).
+    ///
+    /// ## Phase 1 step-2: `StableLocation`-based declaration lookup
+    ///
+    /// This consumer reads [`tsz_binder::Symbol::stable_value_declaration`]
+    /// (with a fallback to the first entry of
+    /// [`tsz_binder::Symbol::stable_declarations`]) instead of
+    /// `symbol.primary_declaration()`. The resulting `StableLocation`
+    /// carries `(file_idx, pos, end)` and is rehydrated to a concrete
+    /// `NodeIndex` on demand via
+    /// [`CheckerContext::node_at_stable_location`][nasl]. This is the
+    /// first consumer migrated under the
+    /// [global query graph plan][plan] (Phase 1 step 2, following
+    /// PR #1055). Heritage-clause tree walking is still arena-bound and
+    /// fundamentally requires a live `NodeIndex`, so the helper returns
+    /// one. The load-bearing change is that declaration *identity* no
+    /// longer comes from the symbol's arena-dependent `NodeIndex`.
+    ///
+    /// [nasl]: crate::context::CheckerContext::node_at_stable_location
+    /// [plan]: ../../../../docs/plan/global-query-graph-architecture.md
     pub(super) fn class_extends_any_base(&mut self, type_id: TypeId) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
@@ -85,32 +104,70 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(decl_idx) = symbol.primary_declaration() else {
-            return false;
-        };
-        let Some(class_decl) = self.ctx.arena.get_class_at(decl_idx) else {
-            return false;
-        };
-        let Some(heritage_clauses) = &class_decl.heritage_clauses else {
-            return false;
+        // Phase 1 step-2: identify the primary class declaration via its
+        // `StableLocation`, not via `symbol.primary_declaration()`. Prefer
+        // `stable_value_declaration` when set; otherwise fall back to the
+        // first `stable_declarations` entry — mirroring the existing
+        // `primary_declaration()` preference order. The parallel
+        // `stable_*` fields are populated in lockstep by the binder, so
+        // this is equivalent whenever the legacy `NodeIndex` fields are
+        // populated.
+        let stable_loc = if symbol.stable_value_declaration.is_known() {
+            symbol.stable_value_declaration
+        } else {
+            match symbol.stable_declarations.first() {
+                Some(loc) if loc.is_known() => *loc,
+                _ => return false,
+            }
         };
 
-        for &clause_idx in &heritage_clauses.nodes {
-            let Some(clause) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
-                continue;
+        // Resolve the `StableLocation` to a live `(NodeIndex, arena)` pair
+        // and collect the candidate `extends` expression node indices. We
+        // eagerly collect `expr_idx` values into a small vector so that the
+        // arena borrow is released before any `&mut self` calls below
+        // (`get_type_of_node`). A future phase can push this rehydration
+        // further down or replace it entirely with a query-side class
+        // summary.
+        let extends_expr_indices: smallvec::SmallVec<[NodeIndex; 2]> = {
+            let Some((decl_idx, arena)) = self.ctx.node_at_stable_location(stable_loc) else {
+                return false;
             };
-            if clause.token != SyntaxKind::ExtendsKeyword as u16 {
-                continue;
-            }
-            let Some(&type_idx) = clause.types.nodes.first() else {
-                continue;
+            let Some(class_decl) = arena.get_class_at(decl_idx) else {
+                return false;
             };
-            let expr_idx =
-                if let Some(expr_type_args) = self.ctx.arena.get_expr_type_args_at(type_idx) {
+            let Some(heritage_clauses) = &class_decl.heritage_clauses else {
+                return false;
+            };
+
+            let mut out = smallvec::SmallVec::new();
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause) = arena.get_heritage_clause_at(clause_idx) else {
+                    continue;
+                };
+                if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                let Some(&type_idx) = clause.types.nodes.first() else {
+                    continue;
+                };
+                let expr_idx = if let Some(expr_type_args) = arena.get_expr_type_args_at(type_idx) {
                     expr_type_args.expression
                 } else {
                     type_idx
                 };
+                out.push(expr_idx);
+            }
+            out
+        };
+
+        // NOTE: `get_type_of_node` still operates against
+        // `self.ctx.arena` (the current file's arena). Cross-file
+        // class-extends-any detection was a pre-existing latent
+        // limitation and is out of scope for this Phase 1 step-2
+        // migration. The `StableLocation` rehydration above returns
+        // the same arena whenever the class is in the current file —
+        // which is the case for every caller today.
+        for expr_idx in extends_expr_indices {
             if self.get_type_of_node(expr_idx) == TypeId::ANY {
                 return true;
             }
@@ -822,5 +879,164 @@ fn get_lib_for_type_property(type_name: &str, prop_name: &str) -> Option<&'stati
             _ => None,
         },
         _ => None,
+    }
+}
+
+// =============================================================================
+// Phase 1 step-2 regression tests: `StableLocation` rehydration
+// =============================================================================
+//
+// These tests validate the migration of `class_extends_any_base` away from
+// the arena-dependent `Symbol::primary_declaration(): NodeIndex` toward the
+// file-stable `Symbol::stable_value_declaration` / `stable_declarations`
+// fields introduced by PR #1055. The critical invariant they lock in is
+// that a `StableLocation` captured from one binder/arena pair can be
+// resolved against a freshly re-parsed arena of the same source — the
+// Phase 5 "bounded arena residency" precondition.
+
+#[cfg(test)]
+mod tests {
+    use crate::context::{CheckerContext, CheckerOptions};
+    use tsz_binder::BinderState;
+    use tsz_parser::ParserState;
+    use tsz_solver::TypeInterner;
+
+    /// Resolving `Symbol::stable_value_declaration` for a class via the new
+    /// `node_at_stable_location` helper must return the same class node
+    /// that `Symbol::value_declaration` points at in the same binder.
+    #[test]
+    fn stable_value_declaration_resolves_to_class_node() {
+        let source = "class Foo extends Bar {}\n".to_string();
+
+        let mut parser = ParserState::new("syn.ts".to_string(), source.clone());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+
+        let sym_id = binder.file_locals.get("Foo").expect("class symbol Foo");
+        let symbol = binder.symbols.get(sym_id).expect("symbol data");
+        let stable = symbol.stable_value_declaration;
+        assert!(
+            stable.is_known(),
+            "class Foo must have a known stable_value_declaration span"
+        );
+        let legacy_node_idx = symbol.value_declaration;
+        assert!(
+            legacy_node_idx.is_some(),
+            "class Foo must have a populated value_declaration (NodeIndex)"
+        );
+
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena,
+            &binder,
+            &types,
+            "syn.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        let (resolved_idx, resolved_arena) = ctx
+            .node_at_stable_location(stable)
+            .expect("node_at_stable_location must resolve the class span");
+
+        assert_eq!(
+            resolved_idx, legacy_node_idx,
+            "StableLocation must rehydrate to the same NodeIndex as value_declaration"
+        );
+        let resolved_node = resolved_arena
+            .get(resolved_idx)
+            .expect("resolved NodeIndex must exist in arena");
+        assert_eq!(resolved_node.pos, stable.pos);
+        assert_eq!(resolved_node.end, stable.end);
+    }
+
+    /// The load-bearing Phase 5 scenario: capture a `StableLocation` from
+    /// one arena, drop it (simulated by a fresh parser), and re-resolve
+    /// the same `(pos, end)` against a newly parsed arena. The
+    /// rehydrated `NodeIndex` must point at a node with matching span.
+    ///
+    /// This proves `node_at_stable_location` does NOT depend on arena
+    /// identity — only on the `(file_idx, pos, end)` triple.
+    #[test]
+    fn stable_location_round_trips_across_arena_reparse() {
+        let source = "class Foo extends Bar {}\nclass Qux {}\n".to_string();
+
+        // Capture a StableLocation for `Foo` from the first binder, then
+        // let the first arena/binder go out of scope.
+        let captured = {
+            let mut parser = ParserState::new("syn.ts".to_string(), source.clone());
+            let root = parser.parse_source_file();
+            let arena = parser.get_arena();
+            let mut binder = BinderState::new();
+            binder.bind_source_file(arena, root);
+            let sym_id = binder.file_locals.get("Foo").expect("class symbol Foo");
+            let symbol = binder.symbols.get(sym_id).expect("symbol data");
+            symbol.stable_value_declaration
+        };
+        assert!(
+            captured.is_known(),
+            "captured StableLocation must carry a real (pos, end) span"
+        );
+
+        // Fresh parse + bind of the identical source. The captured
+        // StableLocation must resolve in this new arena.
+        let mut parser = ParserState::new("syn.ts".to_string(), source);
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena,
+            &binder,
+            &types,
+            "syn.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        let (resolved_idx, resolved_arena) = ctx
+            .node_at_stable_location(captured)
+            .expect("captured StableLocation must rehydrate against a freshly parsed arena");
+        let node = resolved_arena
+            .get(resolved_idx)
+            .expect("resolved NodeIndex must exist in the new arena");
+        assert_eq!(node.pos, captured.pos);
+        assert_eq!(node.end, captured.end);
+
+        // The new binder's `value_declaration` NodeIndex should agree
+        // with the helper's resolution — binder population is
+        // deterministic for identical source text.
+        let sym_id = binder
+            .file_locals
+            .get("Foo")
+            .expect("class symbol Foo in reparsed binder");
+        let new_symbol = binder
+            .symbols
+            .get(sym_id)
+            .expect("symbol data in reparsed binder");
+        assert_eq!(
+            resolved_idx, new_symbol.value_declaration,
+            "re-resolution must agree with the re-parsed binder's NodeIndex"
+        );
+    }
+
+    /// `node_at_stable_location` must return `None` for the sentinel
+    /// `StableLocation::NONE` (unknown span) so consumers can treat it as
+    /// a clean "no declaration" signal.
+    #[test]
+    fn stable_location_none_resolves_to_none() {
+        let arena = tsz_parser::parser::node::NodeArena::new();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            &arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let none = tsz_binder::symbols::StableLocation::NONE;
+        assert!(ctx.node_at_stable_location(none).is_none());
     }
 }
