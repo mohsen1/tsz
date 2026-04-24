@@ -751,6 +751,31 @@ impl<'a> CheckerState<'a> {
                 {
                     result_type = Some(member_type);
                     use_index_signature_check = false;
+                    // Mark class member symbols as referenced for unused-variable tracking.
+                    // `resolve_namespace_value_member` handles class static members via the
+                    // Callable path (constructor type property lookup). Mark the corresponding
+                    // binder symbol so noUnusedLocals does not falsely report it as unused.
+                    // Skip write context: `Foo["key"] = expr` is not a read.
+                    let is_write_target = self.property_access_is_direct_write_target(idx);
+                    if !is_write_target {
+                        if let Some((class_idx, _)) =
+                            self.resolve_class_for_access(access.expression, object_type_for_access)
+                            && let Some(&class_sym_id) =
+                                self.ctx.binder.node_symbols.get(&class_idx.0)
+                            && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                            && let Some(ref members) = class_symbol.members
+                            && let Some(member_sym_id) = members.get(name)
+                        {
+                            self.ctx
+                                .referenced_symbols
+                                .borrow_mut()
+                                .insert(member_sym_id);
+                            self.ctx
+                                .referenced_as_property
+                                .borrow_mut()
+                                .insert(member_sym_id);
+                        }
+                    }
                 }
             }
 
@@ -992,6 +1017,40 @@ impl<'a> CheckerState<'a> {
                         None
                     } else {
                         use_index_signature_check = false;
+                        // Mark class member symbols as referenced for unused-variable tracking.
+                        // Element access like `Foo["key"]` reads member `key` on class `Foo`.
+                        // Without this, private members accessed via bracket notation are falsely
+                        // reported as unused (TS6133) because the solver's property resolution
+                        // pipeline never marks binder symbols.
+                        //
+                        // Skip when the access is the direct LHS of an assignment
+                        // (`Foo["key"] = expr`) — writes don't count as reads for noUnusedLocals.
+                        // The `this[key]` case is handled separately above for union types;
+                        // this branch handles the single-property-name case for class identifiers.
+                        let is_write_target = self.property_access_is_direct_write_target(idx);
+                        if !is_write_target {
+                            let class_result = self.resolve_class_for_access(
+                                access.expression,
+                                object_type_for_access,
+                            );
+                            if let Some((class_idx, _is_static)) = class_result
+                                && let Some(&class_sym_id) =
+                                    self.ctx.binder.node_symbols.get(&class_idx.0)
+                                && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                                && let Some(ref members) = class_symbol.members
+                            {
+                                if let Some(member_sym_id) = members.get(&property_name) {
+                                    self.ctx
+                                        .referenced_symbols
+                                        .borrow_mut()
+                                        .insert(member_sym_id);
+                                    self.ctx
+                                        .referenced_as_property
+                                        .borrow_mut()
+                                        .insert(member_sym_id);
+                                }
+                            }
+                        }
                         // In write context (assignment target), prefer the setter type.
                         Some(effective_write_result(type_id, write_type))
                     }
