@@ -206,8 +206,7 @@ impl BinderState {
                                         }
                                         existing_mut
                                             .add_declaration(decl, lib_sym.first_declaration_span);
-                                        let arenas = self
-                                            .declaration_arenas
+                                        let arenas = Arc::make_mut(&mut self.declaration_arenas)
                                             .entry((existing_id, decl))
                                             .or_default();
                                         if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
@@ -231,8 +230,7 @@ impl BinderState {
                                     for &decl in &lib_sym.declarations {
                                         existing_mut
                                             .add_declaration(decl, lib_sym.first_declaration_span);
-                                        let arenas = self
-                                            .declaration_arenas
+                                        let arenas = Arc::make_mut(&mut self.declaration_arenas)
                                             .entry((existing_id, decl))
                                             .or_default();
                                         if !arenas.iter().any(|a| Arc::ptr_eq(a, &lib_ctx.arena)) {
@@ -278,7 +276,7 @@ impl BinderState {
                             merged_by_name.insert(name_atom, new_id);
                             // Track declaration arenas for new symbol
                             for &decl in &lib_sym.declarations {
-                                self.declaration_arenas
+                                Arc::make_mut(&mut self.declaration_arenas)
                                     .entry((new_id, decl))
                                     .or_default()
                                     .push(Arc::clone(&lib_ctx.arena));
@@ -291,7 +289,7 @@ impl BinderState {
                         merged_by_name.insert(name_atom, new_id);
                         // Track declaration arenas for new symbol
                         for &decl in &lib_sym.declarations {
-                            self.declaration_arenas
+                            Arc::make_mut(&mut self.declaration_arenas)
                                 .entry((new_id, decl))
                                 .or_default()
                                 .push(Arc::clone(&lib_ctx.arena));
@@ -304,7 +302,7 @@ impl BinderState {
                     merged_by_name.insert(name_atom, new_id);
                     // Track declaration arenas for new symbol
                     for &decl in &lib_sym.declarations {
-                        self.declaration_arenas
+                        Arc::make_mut(&mut self.declaration_arenas)
                             .entry((new_id, decl))
                             .or_default()
                             .push(Arc::clone(&lib_ctx.arena));

@@ -284,6 +284,40 @@ module.exports = items;
 }
 
 #[test]
+fn esm_file_with_module_exports_does_not_emit_ts9006() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "cls.js",
+                r#"
+export class Foo {}
+                "#,
+            ),
+            (
+                "bin.js",
+                r#"
+import * as ns from "./cls";
+module.exports = ns;
+                "#,
+            ),
+        ],
+        "bin.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            emit_declarations: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 9006),
+        "ESM file with module.exports should NOT emit TS9006. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_optional_nested_jsdoc_param_flows_into_destructured_binding() {
     let diagnostics = compile_named_files(
         &[(

@@ -769,8 +769,26 @@ impl<'a> CheckerState<'a> {
             && !inside_namespace
             && !in_function
         {
+            // tsc anchors TS1202 at the outer `export` modifier when the
+            // import-equals declaration is the clause of an `export import X =
+            // require(...)` statement. tsz's parser splits these into an
+            // EXPORT_DECLARATION wrapping the inner IMPORT_EQUALS_DECLARATION,
+            // so the inner node's span starts at `import` (not `export`).
+            // Walk up to the parent export wrapper to preserve tsc's anchor.
+            let anchor_idx = self
+                .ctx
+                .arena
+                .get_extended(stmt_idx)
+                .map(|ext| ext.parent)
+                .filter(|&parent| {
+                    self.ctx
+                        .arena
+                        .get(parent)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::EXPORT_DECLARATION)
+                })
+                .unwrap_or(stmt_idx);
             self.error_at_node(
-                stmt_idx,
+                anchor_idx,
                 "Import assignment cannot be used when targeting ECMAScript modules. Consider using 'import * as ns from \"mod\"', 'import {a} from \"mod\"', 'import d from \"mod\"', or another module format instead.",
                 diagnostic_codes::IMPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
             );

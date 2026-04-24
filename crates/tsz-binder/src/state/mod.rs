@@ -24,6 +24,17 @@ use tsz_parser::parser::node::NodeArena;
 /// for the common single-arena case.
 pub type DeclarationArenaMap = FxHashMap<(SymbolId, NodeIndex), SmallVec<[Arc<NodeArena>; 1]>>;
 
+/// Secondary index from `SymbolId` to every `NodeIndex` that appears as a
+/// declaration key for that symbol in the program-wide `DeclarationArenaMap`.
+///
+/// Used by checker paths that previously iterated the entire
+/// `declaration_arenas` map filtering by `entry_sym_id == sym_id` to discover
+/// additional declaration indices for a symbol. With the program-wide
+/// `Arc<DeclarationArenaMap>` shared across all per-file binders, a full
+/// iteration would be `O(N_program)` per query instead of `O(N_file)`; this
+/// index collapses those queries to a point lookup.
+pub type SymToDeclIndicesMap = FxHashMap<SymbolId, SmallVec<[NodeIndex; 4]>>;
+
 /// Map from arena pointer (as `usize`) to that arena's `node_symbols` mapping.
 /// Enables cross-file declaration resolution: when a symbol has declarations in
 /// multiple arenas, the checker can look up the correct `node_symbols` for each
@@ -243,8 +254,18 @@ pub struct BinderState {
     /// Whether the current scope is in strict mode (via "use strict" directive or --alwaysStrict).
     /// In strict mode, function declarations inside blocks are block-scoped, not hoisted.
     pub(crate) is_strict_scope: bool,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// Wrapped in `Arc` so per-file binders constructed by the CLI driver
+    /// can share a single file's flow graph via `Arc::clone` instead of
+    /// deep-cloning `Vec<FlowNode>` (each `FlowNode` carries its own
+    /// `Vec<FlowNodeId>` antecedents, so the clone is allocation-heavy).
+    /// The driver builds ~2×N per-file binders (cross-file lookup +
+    /// per-file checking), so N-file projects previously paid 2N deep
+    /// clones of their flow graphs. Mutations during binding go through
+    /// `Arc::make_mut`, which is zero-cost while the refcount is 1
+    /// (always the case during a single binder's construction).
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Current flow node
     pub(crate) current_flow: FlowNodeId,
     /// Unreachable flow node
@@ -268,7 +289,19 @@ pub struct BinderState {
     /// This is needed when a symbol (like Array) is declared across multiple lib files.
     /// Uses `SmallVec` to handle cross-arena `NodeIndex` collisions: when two lib files have
     /// their interface declaration at the same `NodeIndex`, both arenas are stored.
-    pub declaration_arenas: DeclarationArenaMap,
+    ///
+    /// Wrapped in `Arc` so the merged cross-file map can be shared across N
+    /// per-file binders without deep-cloning or per-file filtering. Mutations
+    /// during binding go through `Arc::make_mut` (zero-cost when refcount=1,
+    /// which is always during a single binder's construction).
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
+    /// Secondary index from `SymbolId` to the set of `NodeIndex`es that appear
+    /// as declaration keys for that symbol in `declaration_arenas`. Built once
+    /// at merge time and shared via `Arc`. Enables checker paths that need to
+    /// enumerate every declaration index registered for a symbol (previously
+    /// done by iterating the whole `declaration_arenas` map) to do a point
+    /// lookup instead of an `O(N_program)` scan.
+    pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
     /// Enables resolving type references in cross-file interface declarations.
     pub cross_file_node_symbols: CrossFileNodeSymbols,
@@ -849,11 +882,12 @@ pub struct BinderStateScopeInputs {
     pub wildcard_reexports: Arc<WildcardReexportsMap>,
     pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
     pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
-    pub declaration_arenas: DeclarationArenaMap,
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
+    pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     pub cross_file_node_symbols: CrossFileNodeSymbols,
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     pub modules_with_export_equals: FxHashSet<String>,
-    pub flow_nodes: FlowNodeArena,
+    pub flow_nodes: Arc<FlowNodeArena>,
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,

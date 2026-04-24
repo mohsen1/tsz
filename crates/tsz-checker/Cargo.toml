@@ -344,6 +344,10 @@ name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
 
 [[test]]
+name = "jsdoc_augments_empty_tests"
+path = "tests/jsdoc_augments_empty_tests.rs"
+
+[[test]]
 name = "jsdoc_extends_constraint_tests"
 path = "tests/jsdoc_extends_constraint_tests.rs"
 

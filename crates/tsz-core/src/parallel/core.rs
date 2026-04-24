@@ -29,8 +29,8 @@
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
 use crate::binder::state::{
-    BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap, WildcardReexportsMap,
-    WildcardReexportsTypeOnlyMap,
+    BinderStateScopeInputs, CrossFileNodeSymbols, DeclarationArenaMap, SymToDeclIndicesMap,
+    WildcardReexportsMap, WildcardReexportsTypeOnlyMap,
 };
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
@@ -487,8 +487,10 @@ pub struct BindResult {
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
     pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
-    /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    pub declaration_arenas: DeclarationArenaMap,
+    /// Declaration-to-arena mapping for precise cross-file declaration lookup.
+    /// `Arc`-wrapped end-to-end so merging the per-file `BinderState.declaration_arenas`
+    /// (also `Arc`) into the final `MergedProgram` does not require deep cloning.
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
     /// Persistent scopes for stateless checking
     pub scopes: Vec<Scope>,
     /// Map from AST node to scope ID
@@ -525,8 +527,16 @@ pub struct BindResult {
     pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`)
     pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// can share the underlying `FlowNodeArena` via `Arc::clone` (atomic
+    /// increment) instead of deep-cloning `Vec<FlowNode>` — each
+    /// `FlowNode` owns a `Vec<FlowNodeId>` antecedents, so the deep clone
+    /// was allocation-heavy on large projects. Mutations during binding
+    /// go through `Arc::make_mut` (free when refcount=1, the case during
+    /// a single file's binding).
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
@@ -1405,8 +1415,16 @@ pub struct BoundFile {
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
     pub augmentation_target_modules: FxHashMap<SymbolId, String>,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver can
+    /// share this file's flow graph via `Arc::clone` (atomic increment)
+    /// instead of deep-cloning the underlying `Vec<FlowNode>` (each
+    /// `FlowNode` owns a `Vec<FlowNodeId>` antecedents). The driver builds
+    /// ~2×N per-file binders (cross-file lookup + per-file checking), so
+    /// on N-file projects this previously cost 2N deep clones of the
+    /// per-file flow graph.
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
@@ -1565,8 +1583,19 @@ pub struct MergedProgram {
     /// via `Arc::clone` (O(1)) instead of building a per-file derived map.
     pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
-    pub declaration_arenas: DeclarationArenaMap,
+    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration.
+    ///
+    /// `Arc`-wrapped so per-file `BinderState.declaration_arenas` reconstruction
+    /// is a cheap atomic increment instead of iterating the entire program-wide
+    /// map per file. On large projects this map holds ~100K entries and the
+    /// CLI driver builds ~12K per-file binders; the previous per-file materialization
+    /// iterated ~100K entries × ~12K binders ≈ 1.2B entry visits at startup.
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
+    /// Secondary index: `SymbolId` → every `NodeIndex` that appears as a
+    /// declaration key for that symbol. Built once at merge time so checker
+    /// paths that need to enumerate a symbol's declarations can do a point
+    /// lookup instead of iterating the program-wide `declaration_arenas`.
+    pub sym_to_decl_indices: Arc<SymToDeclIndicesMap>,
     /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
     /// Enables resolving type references in cross-file interface declarations.
     pub cross_file_node_symbols: CrossFileNodeSymbols,
@@ -2606,7 +2635,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // in Phase 1 from the original lib binder. The per-file binder has duplicate
         // arenas for the same declarations (from merge_lib_contexts_into_binder),
         // which would cause interface members to be lowered multiple times.
-        for (&(old_sym_id, decl_idx), arenas) in &result.declaration_arenas {
+        for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
             if result.lib_symbol_ids.contains(&old_sym_id) {
                 continue;
             }
@@ -2940,6 +2969,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     updated.is_umd_export = old_sym.is_umd_export;
                     // Track which file this symbol was declared in for TDZ cross-file detection
                     updated.decl_file_idx = file_idx as u32;
+                    // Finalize file index on stable declaration locations that
+                    // were recorded by per-file binders with `u32::MAX` (the
+                    // parallel pipeline does not call `BinderState::set_file_idx`
+                    // before binding). This keeps the Phase 1 stable-location
+                    // invariants consistent with `decl_file_idx`.
+                    let stamped = file_idx as u32;
+                    for stable in &mut updated.stable_declarations {
+                        stable.set_file_idx_if_unassigned(stamped);
+                    }
+                    updated
+                        .stable_value_declaration
+                        .set_file_idx_if_unassigned(stamped);
                     updated.exports = old_sym
                         .exports
                         .as_ref()
@@ -3149,7 +3190,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         file_locals_list.push(remapped_file_locals);
 
         let mut remapped_declaration_arenas: DeclarationArenaMap = FxHashMap::default();
-        for (&(old_sym_id, decl_idx), arenas) in &result.declaration_arenas {
+        for (&(old_sym_id, decl_idx), arenas) in result.declaration_arenas.iter() {
             if result.lib_symbol_ids.contains(&old_sym_id) {
                 continue;
             }
@@ -3273,11 +3314,23 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         &type_interner,
     ));
 
+    // Build the secondary `sym_to_decl_indices` index over the program-wide
+    // `declaration_arenas`. Checker paths that previously iterated every entry
+    // filtering by `entry_sym_id == sym_id` use this to do a point lookup.
+    let mut sym_to_decl_indices: SymToDeclIndicesMap = FxHashMap::default();
+    for &(sym_id, decl_idx) in declaration_arenas.keys() {
+        sym_to_decl_indices
+            .entry(sym_id)
+            .or_default()
+            .push(decl_idx);
+    }
+
     MergedProgram {
         files,
         symbols: global_symbols,
         symbol_arenas: Arc::new(symbol_arenas),
-        declaration_arenas,
+        declaration_arenas: Arc::new(declaration_arenas),
+        sym_to_decl_indices: Arc::new(sym_to_decl_indices),
         cross_file_node_symbols,
         globals,
         file_locals: file_locals_list,
@@ -3894,7 +3947,11 @@ fn build_lib_bound_file_for_interface_checks(
         );
     }
 
-    let mut declaration_arenas = program.declaration_arenas.clone();
+    // Deep-clone the program-wide `declaration_arenas` into a mutable map so
+    // we can add user-global-interface entries below. `program.declaration_arenas`
+    // is `Arc`-shared; dereferencing before `.clone()` produces an owned inner
+    // map without disturbing the shared data.
+    let mut declaration_arenas: DeclarationArenaMap = (*program.declaration_arenas).clone();
     add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
 
     BoundFile {
@@ -3911,7 +3968,7 @@ fn build_lib_bound_file_for_interface_checks(
         global_augmentations: FxHashMap::default(),
         module_augmentations: FxHashMap::default(),
         augmentation_target_modules: FxHashMap::default(),
-        flow_nodes: FlowNodeArena::default(),
+        flow_nodes: Arc::new(FlowNodeArena::default()),
         node_flow: FxHashMap::default(),
         switch_clause_to_switch: FxHashMap::default(),
         is_external_module: lib_file.binder.is_external_module,
@@ -4668,13 +4725,29 @@ impl SharedBinderData {
     }
 }
 
-/// Create a `BinderState` from a `BoundFile` for type checking
+/// Create a `BinderState` from a `BoundFile` for type checking.
+///
+/// This path is retained for tsz-core callers that want the legacy per-file
+/// subset of `declaration_arenas` (only non-local, non-lib-originated entries,
+/// as captured in `BoundFile.declaration_arenas`). The CLI driver uses its own
+/// path (`create_binder_from_bound_file_with_augmentations`) which shares the
+/// program-wide map via `Arc::clone` — see the perf follow-up doc §3.2.
 pub fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
-    let declaration_arenas = file.declaration_arenas.clone();
+    let declaration_arenas = Arc::new(file.declaration_arenas.clone());
+    // The per-file subset is small; build a local `sym_to_decl_indices` from it
+    // so consumers that go through the secondary index still see the same set.
+    let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
+    for &(sym_id, decl_idx) in declaration_arenas.keys() {
+        sym_to_decl_indices_local
+            .entry(sym_id)
+            .or_default()
+            .push(decl_idx);
+    }
+    let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
     let symbol_arenas = Arc::new(file.symbol_arenas.clone());
 
     // Get file locals for this specific file
@@ -4712,6 +4785,7 @@ pub fn create_binder_from_bound_file(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
@@ -4770,7 +4844,18 @@ pub fn create_binder_from_bound_file_with_shared(
     file_idx: usize,
     _shared: &SharedBinderData,
 ) -> BinderState {
-    let declaration_arenas = file.declaration_arenas.clone();
+    // Keep the legacy per-file subset behavior here (see `create_binder_from_bound_file`):
+    // these paths are used by `check_files_parallel` and tests that expect the
+    // binder's `declaration_arenas` to exclude lib-originated symbols.
+    let declaration_arenas = Arc::new(file.declaration_arenas.clone());
+    let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
+    for &(sym_id, decl_idx) in declaration_arenas.keys() {
+        sym_to_decl_indices_local
+            .entry(sym_id)
+            .or_default()
+            .push(decl_idx);
+    }
+    let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
     let symbol_arenas = Arc::new(file.symbol_arenas.clone());
 
     let mut file_locals = SymbolTable::new();
@@ -4803,6 +4888,7 @@ pub fn create_binder_from_bound_file_with_shared(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),

@@ -1834,11 +1834,26 @@ impl<'a> CheckerState<'a> {
                 let original_type = annotated_return_type.unwrap_or(return_type);
                 self.unwrap_promise_type(original_type)
                     .unwrap_or(return_type)
+            } else if is_async_for_context
+                && has_contextual_return
+                && return_context_for_circularity
+                    .is_some_and(|t| t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN)
+            {
+                // Contextually-typed async function (e.g., JSDoc @type or callback):
+                // use the contextual return type (already unwrapped from Promise)
+                // for body return-statement checking. This matches tsc's behavior
+                // where `return 0` in `async (): string => { return 0 }` is checked
+                // against `string`, not the inferred type.
+                return_context_for_circularity.expect("is_some_and guard ensures Some")
+            } else if is_async_for_context
+                && has_contextual_return
+                && return_context_for_circularity == Some(TypeId::VOID)
+            {
+                // Async void-return contextual callbacks are allowed to return values.
+                TypeId::ANY
             } else if is_async_for_context {
-                // For contextually-typed async functions (no explicit annotation),
-                // also unwrap Promise from the return type. For unions like
-                // Promise<T> | StateMachine<T>, unwrap each Promise member to get
-                // T | StateMachine<T> as the effective body return type.
+                // For non-contextually-typed async functions, unwrap Promise from
+                // the inferred return type for body checking.
                 self.unwrap_async_return_type_for_body(return_type)
             } else if contextual_void_return_exception {
                 // Contextual `() => void` callbacks are allowed to return values.

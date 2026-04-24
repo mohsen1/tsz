@@ -1054,3 +1054,61 @@ var a = M.Point;
         );
     }
 }
+
+#[cfg(test)]
+mod async_jsdoc_return_type_tests {
+    use crate::test_utils::check_js_source_diagnostics;
+
+    #[test]
+    fn async_block_body_jsdoc_return_mismatch_reports_at_return_statement() {
+        let source = r#"
+/** @type {function(): string} */
+const c = async () => {
+    return 0
+}
+"#;
+        let ts2322 = check_js_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(ts2322.len(), 1, "Expected exactly 1 TS2322: {ts2322:?}");
+        assert!(
+            ts2322[0].message_text.contains("'number'")
+                && ts2322[0].message_text.contains("'string'"),
+            "Expected 'number' not assignable to 'string', got: {}",
+            ts2322[0].message_text
+        );
+    }
+
+    #[test]
+    fn async_block_body_jsdoc_matching_return_no_ts2322() {
+        let source = r#"
+/** @type {function(): string} */
+const d = async () => {
+    return ""
+}
+"#;
+        let ts2322 = check_js_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2322.len(),
+            0,
+            "Expected no TS2322 when return matches declared type: {ts2322:?}"
+        );
+    }
+
+    #[test]
+    fn async_expression_body_jsdoc_return_mismatch() {
+        let source = r#"
+/** @type {function(): string} */
+const b = async () => 0
+"#;
+        let ts2322 = check_js_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2322)
+            .collect::<Vec<_>>();
+        assert_eq!(ts2322.len(), 1, "Expected exactly 1 TS2322: {ts2322:?}");
+    }
+}

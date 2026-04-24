@@ -1274,6 +1274,7 @@ pub(super) fn parse_diagnostic_to_checker(
 
 pub(super) fn filtered_parse_diagnostics(
     parse_diagnostics: &[ParseDiagnostic],
+    program_has_real_syntax_errors: bool,
 ) -> Vec<&ParseDiagnostic> {
     let has_real_syntax_error = parse_diagnostics
         .iter()
@@ -1311,7 +1312,13 @@ pub(super) fn filtered_parse_diagnostics(
             }
             // Suppress parser-emitted grammar codes that tsc would emit via
             // grammarErrorOnNode (checker-side, suppressed by hasParseDiagnostics).
-            if has_non_grammar_parse_error && is_parser_grammar_code(diagnostic.code) {
+            // This applies both per-file (when the current file has non-grammar errors)
+            // and program-wide (when any file in the program has real syntax errors).
+            // tsc's grammarErrorOnNode calls hasParseDiagnostics(sourceFile) which
+            // covers program-level parse errors; we mirror that behavior here.
+            if (has_non_grammar_parse_error || program_has_real_syntax_errors)
+                && is_parser_grammar_code(diagnostic.code)
+            {
                 return false;
             }
             // Suppress TS1359 for 'await' when other parse diagnostics exist.
@@ -1367,6 +1374,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
         | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
     )
@@ -1528,24 +1536,20 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
-    let mut declaration_arenas: tsz::binder::state::DeclarationArenaMap = program
-        .declaration_arenas
-        .iter()
-        .filter_map(|(&(sym_id, decl_idx), arenas)| {
-            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
-            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
-        })
-        .collect();
-    for (&(sym_id, decl_idx), arenas) in &file.declaration_arenas {
-        let target = declaration_arenas.entry((sym_id, decl_idx)).or_default();
-        for arena in arenas {
-            if !Arc::ptr_eq(arena, &file.arena)
-                && !target.iter().any(|existing| Arc::ptr_eq(existing, arena))
-            {
-                target.push(Arc::clone(arena));
-            }
-        }
-    }
+    // Share the program-wide `declaration_arenas` map via `Arc::clone` — O(1)
+    // instead of iterating the entire program-wide map per file and cloning
+    // matching entries. The previous filter kept ~99% of entries on large
+    // projects, so the per-file filtering was almost entirely wasted work:
+    // on a 6086-file project with ~100K declarations this was ~600M entry
+    // visits × a `SmallVec<[Arc<NodeArena>; 1]>` clone each.
+    //
+    // Consumers doing point lookups (~30 call sites) see the same data via
+    // `binder.declaration_arenas.get(&(sym_id, decl_idx))`. The three iter
+    // consumers that needed to enumerate every `NodeIndex` for a given
+    // `SymbolId` were rewritten to use the `sym_to_decl_indices` secondary
+    // index (point lookup) instead of a full `declaration_arenas` scan.
+    let declaration_arenas = Arc::clone(&program.declaration_arenas);
+    let sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
 
     // Share the program-wide symbol_arenas via Arc::clone — O(1) instead of
     // building a per-file filtered map. The previous filter dropped entries
@@ -1599,6 +1603,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             // Per-binder cross_file_node_symbols left empty intentionally.
             // The program-wide outer map is stored once on ProjectEnv and
             // read via `ctx.cross_file_node_symbols_for_arena`. Cloning
@@ -1607,7 +1612,13 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
-            flow_nodes: file.flow_nodes.clone(),
+            // Per-binder `flow_nodes` is an Arc clone (atomic increment)
+            // instead of a deep clone of the underlying `Vec<FlowNode>`.
+            // Each `FlowNode` owns a `Vec<FlowNodeId>` antecedents, so
+            // the previous deep clone was allocation-heavy; on large
+            // repos it was paid ~2× per file (cross-file lookup +
+            // per-file checking binder).
+            flow_nodes: Arc::clone(&file.flow_nodes),
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
@@ -1725,12 +1736,16 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             // into every file binder makes all_binders setup scale with total declarations.
             symbol_arenas: Default::default(),
             declaration_arenas: Default::default(),
+            sym_to_decl_indices: Default::default(),
             // See `create_binder_from_bound_file_with_augmentations` for
             // the rationale: the program-wide map lives on ProjectEnv.
             cross_file_node_symbols: Default::default(),
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: Default::default(),
-            flow_nodes: file.flow_nodes.clone(),
+            // Per-binder `flow_nodes` is an Arc clone; see
+            // `create_binder_from_bound_file_with_augmentations` for
+            // the rationale.
+            flow_nodes: Arc::clone(&file.flow_nodes),
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
@@ -2520,7 +2535,7 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             },
         ];
 
-        let filtered = filtered_parse_diagnostics(&diagnostics);
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
         let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&1359),
@@ -2544,7 +2559,7 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             code: 1359,
         }];
 
-        let filtered = filtered_parse_diagnostics(&diagnostics);
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
         let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&1359),
