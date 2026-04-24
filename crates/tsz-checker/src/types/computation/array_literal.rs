@@ -222,11 +222,13 @@ impl<'a> CheckerState<'a> {
                 return factory.tuple(vec![]);
             }
 
-            // Empty array literal: always never[] in strict mode, any[] otherwise.
-            // This matches tsc's checkArrayLiteral which unconditionally uses
-            // implicitNeverType for empty arrays in strict mode, regardless of
-            // contextual type. The contextual type does NOT affect the element type
-            // of an empty array literal — [] is always never[].
+            // Empty array literal element type depends on noImplicitAny and strictNullChecks:
+            //   - noImplicitAny OFF: any[] (tsc default for unannotated empty arrays)
+            //   - noImplicitAny ON + strictNullChecks ON: never[] (strict mode evolving array)
+            //   - noImplicitAny ON + strictNullChecks OFF (non-strict, TS files): never[]
+            //     In non-strict TS mode, the empty array starts as never[]. The element type
+            //     `never` is subsequently widened to `undefined` (then to `any`) only in
+            //     specific generator yield-type inference contexts (see dispatch_yield.rs).
             //
             // For operators like ||= and ??=, tsc uses UnionReduction.Subtype in
             // the result type computation, which removes never[] when a compatible
