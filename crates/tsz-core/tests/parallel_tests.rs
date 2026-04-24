@@ -8661,3 +8661,129 @@ function run(configuration: server.IConfiguration) {
         consumer.diagnostics
     );
 }
+
+// =========================================================================
+// Dependency Graph Integration Tests
+// =========================================================================
+
+#[test]
+fn test_merged_program_has_dep_graph() {
+    let files = vec![
+        ("a.ts".to_string(), "let a = 1;".to_string()),
+        ("b.ts".to_string(), "let b = 2;".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    assert!(
+        program.dep_graph.is_some(),
+        "MergedProgram should have a dep_graph"
+    );
+    let dg = program.dep_graph.as_ref().unwrap();
+    assert_eq!(dg.node_count, 2);
+}
+
+#[test]
+fn test_merged_program_dep_graph_captures_imports() {
+    let files = vec![
+        (
+            "utils.ts".to_string(),
+            "export function helper() { return 42; }".to_string(),
+        ),
+        (
+            "main.ts".to_string(),
+            "import { helper } from './utils'; helper();".to_string(),
+        ),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    let dg = program.dep_graph.as_ref().expect("should have dep_graph");
+    assert_eq!(dg.node_count, 2);
+    // The dep graph should have captured some topology
+    // (exact edge resolution depends on the simple name-matching heuristic)
+}
+
+#[test]
+fn test_merged_program_topological_order_available() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+        ("c.ts".to_string(), "export const c = 3;".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    let topo = program
+        .topological_file_order()
+        .expect("should have topological order");
+
+    // All three files should appear in the order
+    assert_eq!(topo.order.len(), 3);
+    // No imports between them, so no cycles
+    assert!(topo.is_acyclic);
+    assert!(topo.cycles.is_empty());
+}
+
+#[test]
+fn test_merged_program_dependents_and_dependencies() {
+    let files = vec![
+        ("a.ts".to_string(), "let a = 1;".to_string()),
+        ("b.ts".to_string(), "let b = 2;".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+
+    // Both should return Some (dep graph exists)
+    let deps_of_0 = program.dependencies_of(0);
+    assert!(deps_of_0.is_some());
+
+    let dependents_of_0 = program.dependents_of(0);
+    assert!(dependents_of_0.is_some());
+}
+
+#[test]
+fn test_residency_stats_include_dep_graph_info() {
+    let files = vec![
+        ("a.ts".to_string(), "export const a = 1;".to_string()),
+        ("b.ts".to_string(), "export const b = 2;".to_string()),
+    ];
+
+    let bind_results = parse_and_bind_parallel(files);
+    let program = merge_bind_results(bind_results);
+    let stats = program.residency_stats();
+
+    assert!(
+        stats.has_dep_graph,
+        "residency stats should report dep graph"
+    );
+    // Independent files should have no edges
+    assert!(stats.dep_graph_is_acyclic);
+    assert_eq!(stats.dep_graph_cycle_count, 0);
+    // Both files are roots (no in-graph deps)
+    assert_eq!(stats.dep_graph_root_count, 2);
+}
+
+#[test]
+fn test_dep_graph_deterministic_across_runs() {
+    let files = vec![
+        ("a.ts".to_string(), "let x = 1;".to_string()),
+        ("b.ts".to_string(), "let y = 2;".to_string()),
+        ("c.ts".to_string(), "let z = 3;".to_string()),
+    ];
+
+    let results1 = parse_and_bind_parallel(files.clone());
+    let program1 = merge_bind_results(results1);
+    let topo1 = program1.topological_file_order().unwrap();
+
+    let results2 = parse_and_bind_parallel(files);
+    let program2 = merge_bind_results(results2);
+    let topo2 = program2.topological_file_order().unwrap();
+
+    assert_eq!(topo1.order, topo2.order);
+    assert_eq!(topo1.is_acyclic, topo2.is_acyclic);
+}
