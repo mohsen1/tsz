@@ -1138,13 +1138,34 @@ impl BinderState {
     /// not already assigned by a multi-file merge). Lib symbols (tracked in
     /// `lib_symbol_ids`) are skipped to avoid overwriting their original
     /// file provenance.
+    ///
+    /// Also finalizes `StableLocation::file_idx` on every symbol's
+    /// `stable_declarations` and `stable_value_declaration`. During single-
+    /// file binding these stable locations are recorded with
+    /// `file_idx = u32::MAX`; this pass promotes them to the driver-assigned
+    /// index. This is Phase 1 plumbing for the
+    /// [global query graph architecture][plan]; the parallel `NodeIndex`
+    /// fields remain authoritative for existing consumers.
+    ///
+    /// [plan]: ../../../../docs/plan/global-query-graph-architecture.md
     fn stamp_file_idx(&mut self) {
         let idx = self.file_idx;
+        let lib_symbol_ids = &self.lib_symbol_ids;
 
         // Stamp symbols
         for sym in self.symbols.iter_mut() {
-            if sym.decl_file_idx == u32::MAX && !self.lib_symbol_ids.contains(&sym.id) {
+            let is_lib = lib_symbol_ids.contains(&sym.id);
+            if sym.decl_file_idx == u32::MAX && !is_lib {
                 sym.decl_file_idx = idx;
+            }
+            // Stable locations: only stamp entries that are still unassigned
+            // and only for non-lib symbols. Lib stable locations keep their
+            // own file provenance once it is assigned.
+            if !is_lib {
+                for stable in &mut sym.stable_declarations {
+                    stable.set_file_idx_if_unassigned(idx);
+                }
+                sym.stable_value_declaration.set_file_idx_if_unassigned(idx);
             }
         }
 
@@ -1679,7 +1700,20 @@ impl BinderState {
             if let Some(sym_id) = self.node_symbols.remove(&node.0)
                 && let Some(sym) = self.symbols.get_mut(sym_id)
             {
-                sym.declarations.retain(|decl| *decl != node);
+                // Keep `declarations` and `stable_declarations` in lockstep —
+                // they share a positional invariant established in
+                // `Symbol::add_declaration`.
+                let mut i = 0;
+                while i < sym.declarations.len() {
+                    if sym.declarations[i] == node {
+                        sym.declarations.remove(i);
+                        if i < sym.stable_declarations.len() {
+                            sym.stable_declarations.remove(i);
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
                 sym.first_declaration_span = sym
                     .declarations
                     .first()
@@ -1692,6 +1726,10 @@ impl BinderState {
                     } else {
                         None
                     };
+                    sym.stable_value_declaration = crate::symbols::StableLocation::from_span(
+                        self.file_idx,
+                        sym.value_declaration_span,
+                    );
                 }
             }
         }

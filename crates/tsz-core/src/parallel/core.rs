@@ -2940,6 +2940,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     updated.is_umd_export = old_sym.is_umd_export;
                     // Track which file this symbol was declared in for TDZ cross-file detection
                     updated.decl_file_idx = file_idx as u32;
+                    // Finalize file index on stable declaration locations that
+                    // were recorded by per-file binders with `u32::MAX` (the
+                    // parallel pipeline does not call `BinderState::set_file_idx`
+                    // before binding). This keeps the Phase 1 stable-location
+                    // invariants consistent with `decl_file_idx`.
+                    let stamped = file_idx as u32;
+                    for stable in &mut updated.stable_declarations {
+                        stable.set_file_idx_if_unassigned(stamped);
+                    }
+                    updated
+                        .stable_value_declaration
+                        .set_file_idx_if_unassigned(stamped);
                     updated.exports = old_sym
                         .exports
                         .as_ref()
