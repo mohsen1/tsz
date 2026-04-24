@@ -498,3 +498,122 @@ fn test_is_template_literal_contextual_type_union() {
     let plain_union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert!(!is_template_literal_contextual_type(&interner, plain_union));
 }
+
+// =========================================================================
+// BCT removeSubtypes fingerprint pre-filter tests
+// =========================================================================
+// These tests protect the property-name fingerprint optimisation in
+// `remove_subtypes_for_bct`. They verify that:
+//   (1) Legitimate structural subtype reductions are preserved.
+//   (2) Large "no-reduction" shapes still produce the full union, and
+//       the optimisation does not drop members or spuriously declare
+//       subtype relationships that the full SubtypeChecker would reject.
+
+#[test]
+fn test_bct_disjoint_objects_preserved_after_fingerprint_prefilter() {
+    // Five objects with pairwise-disjoint required property sets. None is a
+    // structural subtype of any other, so the result must be the full
+    // 5-element union. Prior to the fingerprint pre-filter the
+    // SubtypeChecker would run 20 pairwise checks; afterwards the checker
+    // is skipped entirely. Either way the union must contain all five.
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let names: Vec<_> = ["a", "b", "c", "d", "e"]
+        .iter()
+        .map(|n| interner.intern_string(n))
+        .collect();
+    let candidates: Vec<TypeId> = names
+        .iter()
+        .map(|&n| interner.object(vec![PropertyInfo::new(n, TypeId::NUMBER)]))
+        .collect();
+
+    let result = compute_best_common_type::<NoopResolver>(&interner, &candidates, None);
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    assert_eq!(
+        members.len(),
+        candidates.len(),
+        "disjoint objects must be preserved"
+    );
+    for candidate in &candidates {
+        assert!(
+            members.contains(candidate),
+            "candidate missing from union after BCT reduction"
+        );
+    }
+}
+
+#[test]
+fn test_bct_structural_subtype_still_removed_via_fingerprint() {
+    // Narrow `{a, b}` <: Wide `{a}`. Fingerprint pre-filter says "narrow covers
+    // wide" (narrow has every required name of wide), so the full
+    // SubtypeChecker runs and confirms narrow is a subtype. The reduction
+    // must remove `narrow` from the final union.
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let name_a = interner.intern_string("a");
+    let name_b = interner.intern_string("b");
+    let name_c = interner.intern_string("c");
+
+    let wide = interner.object(vec![PropertyInfo::new(name_a, TypeId::NUMBER)]);
+    let narrow = interner.object(vec![
+        PropertyInfo::new(name_a, TypeId::NUMBER),
+        PropertyInfo::new(name_b, TypeId::STRING),
+    ]);
+    let unrelated = interner.object(vec![PropertyInfo::new(name_c, TypeId::BOOLEAN)]);
+
+    let result =
+        compute_best_common_type::<NoopResolver>(&interner, &[wide, narrow, unrelated], None);
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    assert_eq!(
+        members.len(),
+        2,
+        "narrow must be removed by structural subtype reduction: {members:?}"
+    );
+    assert!(members.contains(&wide));
+    assert!(members.contains(&unrelated));
+    assert!(!members.contains(&narrow));
+}
+
+#[test]
+fn test_bct_optional_target_name_does_not_gate_prefilter() {
+    // When the target's missing name is *optional*, the fingerprint pre-filter
+    // must still allow the pair to reach the SubtypeChecker. A source
+    // `{a}` remains a valid subtype of target `{a, b?}` because `b` is
+    // optional. The fingerprint drops optional names on the target side, so
+    // the pre-filter sees only the required `{a}` → `{a}` relation and
+    // defers to the SubtypeChecker which confirms the subtype.
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let name_a = interner.intern_string("a");
+    let name_b = interner.intern_string("b");
+
+    let source = interner.object(vec![PropertyInfo::new(name_a, TypeId::NUMBER)]);
+    let mut b_prop = PropertyInfo::new(name_b, TypeId::STRING);
+    b_prop.optional = true;
+    let target_with_opt = interner.object(vec![PropertyInfo::new(name_a, TypeId::NUMBER), b_prop]);
+    let unrelated = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("z"),
+        TypeId::BOOLEAN,
+    )]);
+
+    let result = compute_best_common_type::<NoopResolver>(
+        &interner,
+        &[source, target_with_opt, unrelated],
+        None,
+    );
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    // `target_with_opt` requires only `a`, which `source` has. So
+    // `target_with_opt <: source`, and we expect the reduction to remove
+    // `target_with_opt` (or `source`) while keeping `unrelated`.
+    assert!(
+        members.len() < 3,
+        "expected subtype reduction to remove at least one of source/target_with_opt: {members:?}"
+    );
+    assert!(members.contains(&unrelated));
+}

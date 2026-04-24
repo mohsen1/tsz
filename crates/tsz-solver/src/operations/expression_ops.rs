@@ -629,6 +629,35 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
     }
     let mut keep = vec![true; len];
 
+    // PERF: pre-compute per-type property-name fingerprints.
+    //
+    // For object-like candidates (Object, ObjectWithIndex, and class instance
+    // types reached through Lazy(DefId)), a required property on the target
+    // that the source lacks *cannot* be satisfied by any subtype check. This
+    // lets us skip the expensive SubtypeChecker call for the common BCT
+    // pattern where N sibling classes share no structurally-covering pairs.
+    //
+    // Guarantees preserved:
+    // - The fingerprint is `None` for types we can't cheaply analyse (e.g.
+    //   unresolved Lazy, generic applications, unions/intersections), so the
+    //   SubtypeChecker fallback runs exactly as before.
+    // - A positive result from `source_covers_target_names` never short-
+    //   circuits to `true` — we still defer to the full subtype check. Only a
+    //   definitive negative ("target has a required name source lacks") skips
+    //   the call and keeps the pair in the union, which is semantically
+    //   conservative (matches tsc when `remove_subtypes_for_bct` is capped).
+    let fingerprints: Vec<Option<TypeNameFingerprint>> = types
+        .iter()
+        .map(|&ty| compute_type_name_fingerprint(interner, ty, resolver))
+        .collect();
+
+    let bct_subtype_skip = |src_idx: usize, tgt_idx: usize| -> bool {
+        match (&fingerprints[src_idx], &fingerprints[tgt_idx]) {
+            (Some(src), Some(tgt)) => !source_covers_target_names(src, tgt),
+            _ => false,
+        }
+    };
+
     if let Some(res) = resolver {
         let mut checker = SubtypeChecker::with_resolver(interner, res);
         for i in 0..len {
@@ -637,6 +666,9 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
             }
             for j in 0..len {
                 if i == j || !keep[j] {
+                    continue;
+                }
+                if bct_subtype_skip(i, j) {
                     continue;
                 }
                 checker.guard.reset();
@@ -657,6 +689,9 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
                 if i == j || !keep[j] {
                     continue;
                 }
+                if bct_subtype_skip(i, j) {
+                    continue;
+                }
                 checker.guard.reset();
                 if checker.is_subtype_of(types[i], types[j]) {
                     keep[i] = false;
@@ -672,6 +707,88 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         .filter(|&(_, &k)| k)
         .map(|(&t, _)| t)
         .collect()
+}
+
+/// Cheap per-type summary used by `remove_subtypes_for_bct` to skip pairs
+/// that can never be in a subtype relation.
+///
+/// `required_names` is the sorted list of **non-optional** property name atoms
+/// exposed by the type. `has_string_index` / `has_number_index` track whether
+/// the type exposes index signatures (which absorb any missing names, making
+/// the fingerprint check inconclusive on the *source* side).
+struct TypeNameFingerprint {
+    required_names: Vec<Atom>,
+    has_string_index: bool,
+    has_number_index: bool,
+}
+
+fn source_covers_target_names(src: &TypeNameFingerprint, tgt: &TypeNameFingerprint) -> bool {
+    // Source-side index signatures or missing fingerprint info are conservatively
+    // "may cover" — fall through to the full subtype check.
+    if src.has_string_index || src.has_number_index {
+        return true;
+    }
+    // Target-side required names missing from source disprove the subtype
+    // relation. Both lists are sorted, so a linear merge is O(|src| + |tgt|).
+    let (mut si, mut ti) = (0usize, 0usize);
+    while ti < tgt.required_names.len() {
+        let want = tgt.required_names[ti];
+        while si < src.required_names.len() && src.required_names[si] < want {
+            si += 1;
+        }
+        if si >= src.required_names.len() || src.required_names[si] != want {
+            return false;
+        }
+        ti += 1;
+    }
+    true
+}
+
+fn compute_type_name_fingerprint<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    ty: TypeId,
+    resolver: Option<&R>,
+) -> Option<TypeNameFingerprint> {
+    // Follow a single Lazy(DefId) redirect to the resolved instance type. We
+    // deliberately do NOT recurse through multiple redirects or apply generic
+    // substitutions here — the goal is a cheap, always-correct pre-filter.
+    let resolved = match interner.lookup(ty)? {
+        TypeData::Lazy(def_id) => match resolver.and_then(|r| r.resolve_lazy(def_id, interner)) {
+            Some(r) if r != ty => r,
+            _ => return None,
+        },
+        _ => ty,
+    };
+
+    let (props, has_string, has_number) = match interner.lookup(resolved)? {
+        TypeData::Object(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            (shape.properties.clone(), false, false)
+        }
+        TypeData::ObjectWithIndex(shape_id) => {
+            let shape = interner.object_shape(shape_id);
+            (
+                shape.properties.clone(),
+                shape.string_index.is_some(),
+                shape.number_index.is_some(),
+            )
+        }
+        _ => return None,
+    };
+
+    let mut required_names: Vec<Atom> = props
+        .iter()
+        .filter(|p| !p.optional)
+        .map(|p| p.name)
+        .collect();
+    required_names.sort_unstable();
+    required_names.dedup();
+
+    Some(TypeNameFingerprint {
+        required_names,
+        has_string_index: has_string,
+        has_number_index: has_number,
+    })
 }
 
 fn is_constructor_like<R: TypeResolver>(
