@@ -569,6 +569,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let idx_priority = crate::types::InferencePriority::MappedType;
 
         for (i, prop) in source_props.iter().enumerate() {
+            // Skip symbol-keyed properties (stored with "__unique_" prefix).
+            // Symbol-keyed properties are NOT accessible via string or numeric index
+            // signatures, so they must not contribute to index-signature inference.
+            // e.g. `{ [sym]?: true }` must not add `true` as a candidate for T
+            // when inferring against `{ [s: string]: T }`.
+            let prop_name_str = self.interner.resolve_atom(prop.name);
+            if prop_name_str.starts_with("__unique_") {
+                continue;
+            }
+
             // For optional properties, strip `undefined` from the type before contributing
             // to index signature inference. When inferring T from `{ a: string, b?: number }`
             // against `{ [x: string]: T }`, tsc infers T = string | number (not

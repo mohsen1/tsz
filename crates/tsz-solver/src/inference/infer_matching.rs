@@ -439,8 +439,19 @@ impl<'a> InferenceContext<'a> {
                 //
                 // Named class/interface instance types are excluded — they must
                 // declare an explicit index signature.
+                //
+                // Symbol-keyed properties (stored with "__unique_" prefix) must be
+                // excluded: they do not participate in string index signatures.
+                // e.g. `{ [sym]?: true }` should not contribute `true` when inferring
+                // T from `{ [s: string]: T }`.
                 if has_implicit_index && !source_shape.properties.is_empty() {
                     for p in &source_shape.properties {
+                        // Skip symbol-keyed properties — they are not reachable via
+                        // a string index and must not pollute string-index inference.
+                        let prop_name_str = self.interner.resolve_atom(p.name);
+                        if prop_name_str.starts_with("__unique_") {
+                            continue;
+                        }
                         // For optional properties, strip `undefined` from optionality.
                         // tsc: `{ a: string, b?: number }` infers T as `string | number`
                         // (not `string | number | undefined`).
@@ -549,11 +560,20 @@ impl<'a> InferenceContext<'a> {
             None
         };
 
-        if !source.properties.is_empty() {
+        // Collect only string/number-named properties for mapped-type inference.
+        // Symbol-keyed properties (stored with "__unique_" prefix) must be excluded:
+        // they do not participate in string/number key spaces and must not
+        // contribute to constraint (`K`) or template (`T`) inference.
+        let string_named_props: Vec<_> = source
+            .properties
+            .iter()
+            .filter(|p| !self.interner.resolve_atom(p.name).starts_with("__unique_"))
+            .collect();
+
+        if !string_named_props.is_empty() {
             // Infer the constraint type (K) from the union of source property names
             // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
-            let name_literals: Vec<TypeId> = source
-                .properties
+            let name_literals: Vec<TypeId> = string_named_props
                 .iter()
                 .map(|p| self.interner.literal_string_atom(p.name))
                 .collect();
@@ -571,7 +591,7 @@ impl<'a> InferenceContext<'a> {
             // contribute a different type for T, the result should be their union
             // (e.g., Box<number> | Box<string> | Box<boolean>), not a single "best" type.
             let template_priority = InferencePriority::MappedType;
-            for prop in &source.properties {
+            for prop in &string_named_props {
                 let key_literal = self.interner.literal_string_atom(prop.name);
                 let subst = TypeSubstitution::single(mapped.type_param.name, key_literal);
                 let instantiated_template =
