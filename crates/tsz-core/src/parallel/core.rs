@@ -527,8 +527,16 @@ pub struct BindResult {
     pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`)
     pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// can share the underlying `FlowNodeArena` via `Arc::clone` (atomic
+    /// increment) instead of deep-cloning `Vec<FlowNode>` — each
+    /// `FlowNode` owns a `Vec<FlowNodeId>` antecedents, so the deep clone
+    /// was allocation-heavy on large projects. Mutations during binding
+    /// go through `Arc::make_mut` (free when refcount=1, the case during
+    /// a single file's binding).
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
@@ -1407,8 +1415,16 @@ pub struct BoundFile {
     pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
     /// Maps symbols declared inside module augmentation blocks to their target module specifier
     pub augmentation_target_modules: FxHashMap<SymbolId, String>,
-    /// Flow nodes for control flow analysis
-    pub flow_nodes: FlowNodeArena,
+    /// Flow nodes for control flow analysis.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver can
+    /// share this file's flow graph via `Arc::clone` (atomic increment)
+    /// instead of deep-cloning the underlying `Vec<FlowNode>` (each
+    /// `FlowNode` owns a `Vec<FlowNodeId>` antecedents). The driver builds
+    /// ~2×N per-file binders (cross-file lookup + per-file checking), so
+    /// on N-file projects this previously cost 2N deep clones of the
+    /// per-file flow graph.
+    pub flow_nodes: Arc<FlowNodeArena>,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
@@ -3940,7 +3956,7 @@ fn build_lib_bound_file_for_interface_checks(
         global_augmentations: FxHashMap::default(),
         module_augmentations: FxHashMap::default(),
         augmentation_target_modules: FxHashMap::default(),
-        flow_nodes: FlowNodeArena::default(),
+        flow_nodes: Arc::new(FlowNodeArena::default()),
         node_flow: FxHashMap::default(),
         switch_clause_to_switch: FxHashMap::default(),
         is_external_module: lib_file.binder.is_external_module,

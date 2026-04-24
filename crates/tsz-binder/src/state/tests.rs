@@ -6520,3 +6520,47 @@ fn arena_for_declaration_or_falls_back_when_unmapped() {
     // Helper matches the explicit Option-collapsing expression it replaces.
     assert!(binder.get_arena_for_declaration(sym_id, decl_idx).is_none());
 }
+
+#[test]
+fn flow_nodes_arc_share_is_zero_copy() {
+    // After binding, `BinderState.flow_nodes` is an `Arc<FlowNodeArena>`.
+    // Cloning the Arc to model the per-file binder reconstruction path
+    // (`flow_nodes: Arc::clone(&file.flow_nodes)` in
+    //  `check_utils::create_binder_from_bound_file_with_augmentations`)
+    // must be a pointer-equality share — no deep clone of the underlying
+    // `Vec<FlowNode>`. This is the invariant that saves ~2N deep clones
+    // on N-file projects.
+    let source = r"
+        function foo(x: number | string) {
+            if (typeof x === 'string') {
+                return x.length;
+            }
+            return x + 1;
+        }
+    ";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // Sanity: binding produced multiple flow nodes (START, assignment,
+    // conditions, branch labels) for the control flow graph.
+    assert!(
+        binder.flow_nodes.len() > 3,
+        "expected multiple flow nodes for the narrowing example, got {}",
+        binder.flow_nodes.len()
+    );
+
+    // Cloning the Arc must be zero-copy: the inner pointer stays identical,
+    // and the strong count increases to 2 (original + clone).
+    assert_eq!(Arc::strong_count(&binder.flow_nodes), 1);
+    let shared = Arc::clone(&binder.flow_nodes);
+    assert_eq!(Arc::strong_count(&binder.flow_nodes), 2);
+    assert!(Arc::ptr_eq(&binder.flow_nodes, &shared));
+
+    // Read semantics still work through `Deref` — iterator count must
+    // match `.len()` without any materialization of a new arena.
+    assert_eq!(shared.iter().count(), binder.flow_nodes.len());
+    assert_eq!(shared.len(), binder.flow_nodes.len());
+}
