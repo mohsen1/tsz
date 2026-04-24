@@ -8,7 +8,28 @@ use super::ModuleResolver;
 use super::request_types::{ModuleExtension, PackageType};
 use crate::config::ModuleResolutionKind;
 use crate::module_resolver_helpers::*;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// Collapse `.` and `..` segments without touching the filesystem. Used to
+/// keep resolved paths stable with the project-level file graph (which keys
+/// files by their canonical textual form).
+fn normalize_path_segments(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            Component::RootDir | Component::Normal(_) | Component::Prefix(_) => {
+                out.push(component.as_os_str());
+            }
+        }
+    }
+    out
+}
 
 impl ModuleResolver {
     // =========================================================================
@@ -184,16 +205,38 @@ impl ModuleResolver {
         if !path.is_dir() {
             return None;
         }
+        // Collapse `.`/`..` segments up front. Without this, a relative
+        // directory import like `../` joined inside typesVersions subfolders
+        // produces resolved paths with embedded `..` (e.g. `ts3.1/../ts3.1/..`)
+        // which the project file graph fails to match against the canonical
+        // spelling, manifesting as spurious TS2307s on re-exports.
+        let normalized = normalize_path_segments(path);
+        let path = normalized.as_path();
 
         let package_json_path = path.join("package.json");
         if package_json_path.exists()
             && let Ok(pj) = self.read_package_json(&package_json_path)
         {
-            if let Some(types) = pj
+            let types = pj
                 .types
-                .or(pj.typings)
-                .filter(|types| !types.trim().is_empty())
-            {
+                .clone()
+                .or_else(|| pj.typings.clone())
+                .filter(|types| !types.trim().is_empty());
+
+            // Apply typesVersions before the bare types/typings path. tsc's
+            // loadNodeModuleFromDirectoryWorker consults typesVersions when
+            // resolving a directory via package.json, matching the types field
+            // value (defaulting to "index") as the subpath. Without this, a
+            // relative import like `../` into a package with typesVersions
+            // bypasses the redirect, producing a divergent resolution from tsc.
+            if let Some(types_versions) = &pj.types_versions {
+                let subpath = types.as_deref().unwrap_or("index");
+                if let Some(resolved) = self.resolve_types_versions(path, subpath, types_versions) {
+                    return Some(resolved);
+                }
+            }
+
+            if let Some(types) = types {
                 let types_path = path.join(&types);
                 if let Some(resolved) = self.try_types_entry(&types_path) {
                     return Some(resolved);
