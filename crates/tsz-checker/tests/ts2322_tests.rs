@@ -4143,3 +4143,60 @@ u2.email = e;
         "Expected TS2412 for exact-optional property write mismatch, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn destructuring_var_decl_with_type_annotation_elaborates_object_literal_properties() {
+    // tsc reports per-property TS2322 errors when a destructuring variable declaration
+    // has a type annotation and the object literal initializer has individual property
+    // type mismatches. Each error is anchored at the property name inside the RHS
+    // object literal (matching tsc's elaboration behavior).
+    // e.g. `var {a1, a2}: { a1: number, a2: string } = { a1: true, a2: 1 }`
+    // should report TWO errors (one for a1, one for a2), NOT one whole-type error.
+    let source = r#"var {a1, a2}: { a1: number, a2: string } = { a1: true, a2: 1 };"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected two TS2322 errors (one per mismatched property), got: {diagnostics:?}"
+    );
+
+    // tsc anchors each error at the property name inside the RHS object literal.
+    // `{ a1: true, a2: 1 }` — errors at `a1` and `a2` property names.
+    // (same positions as tsc col 46 and col 56 in the conformance test)
+    let rhs_a1_pos = source
+        .find("{ a1: true")
+        .map(|p| p + 2) // skip "{ ", point at 'a'
+        .expect("RHS a1 property") as u32;
+    let rhs_a2_pos = source.find("a2: 1").expect("RHS a2 property") as u32;
+
+    assert!(
+        ts2322.iter().any(|d| d.start == rhs_a1_pos),
+        "Expected TS2322 anchored at RHS 'a1' property name (pos {rhs_a1_pos}), got starts: {:?}",
+        ts2322.iter().map(|d| d.start).collect::<Vec<_>>()
+    );
+    assert!(
+        ts2322.iter().any(|d| d.start == rhs_a2_pos),
+        "Expected TS2322 anchored at RHS 'a2' property name (pos {rhs_a2_pos}), got starts: {:?}",
+        ts2322.iter().map(|d| d.start).collect::<Vec<_>>()
+    );
+
+    // Check messages
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text.contains("'boolean'") && d.message_text.contains("'number'")),
+        "Expected 'boolean' not assignable to 'number' message. Got: {ts2322:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text.contains("'number'") && d.message_text.contains("'string'")),
+        "Expected 'number' not assignable to 'string' message. Got: {ts2322:?}"
+    );
+}
