@@ -715,8 +715,18 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        // Mutate the top-level diagnostic to be TS1360
-        let src_str = self.format_type_for_assignability_message(source);
+        // Mutate the top-level diagnostic to be TS1360.
+        // When the target is not literal-sensitive (e.g. `1 satisfies boolean`),
+        // widen a bare literal source for display to match tsc, which reports
+        // `Type 'number' does not satisfy the expected type 'boolean'.`
+        // (tsc's `typeToString` widens fresh literal primitives when the target
+        // type does not preserve literal display.)
+        let display_source = if self.is_literal_sensitive_assignment_target(target) {
+            source
+        } else {
+            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source)
+        };
+        let src_str = self.format_type_for_assignability_message(display_source);
         let tgt_str = self.format_type_for_assignability_message(target);
         use tsz_common::diagnostics::data::diagnostic_codes;
         use tsz_common::diagnostics::data::diagnostic_messages;

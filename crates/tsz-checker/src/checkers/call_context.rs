@@ -845,6 +845,28 @@ impl<'a> CheckerState<'a> {
         self.suppress_generic_return_context_for_direct_arg_overlap(&shape, args)
     }
 
+    /// Whether a node is a direct literal expression (numeric/string/boolean/bigint/null
+    /// keyword or no-substitution template). Used by `satisfies` handling to avoid
+    /// widening leaf literals via contextual typing, matching tsc's
+    /// `checkSatisfiesExpressionWorker` which returns fresh literal types from
+    /// `checkNumericLiteral`/`checkStringLiteral` etc. regardless of contextual type.
+    pub(crate) fn is_direct_literal_expression(&self, idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        matches!(
+            node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        )
+    }
+
     /// Whether an argument node needs contextual typing from the callee signature.
     ///
     /// Literal expressions need contextual typing to preserve literal types when
