@@ -443,6 +443,17 @@ pub(super) fn collect_diagnostics(
         let file_names: Vec<String> = program.files.iter().map(|f| f.file_name.clone()).collect();
         build_duplicate_package_redirects(&file_names, options)
     };
+    // Phase 2 step 1: route the module-resolver's ambient-module check through
+    // `SkeletonIndex` when present. The skeleton already captured both
+    // `declared_modules` and `shorthand_ambient_modules` during the parallel
+    // bind phase (see `crates/tsz-core/src/parallel/skeleton.rs`), so this
+    // consumer no longer needs `MergedProgram.{declared,shorthand_ambient}_modules`
+    // to answer the lookup. The legacy fields remain as a fallback for the
+    // small-project / sequential path where no skeleton is computed.
+    //
+    // This is consumer-side only: `MergedProgram` retains both fields unchanged.
+    let skeleton_for_ambient: Option<&tsz::parallel::SkeletonIndex> =
+        program.skeleton_index.as_ref();
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -487,6 +498,11 @@ pub(super) fn collect_diagnostics(
                         )
                     },
                     |spec| {
+                        // Skeleton-first: served entirely from skeleton data when present.
+                        if let Some(idx) = skeleton_for_ambient {
+                            return idx.is_ambient_module(spec);
+                        }
+                        // Fallback: legacy MergedProgram fields (no skeleton case).
                         program.declared_modules.contains(spec)
                             || program.shorthand_ambient_modules.contains(spec)
                     },
