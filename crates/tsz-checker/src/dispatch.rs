@@ -1016,10 +1016,41 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         } else {
                             request.read().normal_origin().contextual_opt(None)
                         };
+                        // For `satisfies` expressions, preserve literal types in the inner
+                        // expression to match tsc's `checkSatisfiesExpressionWorker`, which
+                        // returns fresh literal types from `checkNumericLiteral` /
+                        // `checkStringLiteral` etc. regardless of contextual typing.
+                        // Without this, a bare literal like `1 satisfies number` would
+                        // get widened to `number` by the contextual-typing widening path,
+                        // producing `Type 'number' is not assignable to 'true'` for
+                        // `const x: true = 1 satisfies number` where tsc says `Type '1'`.
+                        //
+                        // We only preserve the TOP-LEVEL literal: if the operand is a
+                        // direct literal expression, disable literal widening while
+                        // checking it. For compound expressions (object/array literals,
+                        // arrows, etc.) we keep the existing behavior so nested property
+                        // values still widen under their own contextual typing rules
+                        // (matching tsc's `checkPropertyAssignment` widening).
+                        let is_satisfies = k == syntax_kind_ext::SATISFIES_EXPRESSION;
+                        let preserve_for_satisfies = is_satisfies && {
+                            let inner = self
+                                .checker
+                                .ctx
+                                .arena
+                                .skip_parenthesized_and_assertions(assertion.expression);
+                            self.checker.is_direct_literal_expression(inner)
+                        };
+                        let prev_preserve_literals = self.checker.ctx.preserve_literal_types;
+                        if preserve_for_satisfies {
+                            self.checker.ctx.preserve_literal_types = true;
+                        }
                         // Always type-check the expression for side effects / diagnostics.
                         let expr_type = self
                             .checker
                             .get_type_of_node_with_request(assertion.expression, &request);
+                        if preserve_for_satisfies {
+                            self.checker.ctx.preserve_literal_types = prev_preserve_literals;
+                        }
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // TS8037: Type satisfaction expressions can only be used in TypeScript files

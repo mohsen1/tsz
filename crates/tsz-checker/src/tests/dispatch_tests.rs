@@ -2065,3 +2065,95 @@ declare class RC<T extends "a" | "b"> {
         ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn satisfies_preserves_literal_type_for_direct_literal() {
+    // `1 satisfies number` should have type `1` (preserved), not `number` (widened).
+    // tsc: `checkSatisfiesExpressionWorker` calls `checkExpression` which returns
+    // fresh literal types from `checkNumericLiteral` regardless of contextual type.
+    // Assignment to a literal target `true` then shows source `'1'`, not `'number'`.
+    let diags = check_source_diagnostics(
+        r#"
+const a: true = 1 satisfies number;
+const b: true = "foo" satisfies string;
+const c: 2 = 1 satisfies number;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "Expected 3 TS2322 errors for satisfies literal assignments, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    // All three should preserve the source literal in the diagnostic (not widen).
+    assert!(
+        ts2322[0].message_text.contains("Type '1'"),
+        "Expected `Type '1'` preserved for `1 satisfies number`, got: {}",
+        ts2322[0].message_text
+    );
+    assert!(
+        ts2322[1].message_text.contains("Type '\"foo\"'"),
+        "Expected `Type '\"foo\"'` preserved for `\"foo\" satisfies string`, got: {}",
+        ts2322[1].message_text
+    );
+    assert!(
+        ts2322[2].message_text.contains("Type '1'"),
+        "Expected `Type '1'` preserved for `1 satisfies number` assigned to `2`, got: {}",
+        ts2322[2].message_text
+    );
+}
+
+#[test]
+fn satisfies_widens_source_for_ts1360_when_target_is_primitive() {
+    // For TS1360 (`Type X does not satisfy the expected type Y`), when Y is not a
+    // literal-sensitive type (e.g. `boolean`, `number`), tsc widens a bare literal
+    // source for display: `Type 'number' does not satisfy the expected type 'boolean'.`
+    // This preserves our existing match with tsc even though the internal type
+    // of `1 satisfies boolean` is now `1` (preserved literal) rather than `number`.
+    let diags = check_source_diagnostics(
+        r#"
+const x = 1 satisfies boolean;
+"#,
+    );
+    let ts1360: Vec<_> = diags.iter().filter(|d| d.code == 1360).collect();
+    assert_eq!(
+        ts1360.len(),
+        1,
+        "Expected 1 TS1360 error for `1 satisfies boolean`, got: {:?}",
+        ts1360.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+    assert!(
+        ts1360[0].message_text.contains("Type 'number'"),
+        "Expected source widened to 'number' in TS1360 message (target is non-literal `boolean`), got: {}",
+        ts1360[0].message_text
+    );
+    assert!(
+        ts1360[0].message_text.contains("'boolean'"),
+        "Expected target `boolean` in TS1360 message, got: {}",
+        ts1360[0].message_text
+    );
+}
+
+#[test]
+fn satisfies_result_type_is_assignable_to_target_literal_union() {
+    // `"A" satisfies string` should have type `"A"` so it remains assignable to
+    // a parameter of type `"A" | "B"`. Widening to `string` (the previous
+    // behavior) would produce a false TS2345.
+    let diags = check_source_diagnostics(
+        r#"
+declare function fn(s: "A" | "B"): void;
+fn("A" satisfies string);
+fn("C" satisfies string);
+"#,
+    );
+    // First call should succeed; second should fail with TS2345 (string literal
+    // "C" is not assignable to "A" | "B").
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected exactly 1 TS2345 for the `\"C\"` call (not the `\"A\"` call), got: {:?}",
+        ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
