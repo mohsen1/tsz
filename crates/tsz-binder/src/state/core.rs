@@ -185,7 +185,8 @@ impl BinderState {
             node_symbols: FxHashMap::with_capacity_and_hasher(256, Default::default()),
             module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: Arc::new(FxHashMap::default()),
-            declaration_arenas: FxHashMap::default(),
+            declaration_arenas: Arc::new(FxHashMap::default()),
+            sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::with_capacity_and_hasher(128, Default::default()),
             top_level_flow: FxHashMap::default(),
@@ -251,7 +252,8 @@ impl BinderState {
         self.node_symbols.clear();
         self.module_declaration_exports_publicly.clear();
         Arc::make_mut(&mut self.symbol_arenas).clear();
-        self.declaration_arenas.clear();
+        Arc::make_mut(&mut self.declaration_arenas).clear();
+        Arc::make_mut(&mut self.sym_to_decl_indices).clear();
         self.cross_file_node_symbols.clear();
         self.node_flow.clear();
         self.top_level_flow.clear();
@@ -422,7 +424,8 @@ impl BinderState {
             node_symbols,
             module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: Arc::new(FxHashMap::default()),
-            declaration_arenas: FxHashMap::default(),
+            declaration_arenas: Arc::new(FxHashMap::default()),
+            sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: FxHashMap::default(),
             top_level_flow: FxHashMap::default(),
@@ -511,6 +514,7 @@ impl BinderState {
             wildcard_reexports_type_only,
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols,
             shorthand_ambient_modules,
             modules_with_export_equals,
@@ -546,6 +550,7 @@ impl BinderState {
             module_declaration_exports_publicly,
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             cross_file_node_symbols,
             node_flow,
             top_level_flow: FxHashMap::default(),
