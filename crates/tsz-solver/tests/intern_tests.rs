@@ -1595,3 +1595,28 @@ fn test_interner_intersection_three_unions_divergent_accessors() {
         "(string|number) & (\"hello\"|number) & (\"hello\"|boolean) should reduce to \"hello\""
     );
 }
+
+#[test]
+fn test_string_intrinsic_same_kind_collapsed() {
+    let interner = TypeInterner::new();
+
+    // Create Uppercase<string>
+    let upper_string = interner.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
+
+    // Create Uppercase<Uppercase<string>> - should collapse to Uppercase<string>
+    let upper_upper_string =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, upper_string);
+
+    assert_eq!(
+        upper_upper_string, upper_string,
+        "Uppercase<Uppercase<string>> should collapse to Uppercase<string>"
+    );
+
+    // Different kinds should NOT collapse
+    let lower_upper_string =
+        interner.string_intrinsic(StringIntrinsicKind::Lowercase, upper_string);
+    assert_ne!(
+        lower_upper_string, upper_string,
+        "Lowercase<Uppercase<string>> should NOT collapse"
+    );
+}
