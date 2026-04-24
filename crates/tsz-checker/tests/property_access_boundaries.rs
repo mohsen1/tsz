@@ -124,3 +124,82 @@ fn type_has_property_query() {
     assert!(type_has_property(&types, obj, "x"));
     assert!(!type_has_property(&types, obj, "y"));
 }
+
+#[test]
+fn type_has_property_union_requires_all_members() {
+    let types = TypeInterner::new();
+
+    let name_atom = types.intern_string("name");
+    let age_atom = types.intern_string("age");
+
+    let obj_with_name = types.object(vec![tsz_solver::PropertyInfo {
+        name: name_atom,
+        type_id: TypeId::STRING,
+        ..Default::default()
+    }]);
+    let obj_with_both = types.object(vec![
+        tsz_solver::PropertyInfo {
+            name: name_atom,
+            type_id: TypeId::STRING,
+            ..Default::default()
+        },
+        tsz_solver::PropertyInfo {
+            name: age_atom,
+            type_id: TypeId::NUMBER,
+            ..Default::default()
+        },
+    ]);
+
+    let union_type = types.union(vec![obj_with_name, obj_with_both]);
+    assert!(type_has_property(&types, union_type, "name"));
+    assert!(!type_has_property(&types, union_type, "age"));
+    assert!(!type_has_property(&types, union_type, "missing"));
+}
+
+#[test]
+fn tuple_element_union_and_array_element_type() {
+    let types = TypeInterner::new();
+
+    let single = types.tuple(vec![TupleElement {
+        type_id: TypeId::BOOLEAN,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    assert_eq!(
+        tuple_element_type_union(&types, single),
+        Some(TypeId::BOOLEAN)
+    );
+
+    let empty = types.tuple(vec![]);
+    assert_eq!(tuple_element_type_union(&types, empty), Some(TypeId::NEVER));
+
+    assert_eq!(tuple_element_type_union(&types, TypeId::STRING), None);
+
+    let arr = types.array(TypeId::NUMBER);
+    assert_eq!(array_element_type(&types, arr), Some(TypeId::NUMBER));
+    assert_eq!(array_element_type(&types, single), None);
+}
+
+#[test]
+fn def_id_and_application_queries() {
+    let types = TypeInterner::new();
+
+    let lazy1 = types.lazy(DefId(100));
+    let lazy2 = types.lazy(DefId(200));
+    assert_eq!(def_id(&types, lazy1), Some(DefId(100)));
+    assert_eq!(def_id(&types, lazy2), Some(DefId(200)));
+    assert_eq!(def_id(&types, TypeId::STRING), None);
+
+    let app = types.application(lazy1, vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(application_first_arg(&types, app), Some(TypeId::STRING));
+
+    let app_single = types.application(lazy1, vec![TypeId::BOOLEAN]);
+    assert_eq!(
+        application_first_arg(&types, app_single),
+        Some(TypeId::BOOLEAN)
+    );
+
+    assert_eq!(application_first_arg(&types, TypeId::ANY), None);
+    assert_eq!(application_first_arg(&types, lazy1), None);
+}
