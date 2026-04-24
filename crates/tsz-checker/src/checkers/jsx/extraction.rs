@@ -1423,4 +1423,122 @@ impl<'a> CheckerState<'a> {
 
         Some(String::new()) // Default: empty (instance type is props)
     }
+
+    /// Extract the concrete props type from a class component's construct signature
+    /// by substituting explicit JSX type arguments for the type parameters.
+    ///
+    /// Called when a JSX element carries explicit type arguments with the correct
+    /// arity, e.g. `<MyComp<Prop> a={10} b={20} />`.  The standard
+    /// `get_class_component_props_type` path uses constraint/default substitution
+    /// (or attribute-driven inference), which ignores the explicit type args.  This
+    /// method performs the substitution directly so that the caller receives the
+    /// correctly-instantiated props type and can emit TS2322 when attribute values
+    /// don't match.
+    ///
+    /// Returns `None` when the component type lacks construct signatures or the
+    /// signatures don't have the right structure for direct substitution.
+    pub(super) fn get_jsx_class_props_with_explicit_type_args(
+        &mut self,
+        component_type: TypeId,
+        explicit_type_args: &[TypeId],
+    ) -> Option<TypeId> {
+        let sigs = crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            component_type,
+        )?;
+        if sigs.is_empty() {
+            return None;
+        }
+
+        // Pick the single concrete constructor signature (same logic as
+        // `get_class_component_props_type`).
+        let sig = if sigs.len() == 1 {
+            sigs.into_iter().next()?
+        } else {
+            let with_props: Vec<_> = sigs.into_iter().filter(|s| !s.params.is_empty()).collect();
+            if with_props.len() == 1 {
+                with_props.into_iter().next()?
+            } else {
+                return None;
+            }
+        };
+
+        if sig.type_params.is_empty() {
+            // Non-generic class: explicit type args are irrelevant; use the first
+            // parameter directly.
+            return sig.params.first().map(|p| {
+                let evaluated = self.evaluate_type_with_env(p.type_id);
+                evaluated
+            });
+        }
+
+        // Only substitute when the arity matches (count validation already ran).
+        if explicit_type_args.len() > sig.type_params.len() {
+            return None;
+        }
+
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &sig.type_params,
+            explicit_type_args,
+        );
+
+        // Substitute into the instance type to get the concrete props via the
+        // standard ElementAttributesProperty / `props` member path.
+        let instantiated_return = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            sig.return_type,
+            &substitution,
+        );
+        let instance_type = self.evaluate_type_with_env(instantiated_return);
+
+        // Obtain the ElementAttributesProperty name (same logic as the parent fn).
+        let prop_name = self.get_element_attributes_property_name_with_check(None);
+
+        let props_type = match prop_name {
+            None => {
+                // No JSX namespace or fallback: use the `props` member or first param.
+                self.get_jsx_namespace_type()?;
+                use crate::query_boundaries::common::PropertyAccessResult;
+                match self.resolve_property_access_with_env(instance_type, "props") {
+                    PropertyAccessResult::Success { type_id, .. } => type_id,
+                    _ => {
+                        // Fall back to the explicitly-instantiated first param type.
+                        let instantiated_param = sig.params.first().map(|p| {
+                            crate::query_boundaries::common::instantiate_type(
+                                self.ctx.types,
+                                p.type_id,
+                                &substitution,
+                            )
+                        })?;
+                        self.evaluate_type_with_env(instantiated_param)
+                    }
+                }
+            }
+            Some(ref name) if name.is_empty() => {
+                // Empty ElementAttributesProperty: use instantiated first param.
+                let instantiated_param = sig.params.first().map(|p| {
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        p.type_id,
+                        &substitution,
+                    )
+                })?;
+                self.evaluate_type_with_env(instantiated_param)
+            }
+            Some(ref name) => {
+                use crate::query_boundaries::common::PropertyAccessResult;
+                match self.resolve_property_access_with_env(instance_type, name) {
+                    PropertyAccessResult::Success { type_id, .. } => type_id,
+                    _ => return None,
+                }
+            }
+        };
+
+        let evaluated = self.evaluate_type_with_env(props_type);
+        if evaluated == TypeId::ANY || evaluated == TypeId::ERROR || evaluated == TypeId::UNKNOWN {
+            return None;
+        }
+        Some(evaluated)
+    }
 }
