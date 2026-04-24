@@ -1274,6 +1274,7 @@ pub(super) fn parse_diagnostic_to_checker(
 
 pub(super) fn filtered_parse_diagnostics(
     parse_diagnostics: &[ParseDiagnostic],
+    program_has_real_syntax_errors: bool,
 ) -> Vec<&ParseDiagnostic> {
     let has_real_syntax_error = parse_diagnostics
         .iter()
@@ -1311,7 +1312,13 @@ pub(super) fn filtered_parse_diagnostics(
             }
             // Suppress parser-emitted grammar codes that tsc would emit via
             // grammarErrorOnNode (checker-side, suppressed by hasParseDiagnostics).
-            if has_non_grammar_parse_error && is_parser_grammar_code(diagnostic.code) {
+            // This applies both per-file (when the current file has non-grammar errors)
+            // and program-wide (when any file in the program has real syntax errors).
+            // tsc's grammarErrorOnNode calls hasParseDiagnostics(sourceFile) which
+            // covers program-level parse errors; we mirror that behavior here.
+            if (has_non_grammar_parse_error || program_has_real_syntax_errors)
+                && is_parser_grammar_code(diagnostic.code)
+            {
                 return false;
             }
             // Suppress TS1359 for 'await' when other parse diagnostics exist.
@@ -1367,6 +1374,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
         | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
     )
@@ -2519,7 +2527,7 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             },
         ];
 
-        let filtered = filtered_parse_diagnostics(&diagnostics);
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
         let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&1359),
@@ -2543,7 +2551,7 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             code: 1359,
         }];
 
-        let filtered = filtered_parse_diagnostics(&diagnostics);
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
         let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&1359),

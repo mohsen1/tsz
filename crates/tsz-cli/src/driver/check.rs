@@ -1257,7 +1257,8 @@ pub(super) fn collect_diagnostics(
                 .filter(|d| is_real_syntax_error(d.code))
                 .map(|d| d.start)
                 .collect();
-            let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
+            let filtered_parse_diagnostics =
+                filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
             let is_js = is_js_file(Path::new(&file.file_name));
             let mut file_diagnostics = Vec::new();
             // For JS files, suppress TypeScript-grammar parser diagnostics.
@@ -1845,7 +1846,8 @@ pub(super) fn check_file_for_parallel<'a>(
         .filter(|d| is_real_syntax_error(d.code))
         .map(|d| d.start)
         .collect();
-    let filtered_parse_diagnostics = filtered_parse_diagnostics(&file.parse_diagnostics);
+    let filtered_parse_diagnostics =
+        filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
     let is_js = is_js_file(Path::new(&file.file_name));
 
     // For JS files, suppress parser diagnostics. tsc's parser is lenient
