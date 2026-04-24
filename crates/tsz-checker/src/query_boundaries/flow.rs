@@ -24,6 +24,10 @@
 //!   resolves the iterated element type.
 //! - **`TruthyNarrow`**: a value was used in a boolean context; remove nullish
 //!   and other falsy constituents.
+//! - **`CatchVariableTypeofReset`**: a catch variable is being narrowed by
+//!   `typeof`; the base type must be reset to `unknown` to match tsc semantics.
+//! - **`ForOfDestructuredElement`**: a for-of loop combined with destructuring;
+//!   the element type is extracted and optionally has `undefined` stripped.
 
 use tsz_solver::{TypeDatabase, TypeId};
 
@@ -62,6 +66,22 @@ pub(crate) enum FlowObservation {
         /// true = truthy branch (remove falsy), false = falsy branch (keep falsy)
         is_true_branch: bool,
     },
+
+    /// A catch variable is being narrowed by a `typeof` guard.  The checker
+    /// detected that the target is a catch-clause binding whose declared type
+    /// is `unknown`.  The observation resets the narrowing base to `unknown`
+    /// regardless of upstream flow, matching tsc's behavior where `typeof e`
+    /// in a catch clause always narrows from the full `unknown` domain.
+    CatchVariableTypeofReset,
+
+    /// A for-of loop destructures an iterable into a binding pattern.
+    /// Combines iterable element extraction with optional default narrowing.
+    ForOfDestructuredElement {
+        /// The element type already resolved from the iterable.
+        element_type: TypeId,
+        /// Whether the destructured binding has a default value.
+        has_default: bool,
+    },
 }
 
 /// Apply a [`FlowObservation`] to produce a narrowed type.
@@ -99,37 +119,49 @@ pub(crate) fn apply_flow_observation(
         }
 
         FlowObservation::DestructuringElement { has_default, .. } => {
-            // The actual element extraction is done by the checker's existing
-            // get_binding_element_type path. This observation signals that the
-            // result should have `undefined` removed when a default is present.
-            if *has_default {
-                tsz_solver::remove_undefined(db, base_type)
-            } else {
-                base_type
-            }
+            narrow_with_default_policy(db, base_type, *has_default)
         }
 
         FlowObservation::DestructuringProperty { has_default, .. } => {
-            if *has_default {
-                tsz_solver::remove_undefined(db, base_type)
-            } else {
-                base_type
-            }
+            narrow_with_default_policy(db, base_type, *has_default)
         }
 
-        FlowObservation::ForOfElement { iterable_type } => {
-            // The for-of element type is resolved by the checker's iterable
-            // resolution.  This observation primarily signals the solver that
-            // the binding's type comes from iteration.
-            *iterable_type
-        }
+        FlowObservation::ForOfElement { iterable_type } => *iterable_type,
+
+        FlowObservation::CatchVariableTypeofReset => TypeId::UNKNOWN,
+
+        FlowObservation::ForOfDestructuredElement {
+            element_type,
+            has_default,
+        } => narrow_with_default_policy(db, *element_type, *has_default),
     }
 }
 
-/// Apply optional-chain non-nullish narrowing through the solver.
-/// Convenience wrapper used by the checker's flow analyzer.
+/// Internal: apply the destructuring-default narrowing policy.
+///
+/// When a destructuring binding has a default value, `undefined` is removed
+/// from the element type.  `any`/`unknown`/`error` pass through unchanged.
+fn narrow_with_default_policy(
+    db: &dyn TypeDatabase,
+    element_type: TypeId,
+    has_default: bool,
+) -> TypeId {
+    if !has_default {
+        return element_type;
+    }
+    if element_type == TypeId::ANY
+        || element_type == TypeId::UNKNOWN
+        || element_type == TypeId::ERROR
+    {
+        return element_type;
+    }
+    tsz_solver::remove_undefined(db, element_type)
+}
+
+/// Apply optional-chain non-nullish narrowing through the boundary.
+/// Routes through [`apply_flow_observation`] with [`FlowObservation::OptionalChainNonNullish`].
 pub(crate) fn narrow_optional_chain(db: &dyn TypeDatabase, base_type: TypeId) -> TypeId {
-    tsz_solver::remove_nullish(db, base_type)
+    apply_flow_observation(db, base_type, &FlowObservation::OptionalChainNonNullish)
 }
 
 /// Resolve catch variable type through the boundary.
@@ -141,38 +173,51 @@ pub(crate) const fn resolve_catch_variable_type(use_unknown: bool) -> TypeId {
     }
 }
 
-/// For catch variables in typeof narrowing, the typeof check should narrow
-/// from the catch variable's declared base type (any/unknown) rather than
-/// the already-narrowed flow type.  Non-catch variables pass through unchanged.
-pub(crate) const fn catch_variable_typeof_base(type_id: TypeId, is_catch_var: bool) -> TypeId {
+/// Determine the typeof narrowing base for a catch variable.
+///
+/// In tsc, when a catch variable is narrowed by `typeof`, the narrowing
+/// always starts from the catch variable's declared base type (`any` or
+/// `unknown`) rather than the already-narrowed flow type.  This boundary
+/// function centralizes that decision.
+///
+/// When `use_unknown` is true (strict mode), resets to `unknown`.
+/// When `use_unknown` is false, resets to `any`.
+/// Non-catch variables pass through unchanged.
+pub(crate) const fn catch_variable_typeof_base(
+    type_id: TypeId,
+    is_catch_var: bool,
+    use_unknown: bool,
+) -> TypeId {
     if is_catch_var {
-        // Catch variables are typed as `any` (or `unknown` with strict flag),
-        // but in typeof guards, tsc always widens back to `any` so the typeof
-        // narrowing starts from a clean slate.
-        TypeId::ANY
+        resolve_catch_variable_type(use_unknown)
     } else {
         type_id
     }
 }
 
+/// Simplified catch-variable typeof base for flow analysis contexts where
+/// compiler options are not directly available.
+///
+/// In the flow analyzer, `type_id` is already the catch variable's declared
+/// base type (`any` or `unknown`), so this function is a pass-through that
+/// documents the boundary decision.  The important part is that the caller
+/// does NOT override the type with ad-hoc logic.
+pub(crate) const fn catch_variable_typeof_base_from_flow(
+    type_id: TypeId,
+    _is_catch_var: bool,
+) -> TypeId {
+    type_id
+}
+
 /// Strip undefined from a destructured element type when a default is present.
-/// Centralizes the narrowing policy for destructuring defaults.
+/// Routes through the shared [`narrow_with_default_policy`] that backs
+/// [`FlowObservation::DestructuringElement`] and [`FlowObservation::DestructuringProperty`].
 pub(crate) fn narrow_destructuring_default(
     db: &dyn TypeDatabase,
     element_type: TypeId,
     has_default: bool,
 ) -> TypeId {
-    if !has_default {
-        return element_type;
-    }
-    // Don't strip undefined from any/unknown/error - these should pass through
-    if element_type == TypeId::ANY
-        || element_type == TypeId::UNKNOWN
-        || element_type == TypeId::ERROR
-    {
-        return element_type;
-    }
-    tsz_solver::remove_undefined(db, element_type)
+    narrow_with_default_policy(db, element_type, has_default)
 }
 
 /// Determine the catch variable type based on compiler options and any
@@ -305,5 +350,23 @@ mod tests {
     fn catch_variable_type_without_annotation_uses_flag() {
         assert_eq!(catch_variable_type(None, true), TypeId::UNKNOWN);
         assert_eq!(catch_variable_type(None, false), TypeId::ANY);
+    }
+
+    #[test]
+    fn catch_variable_typeof_base_resets_for_catch_var_unknown() {
+        let result = catch_variable_typeof_base(TypeId::STRING, true, true);
+        assert_eq!(result, TypeId::UNKNOWN);
+    }
+
+    #[test]
+    fn catch_variable_typeof_base_resets_for_catch_var_any() {
+        let result = catch_variable_typeof_base(TypeId::STRING, true, false);
+        assert_eq!(result, TypeId::ANY);
+    }
+
+    #[test]
+    fn catch_variable_typeof_base_preserves_non_catch() {
+        let result = catch_variable_typeof_base(TypeId::STRING, false, true);
+        assert_eq!(result, TypeId::STRING);
     }
 }
