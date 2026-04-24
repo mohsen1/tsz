@@ -340,6 +340,9 @@ mod boxed_augmentation_tests;
 #[path = "tests/classify_array_like_tests.rs"]
 mod classify_array_like_tests;
 #[cfg(test)]
+#[path = "tests/classify_contextual_literal_tests.rs"]
+mod classify_contextual_literal_tests;
+#[cfg(test)]
 #[path = "tests/classify_index_key_tests.rs"]
 mod classify_index_key_tests;
 #[cfg(test)]
