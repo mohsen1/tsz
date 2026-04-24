@@ -188,6 +188,45 @@ export function Foo() {}
 // =========================================================================
 
 #[test]
+fn test_ts1202_export_import_equals_anchors_at_export_keyword() {
+    // Regression test for privacyCheck-SimpleReference conformance case:
+    // `export import X = require("...")` under ES modules emits TS1202 at the
+    // `export` keyword (col 1), not at the `import` keyword (col 8). tsz's
+    // parser splits this into EXPORT_DECLARATION wrapping IMPORT_EQUALS_DECLARATION,
+    // so the inner import's span starts at `import`; we walk up to the export
+    // parent to preserve tsc's anchor.
+    use tsz_common::common::ModuleKind;
+    let source = "export import mExported = require(\"./mExported\");\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            module: ModuleKind::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    checker.check_source_file(root);
+    let ts1202 = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 1202)
+        .expect("expected TS1202 for export import under ES module");
+    assert_eq!(
+        ts1202.start, 0,
+        "TS1202 must anchor at the `export` modifier (byte 0), not at `import` (byte 7). got start={}",
+        ts1202.start,
+    );
+}
+
+#[test]
 fn test_export_import_equals_error_position() {
     // export import X = N.X; var X = 1;
     // TS2440 should be reported at the 'export' keyword, not 'import'
