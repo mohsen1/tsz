@@ -136,22 +136,57 @@ or branch with uncommitted work — only clean cargo caches.
 
 ## What's been shipped this campaign (track here)
 
-Architectural / Phase 0–1:
+Architectural / Phase 0–1 / docs:
 - #1007 — design: instantiate_type cross-call cache (revised after review)
 - #1011 — refresh: perf followup with 2026-04-23 state
-- #1045 — Phase 1 step 1: `StableLocation` on `Symbol`
+- #1051 — canonical loop prompt with architectural learnings + review constraints
+- **#1045 [open]** — Phase 1 step 1: `StableLocation` on `Symbol`
 
 Arc-share migrations (Phase 0 plumbing — eliminates per-file deep clones):
-- #932 lib_symbol_ids • #944 wildcard_reexports • #954 module_exports
-- #960 lib_binders • #973 module_augmentations • #979 global_augmentations
-- #986 symbol_arenas • #1039 flow_nodes • #1043 declaration_arenas + sym_to_decl_indices
+- **MERGED**: #932 lib_symbol_ids • #944 wildcard_reexports • #954 module_exports
+- **MERGED**: #960 lib_binders • #973 module_augmentations • #979 global_augmentations
+- **MERGED**: #986 symbol_arenas • **#1043 declaration_arenas + sym_to_decl_indices** (2026-04-24)
+- **#1039 [open]** — flow_nodes (CI green; just needs to land)
 
 Cache infra (Phase 4 prerequisites):
-- #1040 PR 1/4 — canonical-pairs `TypeSubstitution`
+- **#1040 [open]** — PR 1/4: canonical-pairs `TypeSubstitution`
 
 Bench infra:
 - #988 partial JSON on OOM/TERM
 - #1004 parallelize build_cross_file_binders
+
+## Phase 2 status — ALREADY ~70% PLUMBED (2026-04-24 finding)
+
+`crates/tsz-core/src/parallel/skeleton.rs` is **1135 lines** of skeleton
+infrastructure:
+- `FileSkeleton` (per-file extracted from `BindResult`)
+- `SkeletonIndex` (post-reduce; merge candidates, augmentation targets,
+  re-export graph, ambient/shorthand modules)
+- `extract_skeleton`, `reduce_skeletons` — deterministic pipeline
+- `diff_skeletons` — incremental diff
+- `validate_against_merged` — runs in debug builds, asserts skeleton
+  captures the same topology as the legacy `MergedProgram` merge
+
+Currently the skeleton is built **alongside** the legacy merge and only
+validated against it (debug-only). The remaining Phase 2 work is **migrating
+consumers off the legacy `MergedProgram` path** so user arenas can be
+evicted (Phase 5 prerequisite). That's substantial multi-PR work — the
+right next step after Phase 1 step 2 (consumer migration to `StableLocation`).
+
+## Operational learnings (2026-04-24)
+
+- **CI sometimes wedges**: `tsz-pr-unit` checks can stick "pending" for hours
+  with stale build IDs. **Verified working remediation**: `git rebase
+  origin/main && git push --force-with-lease` triggers fresh build IDs.
+  After force-push the unit check completed in 7m3s as normal.
+- **Profiling on macOS without sudo is hard**: `samply --save-only` produces
+  unsymbolicated profiles even with `RUSTFLAGS="-C debuginfo=2"`; `nm` on
+  stripped Rust release binary mostly returns `OUTLINED_FUNCTION_*` names;
+  `cargo flamegraph` needs dtrace/sudo. Need a Cargo.toml profile with
+  `debug = 2, strip = false` AND interactive `samply load` to symbolicate,
+  OR add `tracing` spans into the Check phase and read those.
+- **Disk hygiene works**: cleaning stale agent `.target` dirs freed 17 GB
+  in one pass (79% → 77% capacity).
 
 ## Anti-patterns (don't do)
 
