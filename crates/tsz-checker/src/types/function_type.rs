@@ -299,13 +299,11 @@ impl<'a> CheckerState<'a> {
         // `inJs(1)` on `function inJs(l) { return l; }` annotated with
         // `/** @type {<T>(m: T) => T} */` leave `T` as a free type parameter
         // and inference fails with TS2345.
-        let can_inherit_contextual_generics =
-            is_closure || (self.is_js_file() && is_function_declaration && has_jsdoc_type_function);
-        let inherited_contextual_generics = can_inherit_contextual_generics
+        let inherited_contextual_generics = (is_closure
+            || (self.is_js_file() && is_function_declaration && has_jsdoc_type_function))
             && type_params.is_empty()
             && contextual_signature_type_params.is_some();
-        if can_inherit_contextual_generics
-            && type_params.is_empty()
+        if inherited_contextual_generics
             && let Some(contextual_type_params) = contextual_signature_type_params
         {
             contextual_signature_type_param_updates =
