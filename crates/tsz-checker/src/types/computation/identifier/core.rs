@@ -298,7 +298,13 @@ impl<'a> CheckerState<'a> {
                     .and_then(|sym| sym.declarations.first().copied());
                 if let Some(decl_node) = decl_node {
                     let decl_fn = self.find_enclosing_function(decl_node);
-                    if ref_fn != decl_fn {
+                    // TS7005 should only fire when the closure is in a position where
+                    // the type is still ambiguous (i.e., the capture occurs before the
+                    // last assignment). Use the same guard as the first emission so
+                    // closures created after the last assignment don't get TS7005.
+                    if ref_fn != decl_fn
+                        && self.should_emit_pending_implicit_any_capture_diagnostic(idx, sym_id)
+                    {
                         emit_ts7005 = true;
                     }
                 }
