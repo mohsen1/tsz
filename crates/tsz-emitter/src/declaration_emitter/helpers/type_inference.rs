@@ -1132,6 +1132,33 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        // tsc orders union members by `TypeFlags` when printing: for the
+        // primitive intrinsics the rank is Any < Unknown < String < Number
+        // < Boolean < BigInt < Symbol. Our solver-inferred array-element
+        // union was otherwise rendered in construction order, so
+        // `var a = [1, "hello"]` printed as `(number | string)[]` instead
+        // of tsc's `(string | number)[]`. Apply a stable sort that reorders
+        // known primitives while keeping non-primitive members in their
+        // original relative order (a comparator that returns Equal for
+        // them preserves insertion order under a stable sort).
+        fn primitive_rank(name: &str) -> Option<u32> {
+            match name {
+                "any" => Some(1),
+                "unknown" => Some(2),
+                "string" => Some(4),
+                "number" => Some(8),
+                "boolean" => Some(16),
+                "bigint" => Some(64),
+                "symbol" => Some(4096),
+                "object" => Some(33_554_432),
+                _ => None,
+            }
+        }
+        distinct.sort_by(|a, b| match (primitive_rank(a), primitive_rank(b)) {
+            (Some(ra), Some(rb)) => ra.cmp(&rb),
+            _ => std::cmp::Ordering::Equal,
+        });
+
         let elem_text = if distinct.len() == 1 {
             distinct.pop()?
         } else {
