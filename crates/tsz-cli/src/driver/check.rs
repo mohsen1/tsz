@@ -2637,7 +2637,12 @@ fn build_lib_bound_file_for_interface_checks(
         );
     }
 
-    let mut declaration_arenas = program.declaration_arenas.clone();
+    // Deep-clone the program-wide `declaration_arenas` into the per-call map
+    // so we can mutate it below. `program.declaration_arenas` is an `Arc`-shared
+    // map; `Arc::clone().as_ref().clone()` gets us an owned copy of the inner
+    // `DeclarationArenaMap` without disturbing the shared data.
+    let mut declaration_arenas: tsz::binder::state::DeclarationArenaMap =
+        (*program.declaration_arenas).clone();
     add_user_global_interface_declaration_arenas(program, &mut declaration_arenas);
 
     tsz::parallel::BoundFile {

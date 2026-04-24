@@ -1528,24 +1528,20 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     file_idx: usize,
     augmentations: &MergedAugmentations,
 ) -> BinderState {
-    let mut declaration_arenas: tsz::binder::state::DeclarationArenaMap = program
-        .declaration_arenas
-        .iter()
-        .filter_map(|(&(sym_id, decl_idx), arenas)| {
-            let has_non_local_arena = arenas.iter().any(|arena| !Arc::ptr_eq(arena, &file.arena));
-            has_non_local_arena.then(|| ((sym_id, decl_idx), arenas.clone()))
-        })
-        .collect();
-    for (&(sym_id, decl_idx), arenas) in &file.declaration_arenas {
-        let target = declaration_arenas.entry((sym_id, decl_idx)).or_default();
-        for arena in arenas {
-            if !Arc::ptr_eq(arena, &file.arena)
-                && !target.iter().any(|existing| Arc::ptr_eq(existing, arena))
-            {
-                target.push(Arc::clone(arena));
-            }
-        }
-    }
+    // Share the program-wide `declaration_arenas` map via `Arc::clone` — O(1)
+    // instead of iterating the entire program-wide map per file and cloning
+    // matching entries. The previous filter kept ~99% of entries on large
+    // projects, so the per-file filtering was almost entirely wasted work:
+    // on a 6086-file project with ~100K declarations this was ~600M entry
+    // visits × a `SmallVec<[Arc<NodeArena>; 1]>` clone each.
+    //
+    // Consumers doing point lookups (~30 call sites) see the same data via
+    // `binder.declaration_arenas.get(&(sym_id, decl_idx))`. The three iter
+    // consumers that needed to enumerate every `NodeIndex` for a given
+    // `SymbolId` were rewritten to use the `sym_to_decl_indices` secondary
+    // index (point lookup) instead of a full `declaration_arenas` scan.
+    let declaration_arenas = Arc::clone(&program.declaration_arenas);
+    let sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
 
     // Share the program-wide symbol_arenas via Arc::clone — O(1) instead of
     // building a per-file filtered map. The previous filter dropped entries
@@ -1599,6 +1595,7 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
             symbol_arenas,
             declaration_arenas,
+            sym_to_decl_indices,
             // Per-binder cross_file_node_symbols left empty intentionally.
             // The program-wide outer map is stored once on ProjectEnv and
             // read via `ctx.cross_file_node_symbols_for_arena`. Cloning
@@ -1725,6 +1722,7 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             // into every file binder makes all_binders setup scale with total declarations.
             symbol_arenas: Default::default(),
             declaration_arenas: Default::default(),
+            sym_to_decl_indices: Default::default(),
             // See `create_binder_from_bound_file_with_augmentations` for
             // the rationale: the program-wide map lives on ProjectEnv.
             cross_file_node_symbols: Default::default(),
