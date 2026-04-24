@@ -6354,8 +6354,15 @@ fn test_infer_generic_number_index_from_optional_property() {
     )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // In tsc, optional properties do not contribute `undefined` to index signature inference.
-    assert_eq!(result, TypeId::NUMBER);
+    // tsc inference infers T = number from the optional property, but the
+    // overall assignment `{ 0?: number }` → `{ [k: number]: T }` errors
+    // because NUMBER index signatures preserve the implicit `| undefined`
+    // contributed by the optional flag and `number | undefined` is not
+    // assignable to `number`. `infer_generic_function` returns ERROR when
+    // the call fails its final assignability check (matching tsc's TS2322
+    // emission on this case — see
+    // `optionalPropertyAssignableToStringIndexSignature.ts`).
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -6824,9 +6831,13 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    // Index signature candidates use union semantics: T and U get unions of all
-    // matching property types, so the call succeeds (no assignability failure).
-    assert_ne!(result, TypeId::ERROR);
+    // Inference picks up T from the numeric-named prop and U from the string
+    // index, but the overall call fails its final assignability check because
+    // the optional numeric property `0?: string` contributes `string | undefined`
+    // to the NUMBER-index compatibility check and is not assignable to the
+    // inferred `T = string`. Matches tsc's TS2322 on the `probablyArray =
+    // numberLiteralKeys` case in optionalPropertyAssignableToStringIndexSignature.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
