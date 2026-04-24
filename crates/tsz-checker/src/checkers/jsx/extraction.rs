@@ -1157,10 +1157,11 @@ impl<'a> CheckerState<'a> {
                     _ => first_param_type
                         .and_then(|param_type| {
                             let param_type = self.evaluate_type_with_env(param_type);
-                            (param_type != TypeId::ANY
-                                && param_type != TypeId::ERROR
-                                && param_type != TypeId::STRING
-                                && param_type != TypeId::NUMBER)
+                            // When no ElementAttributesProperty is defined, tsc uses the
+                            // first constructor parameter as the props type even when it is
+                            // a primitive (e.g. `new(n: string): …`). The synthesized attrs
+                            // object is then checked against that primitive → TS2322.
+                            (param_type != TypeId::ANY && param_type != TypeId::ERROR)
                                 .then_some(param_type)
                         })
                         .or_else(|| {
