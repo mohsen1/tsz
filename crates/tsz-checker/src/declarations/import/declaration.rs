@@ -1521,38 +1521,20 @@ impl<'a> CheckerState<'a> {
     // Re-export Cycle Detection
     // =========================================================================
 
-    /// Check re-export chains for circular dependencies.
+    /// Walk the re-export chain rooted at `module_name`, guarding against
+    /// infinite recursion on circular chains.
+    ///
+    /// tsc does not emit a diagnostic for circular `export * from` chains —
+    /// it simply treats the cycle as contributing no transitive exports. This
+    /// walker exists purely to keep exported-symbol collection from spinning
+    /// forever on self/mutually-referential packages (e.g. a typesVersions
+    /// subfolder that re-exports from the package root and vice versa).
     pub(crate) fn check_reexport_chain_for_cycles(
         &mut self,
         module_name: &str,
         visited: &mut FxHashSet<String>,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
         if visited.contains(module_name) {
-            let cycle_path: Vec<&str> = visited
-                .iter()
-                .map(std::string::String::as_str)
-                .chain(std::iter::once(module_name))
-                .collect();
-            let cycle_str = cycle_path.join(" -> ");
-            let message = format!(
-                "{}: {}",
-                diagnostic_messages::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
-                cycle_str
-            );
-
-            // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
-            let module_key = module_name.to_string();
-            if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx.modules_with_ts2307_emitted.insert(module_key);
-                self.error(
-                    0,
-                    0,
-                    message,
-                    diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
-                );
-            }
             return;
         }
 
