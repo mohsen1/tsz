@@ -641,6 +641,27 @@ impl SkeletonIndex {
         size
     }
 
+    /// Returns true if `name` is recorded as an ambient module declaration in any file.
+    ///
+    /// An ambient module is one declared via `declare module "x" { ... }` (with body)
+    /// or `declare module "x";` (shorthand). This mirrors the legacy
+    /// `MergedProgram.declared_modules` ∪ `MergedProgram.shorthand_ambient_modules`
+    /// set membership check used by the CLI module-resolver to decide whether
+    /// an unresolved bare specifier should be treated as `any` instead of TS2307.
+    ///
+    /// The lookup is exact-match against the raw declaration text (which the
+    /// binder stores without surrounding quotes — same encoding as the legacy
+    /// fields). No normalization is applied; this matches the legacy semantics
+    /// of `program.declared_modules.contains(spec) || program.shorthand_ambient_modules.contains(spec)`.
+    ///
+    /// This is the skeleton-only path for the Phase 5 evict-and-rehydrate
+    /// scenario: the consumer can resolve ambient module presence without
+    /// retaining the per-file binder/arena state.
+    #[must_use]
+    pub fn is_ambient_module(&self, name: &str) -> bool {
+        self.declared_modules.contains(name) || self.shorthand_ambient_modules.contains(name)
+    }
+
     /// Build the set of all known declared/ambient module names from the skeleton data.
     ///
     /// This produces the same result as the `set_all_binders` loop in the checker
@@ -1131,5 +1152,155 @@ mod tests {
             vec!["a.ts"],
             "Heritage name change should be detected"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 2 step 1: ambient module resolution served from SkeletonIndex alone.
+    //
+    // The CLI driver's `module_resolver.lookup` `is_ambient_module` closure used to
+    // read `MergedProgram.declared_modules` and `MergedProgram.shorthand_ambient_modules`
+    // directly. The migrated path routes through `SkeletonIndex::is_ambient_module`,
+    // which means the consumer can answer the lookup without retaining any arena
+    // / binder state from the legacy merge. These tests prove that.
+    // -------------------------------------------------------------------------
+
+    /// Helper: build a `SkeletonIndex` with the given ambient module declarations.
+    /// Constructs a skeleton WITHOUT any `MergedProgram` involvement, demonstrating
+    /// that `is_ambient_module` is fully arena-free.
+    fn skeleton_index_with_ambient_modules(declared: &[&str], shorthand: &[&str]) -> SkeletonIndex {
+        let skel = FileSkeleton {
+            file_name: "ambient.d.ts".to_string(),
+            is_external_module: false,
+            symbols: vec![],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: declared.iter().map(|s| (*s).to_string()).collect(),
+            shorthand_ambient_modules: shorthand.iter().map(|s| (*s).to_string()).collect(),
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        reduce_skeletons(&[skel])
+    }
+
+    #[test]
+    fn is_ambient_module_matches_declared_modules() {
+        let idx = skeleton_index_with_ambient_modules(&["my-lib", "react"], &[]);
+        assert!(idx.is_ambient_module("my-lib"));
+        assert!(idx.is_ambient_module("react"));
+        assert!(!idx.is_ambient_module("not-declared"));
+    }
+
+    #[test]
+    fn is_ambient_module_matches_shorthand_modules() {
+        let idx = skeleton_index_with_ambient_modules(&[], &["*.json", "shorthand-only"]);
+        assert!(idx.is_ambient_module("*.json"));
+        assert!(idx.is_ambient_module("shorthand-only"));
+        assert!(!idx.is_ambient_module("react"));
+    }
+
+    #[test]
+    fn is_ambient_module_unions_both_sets() {
+        // Mixed: some names from declared_modules, some from shorthand.
+        let idx = skeleton_index_with_ambient_modules(&["with-body"], &["bodyless"]);
+        assert!(
+            idx.is_ambient_module("with-body"),
+            "declared_modules entry should be detected"
+        );
+        assert!(
+            idx.is_ambient_module("bodyless"),
+            "shorthand_ambient_modules entry should be detected"
+        );
+        assert!(!idx.is_ambient_module("neither"));
+    }
+
+    #[test]
+    fn is_ambient_module_returns_false_on_empty_index() {
+        let idx = skeleton_index_with_ambient_modules(&[], &[]);
+        assert!(!idx.is_ambient_module("anything"));
+    }
+
+    #[test]
+    fn is_ambient_module_uses_exact_match_no_normalization() {
+        // The legacy MergedProgram.declared_modules stores names without quotes
+        // (the binder strips quotes before insertion), so the skeleton's contains
+        // check must be exact-match in the same encoding. Quoted strings should
+        // NOT match unquoted entries (and vice versa).
+        let idx = skeleton_index_with_ambient_modules(&["my-lib"], &[]);
+        assert!(idx.is_ambient_module("my-lib"));
+        assert!(
+            !idx.is_ambient_module("\"my-lib\""),
+            "raw quoted string must not match unquoted declared name (parity with legacy semantics)"
+        );
+    }
+
+    #[test]
+    fn is_ambient_module_consumer_works_after_legacy_fields_emptied() {
+        // Phase 5 scenario: the consumer must still produce the correct answer
+        // when the legacy MergedProgram fields are evicted/empty. We model this
+        // by constructing `SkeletonIndex` directly (no MergedProgram involvement)
+        // and verifying the consumer-shaped closure (mirroring the CLI driver's
+        // `is_ambient_module` closure) returns the right answer.
+        let idx = skeleton_index_with_ambient_modules(&["my-lib"], &["*.css"]);
+
+        // Mirror the CLI driver's consumer closure (post-migration shape):
+        //   |spec| skeleton.is_ambient_module(spec)
+        let consumer = |spec: &str| -> bool { idx.is_ambient_module(spec) };
+
+        assert!(
+            consumer("my-lib"),
+            "declared module must be visible to consumer"
+        );
+        assert!(
+            consumer("*.css"),
+            "shorthand ambient must be visible to consumer"
+        );
+        assert!(!consumer("not-ambient"));
+    }
+
+    #[test]
+    fn is_ambient_module_aggregates_across_files() {
+        // The reducer unions declared_modules and shorthand_ambient_modules from
+        // every input skeleton. The consumer must see the cross-file union.
+        let skel_a = FileSkeleton {
+            file_name: "a.d.ts".to_string(),
+            is_external_module: false,
+            symbols: vec![],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec!["from-a".to_string()],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        let skel_b = FileSkeleton {
+            file_name: "b.d.ts".to_string(),
+            is_external_module: false,
+            symbols: vec![],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec!["from-b".to_string()],
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+        assert!(idx.is_ambient_module("from-a"));
+        assert!(idx.is_ambient_module("from-b"));
+        assert!(!idx.is_ambient_module("from-neither"));
     }
 }
