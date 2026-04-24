@@ -750,3 +750,110 @@ fn export_abstract_class_parses_cleanly() {
         "export abstract class C {{}} should parse cleanly, got {codes:?}"
     );
 }
+
+/// `import type defer * as ns from "..."` is invalid: `type` and `defer`
+/// cannot both modify the same import, and the namespace form is not allowed
+/// after `defer`. tsc enters `parseImportEqualsDeclaration` because the
+/// disambiguation concludes the name is `defer` and the next token (`*`) is
+/// not `,`/`from`. It then reports:
+///
+/// - TS1005 `'=' expected.` at `*` (the missing equals sign).
+/// - TS1005 `';' expected.` at `ns` (the binary-like `missing * as` ends
+///   and the next token starts a new expression statement).
+/// - TS1434 `Unexpected keyword or identifier.` at `from` (viable keyword
+///   in primary position followed by a string literal).
+///
+/// We must match that fingerprint exactly, not cascade an extra TS1434 at
+/// `as` from the earlier unary recovery.
+#[test]
+fn parse_import_type_defer_star_matches_tsc_recovery() {
+    let source = "import type defer * as ns1 from \"./a\";";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    const TS1434: u32 = diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER;
+
+    let fingerprints: Vec<(u32, u32, &str)> = diags
+        .iter()
+        .map(|d| (d.code, d.start, d.message.as_str()))
+        .collect();
+
+    // TS1005 `'=' expected.` at `*` (pos 18, col 19).
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(c, p, m)| *c == TS1005 && *p == 18 && m.contains("'='")),
+        "expected TS1005 `'=' expected.` at col 19 (pos 18), got {fingerprints:?}"
+    );
+    // TS1005 `';' expected.` at `ns1` (pos 23, col 24).
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(c, p, m)| *c == TS1005 && *p == 23 && m.contains("';'")),
+        "expected TS1005 `';' expected.` at col 24 (pos 23), got {fingerprints:?}"
+    );
+    // TS1434 `Unexpected keyword or identifier.` at `from` (pos 27, col 28).
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(c, p, _)| *c == TS1434 && *p == 27),
+        "expected TS1434 at col 28 (pos 27), got {fingerprints:?}"
+    );
+
+    // Must NOT emit any diagnostic at `as` (pos 20, col 21) — that was the
+    // spurious cascade from the old asterisk-recovery path.
+    assert!(
+        !fingerprints.iter().any(|(_, p, _)| *p == 20),
+        "must not emit a diagnostic at `as` (col 21); got {fingerprints:?}"
+    );
+
+    // We only expect three parser diagnostics total for this invalid syntax.
+    // Additional emits indicate a regression of the cascading recovery.
+    assert_eq!(
+        diags.len(),
+        3,
+        "expected exactly 3 parser diagnostics, got {diags:?}"
+    );
+}
+
+/// Confirm that an isolated `*` at statement start is treated as a binary
+/// operator with missing LHS — exactly one TS1109 (Expression expected) is
+/// emitted at the `*` and the trailing `foo` becomes a separate expression
+/// statement. This matches tsc's `parsePrimaryExpression -> createMissingNode`
+/// followed by binary-operator consumption.
+#[test]
+fn parse_leading_asterisk_at_statement_emits_single_expression_expected() {
+    let source = "* foo";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    const TS1109: u32 = diagnostic_codes::EXPRESSION_EXPECTED;
+
+    // One TS1109 at the `*` (pos 0).
+    let ts1109_count = diags.iter().filter(|d| d.code == TS1109).count();
+    assert!(
+        ts1109_count >= 1,
+        "expected at least one TS1109 for leading `*`, got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.code == TS1109 && d.start == 0),
+        "expected TS1109 at the `*` (pos 0), got {diags:?}"
+    );
+}
+
+/// `as` and `satisfies` are contextual keywords: they can be used as plain
+/// identifiers. In primary expression position they must parse as identifiers
+/// rather than triggering the `is_binary_operator` missing-LHS path.
+#[test]
+fn parse_as_and_satisfies_as_identifiers_in_primary_position() {
+    for name in ["as", "satisfies"] {
+        let source = format!("const x = {name};");
+        let (parser, _root) = parse_source(&source);
+        let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+            "`const x = {name};` must not emit TS1109; got {codes:?}"
+        );
+    }
+}
