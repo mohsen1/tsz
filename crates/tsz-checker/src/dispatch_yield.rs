@@ -456,10 +456,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // generator yield type must come from actual body yields, not context
                     // (see function_type.rs comment on final_generator_yield_type).
                     if let Some(ref i) = info {
+                        // In non-strict mode (strictNullChecks: false), an empty iterable
+                        // like `[]` produces `never[]` (element type: `never`). But tsc
+                        // treats the element type as `undefined` for generator yield
+                        // inference in non-strict mode — "In non-strict mode, `[]` produces
+                        // the type `undefined[]` which is implicitly any." (TypeScript docs).
+                        //
+                        // When we encounter `yield* []`, the element type is `never` but
+                        // should be treated as `undefined` for yield type collection so that
+                        // the non-strict null widening in function_type.rs (never[] → any)
+                        // fires correctly and emits TS7055.
+                        let effective_yield_type = if i.yield_type == TypeId::NEVER
+                            && !self.checker.ctx.strict_null_checks()
+                        {
+                            TypeId::UNDEFINED
+                        } else {
+                            i.yield_type
+                        };
                         self.checker
                             .ctx
                             .generator_yield_operand_types
-                            .push(i.yield_type);
+                            .push(effective_yield_type);
                         // When yield* delegates to an iterable with `any` element type
                         // (e.g. `any[]`), suppress TS7055 at the function level.
                         // tsc considers the `any` yield type to be "explained" by

@@ -808,6 +808,17 @@ impl ParserState {
                 _ => self.parse_expression_statement(),
             }
         } else {
+            // When 'abstract' at statement level is followed by '@' on the same line,
+            // tsc emits TS1434 "Unexpected keyword or identifier." at the 'abstract' position,
+            // then falls through to parse 'abstract' as an expression statement.
+            if look_ahead_is(&mut self.scanner, self.current_token, |t| {
+                t == SyntaxKind::AtToken
+            }) {
+                self.parse_error_at_current_token(
+                    "Unexpected keyword or identifier.",
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+            }
             self.parse_expression_statement()
         }
     }

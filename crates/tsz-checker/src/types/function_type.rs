@@ -853,7 +853,29 @@ impl<'a> CheckerState<'a> {
                         inferred_type
                     };
                     let ty = if inferred_type == TypeId::ANY && param.initializer.is_some() {
-                        let mut init_type = self.get_type_of_node(param.initializer);
+                        // When the parameter has a binding pattern (e.g. `[a, z, y]`),
+                        // tsc uses the binding pattern's implied type as contextual for
+                        // the initializer. Without this, `[undefined, null, undefined]`
+                        // would be typed as `(null | undefined)[]` rather than the tuple
+                        // `[undefined, null, undefined]`.  Match tsc's
+                        // `getContextualTypeForInitializerExpression` which resolves to
+                        // `getTypeFromBindingPattern(name, /*includePatternInType*/ true)`.
+                        let binding_pattern_ctx = self
+                            .ctx
+                            .arena
+                            .get(param.name)
+                            .filter(|name_node| {
+                                name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            })
+                            .map(|_| self.infer_type_from_binding_pattern(param.name, TypeId::ANY))
+                            .filter(|pattern_ty| *pattern_ty != TypeId::ANY);
+                        let init_request = match binding_pattern_ctx {
+                            Some(ctx_ty) => TypingRequest::with_contextual_type(ctx_ty),
+                            None => TypingRequest::NONE,
+                        };
+                        let mut init_type =
+                            self.get_type_of_node_with_request(param.initializer, &init_request);
                         if self.is_js_file()
                             && (init_type == TypeId::ANY || init_type == TypeId::UNKNOWN)
                             && self.ctx.arena.get(param.initializer).is_some_and(|n| {
@@ -1828,10 +1850,8 @@ impl<'a> CheckerState<'a> {
                 // and `check_return_statement` can report `number` is not `string`.
                 return_context_for_circularity.unwrap_or(TypeId::ANY)
             } else if is_async_for_context {
-                // For contextually-typed async functions (no explicit annotation),
-                // also unwrap Promise from the return type. For unions like
-                // Promise<T> | StateMachine<T>, unwrap each Promise member to get
-                // T | StateMachine<T> as the effective body return type.
+                // For non-contextually-typed async functions, unwrap Promise from
+                // the inferred return type for body checking.
                 self.unwrap_async_return_type_for_body(return_type)
             } else if contextual_void_return_exception {
                 // Contextual `() => void` callbacks are allowed to return values.

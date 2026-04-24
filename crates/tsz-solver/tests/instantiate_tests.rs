@@ -2220,3 +2220,136 @@ fn test_instantiate_homomorphic_mapped_with_any_union_array_constrained() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// PR 1 canonical-form substitution tests
+// ---------------------------------------------------------------------------
+//
+// These cover `TypeSubstitution::canonical_pairs`. PR 1 is pure refactoring —
+// it adds the deterministic, content-hashable form that PR 2 will use as the
+// key seed for `QueryCache::instantiation_cache`. Substitution *interning*
+// intentionally does NOT live on `TypeInterner`; the eventual cache is
+// owned by `QueryCache` so it participates in `clear()` and size accounting
+// (see `docs/plan/perf-instantiate-type-cache-design.md`).
+
+#[test]
+fn test_canonical_equal_subst_same_pairs() {
+    // Two substitutions with the same {name -> type_id} entries inserted in
+    // different orders must canonicalize to the same SmallVec sequence.
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+
+    let mut a = TypeSubstitution::new();
+    a.insert(t_name, TypeId::NUMBER);
+    a.insert(u_name, TypeId::STRING);
+
+    let mut b = TypeSubstitution::new();
+    b.insert(u_name, TypeId::STRING);
+    b.insert(t_name, TypeId::NUMBER);
+
+    let pairs_a = a.canonical_pairs();
+    let pairs_b = b.canonical_pairs();
+    assert_eq!(
+        pairs_a.as_slice(),
+        pairs_b.as_slice(),
+        "same entries, different insertion order must canonicalize identically",
+    );
+    assert_eq!(pairs_a.len(), 2);
+}
+
+#[test]
+fn test_canonical_distinct_subst_different_pairs() {
+    // {"T" -> number} and {"T" -> string} must produce different canonical pairs.
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+
+    let mut a = TypeSubstitution::new();
+    a.insert(t_name, TypeId::NUMBER);
+
+    let mut b = TypeSubstitution::new();
+    b.insert(t_name, TypeId::STRING);
+
+    assert_ne!(
+        a.canonical_pairs().as_slice(),
+        b.canonical_pairs().as_slice(),
+        "distinct type bindings must have distinct canonical pairs",
+    );
+}
+
+#[test]
+fn test_canonical_empty_is_empty_slice() {
+    // The empty substitution's canonical form is the empty slice. PR 2 will
+    // short-circuit this case on the cache side without allocating; PR 1 just
+    // guarantees the empty input → empty output property.
+    let empty = TypeSubstitution::new();
+    let pairs = empty.canonical_pairs();
+    assert!(
+        pairs.is_empty(),
+        "empty substitution must canonicalize to empty"
+    );
+}
+
+#[test]
+fn test_canonical_stable_across_iter_order() {
+    // Insert three entries in several orderings; all must produce the same
+    // canonical pairs. With three keys the `FxHashMap` iteration order varies
+    // enough to exercise the canonicalization path.
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let v_name = interner.intern_string("V");
+
+    let orderings: &[[(tsz_common::interner::Atom, TypeId); 3]] = &[
+        [
+            (t_name, TypeId::NUMBER),
+            (u_name, TypeId::STRING),
+            (v_name, TypeId::BOOLEAN),
+        ],
+        [
+            (u_name, TypeId::STRING),
+            (t_name, TypeId::NUMBER),
+            (v_name, TypeId::BOOLEAN),
+        ],
+        [
+            (v_name, TypeId::BOOLEAN),
+            (u_name, TypeId::STRING),
+            (t_name, TypeId::NUMBER),
+        ],
+        [
+            (v_name, TypeId::BOOLEAN),
+            (t_name, TypeId::NUMBER),
+            (u_name, TypeId::STRING),
+        ],
+    ];
+
+    let canonical_pairs: Vec<_> = orderings
+        .iter()
+        .map(|entries| {
+            let mut s = TypeSubstitution::new();
+            for &(name, ty) in entries {
+                s.insert(name, ty);
+            }
+            s.canonical_pairs()
+        })
+        .collect();
+
+    // All orderings must produce identical canonical sequences.
+    let first = &canonical_pairs[0];
+    for pairs in &canonical_pairs[1..] {
+        assert_eq!(
+            pairs.as_slice(),
+            first.as_slice(),
+            "insertion order must not change canonical pairs",
+        );
+    }
+
+    // The canonical pairs must themselves be sorted by Atom.
+    let mut sorted = first.clone();
+    sorted.sort_unstable_by_key(|(name, _)| *name);
+    assert_eq!(
+        first.as_slice(),
+        sorted.as_slice(),
+        "canonical pairs must be sorted by Atom",
+    );
+}

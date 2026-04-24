@@ -1574,7 +1574,14 @@ impl<'a> CheckerState<'a> {
 
             let has_remote_declaration =
                 declarations.iter().any(|(_, _, is_local, _, _)| !*is_local);
-            let force2300 = remote_alias_conflict || self.has_targeted_aug(&declarations);
+            // Only force TS2300 for cross-file targeted module augmentation when
+            // the conflict genuinely isn't a block-scoped variable redeclaration.
+            // When every conflicting decl is `const`/`let`, tsc emits TS2451 even
+            // across augmentation (see exportAsNamespace_augment.ts).
+            let force2300 = remote_alias_conflict
+                || (self.has_targeted_aug(&declarations)
+                    && (has_non_block_scoped
+                        || self.targeted_aug_has_non_block_scoped(&declarations)));
             let has_enum_conflict = if has_remote_declaration {
                 declarations.iter().any(|(_, flags, _, _, _)| {
                     (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0

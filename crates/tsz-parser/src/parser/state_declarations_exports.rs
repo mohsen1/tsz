@@ -6,6 +6,7 @@ use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 //
 /// switch/try/do statements, string literals, and expression statements.
 use super::state::{CONTEXT_FLAG_DISALLOW_IN, ParserState};
+use crate::parser::parse_rules::look_ahead_is;
 use crate::parser::{
     NodeIndex,
     node::{
@@ -401,7 +402,21 @@ impl ParserState {
                 self.parse_function_declaration_with_async_optional_name(true, None)
             }
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
-            SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
+            SyntaxKind::AbstractKeyword => {
+                // When 'abstract' is followed by '@', it's `export default abstract @dec class` —
+                // an invalid pattern. tsc parses 'abstract' as an expression identifier and
+                // then emits TS1005 "';' expected." when it sees '@' where a semicolon is needed.
+                // Fall through to the default expression path which does exactly this.
+                if look_ahead_is(&mut self.scanner, self.current_token, |t| {
+                    t == SyntaxKind::AtToken
+                }) {
+                    let expr = self.parse_assignment_expression();
+                    self.parse_semicolon();
+                    expr
+                } else {
+                    self.parse_abstract_class_declaration()
+                }
+            }
             SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
             SyntaxKind::AtToken => {
                 // export default @dec class {} — parse decorators then class
@@ -669,7 +684,55 @@ impl ParserState {
                 self.report_export_invalid_name_statement_expected(start_pos);
                 self.parse_module_declaration()
             }
-            SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
+            SyntaxKind::AbstractKeyword => {
+                // When 'abstract' is followed by '@', it's `export abstract @dec class` —
+                // an invalid decorator placement. tsc emits:
+                //   TS1128 at the 'export' position (Declaration or statement expected.)
+                //   TS1434 at the 'abstract' position (Unexpected keyword or identifier.)
+                // then recovers by parsing 'abstract' as an expression statement.
+                if look_ahead_is(&mut self.scanner, self.current_token, |t| {
+                    t == SyntaxKind::AtToken
+                }) {
+                    self.parse_error_at(
+                        start_pos,
+                        6, // length of "export"
+                        "Declaration or statement expected.",
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                    let abstract_pos = self.token_pos();
+                    self.parse_error_at(
+                        abstract_pos,
+                        8, // length of "abstract"
+                        "Unexpected keyword or identifier.",
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                    );
+                    // Consume 'abstract' as expression, skip rest of the bad statement
+                    self.next_token(); // consume 'abstract'
+                    // skip the rest: @dec class C14 {}
+                    while !self.is_token(SyntaxKind::SemicolonToken)
+                        && !self.is_token(SyntaxKind::EndOfFileToken)
+                        && !self.is_token(SyntaxKind::CloseBraceToken)
+                    {
+                        if self.is_token(SyntaxKind::OpenBraceToken) {
+                            // consume balanced {} block
+                            self.next_token();
+                            let mut depth = 1u32;
+                            while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+                                if self.is_token(SyntaxKind::OpenBraceToken) {
+                                    depth += 1;
+                                } else if self.is_token(SyntaxKind::CloseBraceToken) {
+                                    depth -= 1;
+                                }
+                                self.next_token();
+                            }
+                            break;
+                        }
+                        self.next_token();
+                    }
+                    return NodeIndex::NONE;
+                }
+                self.parse_abstract_class_declaration()
+            }
             SyntaxKind::DeclareKeyword => self.parse_export_declare_declaration(start_pos),
             SyntaxKind::VarKeyword
             | SyntaxKind::LetKeyword

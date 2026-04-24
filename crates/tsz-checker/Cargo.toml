@@ -120,6 +120,10 @@ name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
 
 [[test]]
+name = "ts2322_property_decl_annotation_tests"
+path = "tests/ts2322_property_decl_annotation_tests.rs"
+
+[[test]]
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
@@ -340,12 +344,20 @@ name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
 
 [[test]]
+name = "jsdoc_augments_empty_tests"
+path = "tests/jsdoc_augments_empty_tests.rs"
+
+[[test]]
 name = "jsdoc_extends_constraint_tests"
 path = "tests/jsdoc_extends_constraint_tests.rs"
 
 [[test]]
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
+
+[[test]]
+name = "ts2451_cross_file_augmentation_tests"
+path = "tests/ts2451_cross_file_augmentation_tests.rs"
 
 [lints]
 workspace = true

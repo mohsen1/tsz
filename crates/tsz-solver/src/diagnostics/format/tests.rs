@@ -1708,6 +1708,53 @@ fn format_application_single_arg() {
 }
 
 #[test]
+fn format_application_pads_missing_args_with_param_defaults() {
+    // When the Application carries fewer args than the base's declared type
+    // parameters, the formatter should pad missing trailing args with their
+    // parameter defaults. Matches tsc's display: `Iterator<string>` renders
+    // as `Iterator<string, any, any>` given `Iterator<T, TReturn = any,
+    // TNext = any>`. Regression test for for-of29.ts.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let iter_name = db.intern_string("Iter");
+    let t_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let treturn_param = TypeParamInfo {
+        name: db.intern_string("TReturn"),
+        constraint: None,
+        default: Some(TypeId::ANY),
+        is_const: false,
+    };
+    let tnext_param = TypeParamInfo {
+        name: db.intern_string("TNext"),
+        constraint: None,
+        default: Some(TypeId::ANY),
+        is_const: false,
+    };
+    let iter_body = db.object(vec![]); // structural body isn't relevant to the display test
+    let iter_def = crate::def::DefinitionInfo::type_alias(
+        iter_name,
+        vec![t_param, treturn_param, tnext_param],
+        iter_body,
+    );
+    let iter_def_id = def_store.register(iter_def);
+    let base = db.lazy(iter_def_id);
+    let app = db.application(base, vec![TypeId::STRING]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(app);
+    assert_eq!(
+        result, "Iter<string, any, any>",
+        "Missing trailing args must be padded with parameter defaults. Got: {result}"
+    );
+}
+
+#[test]
 fn format_application_two_args() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

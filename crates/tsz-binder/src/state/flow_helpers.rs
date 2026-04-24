@@ -5,6 +5,7 @@
 
 use super::BinderState;
 use crate::{FlowNodeId, flow_flags};
+use std::sync::Arc;
 use tsz_parser::NodeIndex;
 
 impl BinderState {
@@ -14,12 +15,12 @@ impl BinderState {
 
     /// Create a branch label flow node for merging control flow paths.
     pub(crate) fn create_branch_label(&mut self) -> FlowNodeId {
-        self.flow_nodes.alloc(flow_flags::BRANCH_LABEL)
+        Arc::make_mut(&mut self.flow_nodes).alloc(flow_flags::BRANCH_LABEL)
     }
 
     /// Create a loop label flow node for back-edges.
     pub(crate) fn create_loop_label(&mut self) -> FlowNodeId {
-        self.flow_nodes.alloc(flow_flags::LOOP_LABEL)
+        Arc::make_mut(&mut self.flow_nodes).alloc(flow_flags::LOOP_LABEL)
     }
 
     /// Create a flow condition node for tracking type narrowing.
@@ -29,8 +30,9 @@ impl BinderState {
         antecedent: FlowNodeId,
         condition: NodeIndex,
     ) -> FlowNodeId {
-        let id = self.flow_nodes.alloc(flags);
-        if let Some(node) = self.flow_nodes.get_mut(id) {
+        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+        let id = flow_nodes.alloc(flags);
+        if let Some(node) = flow_nodes.get_mut(id) {
             node.antecedent.push(antecedent);
             node.node = condition;
         }
@@ -44,10 +46,14 @@ impl BinderState {
         fallthrough: FlowNodeId,
         clause: NodeIndex,
     ) -> FlowNodeId {
-        let id = self.flow_nodes.alloc(flow_flags::SWITCH_CLAUSE);
-        if let Some(node) = self.flow_nodes.get_mut(id) {
-            node.node = clause;
-        }
+        let id = {
+            let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+            let id = flow_nodes.alloc(flow_flags::SWITCH_CLAUSE);
+            if let Some(node) = flow_nodes.get_mut(id) {
+                node.node = clause;
+            }
+            id
+        };
         self.add_antecedent(id, pre_switch);
         self.add_antecedent(id, fallthrough);
         id
@@ -55,11 +61,13 @@ impl BinderState {
 
     /// Create a flow node for an assignment.
     pub(crate) fn create_flow_assignment(&mut self, assignment: NodeIndex) -> FlowNodeId {
-        let id = self.flow_nodes.alloc(flow_flags::ASSIGNMENT);
-        if let Some(node) = self.flow_nodes.get_mut(id) {
+        let current_flow = self.current_flow;
+        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+        let id = flow_nodes.alloc(flow_flags::ASSIGNMENT);
+        if let Some(node) = flow_nodes.get_mut(id) {
             node.node = assignment;
-            if self.current_flow.is_some() {
-                node.antecedent.push(self.current_flow);
+            if current_flow.is_some() {
+                node.antecedent.push(current_flow);
             }
         }
         id
@@ -67,11 +75,13 @@ impl BinderState {
 
     /// Create a flow node for a call expression.
     pub(crate) fn create_flow_call(&mut self, call: NodeIndex) -> FlowNodeId {
-        let id = self.flow_nodes.alloc(flow_flags::CALL);
-        if let Some(node) = self.flow_nodes.get_mut(id) {
+        let current_flow = self.current_flow;
+        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+        let id = flow_nodes.alloc(flow_flags::CALL);
+        if let Some(node) = flow_nodes.get_mut(id) {
             node.node = call;
-            if self.current_flow.is_some() {
-                node.antecedent.push(self.current_flow);
+            if current_flow.is_some() {
+                node.antecedent.push(current_flow);
             }
         }
         id
@@ -79,11 +89,13 @@ impl BinderState {
 
     /// Create a flow node for array mutation (e.g. push/splice).
     pub(crate) fn create_flow_array_mutation(&mut self, call: NodeIndex) -> FlowNodeId {
-        let id = self.flow_nodes.alloc(flow_flags::ARRAY_MUTATION);
-        if let Some(node) = self.flow_nodes.get_mut(id) {
+        let current_flow = self.current_flow;
+        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+        let id = flow_nodes.alloc(flow_flags::ARRAY_MUTATION);
+        if let Some(node) = flow_nodes.get_mut(id) {
             node.node = call;
-            if self.current_flow.is_some() {
-                node.antecedent.push(self.current_flow);
+            if current_flow.is_some() {
+                node.antecedent.push(current_flow);
             }
         }
         id
@@ -91,11 +103,13 @@ impl BinderState {
 
     /// Create a flow node for await expression (async suspension point).
     pub(crate) fn create_flow_await_point(&mut self, await_expr: NodeIndex) -> FlowNodeId {
-        let id = self.flow_nodes.alloc(flow_flags::AWAIT_POINT);
-        if let Some(node) = self.flow_nodes.get_mut(id) {
+        let current_flow = self.current_flow;
+        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+        let id = flow_nodes.alloc(flow_flags::AWAIT_POINT);
+        if let Some(node) = flow_nodes.get_mut(id) {
             node.node = await_expr;
-            if self.current_flow.is_some() {
-                node.antecedent.push(self.current_flow);
+            if current_flow.is_some() {
+                node.antecedent.push(current_flow);
             }
         }
         id
@@ -103,11 +117,13 @@ impl BinderState {
 
     /// Create a flow node for yield expression (generator suspension point).
     pub(crate) fn create_flow_yield_point(&mut self, yield_expr: NodeIndex) -> FlowNodeId {
-        let id = self.flow_nodes.alloc(flow_flags::YIELD_POINT);
-        if let Some(node) = self.flow_nodes.get_mut(id) {
+        let current_flow = self.current_flow;
+        let flow_nodes = Arc::make_mut(&mut self.flow_nodes);
+        let id = flow_nodes.alloc(flow_flags::YIELD_POINT);
+        if let Some(node) = flow_nodes.get_mut(id) {
             node.node = yield_expr;
-            if self.current_flow.is_some() {
-                node.antecedent.push(self.current_flow);
+            if current_flow.is_some() {
+                node.antecedent.push(current_flow);
             }
         }
         id
@@ -118,7 +134,7 @@ impl BinderState {
         if antecedent.is_none() || antecedent == self.unreachable_flow {
             return;
         }
-        if let Some(node) = self.flow_nodes.get_mut(label)
+        if let Some(node) = Arc::make_mut(&mut self.flow_nodes).get_mut(label)
             && !node.antecedent.contains(&antecedent)
         {
             node.antecedent.push(antecedent);
