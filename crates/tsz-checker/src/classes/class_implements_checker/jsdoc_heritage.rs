@@ -605,6 +605,59 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Returns `true` when the class has a JSDoc `@augments`/`@extends` tag
+    /// whose type argument is empty (e.g. `/** @augments */`).  tsc treats
+    /// such a tag as an invalid override of the structural `extends` clause,
+    /// which prevents base-class property merging.
+    pub(crate) fn has_empty_jsdoc_augments_tag(&self, class_idx: NodeIndex) -> bool {
+        let sf = match self.ctx.arena.source_files.first() {
+            Some(sf) => sf,
+            None => return false,
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = match self.ctx.arena.get(class_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        use tsz_common::comments::{get_leading_comments_from_cache, is_jsdoc_comment};
+        let leading = get_leading_comments_from_cache(comments, node.pos, source_text);
+        let comment = match leading.last() {
+            Some(c) => c,
+            None => return false,
+        };
+        if !is_jsdoc_comment(comment, source_text) {
+            return false;
+        }
+
+        let comment_text = comment.get_text(source_text);
+        for tag in ["augments", "extends"] {
+            let needle = format!("@{tag}");
+            for (match_pos, _) in comment_text.match_indices(&needle) {
+                let after = match_pos + needle.len();
+                if after >= comment_text.len() {
+                    return true;
+                }
+                let next_ch = comment_text[after..]
+                    .chars()
+                    .next()
+                    .expect("after < len checked above");
+                if next_ch.is_ascii_alphanumeric() {
+                    continue;
+                }
+                if self
+                    .attached_jsdoc_extends_or_augments_tag(class_idx)
+                    .is_none()
+                {
+                    return true;
+                }
+                return false;
+            }
+        }
+        false
+    }
+
     fn type_params_for_jsdoc_extends_name(
         &mut self,
         base_name: &str,
