@@ -94,6 +94,13 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&enum_member_text);
             } else if has_initializer && self.is_import_meta_url_expression(initializer) {
                 self.write(": string");
+            } else if has_initializer
+                && self.initializer_is_global_this_identifier(initializer)
+            {
+                // `const x = globalThis` — tsc emits `: typeof globalThis`.
+                // The solver otherwise resolves `globalThis` to `any` in the
+                // emit boundary, producing a less-informative annotation.
+                self.write(": typeof globalThis");
             } else if is_const_null_or_undefined
                 || (has_initializer && self.invalid_const_enum_object_access(initializer))
                 || (has_initializer
