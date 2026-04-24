@@ -539,6 +539,9 @@ impl<'a> CheckerState<'a> {
             {
                 if init_kind == syntax_kind_ext::CALL_EXPRESSION
                     || init_kind == syntax_kind_ext::NEW_EXPRESSION
+                    // TS2406 also fires for private identifiers (`for (#field in v)`)
+                    // because private identifiers are not valid iteration variables.
+                    || init_kind == SyntaxKind::PrivateIdentifier as u16
                 {
                     self.error_at_node(
                         initializer,
