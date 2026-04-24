@@ -357,6 +357,12 @@ impl<'a> CheckerState<'a> {
             // `[...T]` where `T extends Container<unknown>[]`), we should still
             // force tuple inference. The `[...T]` pattern is specifically used in
             // TypeScript to trigger tuple inference from array literal arguments.
+            // We also keep tuple inference when the contextual type is an
+            // intersection (e.g., `[...number[]] & { length: 2 }`): the other
+            // intersection members add structural constraints that make the
+            // overall shape a fixed-length tuple, matching tsc's behavior where
+            // `isTupleLikeType` returns true for such intersections because a
+            // numeric "0" property is reachable through the tuple member.
             if elems.iter().all(|e| e.rest) {
                 let has_type_param_rest = elems.iter().any(|e| {
                     e.rest
@@ -365,7 +371,13 @@ impl<'a> CheckerState<'a> {
                             e.type_id,
                         )
                 });
-                if has_type_param_rest {
+                let is_intersection_context =
+                    crate::query_boundaries::common::intersection_members(
+                        self.ctx.types,
+                        applicable,
+                    )
+                    .is_some();
+                if has_type_param_rest || is_intersection_context {
                     Some(elems)
                 } else {
                     None
@@ -900,5 +912,47 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(self.ctx.types.union(element_types))
         }
+    }
+}
+
+#[cfg(test)]
+mod array_literal_context_tests {
+    use crate::test_utils::check_source_codes;
+
+    #[test]
+    fn rest_only_tuple_intersected_with_length_accepts_literal() {
+        // Regression for conformance test contextualTypeWithTuple.ts (#29311):
+        // `[...number[]] & { length: 2 }` was causing `[0, 0]` to be inferred as
+        // `number[]` (because the rest-only tuple skipped tuple context), which
+        // then failed to satisfy the intersection. tsc's `isTupleLikeType`
+        // considers such intersections tuple-like, so the array literal must
+        // use tuple inference and become `[number, number]`.
+        let source = r#"
+type test1 = [...number[]]
+type fixed1 = test1 & { length: 2 }
+let var1: fixed1 = [0, 0]
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "[0, 0] should be assignable to [...number[]] & {{ length: 2 }}, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn rest_only_tuple_without_intersection_still_widens_to_array() {
+        // Guard against over-broadening the fix. A bare rest-only tuple without
+        // other intersection members continues to use array inference, matching
+        // the original behavior for destructuring-style contextual types such as
+        // `[...any[]]`.
+        let source = r#"
+declare let arr: (string | number)[];
+let x: [...(string | number)[]] = arr;
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "array is still assignable to rest-only tuple, got: {errors:?}"
+        );
     }
 }
