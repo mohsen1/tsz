@@ -850,7 +850,34 @@ impl<'a> CheckerState<'a> {
             return self.format_type_for_assignability_message(stripped);
         }
 
+        // For intersection types containing a fresh anonymous object member,
+        // use widened display when the target is NOT literal-sensitive.
+        // tsc widens `{ fooProp: "frizzlebizzle" } & Bar` to
+        // `{ fooProp: string } & Bar` when the target has non-literal property
+        // types, but preserves the literal when the target has literal types.
+        if crate::query_boundaries::common::is_intersection_type(
+            self.ctx.types.as_type_database(),
+            ty,
+        ) && !self.is_literal_sensitive_assignment_target(other)
+            && self.intersection_has_fresh_anonymous_object(ty)
+        {
+            return self.format_type_diagnostic_widened(ty);
+        }
+
         self.format_type_for_assignability_message(ty)
+    }
+
+    /// Check if an intersection type contains a fresh anonymous object member
+    /// (one with display_properties and no symbol name).
+    fn intersection_has_fresh_anonymous_object(&self, ty: TypeId) -> bool {
+        crate::query_boundaries::common::intersection_members(self.ctx.types.as_type_database(), ty)
+            .is_some_and(|members| {
+                members.iter().any(|&m| {
+                    self.ctx.types.get_display_properties(m).is_some()
+                        && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, m)
+                            .is_some_and(|shape| shape.symbol.is_none())
+                })
+            })
     }
 
     fn class_constructor_symbol_for_assignment_display(
