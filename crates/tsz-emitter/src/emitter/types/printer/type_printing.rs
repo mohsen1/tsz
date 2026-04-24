@@ -556,7 +556,7 @@ impl<'a> TypePrinter<'a> {
         // `number | string` prints as `string | number`. Non-primitive members
         // keep their original relative order because a sort comparator that
         // returns "equal" for them is stable.
-        fn primitive_rank(id: TypeId) -> Option<u32> {
+        const fn primitive_rank(id: TypeId) -> Option<u32> {
             // Mirrors tsc's TypeFlags bit values in ascending order.
             match id {
                 TypeId::ANY => Some(1),

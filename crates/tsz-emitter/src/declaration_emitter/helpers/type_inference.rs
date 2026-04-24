@@ -1312,7 +1312,13 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(ret) = self.arena.get_return_statement(stmt_node) else {
                     return false;
                 };
-                let type_text = if let Some(text) = self
+                let type_text = if !ret.expression.is_some() {
+                    // `return;` with no expression contributes `void` to the
+                    // function's return type — tsc's inference for a bare
+                    // return is equivalent to `return undefined` with
+                    // widening to `void`. Matches declFileTypeAnnotationBuiltInType.
+                    "void".to_string()
+                } else if let Some(text) = self
                     .preferred_expression_type_text(ret.expression)
                     .filter(|text| !text.is_empty())
                 {
