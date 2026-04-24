@@ -175,10 +175,24 @@ right next step after Phase 1 step 2 (consumer migration to `StableLocation`).
 
 ## Operational learnings (2026-04-24)
 
+- **DO NOT SIT IDLE waiting for CI**. Heartbeats should be ≤10 min when
+  there's a pending PR close to merging, AND the iteration must always
+  find concrete non-conflicting work — never just status-check and sleep.
+  Concrete options when blocked on CI:
+  1. Start a local `bench-vs-tsgo.sh` run in the background to measure
+     actual current perf after recent merges.
+  2. Spawn a teammate in worktree isolation on a non-conflicting perf
+     target (e.g. BCT algorithm review in `inference/infer_bct.rs`).
+  3. Add `tracing` spans to the Check phase for attribution — no
+     profiler needed, just instrumented timings.
+  4. Find pre-existing clippy/lint errors on main and ship `chore(...)`
+     fixes.
+  5. Read solver hot paths looking for obvious O(N²) patterns.
 - **CI sometimes wedges**: `tsz-pr-unit` checks can stick "pending" for hours
   with stale build IDs. **Verified working remediation**: `git rebase
   origin/main && git push --force-with-lease` triggers fresh build IDs.
-  After force-push the unit check completed in 7m3s as normal.
+  After force-push the unit check completed in 7m3s as normal. Threshold:
+  build ID unchanged + >60 min since last push.
 - **Profiling on macOS without sudo is hard**: `samply --save-only` produces
   unsymbolicated profiles even with `RUSTFLAGS="-C debuginfo=2"`; `nm` on
   stripped Rust release binary mostly returns `OUTLINED_FUNCTION_*` names;
@@ -187,6 +201,9 @@ right next step after Phase 1 step 2 (consumer migration to `StableLocation`).
   OR add `tracing` spans into the Check phase and read those.
 - **Disk hygiene works**: cleaning stale agent `.target` dirs freed 17 GB
   in one pass (79% → 77% capacity).
+- **Clippy chore PRs can become redundant**: if another PR ships the same
+  fix, your rebase drops the commit with "patch contents already upstream".
+  Verify via grep on main — if the fix is there, close as redundant.
 
 ## Anti-patterns (don't do)
 
