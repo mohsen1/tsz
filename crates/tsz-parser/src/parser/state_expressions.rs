@@ -1630,14 +1630,15 @@ impl ParserState {
                     UnaryExprData { operator, operand },
                 )
             }
-            SyntaxKind::AsteriskToken => {
-                // `*` is not a standalone unary operator in expression position.
-                // Report TS1109 at the `*`, then recover by skipping it so the
-                // following token can still become the operand expression.
-                self.error_expression_expected();
-                self.next_token();
-                self.parse_unary_expression()
-            }
+            // `*` is only a binary operator (multiplication, etc.). Fall through to
+            // the default path so `parse_primary_expression`'s `is_binary_operator`
+            // branch reports TS1109 and returns a missing LHS without advancing,
+            // matching tsc's `parsePrimaryExpression -> createMissingNode` flow.
+            // The outer `parse_binary_expression_chain` then consumes `*` as a
+            // binary operator, which is the correct tree shape for recovery
+            // (e.g. `import type defer * as ns1 from "./a";` parses `* as`
+            // as a binary expression and produces `;' expected` on `ns1`,
+            // matching tsc).
             SyntaxKind::TypeOfKeyword | SyntaxKind::VoidKeyword | SyntaxKind::DeleteKeyword => {
                 let start_pos = self.token_pos();
                 let operator = self.token() as u16;
@@ -2803,6 +2804,22 @@ impl ParserState {
                 // without losing `case`/`default` tokens.
                 // ColonToken is a structural delimiter (case clauses, labels, type annotations)
                 // and must not be consumed as an error token.
+
+                // `as` and `satisfies` are contextual keywords that have binary
+                // operator precedence (for type assertions / satisfies checks) but
+                // can also appear as plain identifiers. In *primary* position,
+                // prefer identifier parsing — matching tsc's
+                // `parsePrimaryExpression -> parseIdentifier` which returns true
+                // from `isIdentifier()` for contextual keywords. Without this
+                // branch the subsequent `is_binary_operator` check would reject
+                // them and emit a spurious TS1109.
+                if matches!(
+                    self.token(),
+                    SyntaxKind::AsKeyword | SyntaxKind::SatisfiesKeyword
+                ) {
+                    return self.parse_identifier_name();
+                }
+
                 if self.is_binary_operator() {
                     // Binary operator at expression start means missing LHS.
                     // Emit TS1109 matching tsc's parsePrimaryExpression behavior.
