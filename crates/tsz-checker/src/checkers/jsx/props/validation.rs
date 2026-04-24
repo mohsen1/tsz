@@ -270,8 +270,19 @@ impl<'a> CheckerState<'a> {
         let source_str = if let Some(shape) =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, attrs_type)
         {
-            let fields = shape
-                .properties
+            // Sort by declaration_order to preserve JSX attribute source order.
+            // Properties are stored sorted by atom name for O(1) hashing dedup; declaration_order
+            // captures the original insertion order (e.g. `x={1} render={2}` → x first).
+            let mut props: Vec<_> = shape.properties.iter().collect();
+            props.sort_by(
+                |a, b| match (a.declaration_order > 0, b.declaration_order > 0) {
+                    (true, true) => a.declaration_order.cmp(&b.declaration_order),
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    (false, false) => a.name.cmp(&b.name),
+                },
+            );
+            let fields = props
                 .iter()
                 .map(|prop| {
                     let name = self.ctx.types.resolve_atom_ref(prop.name);
