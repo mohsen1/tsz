@@ -522,7 +522,18 @@ impl<'a> TypePrinter<'a> {
             return "never".to_string();
         }
 
-        let mut parts = Vec::with_capacity(types.len());
+        // Split members into real types vs nullish tail. tsc's type printer
+        // emits the nullish members (`null`, `undefined`, `void`) at the end
+        // of the union, in that canonical order — e.g. optional parameter
+        // annotations render as `(X | undefined)[]`, not `(undefined | X)[]`.
+        // Our solver stores unions in the order they were built, which for
+        // `X | undefined` inferred from `a?: X[]` happens to be `undefined`
+        // first. Re-ordering here keeps every other call site alone and
+        // matches tsc's display without touching solver-level canonicalization.
+        let mut real: Vec<TypeId> = Vec::with_capacity(types.len());
+        let mut has_null = false;
+        let mut has_undefined = false;
+        let mut has_void = false;
         for &type_id in types.iter() {
             // When strictNullChecks is off, filter null/undefined/void from unions
             if !self.strict_null_checks
@@ -530,6 +541,30 @@ impl<'a> TypePrinter<'a> {
             {
                 continue;
             }
+            match type_id {
+                TypeId::NULL => has_null = true,
+                TypeId::UNDEFINED => has_undefined = true,
+                TypeId::VOID => has_void = true,
+                _ => real.push(type_id),
+            }
+        }
+
+        // tsc's compareTypes orders union members by TypeFlags; for the nullish
+        // trio the flag values are Void < Undefined < Null, so the tail prints
+        // `void | undefined | null` in that order when members are present.
+        let mut ordered = real;
+        if has_void {
+            ordered.push(TypeId::VOID);
+        }
+        if has_undefined {
+            ordered.push(TypeId::UNDEFINED);
+        }
+        if has_null {
+            ordered.push(TypeId::NULL);
+        }
+
+        let mut parts = Vec::with_capacity(ordered.len());
+        for type_id in ordered {
             let s = self.composition_member_text(type_id);
             // Parenthesize function/constructor types and conditional types in union position.
             // Conditional types need parens because `extends` binds more tightly than `|`:
