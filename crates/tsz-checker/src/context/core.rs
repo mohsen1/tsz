@@ -744,8 +744,13 @@ impl<'a> CheckerContext<'a> {
 
     /// Set resolved module specifiers (module names that exist in the project).
     /// Used to suppress TS2307 errors for known modules.
-    pub fn set_resolved_modules(&mut self, modules: FxHashSet<String>) {
-        self.resolved_modules = Some(modules);
+    ///
+    /// Accepts either an owned `FxHashSet<String>` or an existing
+    /// `Arc<FxHashSet<String>>`. The production per-file CLI driver
+    /// shares the pre-bucketed set via `Arc::clone`; tests pass owned
+    /// sets and pay a single `Arc::new` wrapping.
+    pub fn set_resolved_modules(&mut self, modules: impl Into<Arc<FxHashSet<String>>>) {
+        self.resolved_modules = Some(modules.into());
     }
 
     /// Set resolved module errors map for cross-file import resolution.
