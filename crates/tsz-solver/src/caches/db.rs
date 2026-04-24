@@ -4,6 +4,7 @@
 //! swap in a query system (e.g., Salsa) without touching core logic.
 
 use crate::ObjectLiteralBuilder;
+use crate::caches::instantiation_cache::InstantiationCacheKey;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::intern::type_factory::TypeFactory;
@@ -739,6 +740,22 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         _result: TypeId,
     ) {
     }
+
+    /// Look up a cross-call `instantiate_type` cache entry.
+    ///
+    /// PR 2/4 of the `instantiate_type` cache plumbing
+    /// (`docs/plan/perf-instantiate-type-cache-design.md`). The default
+    /// returns `None` so non-`QueryCache` databases (raw `TypeInterner`,
+    /// tests) don't need to implement it. PR 3/4 will wire the five
+    /// `instantiate_type*` entry points to consult this cache after their
+    /// existing leaf fast paths.
+    fn lookup_instantiation_cache(&self, _key: &InstantiationCacheKey) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an `instantiate_type` result in the cross-call cache.
+    /// Default is a no-op for the same reason as `lookup_instantiation_cache`.
+    fn insert_instantiation_cache(&self, _key: InstantiationCacheKey, _result: TypeId) {}
 
     fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
         crate::evaluation::evaluate::evaluate_keyof(self.as_type_database(), operand)
