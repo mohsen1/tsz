@@ -292,9 +292,19 @@ impl<'a> CheckerState<'a> {
         // explicit `<T>` syntax. This is required for parity with TypeScript in
         // cases like:
         //   const f: <T>(x: T) => void = x => {};
-        let inherited_contextual_generics =
-            is_closure && type_params.is_empty() && contextual_signature_type_params.is_some();
-        if is_closure
+        //
+        // JS function declarations with `@type {<T>(...)}` JSDoc also need to
+        // inherit the contextual type parameters, because JS syntax has no way
+        // to declare `<T>` on a function declaration. Without this, calls like
+        // `inJs(1)` on `function inJs(l) { return l; }` annotated with
+        // `/** @type {<T>(m: T) => T} */` leave `T` as a free type parameter
+        // and inference fails with TS2345.
+        let can_inherit_contextual_generics =
+            is_closure || (self.is_js_file() && is_function_declaration && has_jsdoc_type_function);
+        let inherited_contextual_generics = can_inherit_contextual_generics
+            && type_params.is_empty()
+            && contextual_signature_type_params.is_some();
+        if can_inherit_contextual_generics
             && type_params.is_empty()
             && let Some(contextual_type_params) = contextual_signature_type_params
         {
