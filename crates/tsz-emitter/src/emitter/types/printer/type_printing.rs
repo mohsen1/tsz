@@ -549,6 +549,38 @@ impl<'a> TypePrinter<'a> {
             }
         }
 
+        // tsc's compareTypes orders union members by `getSortOrderFlags`,
+        // which for primitives returns `TypeFlags` directly. Give primitive
+        // intrinsics a stable, tsc-matching order (`any` < `unknown` < `string`
+        // < `number` < `boolean` < `bigint` < `symbol`/`object`) so an inferred
+        // `number | string` prints as `string | number`. Non-primitive members
+        // keep their original relative order because a sort comparator that
+        // returns "equal" for them is stable.
+        fn primitive_rank(id: TypeId) -> Option<u32> {
+            // Mirrors tsc's TypeFlags bit values in ascending order.
+            match id {
+                TypeId::ANY => Some(1),
+                TypeId::UNKNOWN => Some(2),
+                TypeId::STRING => Some(4),
+                TypeId::NUMBER => Some(8),
+                TypeId::BOOLEAN => Some(16),
+                TypeId::BIGINT => Some(64),
+                TypeId::SYMBOL => Some(4096),
+                TypeId::OBJECT => Some(33_554_432),
+                _ => None,
+            }
+        }
+        real.sort_by(|a, b| {
+            // Keep non-primitive members in their original relative order; only
+            // the known primitives get sorted among themselves. For a mixed
+            // union like `MyAlias | string | number`, this reorders the
+            // primitives into tsc order while leaving `MyAlias` in place.
+            match (primitive_rank(*a), primitive_rank(*b)) {
+                (Some(ra), Some(rb)) => ra.cmp(&rb),
+                _ => std::cmp::Ordering::Equal,
+            }
+        });
+
         // tsc's compareTypes orders union members by TypeFlags; for the nullish
         // trio the flag values are Void < Undefined < Null, so the tail prints
         // `void | undefined | null` in that order when members are present.
