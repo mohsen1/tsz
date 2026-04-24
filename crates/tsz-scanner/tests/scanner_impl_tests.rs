@@ -343,6 +343,66 @@ fn re_scan_jsx_token_single_line_text() {
 }
 
 #[test]
+fn scan_jsx_token_reports_merge_conflict_marker_in_children() {
+    // A Git merge conflict marker appearing as a JSX child must be reported
+    // as TS1185 by the JSX scanner, not mis-scanned as the start of a new
+    // JSX element. Regression test for conflictMarkerTrivia3.tsx.
+    let source = "<div>\n<<<<<<< HEAD\n=======\nfoo\n>>>>>>> branch".to_string();
+    let mut scanner = ScannerState::new(source, true);
+
+    assert_eq!(scanner.scan(), SyntaxKind::LessThanToken);
+    assert_eq!(scanner.scan(), SyntaxKind::Identifier); // div
+    assert_eq!(scanner.scan(), SyntaxKind::GreaterThanToken);
+
+    // Re-scan as JSX — must return ConflictMarkerTrivia with token start at
+    // the trivia (newline) right after the `>`, matching tsc's scanJsxToken.
+    let full_start_before_rescan = scanner.get_token_full_start();
+    let token = scanner.re_scan_jsx_token(true);
+    assert_eq!(token, SyntaxKind::ConflictMarkerTrivia);
+    assert_eq!(
+        scanner.get_token_start(),
+        full_start_before_rescan,
+        "ConflictMarkerTrivia token must start at full_start_pos (end of `>`), \
+         so the parser anchors TS1005 `'</' expected.` there"
+    );
+
+    let marker_diag = scanner
+        .get_scanner_diagnostics()
+        .iter()
+        .find(|d| d.code == 1185)
+        .expect("expected TS1185 `Merge conflict marker encountered.`");
+    assert_eq!(
+        marker_diag.pos, 6,
+        "TS1185 must anchor at the `<` of the `<<<<<<<` marker, not at the \
+         prior `\\n` trivia"
+    );
+}
+
+#[test]
+fn scan_jsx_token_non_start_of_line_less_than_is_not_conflict_marker() {
+    // `<<<<<<<` not at start of a line is ordinary content (a `<` in JSX text
+    // breaks the text; no TS1185 should be emitted). Guards against broadening
+    // the fix into false positives on normal JSX content.
+    let source = ">abc<<<<<<<< HEAD".to_string();
+    let mut scanner = ScannerState::new(source, true);
+
+    scanner.scan(); // >
+    scanner.scan(); // abc identifier
+
+    // Rescan as JSX text — the `<` stops the text, the marker is not at line
+    // start so it's NOT detected as a conflict marker.
+    let token = scanner.re_scan_jsx_token(true);
+    assert_eq!(token, SyntaxKind::JsxText);
+    assert!(
+        scanner
+            .get_scanner_diagnostics()
+            .iter()
+            .all(|d| d.code != 1185),
+        "no TS1185 should be emitted when `<<<<<<<` is not at start of line"
+    );
+}
+
+#[test]
 fn test_template_rescan_invalid_hex_escape() {
     use tsz_scanner::SyntaxKind;
     use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};

@@ -2382,7 +2382,19 @@ impl ScannerState {
             let c = self.char_code_unchecked(self.pos);
 
             // Stop on JSX special characters
-            if c == CharacterCodes::OPEN_BRACE || c == CharacterCodes::LESS_THAN {
+            if c == CharacterCodes::OPEN_BRACE {
+                break;
+            }
+            if c == CharacterCodes::LESS_THAN {
+                // Git merge conflict markers appearing in JSX children must be
+                // reported as TS1185 rather than mis-parsed as the start of a
+                // new JSX element. Matches tsc's scanJsxToken (see
+                // TypeScript/src/compiler/scanner.ts `scanJsxToken`).
+                if self.is_conflict_marker_trivia() {
+                    self.scan_conflict_marker_trivia();
+                    self.token = SyntaxKind::ConflictMarkerTrivia;
+                    return self.token;
+                }
                 break;
             }
 
