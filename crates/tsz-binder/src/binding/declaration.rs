@@ -62,7 +62,7 @@ impl BinderState {
                     Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(idx, flags));
                 }
 
                 let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
@@ -87,7 +87,7 @@ impl BinderState {
                     Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(idx, flags));
                 }
             } else {
                 let flags = if is_block_scoped {
@@ -117,7 +117,7 @@ impl BinderState {
                             Arc::make_mut(&mut self.global_augmentations)
                                 .entry(name.to_string())
                                 .or_default()
-                                .push(crate::state::GlobalAugmentation::new(ident_idx));
+                                .push(crate::state::GlobalAugmentation::new(ident_idx, flags));
                         }
                     }
                 }
@@ -834,7 +834,10 @@ impl BinderState {
                 Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
-                    .push(crate::state::GlobalAugmentation::new(idx));
+                    .push(crate::state::GlobalAugmentation::new(
+                        idx,
+                        symbol_flags::INTERFACE,
+                    ));
             }
 
             // In script files (non-module files), top-level interface declarations that match
@@ -848,7 +851,10 @@ impl BinderState {
                 Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
-                    .push(crate::state::GlobalAugmentation::new(idx));
+                    .push(crate::state::GlobalAugmentation::new(
+                        idx,
+                        symbol_flags::INTERFACE,
+                    ));
             }
 
             // Rule #44: Track module augmentation interfaces
@@ -943,7 +949,10 @@ impl BinderState {
                 Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
                     .or_default()
-                    .push(crate::state::GlobalAugmentation::new(idx));
+                    .push(crate::state::GlobalAugmentation::new(
+                        idx,
+                        symbol_flags::TYPE_ALIAS,
+                    ));
             }
 
             // Rule #44: Track module augmentation type aliases

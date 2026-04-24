@@ -159,21 +159,30 @@ pub struct GlobalAugmentation {
     pub node: NodeIndex,
     /// The arena containing this declaration (None = current file's arena, Some = cross-file)
     pub arena: Option<Arc<NodeArena>>,
+    /// Symbol flags this augmentation contributes (e.g., INTERFACE for interface declarations,
+    /// `FUNCTION_SCOPED_VARIABLE` for `var` declarations). Used during lib merging to selectively
+    /// merge only flags from `declare global` blocks in external module lib files.
+    pub flags: u32,
 }
 
 impl GlobalAugmentation {
     /// Create a new global augmentation without arena context (during binding).
     #[must_use]
-    pub const fn new(node: NodeIndex) -> Self {
-        Self { node, arena: None }
+    pub const fn new(node: NodeIndex, flags: u32) -> Self {
+        Self {
+            node,
+            arena: None,
+            flags,
+        }
     }
 
     /// Create a new global augmentation with arena context (during merge).
     #[must_use]
-    pub const fn with_arena(node: NodeIndex, arena: Arc<NodeArena>) -> Self {
+    pub const fn with_arena(node: NodeIndex, arena: Arc<NodeArena>, flags: u32) -> Self {
         Self {
             node,
             arena: Some(arena),
+            flags,
         }
     }
 }
