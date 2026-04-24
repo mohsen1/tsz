@@ -72,17 +72,75 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         // Parameters and destructured parameter bindings are eligible for
-        // "implicit const" treatment. `let`/`var` variables are excluded
-        // because they have edge cases (e.g., `let arguments = 100` shadowing
-        // built-in `arguments` with misresolved declared type). tsc also applies
-        // this to local `let` variables via `isPastLastAssignment()`, but that
-        // requires more careful handling of all assignment sites.
+        // "implicit const" treatment.
+        //
+        // tsc also applies this to local `let` variables via `isPastLastAssignment()`:
+        // if the variable is block-scoped (let), not exported, not a `var`, and none
+        // of its assignments happen inside a nested closure relative to the declaration
+        // scope, then the variable is "effectively const" at any closure created after
+        // the last assignment.
+        //
+        // `var` declarations, exported variables, and global-scope variables are
+        // excluded because they have broader visibility and hoisting semantics.
         //
         // For destructured parameters like `function f({ a })`: the symbol's
         // value_declaration points to the identifier `a`, whose parent chain is:
         //   Identifier → BINDING_ELEMENT → OBJECT_BINDING_PATTERN → PARAMETER
+
+        // Check if this is a `let` variable eligible for "narrowing past last assignment"
+        let is_let_var = if let Some(symbol) = self.binder.get_symbol(symbol_id) {
+            use tsz_binder::{ContainerKind, symbol_flags};
+            // BLOCK_SCOPED_VARIABLE covers both `let` and `const`. Since we already
+            // handled `const` above, this branch only fires for `let`.
+            let is_block_scoped_let = (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                && (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) == 0
+                && !symbol.is_exported;
+            if !is_block_scoped_let {
+                false
+            } else {
+                // Only apply "narrowing past last assignment" for variables declared
+                // inside a function body. Walk up the scope chain from the declaration
+                // until we hit a function boundary (eligible) or source-file/module
+                // boundary (not eligible). Block scopes that are nested inside a
+                // function are fine; block scopes at module level are not.
+                // This matches tsc's `isParameterOrMutableLocalVariable` behavior.
+                let decl_scope_id = self.binder.find_enclosing_scope(self.arena, decl_id);
+                let mut is_in_function_scope = false;
+                if let Some(mut scope_id) = decl_scope_id {
+                    for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+                        let Some(scope) = self.binder.scopes.get(scope_id.0 as usize) else {
+                            break;
+                        };
+                        match scope.kind {
+                            ContainerKind::Function => {
+                                is_in_function_scope = true;
+                                break;
+                            }
+                            ContainerKind::SourceFile | ContainerKind::Module => {
+                                // Hit module/global boundary — not a local variable
+                                break;
+                            }
+                            ContainerKind::Block | ContainerKind::Class => {
+                                // Keep walking up
+                            }
+                        }
+                        let parent = scope.parent;
+                        if parent.is_none() {
+                            break;
+                        }
+                        scope_id = parent;
+                    }
+                }
+                is_in_function_scope
+            }
+        } else {
+            false
+        };
+
         let eligible = decl_node.kind == syntax_kind_ext::PARAMETER
-            || self.is_declaration_in_parameter(decl_id);
+            || self.is_declaration_in_parameter(decl_id)
+            || (is_let_var
+                && !self.has_assignment_in_nested_closure(symbol_id, decl_id, reference));
 
         if !eligible {
             return false;
@@ -199,6 +257,92 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         last_pos
+    }
+
+    /// Check whether any reassignment to the given symbol happens inside a nested
+    /// closure relative to `reference`.
+    ///
+    /// "Nested closure" means a function body that is lexically inside the function
+    /// that contains `reference`. If an assignment is in an inner arrow/function/class
+    /// method, the outer let binding could be mutated at an unpredictable time, so
+    /// closure narrowing is NOT safe to preserve.
+    ///
+    /// This implements the tsc `isPastLastAssignment` condition:
+    ///   "no assignment to x is in a nested function relative to the containing scope
+    ///    of the reference".
+    fn has_assignment_in_nested_closure(
+        &self,
+        _symbol_id: tsz_binder::SymbolId,
+        decl_id: NodeIndex,
+        reference: NodeIndex,
+    ) -> bool {
+        use tsz_binder::flow_flags;
+
+        // Find the function node that encloses the declaration (and therefore the
+        // reference, since declarations scope outward from references).
+        let decl_fn = self.find_enclosing_function_node(decl_id);
+
+        let flow_count = self.binder.flow_nodes.len();
+        for i in 0..flow_count {
+            let flow_id = tsz_binder::FlowNodeId(i as u32);
+            let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
+                continue;
+            };
+
+            if !flow.has_any_flags(flow_flags::ASSIGNMENT) {
+                continue;
+            }
+
+            // Skip initializations — only count reassignments
+            let Some(node) = self.arena.get(flow.node) else {
+                continue;
+            };
+            let kind = node.kind;
+            if kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                || kind == syntax_kind_ext::PARAMETER
+            {
+                continue;
+            }
+
+            if self.assignment_targets_reference(flow.node, reference) {
+                let assign_fn = self.find_enclosing_function_node(flow.node);
+                // If the assignment's enclosing function is *different* from the
+                // declaration's enclosing function, the assignment is in a nested
+                // (or outer) function — closure narrowing is not safe.
+                if assign_fn != decl_fn {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Walk the parent chain from `node_idx` to find the nearest enclosing
+    /// function-like node (FUNCTION_DECLARATION, FUNCTION_EXPRESSION, ARROW_FUNCTION,
+    /// METHOD_DECLARATION, GET_ACCESSOR, SET_ACCESSOR, or CONSTRUCTOR).
+    ///
+    /// Returns `NodeIndex::NONE` if the node is at module/global scope.
+    fn find_enclosing_function_node(&self, node_idx: NodeIndex) -> NodeIndex {
+        let mut current = node_idx;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return NodeIndex::NONE;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return NodeIndex::NONE;
+            }
+            let Some(parent_node) = self.arena.get(parent) else {
+                return NodeIndex::NONE;
+            };
+            if parent_node.is_function_like() {
+                return parent;
+            }
+            current = parent;
+        }
+        NodeIndex::NONE
     }
 
     /// Check if a variable is captured from an outer scope (vs declared locally).
