@@ -758,95 +758,96 @@ impl<'a> CheckerState<'a> {
 
             // Extract property name, name node index, property type, and
             // whether this member is static.
-            let (prop_name, name_idx, prop_type, is_static_member) =
-                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
-                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                        continue;
-                    };
-                    let name = self.get_member_name_text(sig.name).unwrap_or_default();
-                    let prop_type = if sig.type_annotation.is_some() {
-                        self.get_type_from_type_node(sig.type_annotation)
-                    } else {
-                        self.get_type_of_node(member_idx)
-                    };
-                    (name, sig.name, prop_type, false)
-                } else if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
-                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                        continue;
-                    };
-                    let name = self.get_member_name_text(sig.name).unwrap_or_default();
-                    let prop_type = self.get_type_of_interface_member_simple(member_idx);
-                    (name, sig.name, prop_type, false)
-                } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                        continue;
-                    };
-                    let is_static = self.has_static_modifier(&prop.modifiers);
-                    if let Some(name_node) = self.ctx.arena.get(prop.name)
-                        && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
-                    {
-                        continue;
-                    }
-                    let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                    let prop_type = if let Some(declared_type) =
-                        self.effective_class_property_declared_type(member_idx, prop)
-                    {
-                        declared_type
-                    } else {
-                        self.get_type_of_node(member_idx)
-                    };
-                    (name, prop.name, prop_type, is_static)
-                } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                        continue;
-                    };
-                    let is_static = self.has_static_modifier(&method.modifiers);
-                    if let Some(name_node) = self.ctx.arena.get(method.name)
-                        && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
-                    {
-                        continue;
-                    }
-                    let name = self.get_member_name_text(method.name).unwrap_or_default();
-                    let prop_type = self.get_type_of_function(member_idx);
-                    (name, method.name, prop_type, is_static)
-                } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                    || member_node.kind == syntax_kind_ext::SET_ACCESSOR
-                {
-                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
-                        continue;
-                    };
-                    let is_static = self.has_static_modifier(&accessor.modifiers);
-                    if let Some(name_node) = self.ctx.arena.get(accessor.name)
-                        && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
-                    {
-                        continue;
-                    }
-                    let name = self.get_member_name_text(accessor.name).unwrap_or_default();
-                    let prop_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        if accessor.type_annotation.is_some() {
-                            self.get_type_from_type_node(accessor.type_annotation)
-                        } else {
-                            self.infer_getter_return_type(accessor.body)
-                        }
-                    } else {
-                        let type_ann = accessor
-                            .parameters
-                            .nodes
-                            .first()
-                            .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                            .map(|param| param.type_annotation)
-                            .unwrap_or(NodeIndex::NONE);
-                        if type_ann.is_some() {
-                            self.get_type_from_type_node(type_ann)
-                        } else {
-                            self.get_type_of_node(member_idx)
-                        }
-                    };
-                    (name, accessor.name, prop_type, is_static)
-                } else {
+            let (prop_name, name_idx, prop_type, is_static_member) = if member_node.kind
+                == syntax_kind_ext::PROPERTY_SIGNATURE
+            {
+                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                     continue;
                 };
+                let name = self.get_member_name_text(sig.name).unwrap_or_default();
+                let prop_type = if sig.type_annotation.is_some() {
+                    self.get_type_from_type_node(sig.type_annotation)
+                } else {
+                    self.get_type_of_node(member_idx)
+                };
+                (name, sig.name, prop_type, false)
+            } else if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
+                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                    continue;
+                };
+                let name = self.get_member_name_text(sig.name).unwrap_or_default();
+                let prop_type = self.merged_method_signature_type(iface_type, &name, member_idx);
+                (name, sig.name, prop_type, false)
+            } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                let is_static = self.has_static_modifier(&prop.modifiers);
+                if let Some(name_node) = self.ctx.arena.get(prop.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                {
+                    continue;
+                }
+                let name = self.get_member_name_text(prop.name).unwrap_or_default();
+                let prop_type = if let Some(declared_type) =
+                    self.effective_class_property_declared_type(member_idx, prop)
+                {
+                    declared_type
+                } else {
+                    self.get_type_of_node(member_idx)
+                };
+                (name, prop.name, prop_type, is_static)
+            } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    continue;
+                };
+                let is_static = self.has_static_modifier(&method.modifiers);
+                if let Some(name_node) = self.ctx.arena.get(method.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                {
+                    continue;
+                }
+                let name = self.get_member_name_text(method.name).unwrap_or_default();
+                let prop_type = self.get_type_of_function(member_idx);
+                (name, method.name, prop_type, is_static)
+            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                    continue;
+                };
+                let is_static = self.has_static_modifier(&accessor.modifiers);
+                if let Some(name_node) = self.ctx.arena.get(accessor.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                {
+                    continue;
+                }
+                let name = self.get_member_name_text(accessor.name).unwrap_or_default();
+                let prop_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    if accessor.type_annotation.is_some() {
+                        self.get_type_from_type_node(accessor.type_annotation)
+                    } else {
+                        self.infer_getter_return_type(accessor.body)
+                    }
+                } else {
+                    let type_ann = accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .map(|param| param.type_annotation)
+                        .unwrap_or(NodeIndex::NONE);
+                    if type_ann.is_some() {
+                        self.get_type_from_type_node(type_ann)
+                    } else {
+                        self.get_type_of_node(member_idx)
+                    }
+                };
+                (name, accessor.name, prop_type, is_static)
+            } else {
+                continue;
+            };
 
             // Symbol-keyed properties are NOT checked against string or number
             // index signatures, but they ARE checked against symbol index

@@ -237,7 +237,10 @@ impl BinderState {
                     Arc::make_mut(&mut self.global_augmentations)
                         .entry(name.to_string())
                         .or_default()
-                        .push(crate::state::GlobalAugmentation::new(idx));
+                        .push(crate::state::GlobalAugmentation::new(
+                            idx,
+                            symbol_flags::ALIAS,
+                        ));
                 }
             }
         }

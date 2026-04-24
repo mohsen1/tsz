@@ -36,12 +36,24 @@ name = "generator_annotation_mismatch_display_tests"
 path = "tests/generator_annotation_mismatch_display_tests.rs"
 
 [[test]]
+name = "generator_return_type_widening_tests"
+path = "tests/generator_return_type_widening_tests.rs"
+
+[[test]]
 name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "ts2567_augmentation_enum_cross_arena_decl_tests"
+path = "tests/ts2567_augmentation_enum_cross_arena_decl_tests.rs"
+
+[[test]]
 name = "await_generic_non_promise_no_false_ts2339_tests"
 path = "tests/await_generic_non_promise_no_false_ts2339_tests.rs"
+
+[[test]]
+name = "ts2449_parameter_decorator_no_tdz_tests"
+path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
 
 [[test]]
 name = "ts1210_arguments_param_in_class_tests"
@@ -106,6 +118,10 @@ path = "tests/control_flow_type_guard_tests.rs"
 [[test]]
 name = "ts2322_tests"
 path = "tests/ts2322_tests.rs"
+
+[[test]]
+name = "ts2322_property_decl_annotation_tests"
+path = "tests/ts2322_property_decl_annotation_tests.rs"
 
 [[test]]
 name = "spread_rest_tests"
@@ -326,6 +342,22 @@ path = "tests/ts2364_import_meta_assignment_tests.rs"
 [[test]]
 name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
+
+[[test]]
+name = "jsdoc_augments_empty_tests"
+path = "tests/jsdoc_augments_empty_tests.rs"
+
+[[test]]
+name = "jsdoc_extends_constraint_tests"
+path = "tests/jsdoc_extends_constraint_tests.rs"
+
+[[test]]
+name = "override_intersection_display_tests"
+path = "tests/override_intersection_display_tests.rs"
+
+[[test]]
+name = "ts2451_cross_file_augmentation_tests"
+path = "tests/ts2451_cross_file_augmentation_tests.rs"
 
 [lints]
 workspace = true

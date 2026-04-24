@@ -456,6 +456,91 @@ export class TimestampedUser extends Timestamped(User) {
 }
 
 #[test]
+fn test_compile_self_referential_wildcard_reexport_does_not_emit_ts2307() {
+    // Regression: when a package's typesVersions redirect + relative
+    // `export * from "../"` re-export loops back to the same file, tsz used
+    // to emit bogus TS2307 ("Cannot find module") diagnostics from its
+    // re-export cycle detector. tsc handles the cycle silently — it just
+    // treats the chain as contributing no transitive exports.
+    //
+    // See `typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts`.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let ext_dir = dir.path().join("node_modules").join("ext");
+    fs::create_dir_all(ext_dir.join("ts3.1")).expect("create ts3.1 dir");
+    fs::write(
+        ext_dir.join("package.json"),
+        r#"{
+    "name": "ext",
+    "version": "1.0.0",
+    "types": "index",
+    "typesVersions": {
+        ">=3.1.0-0": { "*" : ["ts3.1/*"] }
+    }
+}"#,
+    )
+    .expect("write package.json");
+    fs::write(
+        ext_dir.join("index.d.ts"),
+        "export interface A {}\nexport function fa(): A;\n",
+    )
+    .expect("write index.d.ts");
+    fs::write(
+        ext_dir.join("other.d.ts"),
+        "export interface B {}\nexport function fb(): B;\n",
+    )
+    .expect("write other.d.ts");
+    fs::write(
+        ext_dir.join("ts3.1").join("index.d.ts"),
+        "export * from \"../\";\n",
+    )
+    .expect("write ts3.1/index.d.ts");
+    fs::write(
+        ext_dir.join("ts3.1").join("other.d.ts"),
+        "export * from \"../other\";\n",
+    )
+    .expect("write ts3.1/other.d.ts");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "esnext",
+    "declaration": true
+  },
+  "files": ["main.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("main.ts"),
+        r#"import { fa } from "ext";
+import { fb } from "ext/other";
+
+export const va = fa();
+export const vb = fb();
+"#,
+    )
+    .expect("write main.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .collect();
+    assert!(
+        ts2307.is_empty(),
+        "Did not expect TS2307 for a self-referential `export * from` cycle. Got: {ts2307:?}"
+    );
+}
+
+#[test]
 fn test_compile_project_default_reexport_duplicate_crash_matches_ts2307_count() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(

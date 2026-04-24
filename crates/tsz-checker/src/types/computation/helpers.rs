@@ -1741,6 +1741,26 @@ impl<'a> CheckerState<'a> {
         TypeId::ANY
     }
 
+    /// Prefer the merged method type (with all overloads) from `iface_type`
+    /// over the single-node `get_type_of_interface_member_simple` result.
+    ///
+    /// For `interface I { bar(): any; bar(): any; [s: string]: number; }`
+    /// this returns the Callable `{ (): any; (): any; }` that tsc displays
+    /// in TS2411, instead of just `() => any` from the first signature.
+    pub(crate) fn merged_method_signature_type(
+        &mut self,
+        iface_type: TypeId,
+        name: &str,
+        member_idx: NodeIndex,
+    ) -> TypeId {
+        if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
+            self.resolve_property_access_with_env(iface_type, name)
+        {
+            return type_id;
+        }
+        self.get_type_of_interface_member_simple(member_idx)
+    }
+
     /// Get the type of an interface member.
     ///
     /// Returns an object type containing the member. For method signatures,

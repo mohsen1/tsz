@@ -973,24 +973,39 @@ impl<'a> CheckerState<'a> {
         let direct_discriminants =
             self.object_literal_direct_unit_discriminants(obj_literal_idx, explicit_property_names);
 
+        // Apply all discriminants sequentially to progressively narrow the set of
+        // matching union members. This matches tsc's behavior for objects with
+        // multiple discriminant properties like `{ p1: 'left', p2: false }` against
+        // `{ p1: 'left'; p2: true; p3: number } | { p1: 'right'; p2: false; p4: string } | { p1: 'left'; p2: boolean }`:
+        // - `p1: 'left'` narrows to members [0, 2]
+        // - `p2: false` further narrows [0, 2] to [2] (member 0 has p2: true, not assignable)
+        // Result: only member 2 is applicable, and excess property check uses that
+        // narrowed set for the error message.
+        let mut active_indices: Vec<usize> = (0..union_shapes.len()).collect();
+        let mut did_narrow = false;
+
         for (prop_name, prop_type) in direct_discriminants {
             let source_prop = source_props.iter().find(|prop| prop.name == prop_name);
             let Some(source_prop) = source_prop else {
                 continue;
             };
 
-            let mut target_prop_types = Vec::with_capacity(union_shapes.len());
-            for shape in union_shapes {
+            // Collect target property types only for the currently-active members.
+            // If any active member lacks the property, skip this discriminant.
+            let mut target_prop_types = Vec::with_capacity(active_indices.len());
+            let mut all_active_have_prop = true;
+            for &active_i in &active_indices {
+                let shape = &union_shapes[active_i];
                 let Some(target_prop) =
                     shape.properties.iter().find(|p| p.name == source_prop.name)
                 else {
-                    target_prop_types.clear();
+                    all_active_have_prop = false;
                     break;
                 };
                 target_prop_types.push(target_prop.type_id);
             }
 
-            if target_prop_types.len() != union_shapes.len() {
+            if !all_active_have_prop {
                 continue;
             }
 
@@ -999,18 +1014,26 @@ impl<'a> CheckerState<'a> {
             // assignable to. E.g., for { a: null } | { a: string }, source `a: null`
             // narrows to the first member because null is assignable to null but not
             // to string (in strict mode).
-            let matching_indices: Vec<usize> = target_prop_types
+            let new_active: Vec<usize> = target_prop_types
                 .iter()
                 .enumerate()
-                .filter_map(|(i, &target_ty)| self.is_subtype_of(prop_type, target_ty).then_some(i))
+                .filter_map(|(local_i, &target_ty)| {
+                    self.is_subtype_of(prop_type, target_ty)
+                        .then_some(active_indices[local_i])
+                })
                 .collect();
 
-            if !matching_indices.is_empty() && matching_indices.len() < union_shapes.len() {
-                return Some(matching_indices);
+            if !new_active.is_empty() && new_active.len() < active_indices.len() {
+                active_indices = new_active;
+                did_narrow = true;
             }
         }
 
-        None
+        if did_narrow && active_indices.len() < union_shapes.len() {
+            Some(active_indices)
+        } else {
+            None
+        }
     }
 
     fn try_union_index_signature_value_check(

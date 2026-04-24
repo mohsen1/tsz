@@ -746,9 +746,16 @@ impl<'a> CheckerState<'a> {
             {
                 declaration_indices.push(symbol_value_declaration);
             }
-            for (&(entry_sym_id, decl_idx), _) in self.ctx.binder.declaration_arenas.iter() {
-                if entry_sym_id == sym_id && !declaration_indices.contains(&decl_idx) {
-                    declaration_indices.push(decl_idx);
+            // Previously this site iterated the entire `declaration_arenas` map
+            // filtering by `entry_sym_id == sym_id`. With the program-wide map
+            // now shared across all per-file binders via `Arc`, a full iteration
+            // would be O(N_program) per call; the `sym_to_decl_indices` secondary
+            // index collapses that to a point lookup.
+            if let Some(extra_indices) = self.ctx.binder.sym_to_decl_indices.get(&sym_id) {
+                for &decl_idx in extra_indices {
+                    if !declaration_indices.contains(&decl_idx) {
+                        declaration_indices.push(decl_idx);
+                    }
                 }
             }
 

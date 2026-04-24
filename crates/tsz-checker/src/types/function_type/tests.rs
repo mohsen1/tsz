@@ -123,6 +123,51 @@ fn async_inferred_return_union_with_promise() {
     );
 }
 
+/// When a parameter has a binding pattern and an initializer, tsc uses the
+/// binding pattern's implied type (`[any, any, any]`) as the contextual type
+/// for the initializer. That preserves the tuple shape of the initializer
+/// (`[undefined, null, undefined]`) instead of widening to an array
+/// (`(null | undefined)[]`).
+///
+/// Mirrors tsc's behavior at
+/// `TypeScript/src/compiler/checker.ts :: getContextualTypeForInitializerExpression`
+/// where a binding-pattern declaration's pattern type is used as contextual.
+#[test]
+fn destructuring_param_initializer_preserves_tuple_shape() {
+    // When the tuple is preserved, calling with arguments that violate the
+    // per-position element types surfaces TS2322 errors referencing the
+    // element types (`undefined`, `null`).  If instead the param were
+    // inferred as an array `(null | undefined)[]`, the error message would
+    // mention the union and/or an array target.
+    let source = "function b6([a, z, y] = [undefined, null, undefined]) { }
+                  b6([\"string\", 1, 2]);";
+    let diags = diagnostics_with_spans(source);
+
+    // We must see a TS2322 with target `null` (only present when the
+    // per-position tuple element is preserved — position 1 = null).
+    let has_null_target = diags
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .any(|d| d.message_text.contains("'null'"));
+    assert!(
+        has_null_target,
+        "expected TS2322 mentioning target 'null' (tuple element 1), diags: {diags:#?}"
+    );
+
+    // And we must NOT mention an array target like `undefined[]` or
+    // `(null | undefined)[]` which would indicate the initializer was
+    // widened to an array type.
+    let mentions_array_target = diags.iter().any(|d| {
+        d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            && (d.message_text.contains("undefined[]")
+                || d.message_text.contains("null | undefined)[]"))
+    });
+    assert!(
+        !mentions_array_target,
+        "TS2322 should not mention array target — tuple shape should be preserved, diags: {diags:#?}"
+    );
+}
+
 #[test]
 fn async_generic_return_call_does_not_get_promise_union_context() {
     let diags = async_diagnostics(

@@ -1713,6 +1713,79 @@ fn test_resolver_empty_types_field_uses_types_versions() {
 }
 
 #[test]
+fn test_resolver_relative_directory_applies_types_versions() {
+    // Regression: a relative import resolving into a package root (e.g. `../`
+    // from inside a typesVersions-redirected directory) must re-apply
+    // typesVersions from the package's package.json. Without this, tsz
+    // bypasses the redirect and resolves straight to the bare `types` entry,
+    // diverging from tsc. See the TypeScript conformance test
+    // `typesVersionsDeclarationEmit.multiFileBackReferenceToSelf.ts`.
+    use std::fs;
+    let dir = std::env::temp_dir().join("tsz_test_resolver_relative_dir_types_versions");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("node_modules").join("ext").join("ts3.1")).unwrap();
+
+    fs::write(
+        dir.join("node_modules").join("ext").join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "types": "index",
+            "typesVersions": {
+                ">=3.1.0-0": { "*": ["ts3.1/*"] }
+            }
+        }"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules").join("ext").join("index.d.ts"),
+        "export interface A {}\nexport function fa(): A;",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("node_modules")
+            .join("ext")
+            .join("ts3.1")
+            .join("index.d.ts"),
+        r#"export * from "../";"#,
+    )
+    .unwrap();
+
+    let options = crate::config::ResolvedCompilerOptions {
+        module_resolution: Some(crate::config::ModuleResolutionKind::Node),
+        types_versions_compiler_version: Some("3.1.0-dev".to_string()),
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let containing = dir
+        .join("node_modules")
+        .join("ext")
+        .join("ts3.1")
+        .join("index.d.ts");
+    let result = resolver.resolve("../", &containing, Span::new(0, 4));
+
+    let resolved = result.expect("relative directory import should resolve");
+    // tsc applies typesVersions here, mapping `../` → ts3.1/index.d.ts (which
+    // loops back to the current file). The key invariant is that the bare
+    // `index.d.ts` is NOT selected when typesVersions matches.
+    let expected = dir
+        .join("node_modules")
+        .join("ext")
+        .join("ts3.1")
+        .join("index.d.ts")
+        .canonicalize()
+        .unwrap();
+    let actual = resolved.resolved_path.canonicalize().unwrap();
+    assert_eq!(
+        actual, expected,
+        "expected typesVersions to redirect `../` to ts3.1/index.d.ts, got {:?}",
+        resolved.resolved_path,
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_subpath_ambient_module_falls_back_to_types_entry() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_subpath_ambient_module");

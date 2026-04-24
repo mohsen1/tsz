@@ -227,3 +227,28 @@ var x: { z: I; [s: string]: { x: any; y: any; } };
 // Note: Inherited member vs index signature is tested via conformance tests
 // (e.g. inheritedMembersAndIndexSignaturesFromDifferentBases.ts) since it
 // requires full lib type resolution that unit tests don't provide.
+
+#[test]
+fn test_ts2411_method_overload_displays_merged_signatures() {
+    // When an interface method has multiple overload signatures, the TS2411
+    // message must render the property's type as `{ (): any; (): any; }`
+    // (matching tsc) instead of just the first signature's `() => any`.
+    // Regression test for interfaceMemberValidation.ts.
+    let source = r#"
+interface foo {
+    bar(): any;
+    bar(): any;
+    [s: string]: number;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for `bar` overloads vs string index");
+    assert!(
+        ts2411.1.contains("{ (): any; (): any; }"),
+        "TS2411 must render merged overload type as `{{ (): any; (): any; }}`, got: {}",
+        ts2411.1
+    );
+}
