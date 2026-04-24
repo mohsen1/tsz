@@ -598,22 +598,44 @@ impl ParserState {
 
         self.next_token(); // consume `function`
 
-        let parameters = if self.is_token(SyntaxKind::OpenParenToken) {
+        let mut is_constructor = false;
+        let mut constructor_return_type = NodeIndex::NONE;
+        let mut starting_param_index: u32 = 0;
+        let mut parameters = self.make_node_list(Vec::new());
+
+        if self.is_token(SyntaxKind::OpenParenToken) {
             self.parse_expected(SyntaxKind::OpenParenToken);
-            if self.is_token(SyntaxKind::CloseParenToken) {
-                self.make_node_list(Vec::new())
-            } else {
-                self.parse_type_parameter_list()
+
+            // JSDoc-legacy `function(new: R, …)` denotes a constructor type whose
+            // return type is R.  Detect the leading `new:` before normal param
+            // parsing so we can feed it back into the type as the construct
+            // signature's return type rather than treating `new` as a parameter
+            // name (which would inflate the arity and cascade into TS2554).
+            if self.is_token(SyntaxKind::NewKeyword) && self.next_token_is_colon_lookahead() {
+                is_constructor = true;
+                self.next_token(); // consume `new`
+                self.next_token(); // consume `:`
+                constructor_return_type = self.parse_type();
+                // Consume the trailing `,` if there are more params, otherwise
+                // fall through and let the `)` handling below close the list.
+                let _ = self.parse_optional(SyntaxKind::CommaToken);
+                starting_param_index = 1;
             }
-        } else {
-            self.make_node_list(Vec::new())
-        };
+
+            if !self.is_token(SyntaxKind::CloseParenToken) {
+                parameters = self.parse_jsdoc_legacy_function_parameters(starting_param_index);
+            }
+        }
 
         if self.is_token(SyntaxKind::CloseParenToken) {
             self.parse_expected(SyntaxKind::CloseParenToken);
         }
 
-        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+        // When `new:` consumed the return type already, ignore any further
+        // `: T` suffix (it would be a stray annotation).
+        let type_annotation = if is_constructor {
+            constructor_return_type
+        } else if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else {
             NodeIndex::NONE
@@ -621,8 +643,14 @@ impl ParserState {
 
         let end_pos = self.token_end();
 
+        let kind = if is_constructor {
+            syntax_kind_ext::CONSTRUCTOR_TYPE
+        } else {
+            syntax_kind_ext::FUNCTION_TYPE
+        };
+
         self.arena.add_function_type(
-            syntax_kind_ext::FUNCTION_TYPE,
+            kind,
             start_pos,
             end_pos,
             crate::parser::node::FunctionTypeData {
@@ -632,6 +660,129 @@ impl ParserState {
                 is_abstract: false,
             },
         )
+    }
+
+    /// Lookahead that returns true when the *next* token (after the current one)
+    /// is `:`.  Used to detect the `new:` and `this:` JSDoc function-type markers.
+    fn next_token_is_colon_lookahead(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        self.next_token();
+        let is_colon = self.is_token(SyntaxKind::ColonToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        is_colon
+    }
+
+    /// Parse a JSDoc-legacy function type parameter list such as
+    /// `(this: number, string, number)`.  Unlike a normal TS parameter list, entries
+    /// may be bare types (no `name:`) — tsc treats `function(T1, T2)` as
+    /// `(arg0: T1, arg1: T2) => …`.  Without synthesizing names for bare types the
+    /// checker would emit cascading TS7051 ("parameter has a name but no type") and
+    /// TS2300 ("duplicate identifier") on top of the TS8020 that was already
+    /// reported for this JSDoc syntax.  `starting_index` lets callers skip the
+    /// indices taken up by a preceding `new:` slot so bare names line up with
+    /// tsc's `argN` convention.
+    fn parse_jsdoc_legacy_function_parameters(&mut self, starting_index: u32) -> NodeList {
+        let mut params = Vec::new();
+        let mut index: u32 = starting_index;
+
+        while !self.is_token(SyntaxKind::CloseParenToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            let param = self.parse_jsdoc_legacy_function_parameter(index);
+            params.push(param);
+            index += 1;
+            if !self.parse_optional(SyntaxKind::CommaToken) {
+                break;
+            }
+        }
+
+        self.make_node_list(params)
+    }
+
+    fn parse_jsdoc_legacy_function_parameter(&mut self, index: u32) -> NodeIndex {
+        let param_start = self.token_pos();
+        let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+
+        if self.looks_like_jsdoc_named_parameter() {
+            // Conventional `name [?]: type` entry (also covers `this: T` and `new: T`).
+            let name = if self.is_identifier_or_keyword() {
+                self.parse_identifier_name()
+            } else {
+                self.parse_identifier()
+            };
+            let question_token = self.parse_optional(SyntaxKind::QuestionToken);
+            let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+                self.parse_type()
+            } else {
+                NodeIndex::NONE
+            };
+            let param_end = self.token_full_start();
+            self.arena.add_parameter(
+                syntax_kind_ext::PARAMETER,
+                param_start,
+                param_end,
+                crate::parser::node::ParameterData {
+                    modifiers: None,
+                    dot_dot_dot_token,
+                    name,
+                    question_token,
+                    type_annotation,
+                    initializer: NodeIndex::NONE,
+                },
+            )
+        } else {
+            // Bare type — synthesize an `argN` identifier so the checker sees a
+            // well-typed parameter rather than a nameless type that would cascade
+            // into TS7051 / TS2300 after the TS8020 we already emitted.
+            let name_pos = self.token_pos();
+            let type_annotation = self.parse_type();
+            let name = self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                name_pos,
+                name_pos,
+                crate::parser::node::IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: format!("arg{index}"),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            );
+            let param_end = self.token_full_start();
+            self.arena.add_parameter(
+                syntax_kind_ext::PARAMETER,
+                param_start,
+                param_end,
+                crate::parser::node::ParameterData {
+                    modifiers: None,
+                    dot_dot_dot_token,
+                    name,
+                    question_token: false,
+                    type_annotation,
+                    initializer: NodeIndex::NONE,
+                },
+            )
+        }
+    }
+
+    /// Lookahead: does the current token stream start with `name [?]:` — i.e. a
+    /// conventional parameter declaration — as opposed to a bare type?  Used to
+    /// decide how to parse entries in a JSDoc-legacy function type parameter list.
+    fn looks_like_jsdoc_named_parameter(&mut self) -> bool {
+        if !self.is_identifier_or_keyword() {
+            return false;
+        }
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        self.next_token();
+        if self.is_token(SyntaxKind::QuestionToken) {
+            self.next_token();
+        }
+        let is_colon = self.is_token(SyntaxKind::ColonToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        is_colon
     }
 
     fn should_parse_abstract_constructor_type(&mut self) -> bool {
@@ -721,14 +872,18 @@ impl ParserState {
         }
 
         let first_name = self.parse_type_identifier_or_keyword();
-        let type_name = self.parse_qualified_name_rest(first_name);
+        let (type_name, jsdoc_type_arguments) = self.parse_qualified_name_rest(first_name);
         // Only parse type arguments if `<` is on the same line (no preceding line break).
         // A line break before `<` means it's a new construct (e.g., a call signature
         // in a type literal), not type arguments for this type reference.
         // This matches tsc's `!scanner.hasPrecedingLineBreak()` check.
-        let type_arguments = (self.is_less_than_or_compound()
-            && !self.scanner.has_preceding_line_break())
-        .then(|| self.parse_type_arguments());
+        // `jsdoc_type_arguments` is Some when we already consumed `Foo.<T>` JSDoc-legacy
+        // type arguments while walking the qualified-name rest — prefer those so the
+        // caller sees a clean `Foo<T>` rather than a namespace access.
+        let type_arguments = jsdoc_type_arguments.or_else(|| {
+            (self.is_less_than_or_compound() && !self.scanner.has_preceding_line_break())
+                .then(|| self.parse_type_arguments())
+        });
 
         self.arena.add_type_ref(
             syntax_kind_ext::TYPE_REFERENCE,
