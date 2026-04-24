@@ -14,6 +14,12 @@
 //! Baselines these lock in (from the TypeScript compiler baselines):
 //!   generatorTypeCheck6.ts:   `Generator<any, any, unknown>` vs `number`
 //!   generatorTypeCheck8.ts:   `Generator<string, any, any>` vs `BadGenerator`
+//!
+//! The generatorTypeCheck8 case also locks in the Iterable-over-Iterator
+//! priority when the declared return type extends both heritage families:
+//! tsc derives the yield type from `[Symbol.iterator]()`, which is only
+//! declared on Iterable-family bases, so `Iterable<string>` wins over
+//! `Iterator<number>` regardless of source order in the `extends` list.
 
 use tsz_binder::BinderState;
 use tsz_checker::CheckerState;
@@ -129,5 +135,65 @@ function* g(): BadIter { }
     assert!(
         !msg.contains(", any, unknown>"),
         "TNext must remain `any` when declared annotation exposes a TYield, got: {msg}"
+    );
+}
+
+#[test]
+fn yield_type_prefers_iterable_over_iterator_in_mixed_heritage() {
+    // Exact shape of the conformance test `generatorTypeCheck8.ts`.
+    // `BadGenerator` extends both `Iterator<number>` AND `Iterable<string>`.
+    // tsc derives the yield type from `[Symbol.iterator]()`, which only
+    // exists on `Iterable<T>`, so the synthesized body must render as
+    // `Generator<string, any, any>` — NOT `Generator<number, any, any>`.
+    let source = r#"
+interface BadGenerator extends Iterator<number>, Iterable<string> { }
+function* g3(): BadGenerator { }
+"#;
+    let diags = get_diagnostics(source);
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|(code, msg)| *code == 2322 && msg.contains("Generator<"))
+        .collect();
+    assert!(
+        !relevant.is_empty(),
+        "expected a TS2322 rendering the synthesized Generator type, got {diags:#?}"
+    );
+    let msg = relevant[0].1.as_str();
+    assert!(
+        msg.contains("Generator<string,"),
+        "yield type must come from Iterable<string> (via [Symbol.iterator]), got: {msg}"
+    );
+    assert!(
+        !msg.contains("Generator<number,"),
+        "yield type must not come from Iterator<number> when Iterable<string> is also extended, got: {msg}"
+    );
+}
+
+#[test]
+fn yield_type_prefers_iterable_even_when_iterator_listed_first() {
+    // Same as above but with an extra middle heritage to ensure ordering
+    // truly doesn't influence the outcome; the only thing that matters is
+    // which heritage family exposes `[Symbol.iterator]()`.
+    let source = r#"
+interface Mixed extends Iterator<number>, IterableIterator<boolean> { }
+function* g(): Mixed { }
+"#;
+    let diags = get_diagnostics(source);
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|(code, msg)| *code == 2322 && msg.contains("Generator<"))
+        .collect();
+    assert!(
+        !relevant.is_empty(),
+        "expected a TS2322 rendering the synthesized Generator type, got {diags:#?}"
+    );
+    let msg = relevant[0].1.as_str();
+    assert!(
+        msg.contains("Generator<boolean,"),
+        "yield type must come from IterableIterator<boolean>, got: {msg}"
+    );
+    assert!(
+        !msg.contains("Generator<number,"),
+        "yield type must not come from Iterator<number> when an Iterable-family is also extended, got: {msg}"
     );
 }
