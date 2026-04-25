@@ -5,6 +5,7 @@
 //! database implementation used by the checker at runtime.
 
 use crate::caches::db::{QueryDatabase, TypeDatabase};
+use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
@@ -139,6 +140,12 @@ pub struct QueryCacheStatistics {
     pub variance_cache_entries: usize,
     /// Number of memoized canonical type mappings.
     pub canonical_cache_entries: usize,
+    /// Number of memoized `instantiate_type` results.
+    pub instantiation_cache_entries: usize,
+    /// Number of times the instantiation cache returned a hit.
+    pub instantiation_cache_hits: u64,
+    /// Number of times the instantiation cache was probed and missed.
+    pub instantiation_cache_misses: u64,
     /// Relation (subtype + assignability) cache statistics.
     pub relation: RelationCacheStats,
 }
@@ -153,6 +160,9 @@ impl QueryCacheStatistics {
         self.property_cache_entries += other.property_cache_entries;
         self.variance_cache_entries += other.variance_cache_entries;
         self.canonical_cache_entries += other.canonical_cache_entries;
+        self.instantiation_cache_entries += other.instantiation_cache_entries;
+        self.instantiation_cache_hits += other.instantiation_cache_hits;
+        self.instantiation_cache_misses += other.instantiation_cache_misses;
         self.relation.subtype_hits += other.relation.subtype_hits;
         self.relation.subtype_misses += other.relation.subtype_misses;
         self.relation.subtype_entries += other.relation.subtype_entries;
@@ -207,7 +217,20 @@ impl QueryCacheStatistics {
         // assignability_cache: RelationCacheKey -> bool  ≈ 12 + 1 = 13
         let assignability = self.relation.assignability_entries * (BUCKET_OVERHEAD + 13);
 
-        eval + app_eval + elem + spread + prop + variance + canonical + subtype + assignability
+        // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
+        // CanonicalSubst inline = 4*(4+4) + len + cap = ~48 bytes; TypeId=4,
+        // u8=1, Option<TypeId>=8, value TypeId=4. Conservative per-bucket cost.
+        let instantiation = self.instantiation_cache_entries * (BUCKET_OVERHEAD + 65);
+
+        eval + app_eval
+            + elem
+            + spread
+            + prop
+            + variance
+            + canonical
+            + subtype
+            + assignability
+            + instantiation
     }
 }
 
@@ -257,6 +280,13 @@ impl std::fmt::Display for QueryCacheStatistics {
             self.relation.assignability_hits,
             self.relation.assignability_misses,
         )?;
+        writeln!(
+            f,
+            "  instantiation_cache:    {} entries ({} hits, {} misses)",
+            self.instantiation_cache_entries,
+            self.instantiation_cache_hits,
+            self.instantiation_cache_misses,
+        )?;
         write!(
             f,
             "  estimated_size:         {} bytes ({:.1} KB)",
@@ -295,10 +325,19 @@ pub struct QueryCache<'a> {
     /// across multiple `SubtypeChecker` instances (common in constraint checking).
     /// `Some(type_id)` = successfully merged, `None` = not eligible for merging.
     intersection_merge_cache: RefCell<FxHashMap<TypeId, Option<TypeId>>>,
+    /// Cross-call cache for `instantiate_type` results, keyed by
+    /// `(TypeId, CanonicalSubst, mode_bits, Option<this_type>)`.
+    /// PR 2/4 of the `instantiate_type` cache plumbing
+    /// (`docs/plan/perf-instantiate-type-cache-design.md`). PR 3/4 will
+    /// wire this into the five `instantiate_type*` entry points; for now
+    /// the cache exists but no production path probes it.
+    instantiation_cache: InstantiationCache,
     subtype_cache_hits: Cell<u64>,
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
     assignability_cache_misses: Cell<u64>,
+    instantiation_cache_hits: Cell<u64>,
+    instantiation_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
     exact_optional_property_types: Cell<bool>,
     /// Optional shared cross-file cache for multi-file project checking.
@@ -337,10 +376,13 @@ impl<'a> QueryCache<'a> {
             variance_cache: RefCell::new(FxHashMap::default()),
             canonical_cache: RefCell::new(FxHashMap::default()),
             intersection_merge_cache: RefCell::new(FxHashMap::default()),
+            instantiation_cache: InstantiationCache::new(),
             subtype_cache_hits: Cell::new(0),
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
             assignability_cache_misses: Cell::new(0),
+            instantiation_cache_hits: Cell::new(0),
+            instantiation_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
             exact_optional_property_types: Cell::new(interner.exact_optional_property_types()),
             shared,
@@ -358,6 +400,7 @@ impl<'a> QueryCache<'a> {
         self.variance_cache.borrow_mut().clear();
         self.canonical_cache.borrow_mut().clear();
         self.intersection_merge_cache.borrow_mut().clear();
+        self.instantiation_cache.clear();
         self.reset_relation_cache_stats();
     }
 
@@ -386,6 +429,9 @@ impl<'a> QueryCache<'a> {
             property_cache_entries: self.property_cache.borrow().len(),
             variance_cache_entries: self.variance_cache.borrow().len(),
             canonical_cache_entries: self.canonical_cache.borrow().len(),
+            instantiation_cache_entries: self.instantiation_cache.len(),
+            instantiation_cache_hits: self.instantiation_cache_hits.get(),
+            instantiation_cache_misses: self.instantiation_cache_misses.get(),
             relation: self.relation_cache_stats(),
         }
     }
@@ -496,6 +542,14 @@ impl<'a> QueryCache<'a> {
             size += map.capacity() * (BUCKET_OVERHEAD + 2 * std::mem::size_of::<TypeId>());
         }
 
+        // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
+        // CanonicalSubst's inline SmallVec buffer is included in the
+        // `InstantiationCacheKey` size; spilled entries pay extra heap.
+        size += self.instantiation_cache.capacity()
+            * (BUCKET_OVERHEAD
+                + std::mem::size_of::<InstantiationCacheKey>()
+                + std::mem::size_of::<TypeId>());
+
         size
     }
 
@@ -504,6 +558,8 @@ impl<'a> QueryCache<'a> {
         self.subtype_cache_misses.set(0);
         self.assignability_cache_hits.set(0);
         self.assignability_cache_misses.set(0);
+        self.instantiation_cache_hits.set(0);
+        self.instantiation_cache_misses.set(0);
     }
 
     pub fn probe_subtype_cache(&self, key: RelationCacheKey) -> RelationCacheProbe {
