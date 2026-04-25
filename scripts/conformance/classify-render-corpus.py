@@ -34,10 +34,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from lib.conformance_query import basename, load_detail
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -98,10 +102,6 @@ def normalize_path(path: str) -> str:
     return path
 
 
-def basename(path: str) -> str:
-    return path.rsplit("/", 1)[-1] if "/" in path else path
-
-
 def area_of(path: str) -> str:
     markers = [
         "/cases/compiler/",
@@ -115,15 +115,6 @@ def area_of(path: str) -> str:
                 return "/".join(parts[:-1])
             return "compiler"
     return ""
-
-
-def load_detail(path: Path) -> dict:
-    if not path.exists():
-        raise SystemExit(
-            f"error: {path} not found; run ./scripts/conformance/conformance.sh snapshot"
-        )
-    with path.open() as f:
-        return json.load(f)
 
 
 def resolve_log_path(path: str, detail_paths: set[str]) -> str:
