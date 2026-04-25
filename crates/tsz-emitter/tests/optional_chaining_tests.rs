@@ -1,17 +1,19 @@
 //! Integration tests for optional chaining downlevel emit
 
 use tsz_common::common::ScriptTarget;
-use tsz_emitter::output::printer::{PrintOptions, lower_and_print};
-use tsz_parser::ParserState;
+use tsz_emitter::output::printer::PrintOptions;
+
+#[path = "test_support.rs"]
+mod test_support;
+
+use test_support::{parse_and_lower_print, parse_and_print_with_opts};
 
 fn emit_es2016(source: &str) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
     let opts = PrintOptions {
         target: ScriptTarget::ES2016,
         ..Default::default()
     };
-    lower_and_print(&parser.arena, root, opts).code
+    parse_and_lower_print(source, opts)
 }
 
 /// super.method?.() should capture `super.method` as a unit and use `.call(this)`.
@@ -58,18 +60,12 @@ fn hoisted_var_in_single_line_body() {
 class Derived extends Base {
     method1() { return super.method?.(); }
 }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
     let opts = PrintOptions {
         target: ScriptTarget::ES2016,
         ..Default::default()
     };
-    // Use Printer directly to set source text (needed for single-line detection)
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    // parse_and_print_with_opts calls set_source_text (needed for single-line detection)
+    let output = parse_and_print_with_opts(source, opts);
     assert!(
         output.contains("{ var _a; return"),
         "Single-line body should include inline var declaration.\nOutput:\n{output}"

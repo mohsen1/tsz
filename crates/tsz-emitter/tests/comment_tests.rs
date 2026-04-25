@@ -1,7 +1,11 @@
 //! Integration tests for comment preservation in emitter
 
 use tsz_emitter::output::printer::PrintOptions;
-use tsz_parser::ParserState;
+
+#[path = "test_support.rs"]
+mod test_support;
+
+use test_support::{parse_and_print, parse_and_print_with_opts};
 
 #[test]
 fn test_comment_between_call_arguments() {
@@ -9,15 +13,7 @@ fn test_comment_between_call_arguments() {
     var x = foo(/*comment*/ "arg");
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    // Need to use Printer directly to set source text for comment preservation
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The comment should be preserved before the string literal
     assert!(
@@ -62,14 +58,7 @@ fn test_block_comment_after_comma_in_multiline_object() {
     b: 2
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The block comment should have a space before it (not "1,/* comment */")
     assert!(
@@ -95,14 +84,7 @@ fn trailing_comment_after_erased_interface_sibling_preserved() {
     // Simplified version of circularBaseTypes
     let source = "interface Foo {}; // keep this\nvar x = 1;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The `; // keep this` comment must be preserved in output
     assert!(
@@ -119,14 +101,7 @@ fn trailing_comment_after_erased_interface_sibling_preserved() {
 fn comments_between_consecutive_erased_declarations_are_erased() {
     let source = "interface Foo {}\n// belongs to type Bar\ntype Bar = string;\nvar x = 1;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The comment between two erased declarations should be erased
     assert!(
@@ -145,14 +120,7 @@ fn block_comment_before_semicolon_preserves_space() {
     // Source has a block comment followed by an empty statement (;)
     let source = "/*existing trivia*/ ;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("/*existing trivia*/ ;"),
@@ -166,18 +134,11 @@ fn pinned_comments_preserved_when_remove_comments_true() {
     // but only when detached (separated by a blank line from the next content).
     let source = "/*! Copyright 2024 */\n\nclass C {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
     let opts = PrintOptions {
         remove_comments: true,
         ..Default::default()
     };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_with_opts(source, opts);
 
     assert!(
         output.contains("/*! Copyright 2024 */"),
@@ -191,18 +152,11 @@ fn attached_pinned_comments_stripped_when_remove_comments_true() {
     // when removeComments: true, matching tsc behavior.
     let source = "/*! attached comment */\nclass C {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
     let opts = PrintOptions {
         remove_comments: true,
         ..Default::default()
     };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_with_opts(source, opts);
 
     assert!(
         !output.contains("/*! attached comment */"),
@@ -217,14 +171,7 @@ fn attached_pinned_comments_stripped_when_remove_comments_true() {
 fn test_heritage_type_arg_comments_do_not_leak() {
     let source = "class Foo extends Bar</* type comment */ string> { }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("type comment"),
@@ -241,14 +188,7 @@ fn test_heritage_type_arg_comments_do_not_leak() {
 fn test_heritage_multiple_type_arg_comments_do_not_leak() {
     let source = "class Foo extends Map</* key */ string, /* value */ number> { }";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("key"),
