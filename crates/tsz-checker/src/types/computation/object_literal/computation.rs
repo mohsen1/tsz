@@ -570,9 +570,23 @@ impl<'a> CheckerState<'a> {
                                 .implicit_any_checked_closures
                                 .remove(&prop.initializer);
                         }
+                        // Only clear stale implicit-any diagnostics when the contextual
+                        // type for this property actually provides typed parameters
+                        // for the function. A "concrete" contextual type that boils
+                        // down to a self-reference (e.g. an IIFE arg whose object-
+                        // literal type equals the property's own value type) does
+                        // not actually contextually type the function's parameters,
+                        // so clearing the prior TS7006 there is a false positive.
                         if !initializer_is_local_js_prototype_function
                             && self.request_has_concrete_contextual_type(&property_request)
                             && property_request.contextual_type != Some(TypeId::NEVER)
+                            && initializer_is_function_like
+                            && property_request.contextual_type.is_some_and(|ct| {
+                                self.contextual_type_provides_function_param_types(
+                                    ct,
+                                    prop.initializer,
+                                )
+                            })
                         {
                             let spans = self.function_like_param_spans_for_node(prop.initializer);
                             self.clear_stale_function_like_implicit_any_diagnostics(

@@ -16,6 +16,51 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Decide whether a refresh contextual type actually provides parameter
+    /// types for a function-like initializer. Returns true only when the
+    /// contextual type's first call signature has at least one parameter
+    /// whose type is more specific than `any` — that's the only shape where
+    /// the post-refresh implicit-any diagnostics would be safely stale.
+    ///
+    /// Self-referential contextual types (e.g. an IIFE arg whose object
+    /// literal type loops back through its own property's function shape)
+    /// expose the same `(p: any) => any` signature as the uninferred
+    /// initializer, so clearing the prior TS7006 would be a false positive.
+    pub(super) fn contextual_type_provides_function_param_types(
+        &self,
+        contextual_type: TypeId,
+        initializer_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(initializer_idx) else {
+            return false;
+        };
+        let params: &[NodeIndex] = self
+            .ctx
+            .arena
+            .get_function(node)
+            .map(|f| f.parameters.nodes.as_slice())
+            .or_else(|| {
+                self.ctx
+                    .arena
+                    .get_method_decl(node)
+                    .map(|m| m.parameters.nodes.as_slice())
+            })
+            .unwrap_or(&[]);
+        let Some(callable) = crate::query_boundaries::common::callable_shape_for_type(
+            self.ctx.types,
+            contextual_type,
+        ) else {
+            return false;
+        };
+        let Some(sig) = callable.call_signatures.first() else {
+            return false;
+        };
+        sig.params
+            .iter()
+            .take(params.len())
+            .any(|param| param.type_id != TypeId::ANY && param.type_id != TypeId::UNKNOWN)
+    }
+
     pub(crate) fn function_like_param_spans_for_node(&self, idx: NodeIndex) -> Vec<(u32, u32)> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return Vec::new();

@@ -271,6 +271,9 @@ mod ts6133_private_name_tests;
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;
 #[cfg(test)]
+#[path = "../tests/ts7006_iife_arg_implicit_any.rs"]
+mod ts7006_iife_arg_implicit_any;
+#[cfg(test)]
 #[path = "../tests/ts7036_tests.rs"]
 mod ts7036_tests;
 #[cfg(test)]
