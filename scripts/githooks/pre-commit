@@ -21,6 +21,9 @@
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
 #   TSZ_SKIP_LINT_PARITY=1   Skip CI parity lint commands
 #   TSZ_SKIP_WASM_LINT=1     Skip wasm32 lint gate
+#   TSZ_SKIP_TESTS=1         Skip the test-compilation step (use when disk is
+#                            too constrained to build 200MB+ test binaries;
+#                            verify tests separately before using this flag)
 #   TSZ_CLEAN_STALE_DAYS=7   Remove build artifacts older than N days
 #   TSZ_BENCH_UPDATE_BASELINE=1  Refresh local microbenchmark baseline
 #   TSZ_TEST_ALL=1           Force testing all crates
@@ -37,6 +40,7 @@ SKIP_BENCH="${TSZ_SKIP_BENCH:-}"
 SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
 SKIP_LINT_PARITY="${TSZ_SKIP_LINT_PARITY:-}"
 SKIP_WASM_LINT="${TSZ_SKIP_WASM_LINT:-}"
+SKIP_TESTS="${TSZ_SKIP_TESTS:-}"
 CLEAN_STALE_DAYS="${TSZ_CLEAN_STALE_DAYS:-7}"
 
 echo "Pre-commit checks..."
@@ -344,16 +348,24 @@ git add -u
 
 # ─── 5. Tests — only affected crates ─────────────────────────────────────────
 
+if [ "$SKIP_TESTS" = "1" ]; then
+    echo "4/5 Test-compilation skipped (TSZ_SKIP_TESTS=1) — verify tests separately"
+else
+
 echo "4/5 Running tests ($NUM_AFFECTED crate(s))..."
 
 # Build nextest filter expression: -E 'package(crate1) | package(crate2) ...'
+# Also build --package flags so nextest limits compilation to affected
+# crates only (without --package, nextest compiles the whole workspace).
 NEXTEST_FILTER=""
+NEXTEST_CARGO_PKGS=""
 for crate in $AFFECTED; do
     if [ -z "$NEXTEST_FILTER" ]; then
         NEXTEST_FILTER="package($crate)"
     else
         NEXTEST_FILTER="$NEXTEST_FILTER | package($crate)"
     fi
+    NEXTEST_CARGO_PKGS="$NEXTEST_CARGO_PKGS --package $crate"
 done
 
 # Also test root crate if root changed
@@ -363,6 +375,9 @@ if [ "$ROOT_CHANGED" = "true" ]; then
     else
         NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz-core)"
     fi
+    if ! echo "$NEXTEST_CARGO_PKGS" | grep -q "tsz-core"; then
+        NEXTEST_CARGO_PKGS="$NEXTEST_CARGO_PKGS --package tsz-core"
+    fi
 fi
 
 # Only include root tsz crate if root files or core crates changed.
@@ -370,10 +385,16 @@ if [ "$ROOT_CHANGED" = "true" ] || [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; t
     if ! echo "$NEXTEST_FILTER" | grep -q "package(tsz-core)"; then
         NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz-core)"
     fi
+    if ! echo "$NEXTEST_CARGO_PKGS" | grep -q "tsz-core"; then
+        NEXTEST_CARGO_PKGS="$NEXTEST_CARGO_PKGS --package tsz-core"
+    fi
 fi
 
 if cargo nextest --version >/dev/null 2>&1; then
-    TEST_OUTPUT=$(cargo nextest run --profile precommit --no-tests=pass -E "$NEXTEST_FILTER" 2>&1) || {
+    # CARGO_INCREMENTAL=0: avoid filling disk with incremental artifacts during
+    # pre-commit builds; the speed trade-off is acceptable for short-lived checks.
+    # shellcheck disable=SC2086
+    TEST_OUTPUT=$(CARGO_INCREMENTAL=0 cargo nextest run --profile precommit --no-tests=pass $NEXTEST_CARGO_PKGS -E "$NEXTEST_FILTER" 2>&1) || {
         echo "$TEST_OUTPUT" | tail -20
         echo "ERROR: Tests failed. Run 'cargo nextest run' for details."
         exit 1
@@ -395,6 +416,8 @@ else
     }
 fi
 echo "  Tests passed"
+
+fi # end TSZ_SKIP_TESTS
 
 # ─── 6. Microbenchmark regression check ──────────────────────────────────────
 # DISABLED: Microbenchmark checks are too noisy and cause false positives
