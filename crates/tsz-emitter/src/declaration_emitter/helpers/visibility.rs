@@ -440,7 +440,9 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         match name_node.kind {
-            k if k == SyntaxKind::Identifier as u16 => self.should_emit_public_api_dependency(name_idx),
+            k if k == SyntaxKind::Identifier as u16 => {
+                self.should_emit_public_api_dependency(name_idx)
+            }
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
             {

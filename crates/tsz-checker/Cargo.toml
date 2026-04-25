@@ -136,6 +136,10 @@ name = "ts2322_literal_source_display_tests"
 path = "tests/ts2322_literal_source_display_tests.rs"
 
 [[test]]
+name = "ts2322_pair_disambiguation_widening_tests"
+path = "tests/ts2322_pair_disambiguation_widening_tests.rs"
+
+[[test]]
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
