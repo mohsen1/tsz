@@ -496,7 +496,14 @@ pub struct BinderState {
     ///
     /// This is the binder's contribution to stable semantic identity (Phase 1).
     /// The checker converts these entries to solver `DefId`s during construction.
-    pub semantic_defs: FxHashMap<SymbolId, SemanticDefEntry>,
+    ///
+    /// Stored behind `Arc` so cross-file lookup binders (one per file in the
+    /// parallel CLI pipeline) can share the per-file map by reference instead
+    /// of deep-cloning the underlying `FxHashMap` on every reconstruction.
+    /// On large repos (6086 files), the previous deep clone was the largest
+    /// single source of memory pressure during cross-file binder build.
+    /// Mutations during binding use `Arc::make_mut` (free when refcount=1).
+    pub semantic_defs: Arc<FxHashMap<SymbolId, SemanticDefEntry>>,
 
     /// Stable file index assigned by the driver (LSP `Project` or CLI).
     ///

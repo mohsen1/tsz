@@ -3502,7 +3502,7 @@ const G = 42;
     assert_eq!(binder1.semantic_defs.len(), binder2.semantic_defs.len());
 
     // Same names and kinds
-    for (sym_id, entry1) in &binder1.semantic_defs {
+    for (sym_id, entry1) in binder1.semantic_defs.iter() {
         let entry2 = binder2
             .semantic_defs
             .get(sym_id)
@@ -3720,7 +3720,7 @@ enum D { X }
 namespace E {}
 ",
     );
-    for (&sym_id, entry) in &binder.semantic_defs {
+    for (&sym_id, entry) in binder.semantic_defs.iter() {
         let symbol = binder
             .symbols
             .get(sym_id)
@@ -3784,7 +3784,7 @@ enum Direction { Up, Down }
 
     // Each lib semantic_def should use a remapped SymbolId that exists in the
     // main binder's symbol arena (not the lib binder's original IDs).
-    for (&sym_id, entry) in &main_binder.semantic_defs {
+    for (&sym_id, entry) in main_binder.semantic_defs.iter() {
         assert!(
             main_binder.symbols.get(sym_id).is_some(),
             "semantic_def for '{}' (SymbolId {}) should reference a symbol in the main arena",
@@ -4491,7 +4491,7 @@ const LOCAL = 42;
 
     assert_eq!(binder1.semantic_defs.len(), binder2.semantic_defs.len());
 
-    for (sym_id, entry1) in &binder1.semantic_defs {
+    for (sym_id, entry1) in binder1.semantic_defs.iter() {
         let entry2 = binder2
             .semantic_defs
             .get(sym_id)
@@ -4627,7 +4627,7 @@ class Concrete {}
     let binder1 = bind_source(source);
     let binder2 = bind_source(source);
 
-    for (sym_id, e1) in &binder1.semantic_defs {
+    for (sym_id, e1) in binder1.semantic_defs.iter() {
         let e2 = binder2
             .semantic_defs
             .get(sym_id)
