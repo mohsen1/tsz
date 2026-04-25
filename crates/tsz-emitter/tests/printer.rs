@@ -2,6 +2,16 @@ use super::*;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 
+/// Parse, lower, and print a source string with the given options.
+///
+/// Convenience wrapper for tests that don't need access to the parser
+/// arena. Uses `"test.ts"` as the file name and returns the printed code.
+fn parse_lower_print(source: &str, opts: PrintOptions) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    lower_and_print(&parser.arena, root, opts).code
+}
+
 #[test]
 fn test_print_options() {
     let opts = PrintOptions::es5();
@@ -42,42 +52,32 @@ fn test_streaming_writer() {
 #[test]
 fn test_es6_generator_param_named_yield_keeps_identifier_text() {
     let source = "function* foo(a = yield, yield) {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert_eq!(output, "function* foo(a = yield, yield) { }\n");
 }
 
 #[test]
 fn test_optional_catch_binding_downlevel_to_param() {
     let source = "try {\n} catch {\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2018,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(
         output.contains("catch (_a)"),
         "Expected catch (_a) in downleveled output, got: {output}"
     );
 
-    let output_es2020 = lower_and_print(
-        &parser.arena,
-        root,
+    let output_es2020 = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2020,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(
         !output_es2020.contains("catch (_a)"),
         "ES2020+ should preserve optional catch binding"
@@ -87,18 +87,13 @@ fn test_optional_catch_binding_downlevel_to_param() {
 #[test]
 fn test_optional_catch_binding_multiple_get_unique_names() {
     let source = "try {} catch {}\ntry {} catch {}\ntry {} catch {}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2018,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(
         output.contains("catch (_a)"),
         "First catch should use _a, got: {output}"
@@ -116,18 +111,13 @@ fn test_optional_catch_binding_multiple_get_unique_names() {
 #[test]
 fn test_exponentiation_downlevel_to_math_pow() {
     let source = "const x = 2 ** 3;\nlet y = 2;\ny **= 3;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(output.contains("Math.pow(2, 3)"));
     assert!(output.contains("y = Math.pow(y, 3)"));
@@ -155,18 +145,13 @@ fn test_optional_call_downlevel_to_conditional() {
 #[test]
 fn test_optional_call_es2020_syntax_preserved() {
     let source = "const fn = () => 1;\nconst obj = { m() { return this; } };\nfn?.();\nobj?.m();\nobj.m?.();\nobj?.m?.();\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2020,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(output.contains("fn?.()"));
     assert!(output.contains("obj?.m()"));
     assert!(output.contains("obj.m?.()"));
@@ -177,18 +162,13 @@ fn test_optional_call_es2020_syntax_preserved() {
 #[test]
 fn test_optional_call_spread_downlevel_es5() {
     let source = "const fn = function (...args) { return args; };\nconst obj = { m(...args) { return args; } };\nfn?.(...[1], 2);\nobj?.m(...[1], 2);\nobj.m?.(...[1], 2);\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(output.contains(".__spreadArray"));
     assert!(output.contains(".apply(void 0,"));
     assert!(output.contains(".call.apply"));
@@ -198,19 +178,14 @@ fn test_optional_call_spread_downlevel_es5() {
 #[test]
 fn test_commonjs_empty_named_import_emits_bare_require() {
     let source = "import {} from \"./side\";\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(output.contains("require(\"./side\");"));
     assert!(!output.contains("var side_1 = require(\"./side\");"));
@@ -219,19 +194,14 @@ fn test_commonjs_empty_named_import_emits_bare_require() {
 #[test]
 fn test_commonjs_type_only_named_import_is_elided() {
     let source = "import { type Foo } from \"./types\";\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(!output.contains("require(\"./types\")"));
 }
@@ -239,19 +209,14 @@ fn test_commonjs_type_only_named_import_is_elided() {
 #[test]
 fn test_commonjs_module_temp_vars_do_not_collide() {
     let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\nconsole.log(x);\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(
         output.contains("foo_1 = require(\"./foo\");"),
@@ -266,18 +231,13 @@ fn test_commonjs_module_temp_vars_do_not_collide() {
 #[test]
 fn test_es5_class_expression_uses_variable_declaration_name() {
     let source = "const C = class { method() { return 1; } };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(
         output.contains("var C = /** @class */"),
@@ -288,18 +248,13 @@ fn test_es5_class_expression_uses_variable_declaration_name() {
 #[test]
 fn test_es5_class_expression_uses_assignment_lhs_name() {
     let source = "let C;\nC = class { method() { return 1; } };";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(
         output.contains("var C = /** @class */"),
@@ -310,19 +265,14 @@ fn test_es5_class_expression_uses_assignment_lhs_name() {
 #[test]
 fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
     let source = "const a = 1;\nconst b = 2;\nexport { a, b };\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(
         output.contains("exports.b = exports.a = void 0;"),
@@ -333,19 +283,14 @@ fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
 #[test]
 fn test_es_module_export_equals_erased_to_empty_export_marker() {
     let source = "var a = 10;\nexport = a;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::ES2015,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(output.contains("var a = 10;"));
     assert!(output.contains("export {};"));
@@ -355,19 +300,14 @@ fn test_es_module_export_equals_erased_to_empty_export_marker() {
 #[test]
 fn test_es_module_external_import_equals_erased_to_empty_export_marker() {
     let source = "import a = require(\"./server\");\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::ES2015,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert_eq!(output, "export {};\n");
 }
@@ -375,19 +315,14 @@ fn test_es_module_external_import_equals_erased_to_empty_export_marker() {
 #[test]
 fn test_commonjs_export_equals_interface_is_erased() {
     let source = "interface C {}\nexport = C;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(!output.contains("module.exports = C"));
 }
@@ -395,18 +330,13 @@ fn test_commonjs_export_equals_interface_is_erased() {
 #[test]
 fn test_for_await_of_target_es2018_preserved() {
     let source = "async function f() {\n    const iterable = [];\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2018,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(output.contains("for await (const x of iterable)"));
     assert!(!output.contains("__asyncValues"));
@@ -415,18 +345,13 @@ fn test_for_await_of_target_es2018_preserved() {
 #[test]
 fn test_for_await_of_target_es2017_downlevel_to_await() {
     let source = "const iterable = [];\nasync function f() {\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2017,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(output.contains("__asyncValues"));
     assert!(output.contains("for (var"));
@@ -438,18 +363,13 @@ fn test_for_await_of_target_es2017_downlevel_to_await() {
 #[test]
 fn test_for_await_of_target_es2016_downlevel_to_yield() {
     let source = "const iterable = [];\nasync function f() {\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2016,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(output.contains("__awaiter"));
     assert!(output.contains("__asyncValues"));
@@ -460,18 +380,13 @@ fn test_for_await_of_target_es2016_downlevel_to_yield() {
 #[test]
 fn test_nested_for_await_of_targets_nested_return_temps() {
     let source = "async function f() {\n    for await (const a of xs) {\n        for await (const b of ys) {\n            console.log(a, b);\n        }\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2016,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(output.contains("for (var"));
     assert!(output.contains("__asyncValues"));
@@ -485,10 +400,7 @@ fn test_template_literal_closing_brace_with_whitespace() {
     // Regression test: template substitutions with whitespace padding inside
     // `${ expr }` must preserve closing `}` and backtick.
     let source = "var x = `${ null }${ 4 }`;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert!(
         output.contains("`${null}${4}`"),
         "expected template with closing braces, got: {output}"
@@ -498,10 +410,7 @@ fn test_template_literal_closing_brace_with_whitespace() {
 #[test]
 fn test_template_literal_closing_brace_no_whitespace() {
     let source = "var x = `${null}${4}`;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert!(
         output.contains("`${null}${4}`"),
         "expected template with closing braces, got: {output}"
@@ -512,10 +421,7 @@ fn test_template_literal_closing_brace_no_whitespace() {
 fn test_template_literal_tail_backtick_with_content() {
     // Ensure TemplateTail text + closing backtick are both emitted.
     let source = "var x = `hello ${ name } world`;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert!(
         output.contains("`hello ${name} world`"),
         "expected template with tail content and backtick, got: {output}"
@@ -526,10 +432,7 @@ fn test_template_literal_tail_backtick_with_content() {
 fn test_tagged_template_closing_brace_with_whitespace() {
     let source =
         "function tag(s: TemplateStringsArray, ...a: any[]) {}\ntag `${ null }${ null }`;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert!(
         output.contains("tag `${null}${null}`"),
         "expected tagged template with closing braces, got: {output}"
@@ -540,10 +443,7 @@ fn test_tagged_template_closing_brace_with_whitespace() {
 fn test_template_literal_multiple_spans_mixed_whitespace() {
     // Mix of spaces and no-spaces across multiple substitutions.
     let source = "var x = `a${ 1 }b${2}c${ 3 }d`;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert!(
         output.contains("`a${1}b${2}c${3}d`"),
         "expected template with all closing braces, got: {output}"
@@ -554,18 +454,13 @@ fn test_template_literal_multiple_spans_mixed_whitespace() {
 fn test_amd_non_module_script_no_use_strict() {
     // Non-module scripts (no import/export) under AMD should NOT get "use strict".
     let source = "var x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             module: ModuleKind::AMD,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(
         !output.contains("use strict"),
@@ -577,18 +472,13 @@ fn test_amd_non_module_script_no_use_strict() {
 fn test_commonjs_module_gets_use_strict() {
     // CJS module files (with export) should get "use strict" in the preamble.
     let source = "export const x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(
         output.contains("\"use strict\""),
@@ -600,18 +490,13 @@ fn test_commonjs_module_gets_use_strict() {
 fn test_commonjs_non_module_no_use_strict() {
     // CJS non-module scripts should NOT get "use strict".
     let source = "var x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     assert!(
         !output.contains("use strict"),
@@ -626,18 +511,13 @@ fn test_commonjs_non_module_no_use_strict() {
 #[test]
 fn test_top_level_enum_uses_var_at_es2015() {
     let source = "enum Color { Red, Green, Blue }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(
         output.contains("var Color;"),
         "Top-level enum at ES2015 should use 'var', got: {output}"
@@ -647,18 +527,13 @@ fn test_top_level_enum_uses_var_at_es2015() {
 #[test]
 fn test_enum_in_function_uses_let_at_es2015() {
     let source = "function foo() { enum E { A, B } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(
         output.contains("let E;"),
         "Enum inside function at ES2015 should use 'let', got: {output}"
@@ -672,18 +547,13 @@ fn test_enum_in_function_uses_let_at_es2015() {
 #[test]
 fn test_enum_in_function_uses_var_at_es5() {
     let source = "function foo() { enum E { A, B } }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(
         output.contains("var E;"),
         "Enum inside function at ES5 should use 'var', got: {output}"
@@ -693,18 +563,13 @@ fn test_enum_in_function_uses_var_at_es5() {
 #[test]
 fn test_top_level_enum_uses_var_at_es5() {
     let source = "enum E { A, B, C }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES5,
             ..Default::default()
         },
-    )
-    .code;
+    );
     assert!(
         output.contains("var E;"),
         "Top-level enum at ES5 should use 'var', got: {output}"
@@ -721,18 +586,13 @@ fn test_extends_optional_chain_parenthesized_downlevel() {
 }
 class C1 extends A?.B {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     // The lowered optional chain must be wrapped in parens
     assert!(
@@ -747,19 +607,14 @@ fn test_commonjs_class_export_before_static_block_iife() {
     // and the lowered static block IIFE, matching tsc behavior.
     let source =
         "export class C {\n    static x: number;\n    static {\n        C.x = 1;\n    }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(
-        &parser.arena,
-        root,
+    let output = parse_lower_print(
+        source,
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::CommonJS,
             ..Default::default()
         },
-    )
-    .code;
+    );
 
     // exports.C = C; must come before the static block IIFE
     let export_pos = output.find("exports.C = C;");
@@ -907,10 +762,7 @@ fn test_comment_preserved_after_erased_type_annotation() {
     // extends into trailing trivia, consuming comments meant for the
     // next statement.
     let source = "var x: {\n    foo: string,\n    bar: string\n}\n\n// ASI makes this work\nvar y: {\n    foo: string\n    bar: string\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert!(
         output.contains("// ASI makes this work"),
         "Comment after erased type annotation should be preserved.\nOutput: {output}"
@@ -921,10 +773,7 @@ fn test_comment_preserved_after_erased_type_annotation() {
 fn test_comment_preserved_after_erased_function_return_type() {
     // Comments after an erased return type annotation should not be consumed.
     let source = "function foo(): number {\n    // body comment\n    return 1;\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    let output = parse_lower_print(source, PrintOptions::es6());
     assert!(
         output.contains("// body comment"),
         "Comment inside function body should be preserved after return type erasure.\nOutput: {output}"
