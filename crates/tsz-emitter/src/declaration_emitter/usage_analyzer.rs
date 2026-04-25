@@ -838,6 +838,31 @@ impl<'a> UsageAnalyzer<'a> {
             self.walk_inferred_type_or_related(&[decl_idx, decl.name]);
         }
 
+        // For arrow/function-expression initializers, walk the return-type
+        // and parameter-type annotations so their references survive elision.
+        // Without this, `export const f = (...): X<...> => ...` with `X` from
+        // an external import elides the import (the inferred TypeId may not
+        // expose the source-level reference). Matches
+        // declarationEmitRecursiveConditionalAliasPreserved.
+        if decl.initializer.is_some()
+            && let Some(init_node) = self.arena.get(decl.initializer)
+            && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            && let Some(func) = self.arena.get_function(init_node)
+        {
+            if func.type_annotation.is_some() {
+                self.analyze_type_node(func.type_annotation);
+            }
+            for &param_idx in &func.parameters.nodes {
+                if let Some(param_node) = self.arena.get(param_idx)
+                    && let Some(param) = self.arena.get_parameter(param_node)
+                    && param.type_annotation.is_some()
+                {
+                    self.analyze_type_node(param.type_annotation);
+                }
+            }
+        }
+
         if decl.initializer.is_some()
             && self.initializer_preserves_value_reference(decl.initializer)
         {
