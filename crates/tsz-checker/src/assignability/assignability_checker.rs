@@ -1423,6 +1423,49 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Tuples carry their element types directly (not via Object shape),
+        // so the property-shape walk below would skip them. Resolve each
+        // tuple element first so downstream comparable-for-assertion checks
+        // (e.g. tuple-to-tuple element-wise overlap in
+        // `types_are_comparable_for_assertion`) see concrete types instead
+        // of unresolved `Lazy(DefId)` class refs — those refs short-circuit
+        // the solver's depth>0 Lazy heuristic to "comparable", masking real
+        // mismatches like `[C, D] as [A, I]`.
+        if let Some(elements) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
+        {
+            let mut any_changed = false;
+            let new_elements: Vec<tsz_solver::TupleElement> = elements
+                .iter()
+                .map(|elem| {
+                    let mut eval_ty = elem.type_id;
+                    if crate::query_boundaries::common::is_lazy_type(
+                        self.ctx.types.as_type_database(),
+                        eval_ty,
+                    ) {
+                        let resolved = self.evaluate_type_for_assignability(eval_ty);
+                        if resolved != eval_ty {
+                            any_changed = true;
+                            eval_ty = resolved;
+                        }
+                    }
+                    let deep = self.deep_evaluate_object_properties_inner(eval_ty, depth + 1);
+                    if deep != eval_ty {
+                        any_changed = true;
+                        eval_ty = deep;
+                    }
+                    tsz_solver::TupleElement {
+                        type_id: eval_ty,
+                        ..*elem
+                    }
+                })
+                .collect();
+            if any_changed {
+                return self.ctx.types.as_type_database().tuple(new_elements);
+            }
+            return type_id;
+        }
+
         let db = self.ctx.types.as_type_database();
         // Use solver query API to get the shape id (handles Object and ObjectWithIndex)
         let shape_id = match crate::query_boundaries::common::object_shape_id(db, type_id) {
