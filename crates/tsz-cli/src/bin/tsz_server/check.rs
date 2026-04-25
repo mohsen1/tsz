@@ -171,11 +171,13 @@ impl Server {
         let resolved_modules_arc = Arc::new(resolved_modules);
 
         // Build skeleton indices if available (Phase 2 step 2 added the
-        // module-augmentations index here too).
+        // module-augmentations index, Phase 2 step 3 added the
+        // augmentation-targets index).
         let (
             skeleton_declared_modules,
             skeleton_expando_index,
             skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
         ) = if let Some(ref skel) = program.skeleton_index {
             let (exact, patterns) = skel.build_declared_module_sets();
             (
@@ -184,9 +186,10 @@ impl Server {
                 )),
                 Some(Arc::new(skel.expando_properties.clone())),
                 Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
+                Some(Arc::new(skel.build_augmentation_targets_index())),
             )
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
 
         let mut project_env = ProjectEnv {
@@ -196,6 +199,7 @@ impl Server {
             skeleton_declared_modules,
             skeleton_expando_index,
             skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
@@ -422,11 +426,13 @@ impl Server {
         let resolved_modules_arc = Arc::new(resolved_modules);
 
         // Build skeleton indices if available (Phase 2 step 2 added the
-        // module-augmentations index here too).
+        // module-augmentations index, Phase 2 step 3 added the
+        // augmentation-targets index).
         let (
             skeleton_declared_modules,
             skeleton_expando_index,
             skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
         ) = if let Some(ref skel) = program.skeleton_index {
             let (exact, patterns) = skel.build_declared_module_sets();
             (
@@ -435,9 +441,10 @@ impl Server {
                 )),
                 Some(Arc::new(skel.expando_properties.clone())),
                 Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
+                Some(Arc::new(skel.build_augmentation_targets_index())),
             )
         } else {
-            (None, None, None)
+            (None, None, None, None)
         };
 
         let mut project_env = ProjectEnv {
@@ -447,6 +454,7 @@ impl Server {
             skeleton_declared_modules,
             skeleton_expando_index,
             skeleton_module_augmentations_index,
+            skeleton_augmentation_targets_index,
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };

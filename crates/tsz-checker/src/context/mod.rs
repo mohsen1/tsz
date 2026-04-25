@@ -1295,6 +1295,16 @@ pub struct ProjectEnv {
     /// become evictable in Phase 5 — the merged augmentations index can be
     /// built without retaining per-file binder state.
     pub skeleton_module_augmentations_index: Option<GlobalModuleAugmentationsIndex>,
+    /// Pre-computed augmentation-targets index built from `SkeletonIndex`
+    /// (Phase 2 step 3).
+    ///
+    /// When set, [`Self::build_global_indices`] skips the per-binder
+    /// `augmentation_target_modules` loop and reuses this `Arc` for the
+    /// `global_augmentation_targets_index` slot. Drivers populate this from
+    /// `SkeletonIndex::build_augmentation_targets_index(...)` so that — once
+    /// arenas become evictable in Phase 5 — the merged augmentation-targets
+    /// index can be built without retaining per-file binder state.
+    pub skeleton_augmentation_targets_index: Option<GlobalAugmentationTargetsIndex>,
     /// Pre-computed symbol-to-file ownership targets (legacy vec form).
     pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
     /// Pre-built O(1) index: `SymbolId` -> owning file index.
@@ -1372,6 +1382,7 @@ impl Default for ProjectEnv {
             skeleton_declared_modules: None,
             skeleton_expando_index: None,
             skeleton_module_augmentations_index: None,
+            skeleton_augmentation_targets_index: None,
             symbol_file_targets: Arc::new(vec![]),
             global_symbol_file_index: None,
             global_file_locals_index: None,
@@ -1529,6 +1540,12 @@ impl ProjectEnv {
         let has_skeleton_module_augmentations = self.skeleton_module_augmentations_index.is_some();
         let mut module_augs_index: FxHashMap<String, Vec<(usize, ModuleAugmentation)>> =
             FxHashMap::default();
+        // Phase 2 step 3: when the driver pre-built
+        // `skeleton_augmentation_targets_index` from `SkeletonIndex`, skip the
+        // per-binder `augmentation_target_modules` loop entirely and reuse the
+        // pre-built map. This unblocks Phase 5 — the merged augmentation-targets
+        // index no longer needs per-file binder state.
+        let has_skeleton_aug_targets = self.skeleton_augmentation_targets_index.is_some();
         let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> = FxHashMap::default();
         let mut module_binder_index: FxHashMap<String, Vec<usize>> = FxHashMap::default();
 
@@ -1618,11 +1635,16 @@ impl ProjectEnv {
                         }));
                 }
             }
-            for (&sym_id, module_spec) in binder.augmentation_target_modules.iter() {
-                aug_targets_index
-                    .entry(module_spec.clone())
-                    .or_default()
-                    .push((sym_id, file_idx));
+            // Phase 2 step 3: skip the per-binder augmentation_target_modules
+            // loop when the skeleton-built map is already installed. The driver
+            // pre-built it from `SkeletonIndex::build_augmentation_targets_index(...)`.
+            if !has_skeleton_aug_targets {
+                for (&sym_id, module_spec) in binder.augmentation_target_modules.iter() {
+                    aug_targets_index
+                        .entry(module_spec.clone())
+                        .or_default()
+                        .push((sym_id, file_idx));
+                }
             }
         }
 
@@ -1655,7 +1677,13 @@ impl ProjectEnv {
             .as_ref()
             .map(Arc::clone)
             .or_else(|| Some(Arc::new(module_augs_index)));
-        self.global_augmentation_targets_index = Some(Arc::new(aug_targets_index));
+        // Phase 2 step 3: prefer the skeleton-pre-built map when available;
+        // otherwise install the binder-derived one we just computed.
+        self.global_augmentation_targets_index = self
+            .skeleton_augmentation_targets_index
+            .as_ref()
+            .map(Arc::clone)
+            .or_else(|| Some(Arc::new(aug_targets_index)));
         self.global_module_binder_index = Some(Arc::new(module_binder_index));
 
         // Build arena-pointer → file-index map
