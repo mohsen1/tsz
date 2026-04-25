@@ -95,7 +95,7 @@ pub mod diagnostics {
     };
 }
 
-#[cfg(test)]
+#[doc(hidden)]
 pub mod test_utils;
 
 // Tests that don't depend on root crate's test_fixtures

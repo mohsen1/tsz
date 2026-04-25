@@ -5,7 +5,7 @@
 
 use crate::context::CheckerOptions;
 use crate::diagnostics::Diagnostic;
-use crate::query_boundaries::type_construction::TypeInterner;
+use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
@@ -63,5 +63,15 @@ pub fn check_source_codes(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
         .iter()
         .map(|d| d.code)
+        .collect()
+}
+
+/// Parse, bind, and type-check source, returning `(code, message_text)` pairs.
+///
+/// Convenience wrapper for tests that inspect both error codes and message text.
+pub fn check_source_code_messages(source: &str) -> Vec<(u32, String)> {
+    check_source_diagnostics(source)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
         .collect()
 }
