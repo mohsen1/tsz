@@ -2954,7 +2954,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let merged_binder =
         tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
+    for (&node_idx, &original_sym_id) in original_binder.node_symbols.iter() {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
             panic!("missing merged node symbol for node {node_idx}");
         };
@@ -3040,7 +3040,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
     let merged_binder =
         tsz::parallel::create_binder_from_bound_file(&program.files[0], &program, 0);
 
-    for (&node_idx, &original_sym_id) in &original_binder.node_symbols {
+    for (&node_idx, &original_sym_id) in original_binder.node_symbols.iter() {
         let Some(&merged_sym_id) = merged_binder.node_symbols.get(&node_idx) else {
             panic!("missing merged node symbol for node {node_idx}");
         };

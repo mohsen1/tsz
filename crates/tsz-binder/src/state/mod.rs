@@ -274,8 +274,17 @@ pub struct BinderState {
     pub(crate) scope_chain: Vec<crate::ScopeContext>,
     /// Current scope index in `scope_chain`
     pub(crate) current_scope_idx: usize,
-    /// Node-to-symbol mapping
-    pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Node-to-symbol mapping.
+    ///
+    /// Stored behind `Arc` so cross-file lookup binders (one per file in the
+    /// parallel CLI pipeline) can share each file's per-file map by reference
+    /// instead of deep-cloning the underlying `FxHashMap` on every binder
+    /// reconstruction. On large repos (6086 files), the previous deep clone
+    /// of `node_symbols` was one of the largest per-binder allocations
+    /// (#1202 covered `semantic_defs`; this is the same template applied to
+    /// `node_symbols`). Mutations during binding use `Arc::make_mut` (free
+    /// when refcount=1, the case during a single binder's construction).
+    pub node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena).

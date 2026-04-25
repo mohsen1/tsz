@@ -362,8 +362,9 @@ Status snapshot 2026-04-25 (large-ts-repo, 6086 files, 39MB):
 
 1. Pre-#1202 baseline: peak RSS ~67 GB virtual, exit 137 (SIGKILL by macOS jetsam) at ~75s. Bench reports as TIMEOUT.
 2. Post-#1202 (`perf(binder,checker,cli,core): Arc-share per-file semantic_defs`): peak RSS dropped to ~10 GB resident, exit 137 still hits at ~47s. **6.7× memory reduction**, but system memory ceiling still exceeded on this 32 GB host.
-3. Implication: #1202 worked but is not sufficient alone. Continue Arc-sharing the next-largest per-binder maps: `node_symbols`, `node_flow`, `node_scope_ids`, `top_level_flow`, `switch_clause_to_switch`. Each is a per-file `FxHashMap` cloned at `crates/tsz-cli/src/driver/check_utils.rs` cross-file binder construction.
-4. Bench harness caveat: `tsz: TIMEOUT` in the table can mean either timer-kill (124) or OS-kill (137). The 137 case ("OOM-by-paging") is the dominant failure mode here. Inspect exit codes when investigating.
+3. Post-Arc-share-`node_symbols` (this PR): peak RSS dropped further to **~6.2 GB** resident, exit 137 still hits at ~45s. Additional **~38% reduction** on top of #1202. Cumulative: 67 GB virtual → 6.2 GB resident (~10× from baseline).
+4. Implication: #1202 + node_symbols Arc-share got us most of the way; continue Arc-sharing the remaining per-binder maps (`node_flow`, `node_scope_ids`, `top_level_flow`, `switch_clause_to_switch`) to push further toward stable completion.
+5. Bench harness caveat: `tsz: TIMEOUT` in the table can mean either timer-kill (124) or OS-kill (137). The 137 case ("OOM-by-paging") is the dominant failure mode here. Inspect exit codes when investigating.
 
 Exit criteria:
 

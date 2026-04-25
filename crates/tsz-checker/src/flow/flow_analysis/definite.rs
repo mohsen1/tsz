@@ -667,7 +667,7 @@ impl<'a> CheckerState<'a> {
         };
         let symbol_identifier_ref = |sym: SymbolId| -> Option<NodeIndex> {
             let mut declaration_ident: Option<NodeIndex> = None;
-            for (&node_id, &node_sym) in &self.ctx.binder.node_symbols {
+            for (&node_id, &node_sym) in self.ctx.binder.node_symbols.iter() {
                 if node_sym != sym {
                     continue;
                 }
