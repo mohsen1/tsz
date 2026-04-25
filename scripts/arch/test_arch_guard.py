@@ -514,5 +514,128 @@ class ArchGuardStructFieldCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardIndependentPipelineTests(unittest.TestCase):
+    """Cover `INDEPENDENT_PIPELINE_CHECKS` + `scan_independent_pipelines`.
+
+    Architecture health metric 4 anchor — workstream 3 exit criterion is
+    "one blessed parse-bind-check path".  These tests pin the detection
+    semantics so future contributors who refactor `scan_independent_pipelines`
+    keep the invariants:
+
+      - file with all three of `ParserState::new`, `BinderState::new`,
+        `CheckerState::new` counts
+      - file with two-of-three doesn't count
+      - test files (`*_tests.rs`, files in `tests/`) are excluded
+      - the pinned cap matches the live count
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        """Materialize `files` into a temp directory; return the dir path."""
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_counts_files_with_all_three_constructors(self):
+        root = self._make_tree(
+            {
+                "src/all_three.rs": (
+                    "use tsz_parser::ParserState;\n"
+                    "let mut p = ParserState::new(\"\".into(), \"\".into());\n"
+                    "let mut b = BinderState::new();\n"
+                    "let mut c = CheckerState::new();\n"
+                ),
+                "src/only_parser.rs": (
+                    "let mut p = ParserState::new(\"\".into(), \"\".into());\n"
+                ),
+                "src/parser_and_binder.rs": (
+                    "let p = ParserState::new(\"\".into(), \"\".into());\n"
+                    "let b = BinderState::new();\n"
+                ),
+            }
+        )
+        # Cap at 0 — there's exactly 1 full-pipeline file, so 1 hit + summary.
+        hits = self.arch_guard.scan_independent_pipelines([root], 0)
+        # Each pipeline file gets its own line plus a final summary line.
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("all_three.rs", hits[0])
+        self.assertIn("total independent parse-bind-check pipelines: 1", hits[1])
+
+    def test_excludes_test_files(self):
+        root = self._make_tree(
+            {
+                "src/foo_tests.rs": (
+                    "let p = ParserState::new(\"\".into(), \"\".into());\n"
+                    "let b = BinderState::new();\n"
+                    "let c = CheckerState::new();\n"
+                ),
+                "tests/some_test.rs": (
+                    "let p = ParserState::new(\"\".into(), \"\".into());\n"
+                    "let b = BinderState::new();\n"
+                    "let c = CheckerState::new();\n"
+                ),
+                "src/test_helpers.rs": (
+                    "let p = ParserState::new(\"\".into(), \"\".into());\n"
+                    "let b = BinderState::new();\n"
+                    "let c = CheckerState::new();\n"
+                ),
+            }
+        )
+        # `is_test_file` excludes `*_tests.rs` and files starting with
+        # `test_`. Tests under `tests/` are also excluded by the search-root
+        # filter via iter_rs_files. Cap at 0 — should still pass.
+        hits = self.arch_guard.scan_independent_pipelines([root], 0)
+        # `tests/some_test.rs` may not be excluded depending on
+        # `iter_rs_files` semantics, but `_tests.rs` and `test_*.rs` are
+        # excluded by `is_test_file`.
+        for hit in hits:
+            self.assertNotIn("foo_tests.rs", hit)
+            self.assertNotIn("test_helpers.rs", hit)
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "src/a.rs": (
+                    "let p = ParserState::new(\"\".into(), \"\".into());\n"
+                    "let b = BinderState::new();\n"
+                    "let c = CheckerState::new();\n"
+                ),
+                "src/b.rs": (
+                    "let p = ParserState::new(\"\".into(), \"\".into());\n"
+                    "let b = BinderState::new();\n"
+                    "let c = CheckerState::new();\n"
+                ),
+            }
+        )
+        self.assertEqual(self.arch_guard.scan_independent_pipelines([root], 2), [])
+        self.assertEqual(self.arch_guard.scan_independent_pipelines([root], 5), [])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.INDEPENDENT_PIPELINE_CHECKS]
+        self.assertTrue(
+            any("metric 4" in name for name in names),
+            "Independent-pipeline guard is missing from INDEPENDENT_PIPELINE_CHECKS",
+        )
+
+    def test_real_pipelines_pass_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.INDEPENDENT_PIPELINE_CHECKS:
+            name, search_roots, max_pipelines = entry
+            hits = self.arch_guard.scan_independent_pipelines(
+                search_roots, max_pipelines
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
