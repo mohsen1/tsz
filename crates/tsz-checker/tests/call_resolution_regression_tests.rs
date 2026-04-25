@@ -1975,10 +1975,30 @@ declare var x1: A & C & {
     f3: F3 | F4;
 };
 x1.f3();
+    "#;
+    assert!(
+        has_error(source, 2684),
+        "Union of multi-overload interfaces with no compatible this-pairs should emit TS2684"
+    );
+}
+
+#[test]
+fn union_multi_overload_incompatible_without_this_emits_ts2349() {
+    let source = r#"
+interface F1 {
+    (x: string): void;
+    (x: number): void;
+}
+interface F2 {
+    (x: boolean): void;
+    (x: undefined): void;
+}
+declare let f: F1 | F2;
+f("hello");
 "#;
     assert!(
         has_error(source, 2349),
-        "Union of multi-overload interfaces with no compatible this-pairs should emit TS2349"
+        "Union of incompatible non-this multi-overload interfaces should remain not callable"
     );
 }
 
