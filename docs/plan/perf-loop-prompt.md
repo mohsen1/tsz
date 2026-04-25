@@ -156,8 +156,11 @@ or branch with uncommitted work — only clean cargo caches.
 
 ### Cache infra (Phase 4 prerequisites):
 - **#1040 MERGED** — PR 1/4: canonical-pairs `TypeSubstitution` (deterministic content-hashable form)
-- **#1128 MERGED** (2026-04-25) — PR 2/4: `InstantiationCache` storage on `QueryCache` + `lookup_instantiation_cache`/`insert_instantiation_cache` on `QueryDatabase`. No entry-point wiring yet.
-- **PR 3/4 IN FLIGHT** (agent `cache-pr3-wire-opus`, 2026-04-25) — wire 5 entry points; perf win lands here.
+- **#1128 MERGED** (2026-04-25) — PR 2/4: `InstantiationCache` storage on `QueryCache` + `lookup_instantiation_cache`/`insert_instantiation_cache` on `QueryDatabase`. No entry-point wiring.
+- **#1132 OPEN** (2026-04-25) — PR 3/4: wire 5 entry points via `_cached` variants + `Option<&dyn QueryDatabase>` parameter (deviation from literal spec — strict signature change blocked by 116 cascading errors; `_cached` variants land same perf win without multi-day rewrite). Bench results vs prior tsz: paths.ts 115→58ms (-50%), deep-pick.ts 200→53ms (-74%, **flips tsgo-faster→tsz-faster 1.89×**), deep-readonly.ts 99→62ms (-37%). 6 hot-path callers wired in TypeEvaluator + SubtypeChecker.
+
+### Phase 1 — STABLE IDENTITY (continued, 2026-04-25):
+- **#1131 MERGED** (2026-04-25) — Phase 1 step 3: `identifier_source_display` migration (2 functions, 3 new tests including Phase 5 round-trip across arena reparse).
 
 ### Phase 2 — SKELETON IR consumers:
 - **#1127 MERGED** (2026-04-25) — Phase 2 step 1: `is_ambient_module` resolver served from `SkeletonIndex` alone (Phase 5 invariant test included). First skeleton consumer migrated.
