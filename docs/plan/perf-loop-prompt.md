@@ -265,11 +265,13 @@ shape as Phase 1 step 2 PR #1066.
    `Arc<FxHashMap<&str, SmallVec<[(BinderIdx, SymbolId); 2]>>>` built
    at merge, plumb through `CheckerContext`. Multi-hour task; defer
    until Cache PR 3/4 lands (potential conflict on checker fields).
-7. **Investigate 3.28× regression** between fe3e457d3f (pre-session
-   baseline) and current main on `manyConstExports.ts` (77ms → 253ms
-   across 495 commits). Not from Arc-share migrations (neutral on
-   single-file noemit). Multi-hour bisect — defer unless explicitly
-   requested.
+7. **~~3.28× regression on manyConstExports — RESOLVED 2026-04-25:
+   was a CLI invocation error, not a regression.~~** Original measurement
+   used `tsz check --noemit <file>` which is invalid (CLI treats `check`
+   as a filename, hits TS6053 file-not-found error path). Correct form is
+   `tsz --noemit <file>`. Real measurement on current main (post-#1128):
+   80.8 ms ± 3.4 ms vs claimed 77.3 ms baseline = within noise. No
+   regression exists.
 
 This document should evolve. When a directive lands wrong (regression,
 review change, design pivot), update this file and re-feed it as the
