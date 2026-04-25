@@ -782,5 +782,146 @@ class ArchGuardSolverImportCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardDeclarationEmitRederiveTests(unittest.TestCase):
+    """Cover `DECLARATION_EMIT_REDERIVE_CHECKS` + `scan_declaration_emit_rederive`.
+
+    Architecture health metric 8 anchor — workstream 2 ("Declaration emit
+    priorities") wants declaration emit to consume a stable semantic
+    summary rather than rederive facts via direct `tsz_checker` /
+    `tsz_solver` / `tsz_binder` imports.  These tests pin the detection
+    semantics:
+
+      - any of `use tsz_<crate>::...`, `pub use tsz_<crate>`, or
+        `extern crate tsz_<crate>` lines flag the file (where `<crate>`
+        is one of `checker`, `solver`, `binder`)
+      - test files (`*_tests.rs`, `test_*.rs`, files under `tests/` or
+        `benches/`) are excluded
+      - files importing several semantic crates count once
+      - comment-only lines are not counted
+      - non-semantic-crate imports (e.g. `tsz_parser`, `tsz_emitter`)
+        are not counted
+      - the pinned cap matches the live count
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_each_semantic_crate_import_form(self):
+        root = self._make_tree(
+            {
+                "use_checker.rs": "use tsz_checker::CheckerState;\n",
+                "use_solver.rs": "use tsz_solver::TypeId;\n",
+                "pub_use_binder.rs": "pub use tsz_binder;\n",
+                "extern_checker.rs": "extern crate tsz_checker;\n",
+            }
+        )
+        hits = self.arch_guard.scan_declaration_emit_rederive(root, 0)
+        # 4 files reached the boundary + 1 summary line.
+        self.assertEqual(len(hits), 5, f"unexpected hits: {hits!r}")
+        joined = "\n".join(hits[:-1])
+        self.assertIn("use_checker.rs", joined)
+        self.assertIn("use_solver.rs", joined)
+        self.assertIn("pub_use_binder.rs", joined)
+        self.assertIn("extern_checker.rs", joined)
+        self.assertIn(
+            "total declaration_emitter files importing "
+            "tsz_checker/tsz_solver/tsz_binder: 4",
+            hits[-1],
+        )
+
+    def test_does_not_flag_non_semantic_crate_imports(self):
+        # The metric is specifically about semantic rederivation.
+        # Imports of other tsz crates (e.g. tsz_parser, tsz_emitter,
+        # tsz_lowering, tsz_common) are NOT in scope and must not
+        # trigger the guard.
+        root = self._make_tree(
+            {
+                "non_semantic.rs": (
+                    "use tsz_parser::ParserState;\n"
+                    "use tsz_emitter::Printer;\n"
+                    "use tsz_lowering::TypeLowering;\n"
+                    "use tsz_common::position::LineMap;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_declaration_emit_rederive(root, 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_counts_each_file_at_most_once(self):
+        # A file importing checker AND solver AND binder still counts as 1.
+        root = self._make_tree(
+            {
+                "many.rs": (
+                    "use tsz_checker::CheckerState;\n"
+                    "use tsz_solver::TypeId;\n"
+                    "use tsz_binder::BinderState;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_declaration_emit_rederive(root, 0)
+        # 1 importing file + 1 summary line.
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn(
+            "total declaration_emitter files importing "
+            "tsz_checker/tsz_solver/tsz_binder: 1",
+            hits[-1],
+        )
+
+    def test_excludes_test_files_and_test_dirs(self):
+        root = self._make_tree(
+            {
+                "foo_tests.rs": "use tsz_checker::CheckerState;\n",
+                "test_helpers.rs": "use tsz_solver::TypeId;\n",
+                "tests/integration.rs": "use tsz_binder::BinderState;\n",
+                "benches/bench.rs": "use tsz_checker::CheckerState;\n",
+            }
+        )
+        hits = self.arch_guard.scan_declaration_emit_rederive(root, 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_ignores_comment_only_lines(self):
+        root = self._make_tree(
+            {
+                "commented.rs": (
+                    "// use tsz_checker::CheckerState;\n"
+                    "// pub use tsz_solver;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_declaration_emit_rederive(root, 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0] for entry in self.arch_guard.DECLARATION_EMIT_REDERIVE_CHECKS
+        ]
+        self.assertTrue(
+            any("metric 8" in name for name in names),
+            "Declaration-emit-rederive guard missing from DECLARATION_EMIT_REDERIVE_CHECKS",
+        )
+
+    def test_real_imports_pass_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.DECLARATION_EMIT_REDERIVE_CHECKS:
+            name, search_root, max_files = entry
+            hits = self.arch_guard.scan_declaration_emit_rederive(
+                search_root, max_files
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

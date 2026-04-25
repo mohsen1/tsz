@@ -541,6 +541,34 @@ SOLVER_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the count of non-test source files inside the declaration emitter
+# (`crates/tsz-emitter/src/declaration_emitter/`) that directly import any
+# of the semantic crates `tsz_checker`, `tsz_solver`, `tsz_binder`
+# (architecture health metric 8 in `docs/plan/ROADMAP.md`).
+#
+# Each such import is a place where declaration emit reaches into an
+# upstream semantic computation rather than reading from a stable
+# semantic summary.  Workstream 2 ("Declaration emit priorities") wants
+# declaration emit to consume a documented, narrow semantic view; the
+# raw count tracks how many file-shaped consumers still rederive facts.
+#
+# A file "imports a semantic crate" if a non-comment line matches one of
+#   - `use tsz_checker::…` / `use tsz_solver::…` / `use tsz_binder::…`
+#   - the same with `pub use`
+#   - the same with `extern crate`
+# Each file is counted at most once even when it imports multiple of
+# these crates, so the count tracks "files reaching across the
+# declaration emit boundary", not "import statements".
+#
+# Each entry: (description, search_root, max_files).
+DECLARATION_EMIT_REDERIVE_CHECKS = [
+    (
+        "Declaration emit boundary: files rederiving semantic facts via tsz_checker/tsz_solver/tsz_binder (architecture health metric 8)",
+        ROOT / "crates" / "tsz-emitter" / "src" / "declaration_emitter",
+        19,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -744,6 +772,74 @@ def scan_solver_import_count(
             f"{len(importing_files)} (cap {max_imports}; bump cap intentionally "
             f"and update ROADMAP.md, or route the consumer through the compiler "
             f"service shell or `tsz_checker::query_boundaries` — workstream 3)"
+        )
+        return hits
+    return []
+
+
+_DECL_EMIT_SEMANTIC_PATTERN = re.compile(
+    r"\b(?:use|pub\s+use|extern\s+crate)\s+"
+    r"tsz_(?:checker|solver|binder)"
+    r"(?:::|\s*;|\s+as\b)"
+)
+
+
+def scan_declaration_emit_rederive(
+    search_root: pathlib.Path,
+    max_files: int,
+) -> list[str]:
+    """Count non-test files in the declaration emitter that import any
+    semantic crate (`tsz_checker`, `tsz_solver`, `tsz_binder`)
+    (architecture health metric 8).
+
+    Each such file is a place where declaration emit reaches across its
+    intended boundary into upstream semantic computation rather than
+    reading from a stable semantic summary (workstream 2: "Declaration
+    emit priorities").  A file is counted once regardless of how many
+    semantic crates it pulls in.
+
+    Test files (`*_tests.rs`, `test_*.rs`, files inside `tests/` or
+    `benches/`) are excluded.  Returns one hit per offending file plus
+    a summary line when the total exceeds `max_files`.
+    """
+    if not search_root.exists():
+        return []
+
+    importing_files: list[str] = []
+    for path in search_root.rglob("*.rs"):
+        try:
+            rel_to_root = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_to_root = path.relative_to(search_root).as_posix()
+        parts = set(rel_to_root.split("/"))
+        if EXCLUDE_DIRS.intersection(parts):
+            continue
+        if "tests" in parts or "benches" in parts:
+            continue
+        if is_test_file(rel_to_root):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if line.lstrip().startswith("//"):
+                continue
+            if _DECL_EMIT_SEMANTIC_PATTERN.search(line):
+                importing_files.append(rel_to_root)
+                break
+
+    importing_files.sort()
+    if len(importing_files) > max_files:
+        hits = [
+            f"declaration emit semantic rederive #{i + 1}: {rel}"
+            for i, rel in enumerate(importing_files)
+        ]
+        hits.append(
+            f"total declaration_emitter files importing tsz_checker/tsz_solver/tsz_binder: "
+            f"{len(importing_files)} (cap {max_files}; bump cap intentionally "
+            f"and update ROADMAP.md, or move the logic to consume a declaration "
+            f"emit semantic summary — workstream 2 'Declaration emit priorities')"
         )
         return hits
     return []
@@ -1074,6 +1170,12 @@ def main() -> int:
         hits = scan_solver_import_count(
             search_roots, exclude_path_prefixes, max_imports
         )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, search_root, max_files in DECLARATION_EMIT_REDERIVE_CHECKS:
+        hits = scan_declaration_emit_rederive(search_root, max_files)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
