@@ -1,34 +1,9 @@
 //! Tests for TS2428, TS2411, TS2413: interface declaration merging diagnostics.
 
-use crate::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use crate::test_utils::check_source_code_messages;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    check_source_code_messages(source)
 }
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
@@ -270,10 +245,6 @@ namespace M3 {
 
 // ── TS2411 quoting tests ────────────────────────────────────────────────
 
-fn get_diagnostic_messages(source: &str) -> Vec<(u32, String)> {
-    get_diagnostics(source)
-}
-
 #[test]
 fn ts2411_single_quoted_property_name_preserved_in_diagnostic() {
     // TSC preserves quote style: `'a': number` → Property ''a'' of type ...
@@ -283,7 +254,7 @@ interface A2 {
     'a': number;
 }
 "#;
-    let diags = get_diagnostic_messages(source);
+    let diags = get_diagnostics(source);
     let ts2411_msgs: Vec<_> = diags.iter().filter(|d| d.0 == 2411).collect();
     assert!(
         !ts2411_msgs.is_empty(),
@@ -305,7 +276,7 @@ interface A {
     "-Infinity": string;
 }
 "#;
-    let diags = get_diagnostic_messages(source);
+    let diags = get_diagnostics(source);
     let ts2411_msgs: Vec<_> = diags.iter().filter(|d| d.0 == 2411).collect();
     assert!(
         !ts2411_msgs.is_empty(),
@@ -327,7 +298,7 @@ interface A {
     foo: string;
 }
 "#;
-    let diags = get_diagnostic_messages(source);
+    let diags = get_diagnostics(source);
     let ts2411_msgs: Vec<_> = diags.iter().filter(|d| d.0 == 2411).collect();
     assert!(
         !ts2411_msgs.is_empty(),
@@ -371,7 +342,7 @@ interface A {
     [x: string]: { length: string };
 }
 "#;
-    let diags = get_diagnostic_messages(source);
+    let diags = get_diagnostics(source);
     let ts2413_count = diags.iter().filter(|d| d.0 == 2413).count();
     assert!(
         ts2413_count <= 1,

@@ -14,31 +14,7 @@
 //! augmentation declared against a local class in a single file still emits
 //! TS2567 correctly.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn get_diagnostic_codes(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        Default::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
-}
+use tsz_checker::test_utils::check_source_codes;
 
 #[test]
 fn augmentation_enum_merged_with_class_still_emits_ts2567() {
@@ -52,7 +28,7 @@ declare module "./test" {
     export enum Foo { A, B, C }
 }
 "#;
-    let codes = get_diagnostic_codes(source);
+    let codes = check_source_codes(source);
     assert!(
         codes.contains(&2567),
         "augmentation-enum merging with an existing class must emit TS2567; got: {codes:?}"

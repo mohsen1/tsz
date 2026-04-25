@@ -8,35 +8,21 @@
 //! constructor/method-parameter cases in
 //! `useBeforeDeclaration_classDecorators.2.ts`.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
 use tsz_checker::context::CheckerOptions;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::test_utils::check_source;
 
 fn get_diagnostic_codes(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        experimental_decorators: true,
-        ..CheckerOptions::default()
-    };
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            experimental_decorators: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 #[test]
