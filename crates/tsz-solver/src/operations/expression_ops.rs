@@ -667,43 +667,31 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
     }
 
     let result: Arc<[TypeId]> = if let Some(res) = resolver {
-        // BONUS fast path: if all candidates are `Lazy(_)` instances of the
-        // same direct extends-parent symbol, no two can be subtypes of one
-        // another. Skip the O(N²) loop. This is the dominant shape of the
-        // BCT stress fixture (`Derived0..Derived199 extends Base`), where
-        // every pairwise `is_subtype_of` would be `false`. Conservative —
-        // only definitive negatives short-circuit; correctness of the
-        // existing tests is preserved (a no-op alternative branch falls
-        // through to the full loop on any non-match).
-        if all_share_same_extends_parent(interner, types, res) {
-            Arc::from(types.to_vec())
-        } else {
-            let mut keep = vec![true; len];
-            let mut checker = SubtypeChecker::with_resolver(interner, res);
-            for i in 0..len {
-                if !keep[i] {
+        let mut keep = vec![true; len];
+        let mut checker = SubtypeChecker::with_resolver(interner, res);
+        for i in 0..len {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || !keep[j] {
                     continue;
                 }
-                for j in 0..len {
-                    if i == j || !keep[j] {
-                        continue;
-                    }
-                    checker.guard.reset();
-                    if checker.is_subtype_of(types[i], types[j]) {
-                        // types[i] <: types[j], so types[i] is redundant
-                        keep[i] = false;
-                        break;
-                    }
+                checker.guard.reset();
+                if checker.is_subtype_of(types[i], types[j]) {
+                    // types[i] <: types[j], so types[i] is redundant
+                    keep[i] = false;
+                    break;
                 }
             }
-            let kept: Vec<TypeId> = types
-                .iter()
-                .zip(keep.iter())
-                .filter(|&(_, &k)| k)
-                .map(|(&t, _)| t)
-                .collect();
-            Arc::from(kept)
         }
+        let kept: Vec<TypeId> = types
+            .iter()
+            .zip(keep.iter())
+            .filter(|&(_, &k)| k)
+            .map(|(&t, _)| t)
+            .collect();
+        Arc::from(kept)
     } else {
         let mut keep = vec![true; len];
         let mut checker = SubtypeChecker::new(interner);
@@ -735,60 +723,6 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         db.insert_subtype_reduction_cache(key, result.clone());
     }
     result
-}
-
-/// Sibling-classes fast path for [`remove_subtypes_for_bct`].
-///
-/// Returns `true` when every entry in `types` is a `Lazy(DefId)` referring
-/// to a class with the SAME extends-parent `DefId`, AND the entries have
-/// distinct `DefId`s. In that configuration no candidate can be a subtype
-/// of another (they are siblings sharing the same parent), so the O(N²)
-/// pairwise loop would strip nothing — we can short-circuit by returning
-/// the input list unchanged.
-///
-/// Conservative: any deviation from this exact shape (non-`Lazy`, missing
-/// extends, mixed parents, duplicate `DefId`s) returns `false` so the
-/// full loop runs and existing test coverage is preserved. Mirrors the
-/// unit-type fast path at the start of `compute_best_common_type`.
-fn all_share_same_extends_parent<R: TypeResolver>(
-    interner: &dyn TypeDatabase,
-    types: &[TypeId],
-    resolver: &R,
-) -> bool {
-    if types.len() < 2 {
-        return false;
-    }
-
-    let mut shared_parent: Option<crate::def::DefId> = None;
-    let mut seen: smallvec::SmallVec<[crate::def::DefId; 8]> = smallvec::SmallVec::new();
-    let _ = interner; // touched only for the `Lazy` discriminant via `lookup` below.
-
-    for &ty in types {
-        let def_id = match interner.lookup(ty) {
-            Some(TypeData::Lazy(d)) => d,
-            _ => return false,
-        };
-
-        // Distinct DefIds — duplicate entries fall back to the slow path
-        // (the existing loop trivially handles `i == j` itself).
-        if seen.contains(&def_id) {
-            return false;
-        }
-        seen.push(def_id);
-
-        let parent_def = resolver.get_class_extends(def_id);
-        let Some(parent_def) = parent_def else {
-            return false;
-        };
-
-        match shared_parent {
-            None => shared_parent = Some(parent_def),
-            Some(p) if p == parent_def => {}
-            Some(_) => return false,
-        }
-    }
-
-    shared_parent.is_some()
 }
 
 fn is_constructor_like<R: TypeResolver>(
