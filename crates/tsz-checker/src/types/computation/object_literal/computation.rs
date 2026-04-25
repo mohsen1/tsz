@@ -5,7 +5,7 @@
 
 use super::super::object_literal_context::ContextualPropertyPresence;
 use crate::context::TypingRequest;
-use crate::context::speculation::DiagnosticSpeculationGuard;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{
     is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
@@ -1395,7 +1395,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let method_diag_guard = DiagnosticSpeculationGuard::new(&self.ctx);
+                    let method_diag_guard = DiagnosticSpeculationSnapshot::new(&self.ctx);
                     let pre_refresh_snap = self.ctx.snapshot_diagnostics();
                     let mut method_type = self.get_type_of_function_impl(elem_idx, &method_request);
                     let has_concrete_method_context =
@@ -1471,7 +1471,7 @@ impl<'a> CheckerState<'a> {
                             )),
                         );
                         self.ctx.this_type_stack.push(refined_this_type);
-                        let rerun_guard = DiagnosticSpeculationGuard::new(&self.ctx);
+                        let rerun_guard = DiagnosticSpeculationSnapshot::new(&self.ctx);
                         let rerun_pre_refresh_snap = self.ctx.snapshot_diagnostics();
                         let _ = self.get_type_of_function_impl(elem_idx, &method_request);
                         if has_concrete_method_context {
