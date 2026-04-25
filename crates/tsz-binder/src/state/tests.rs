@@ -14,11 +14,7 @@ namespace M {
     class B {}
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let m_sym_id = binder
         .file_locals
@@ -98,11 +94,7 @@ fn records_import_metadata_for_exported_reexports() {
 export { A, B as C } from './a';
 export type { D as E } from './b';
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let a_sym_id = binder
         .file_locals
@@ -478,11 +470,7 @@ var x = {
 
 export = x;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let module_exports = binder
         .module_exports
@@ -610,10 +598,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     // Count START nodes. There should be exactly 1 (the file-level start),
     // NOT 2 (file + IIFE body).
@@ -642,10 +627,7 @@ let f = function() {
     x = 1;
 };
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     // Count START nodes. Should be 2: one for the file, one for the function body.
     let start_count = (0..binder.flow_nodes.len())
@@ -673,10 +655,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let start_count = (0..binder.flow_nodes.len())
         .filter(|&i| {
@@ -703,10 +682,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let start_count = (0..binder.flow_nodes.len())
         .filter(|&i| {
@@ -733,10 +709,7 @@ let x: number | undefined;
     x = 1;
 })();
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let start_count = (0..binder.flow_nodes.len())
         .filter(|&i| {
@@ -3396,10 +3369,7 @@ interface Foo {
 
 /// Helper: parse + bind a source file and return the binder state.
 fn bind_source(source: &str) -> BinderState {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
     binder
 }
 
@@ -4012,11 +3982,7 @@ import { foo } from "./utils";
 import bar from "react";
 import "./side-effect";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     assert!(
         binder.file_import_sources.contains(&"./utils".to_string()),
@@ -4044,11 +4010,7 @@ export { x } from "./module-a";
 export * from "./module-b";
 export type { T } from "./types";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     assert!(
         binder
@@ -4076,11 +4038,7 @@ fn file_import_sources_import_equals_require() {
     let source = r#"
 import ts = require("typescript");
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     assert!(
         binder
@@ -4094,11 +4052,7 @@ import ts = require("typescript");
 #[test]
 fn file_import_sources_reset_clears() {
     let source = r#"import { a } from "./a";"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (mut binder, _parser) = parse_and_bind(source);
 
     assert!(!binder.file_import_sources.is_empty());
 
@@ -4116,11 +4070,7 @@ fn file_import_sources_no_dynamic_imports() {
 const m = import("./dynamic");
 const r = require("./required");
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     assert!(
         binder.file_import_sources.is_empty(),
@@ -4860,10 +4810,7 @@ const myVar = 1;
 #[test]
 fn test_heritage_names_captured_for_class_extends() {
     let source = "class Foo extends Bar {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let entry = binder
         .semantic_defs
@@ -4877,10 +4824,7 @@ fn test_heritage_names_captured_for_class_extends() {
 #[test]
 fn test_heritage_names_captured_for_class_implements() {
     let source = "class Foo implements Iface1, Iface2 {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let entry = binder
         .semantic_defs
@@ -4894,10 +4838,7 @@ fn test_heritage_names_captured_for_class_implements() {
 #[test]
 fn test_heritage_names_captured_for_class_extends_and_implements() {
     let source = "class Foo extends Base implements I1, I2 {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let entry = binder
         .semantic_defs
@@ -4913,10 +4854,7 @@ fn test_heritage_names_captured_for_class_extends_and_implements() {
 #[test]
 fn test_heritage_names_captured_for_interface_extends() {
     let source = "interface Foo extends Bar, Baz {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let entry = binder
         .semantic_defs
@@ -4931,10 +4869,7 @@ fn test_heritage_names_captured_for_interface_extends() {
 #[test]
 fn test_heritage_names_empty_for_no_heritage() {
     let source = "class Plain {} interface Empty {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let plain = binder
         .semantic_defs
@@ -4956,10 +4891,7 @@ fn test_heritage_names_empty_for_no_heritage() {
 #[test]
 fn test_heritage_names_property_access_expression() {
     let source = "class Foo extends ns.Base {}";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let entry = binder
         .semantic_defs
@@ -5516,10 +5448,7 @@ import { foo } from "./utils";
 import * as React from "react";
 export { bar } from "./helpers";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let skeleton = binder.file_summary();
 
@@ -5534,10 +5463,7 @@ fn file_skeleton_captures_heritage_deps() {
 export class Dog extends Animal implements Movable {}
 export interface FastAnimal extends Animal {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let skeleton = binder.file_summary();
 
@@ -5560,10 +5486,7 @@ import { a } from "./shared";
 import { b } from "./shared";
 export { c } from "./other";
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let skeleton = binder.file_summary();
     let specs = skeleton.dependency_specifiers();
@@ -5582,10 +5505,7 @@ fn file_skeleton_has_exports_and_heritage_helpers() {
     let source = r#"
 const x = 1;
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let skeleton = binder.file_summary();
 
@@ -5627,10 +5547,7 @@ fn file_skeleton_api_fingerprint_changes_on_export_change() {
 #[test]
 fn file_skeleton_api_fingerprint_stable_across_calls() {
     let source = r#"export interface I { x: number; }"#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let fp1 = binder.file_summary().api_fingerprint();
     let fp2 = binder.file_summary().api_fingerprint();
@@ -5644,10 +5561,7 @@ export class Zebra {}
 export class Alpha {}
 export class Middle {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let skeleton = binder.file_summary();
     let names: Vec<&str> = skeleton
@@ -5670,10 +5584,7 @@ export interface Map<K, V> {}
 export type Pair<A, B> = [A, B];
 export class List<T> {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     let skeleton = binder.file_summary();
 
@@ -6538,11 +6449,7 @@ fn flow_nodes_arc_share_is_zero_copy() {
             return x + 1;
         }
     ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind(source);
 
     // Sanity: binding produced multiple flow nodes (START, assignment,
     // conditions, branch labels) for the control flow graph.
