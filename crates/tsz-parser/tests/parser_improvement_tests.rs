@@ -1462,6 +1462,65 @@ const c = 3;";
     );
 }
 
+/// Regression: workstream-7 incremental parser/interner coherence.
+///
+/// `parse_source_file_statements_from_offset` resets the scanner text and
+/// parses a suffix into the existing arena, but unlike `parse_source_file`
+/// it never copies the scanner's interner back to `arena.set_interner(...)`
+/// at the end.  Identifiers introduced by the incremental parse are interned
+/// only in the scanner; arena-side `resolve_identifier_text` lookups via the
+/// node's `Atom` then return stale or empty strings.
+///
+/// This test introduces a fresh identifier (`zorblax_unique_id`) via
+/// incremental parse from offset 0 and asserts the arena's interner can
+/// resolve the produced node's atom back to the same source text.
+#[test]
+fn test_incremental_parse_propagates_scanner_interner_to_arena() {
+    use tsz_common::interner::Atom;
+
+    let source = "let zorblax_unique_id = 1;";
+
+    // Construct a fresh parser and incrementally parse from offset 0.
+    // (The bug also reproduces with non-zero offsets; offset 0 is the
+    // simplest case where every identifier is "new" relative to the
+    // empty initial-state interner.)
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _result = parser.parse_source_file_statements_from_offset(
+        "test.ts".to_string(),
+        source.to_string(),
+        0,
+    );
+
+    // Find the identifier node for `zorblax_unique_id`.
+    let arena = parser.get_arena();
+    let identifier = arena
+        .identifiers
+        .iter()
+        .find(|data| data.escaped_text == "zorblax_unique_id")
+        .expect("incremental parse should produce an identifier node");
+
+    assert_ne!(
+        identifier.atom,
+        Atom::NONE,
+        "scanner should have interned the identifier atom"
+    );
+    let resolved = arena.resolve_identifier_text(identifier);
+    assert_eq!(
+        resolved, "zorblax_unique_id",
+        "arena interner must resolve the atom produced by incremental parse \
+         (this fails when arena.set_interner is not called after \
+         parse_source_file_statements_from_offset)"
+    );
+
+    // Sanity-check the parse so test breakage points clearly at the bug
+    // we care about and not at unrelated parser regressions.
+    assert_eq!(
+        _result.statements.len(),
+        1,
+        "expected the suffix to parse as a single `let` statement"
+    );
+}
+
 // =============================================================================
 // Conditional Type ASI Tests
 // =============================================================================

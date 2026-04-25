@@ -200,6 +200,13 @@ impl ParserState {
             .arena
             .add_token(SyntaxKind::EndOfFileToken as u16, end_pos, end_pos);
 
+        // Mirror `parse_source_file`: propagate the scanner's interner to the
+        // arena so atom-based identifier resolution works for nodes produced
+        // by the incremental parse. Without this, identifiers introduced by
+        // the suffix parse are present in the scanner interner only and
+        // arena-side `resolve_identifier_text` returns the empty fallback.
+        self.arena.set_interner(self.scanner.interner().clone());
+
         IncrementalParseResult {
             statements,
             end_pos,
