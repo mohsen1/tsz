@@ -47,10 +47,6 @@ Currently targeting **TypeScript `{{ metrics.ts_version }}`**
   <span class="progress-stat">{{ metrics.fourslash_rate_label }} - {{ metrics.fourslash_passed }}/{{ metrics.fourslash_total }}</span>
 </div>
 
-{% if metrics.metrics_notice %}
-<p class="metrics-note">{{ metrics.metrics_notice }}</p>
-{% endif %}
-<p class="metrics-meta">{{ metrics.metrics_source_summary }}</p>
 <p class="loc-stat">{{ metrics.total_loc }} lines of Rust across {{ metrics.num_crates }} crates</p>
 
 Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match `tsc` in error code, file, line, column, and message.

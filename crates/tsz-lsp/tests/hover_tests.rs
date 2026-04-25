@@ -1,5 +1,9 @@
 use super::*;
+use crate::provider_macro::FullProviderOptions;
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
+use tsz_checker::context::LibContext;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -42,6 +46,48 @@ fn test_hover_variable_type() {
         );
         assert!(info.range.is_some(), "Should have range");
     }
+}
+
+#[test]
+fn test_hover_global_from_lib_uses_lib_context_type() {
+    let lib = Arc::new(LibFile::from_source(
+        "lib.dom.d.ts".to_string(),
+        "interface Console { log(...data: any[]): void; }\ndeclare var console: Console;"
+            .to_string(),
+    ));
+    let source = "console.log('hello');";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &[Arc::clone(&lib)]);
+
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+    let lib_contexts = vec![LibContext {
+        arena: Arc::clone(&lib.arena),
+        binder: Arc::clone(&lib.binder),
+    }];
+    let provider = HoverProvider::with_options_and_lib_contexts(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+        FullProviderOptions {
+            strict: true,
+            sound_mode: false,
+            lib_contexts: &lib_contexts,
+        },
+    );
+
+    let mut cache = None;
+    let info = provider
+        .get_hover(root, Position::new(0, 1), &mut cache)
+        .expect("Expected hover for lib global console");
+
+    assert_eq!(info.display_string, "var console: Console");
 }
 
 #[test]

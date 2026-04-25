@@ -36,17 +36,6 @@ function toInt(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function suiteSourceLabel(source) {
-  switch (source) {
-    case "ci":
-      return "CI artifacts";
-    case "readme":
-      return "README fallback";
-    default:
-      return "Unavailable";
-  }
-}
-
 function formatEmitExtra(skipped, timeouts = 0) {
   const parts = [];
   if (Number.isFinite(skipped) && skipped > 0) {
@@ -72,11 +61,9 @@ function setSuiteUnavailable(metrics, key) {
   metrics[`${key}_passed`] = "N/A";
   metrics[`${key}_total`] = "N/A";
   metrics[`${key}_extra`] = "";
-  metrics[`${key}_source`] = "missing";
-  metrics[`${key}_source_label`] = suiteSourceLabel("missing");
 }
 
-function setSuiteMetrics(metrics, key, rate, passed, total, source, extra = "") {
+function setSuiteMetrics(metrics, key, rate, passed, total, extra = "") {
   const normalizedRate = Number(rate).toFixed(1);
   metrics[`${key}_rate`] = normalizedRate;
   metrics[`${key}_rate_label`] = `${normalizedRate}%`;
@@ -84,25 +71,19 @@ function setSuiteMetrics(metrics, key, rate, passed, total, source, extra = "") 
   metrics[`${key}_passed`] = fmt(passed);
   metrics[`${key}_total`] = fmt(total);
   metrics[`${key}_extra`] = extra;
-  metrics[`${key}_source`] = source;
-  metrics[`${key}_source_label`] = suiteSourceLabel(source);
 }
 
-function setSuiteIfValid(metrics, key, rate, passed, total, source, extra = "") {
+function setSuiteIfValid(metrics, key, rate, passed, total, extra = "") {
   if (rate === null || passed === null || total === null || total <= 0) {
     return false;
   }
-  setSuiteMetrics(metrics, key, rate, passed, total, source, extra);
+  setSuiteMetrics(metrics, key, rate, passed, total, extra);
   return true;
 }
 
 function extractMetrics() {
   const metrics = {
     ts_version: "unknown",
-    metrics_notice: "",
-    metrics_source_summary: "",
-    uses_fallback_metrics: false,
-    has_missing_metrics: false,
   };
   setSuiteUnavailable(metrics, "conformance");
   setSuiteUnavailable(metrics, "emit_js");
@@ -127,7 +108,6 @@ function extractMetrics() {
         toNumber(conformance.pass_rate),
         toInt(conformance.passed),
         toInt(conformance.total),
-        "ci",
       )
     : false;
   const hasCiEmitJs = emit
@@ -137,7 +117,6 @@ function extractMetrics() {
         toNumber(emit.js_pass_rate),
         toInt(emit.js_passed),
         toInt(emit.js_total),
-        "ci",
         formatEmitExtra(toInt(emit.js_skipped), toInt(emit.js_timeouts)),
       )
     : false;
@@ -148,7 +127,6 @@ function extractMetrics() {
         toNumber(emit.dts_pass_rate),
         toInt(emit.dts_passed),
         toInt(emit.dts_total),
-        "ci",
         formatEmitExtra(toInt(emit.dts_skipped)),
       )
     : false;
@@ -159,7 +137,6 @@ function extractMetrics() {
         toNumber(fourslash.pass_rate),
         toInt(fourslash.passed),
         toInt(fourslash.total),
-        "ci",
       )
     : false;
 
@@ -177,7 +154,6 @@ function extractMetrics() {
             toNumber(m[1]),
             toInt(m[2]),
             toInt(m[3]),
-            "readme",
           );
         }
       }
@@ -197,7 +173,6 @@ function extractMetrics() {
               toNumber(m[1]),
               toInt(m[2]),
               toInt(m[3]),
-              "readme",
               parseEmitExtraFromReadmeLine(line),
             );
           } else if (!hasCiEmitDts && line.includes("Declaration")) {
@@ -207,7 +182,6 @@ function extractMetrics() {
               toNumber(m[1]),
               toInt(m[2]),
               toInt(m[3]),
-              "readme",
               parseEmitExtraFromReadmeLine(line),
             );
           }
@@ -228,41 +202,10 @@ function extractMetrics() {
             toNumber(m[1]),
             toInt(m[2]),
             toInt(m[3]),
-            "readme",
           );
         }
       }
     }
-  }
-
-  const sources = [
-    ["Conformance", metrics.conformance_source_label],
-    ["JS Emit", metrics.emit_js_source_label],
-    ["Declaration Emit", metrics.emit_dts_source_label],
-    ["Language Service", metrics.fourslash_source_label],
-  ];
-  metrics.metrics_source_summary = sources.map(([k, v]) => `${k}: ${v}`).join(" | ");
-  metrics.uses_fallback_metrics = [
-    metrics.conformance_source,
-    metrics.emit_js_source,
-    metrics.emit_dts_source,
-    metrics.fourslash_source,
-  ].includes("readme");
-  metrics.has_missing_metrics = [
-    metrics.conformance_source,
-    metrics.emit_js_source,
-    metrics.emit_dts_source,
-    metrics.fourslash_source,
-  ].includes("missing");
-  if (metrics.uses_fallback_metrics && metrics.has_missing_metrics) {
-    metrics.metrics_notice =
-      "Some progress metrics are sourced from README fallback and others are unavailable. README-derived values may be stale.";
-  } else if (metrics.uses_fallback_metrics) {
-    metrics.metrics_notice =
-      "Some progress metrics are sourced from README fallback because CI artifacts were unavailable. README-derived values may be stale.";
-  } else if (metrics.has_missing_metrics) {
-    metrics.metrics_notice =
-      "Some progress metrics are currently unavailable because CI artifacts are missing or invalid.";
   }
 
   try {

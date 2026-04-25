@@ -168,6 +168,7 @@ impl<'a> HoverProvider<'a> {
                 compiler_options,
             )
         };
+        self.apply_lib_contexts(&mut checker);
 
         let decl_node_idx = self.find_best_declaration(symbol, node_idx);
 
@@ -187,7 +188,10 @@ impl<'a> HoverProvider<'a> {
                 | tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
             != 0
         {
-            if let Some(annotation) = self.variable_declaration_annotation_text(decl_node_idx) {
+            if let Some(annotation) = self
+                .variable_declaration_annotation_text(decl_node_idx)
+                .or_else(|| self.variable_declaration_annotation_text_for_symbol(symbol_id, symbol))
+            {
                 type_string = annotation;
             } else if let Some(initializer_type) =
                 self.variable_initializer_display_type(&mut checker, decl_node_idx)
@@ -313,6 +317,7 @@ impl<'a> HoverProvider<'a> {
                 compiler_options,
             )
         };
+        self.apply_lib_contexts(&mut checker);
 
         let name = self
             .arena
@@ -1141,16 +1146,62 @@ impl<'a> HoverProvider<'a> {
         if !decl_node_idx.is_some() {
             return None;
         }
-        let decl_node = self.arena.get(decl_node_idx)?;
-        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+        self.variable_declaration_annotation_text_from_arena(
+            self.arena,
+            self.source_text,
+            decl_node_idx,
+        )
+    }
+
+    fn variable_declaration_annotation_text_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<String> {
+        for decl_idx in symbol.all_declarations() {
+            if let Some(annotation) = self.variable_declaration_annotation_text_from_arena(
+                self.arena,
+                self.source_text,
+                decl_idx,
+            ) {
+                return Some(annotation);
+            }
+
+            let Some(arenas) = self.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                continue;
+            };
+
+            for arena in arenas {
+                let source_text = arena.source_files.first()?.text.as_ref();
+                if let Some(annotation) = self.variable_declaration_annotation_text_from_arena(
+                    arena,
+                    source_text,
+                    decl_idx,
+                ) {
+                    return Some(annotation);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn variable_declaration_annotation_text_from_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        source_text: &str,
+        decl_node_idx: NodeIndex,
+    ) -> Option<String> {
+        let decl_node = arena.get(decl_node_idx)?;
+        let var_decl = arena.get_variable_declaration(decl_node)?;
         if !var_decl.type_annotation.is_some() {
             return None;
         }
-        let type_node = self.arena.get(var_decl.type_annotation)?;
+        let type_node = arena.get(var_decl.type_annotation)?;
         let start = type_node.pos as usize;
-        let end = type_node.end.min(self.source_text.len() as u32) as usize;
+        let end = type_node.end.min(source_text.len() as u32) as usize;
         (start < end).then(|| {
-            self.source_text[start..end]
+            source_text[start..end]
                 .trim_end()
                 .trim_end_matches([',', ';', '='])
                 .trim_end()
