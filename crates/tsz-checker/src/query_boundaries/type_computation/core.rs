@@ -54,6 +54,18 @@ pub(crate) fn compute_best_common_type<R: TypeResolver>(
     tsz_solver::expression_ops::compute_best_common_type(db, types, resolver)
 }
 
+/// Cache-aware variant: thread `&dyn QueryDatabase` so the cross-call
+/// subtype-reduction cache on `QueryCache` can collapse the O(N²) loop
+/// in `remove_subtypes_for_bct` for repeated BCT call sites.
+pub(crate) fn compute_best_common_type_cached<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    query_db: Option<&dyn tsz_solver::QueryDatabase>,
+    types: &[TypeId],
+    resolver: Option<&R>,
+) -> TypeId {
+    tsz_solver::expression_ops::compute_best_common_type_cached(db, query_db, types, resolver)
+}
+
 /// Check whether a contextual type is suitable for template literal narrowing.
 pub(crate) fn is_template_literal_contextual_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::expression_ops::is_template_literal_contextual_type(db, type_id)
