@@ -1251,7 +1251,6 @@ impl<'a> CheckerState<'a> {
                 TypeId::UNKNOWN,
             ))
         });
-
         for (index, &cached_actual) in arg_types.iter().enumerate() {
             // Skip spread marker tuples [...T] created by the checker for generic
             // TypeParameter spreads. The solver already validated these against the
@@ -1287,6 +1286,15 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types.as_type_database(),
                 expected,
             ) {
+                continue;
+            }
+
+            // Skip rechecking arguments whose expected type still contains inference
+            // placeholders. In those cases, the call solver's earlier check already
+            // used the concrete placeholder-driven relationships, and re-checking with
+            // concrete assignability tends to produce false positives (for example,
+            // constraint signatures with `infer` branches).
+            if crate::query_boundaries::common::contains_infer_types(self.ctx.types, expected) {
                 continue;
             }
 
