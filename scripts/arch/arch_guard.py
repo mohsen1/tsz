@@ -472,6 +472,23 @@ FILE_LINE_LIMIT_CHECKS = [
     ),
 ]
 
+# Pin field counts on giant coordination structs so workstream-4 (Checker
+# State / Speculation) extraction work shows up as visible metric drift in
+# the diff.  Each entry: (description, file_path, struct_name, max_fields).
+#
+# When a field is added intentionally, bump the cap in the same PR.  This is
+# the same convention as `FILE_LINE_LIMIT_CHECKS` — it makes architecture
+# health metric drift visible at review time (Operating Principle 8 in
+# `docs/plan/ROADMAP.md`).
+STRUCT_FIELD_COUNT_CHECKS = [
+    (
+        "Checker boundary: CheckerContext field count (architecture health metric 1)",
+        ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
+        "CheckerContext",
+        221,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -549,6 +566,64 @@ def scan_line_limits(base: pathlib.Path, limit: int, exclude_files=None):
         if line_count > limit:
             hits.append(f"{rel}:{line_count} lines (limit {limit})")
     return hits
+
+
+def scan_struct_field_count(
+    path: pathlib.Path, struct_name: str, max_fields: int
+) -> list[str]:
+    """Count fields in `pub struct <struct_name>` and report when over `max_fields`.
+
+    Field counting is intentionally regex-based (not syn/AST): the goal is a
+    cheap, repeatable arch metric, not a perfect reflection.  Lines that look
+    like a field declaration (`name: Type,`) inside the struct body are
+    counted; doc comments, empty lines, and `}` terminators are skipped.
+    Comments are stripped first via `strip_rust_comments` so commented-out
+    fields don't inflate the count.
+    """
+    if not path.exists():
+        return []
+    try:
+        rel = path.relative_to(ROOT).as_posix()
+    except ValueError:
+        rel = path.as_posix()
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    stripped = strip_rust_comments(text)
+
+    # Find `pub struct <struct_name><...generic args...> {` and the matching
+    # closing brace via depth counting (not regex over braces, which would
+    # miss nested types like `FxHashMap<K, V>` inside fields).
+    header_pattern = re.compile(
+        rf"\bpub\s+struct\s+{re.escape(struct_name)}\b[^{{]*\{{",
+        re.MULTILINE,
+    )
+    match = header_pattern.search(stripped)
+    if match is None:
+        return [f"{rel}:0 struct {struct_name!r} not found"]
+
+    body_start = match.end()
+    depth = 1
+    body_end = body_start
+    for i in range(body_start, len(stripped)):
+        ch = stripped[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                body_end = i
+                break
+    body = stripped[body_start:body_end]
+
+    field_pattern = re.compile(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?[a-z_][a-zA-Z0-9_]*\s*:")
+    field_count = sum(1 for line in body.splitlines() if field_pattern.match(line))
+
+    if field_count > max_fields:
+        return [
+            f"{rel}:struct {struct_name} has {field_count} fields "
+            f"(cap {max_fields}; bump cap intentionally and update ROADMAP.md)"
+        ]
+    return []
 
 
 def scan_file_line_limit(path: pathlib.Path, limit: int):
@@ -793,6 +868,12 @@ def main() -> int:
 
     for name, path, limit in FILE_LINE_LIMIT_CHECKS:
         hits = scan_file_line_limit(path, limit)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, path, struct_name, max_fields in STRUCT_FIELD_COUNT_CHECKS:
+        hits = scan_struct_field_count(path, struct_name, max_fields)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

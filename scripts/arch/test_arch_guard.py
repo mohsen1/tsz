@@ -417,5 +417,102 @@ class ArchGuardRatchetDirectionTests(unittest.TestCase):
                 )
 
 
+class ArchGuardStructFieldCountTests(unittest.TestCase):
+    """Cover `STRUCT_FIELD_COUNT_CHECKS` + `scan_struct_field_count`.
+
+    The CheckerContext check is the architecture-health-metric-1 anchor
+    from `docs/plan/ROADMAP.md`. These tests pin the regex semantics so
+    future rewrites (e.g. to syn) preserve the invariants:
+
+      - count comments out
+      - count `pub`, `pub(crate)`, and bare-private fields
+      - skip lines that aren't `name: Type,` shaped
+      - report `struct not found` rather than passing silently
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, body: str, struct_name: str, max_fields: int):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "struct.rs"
+            path.write_text(body, encoding="utf-8")
+            return self.arch_guard.scan_struct_field_count(
+                path, struct_name, max_fields
+            )
+
+    def test_counts_pub_pub_crate_and_private_fields(self):
+        body = "\n".join(
+            [
+                "pub struct Sample {",
+                "    pub a: u32,",
+                "    pub(crate) b: String,",
+                "    c: bool,",
+                "}",
+            ]
+        )
+        hits = self._write_and_scan(body, "Sample", 2)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("3 fields", hits[0])
+        self.assertIn("cap 2", hits[0])
+
+    def test_passes_when_at_or_under_cap(self):
+        body = "\n".join(
+            [
+                "pub struct Sample {",
+                "    a: u32,",
+                "    b: u32,",
+                "}",
+            ]
+        )
+        self.assertEqual(self._write_and_scan(body, "Sample", 2), [])
+        self.assertEqual(self._write_and_scan(body, "Sample", 3), [])
+
+    def test_strips_comments_so_commented_out_fields_dont_count(self):
+        body = "\n".join(
+            [
+                "pub struct Sample {",
+                "    a: u32,",
+                "    // b: u32,",
+                "    /* c: u32, */",
+                "}",
+            ]
+        )
+        self.assertEqual(self._write_and_scan(body, "Sample", 1), [])
+
+    def test_reports_struct_not_found(self):
+        body = "pub struct Other { a: u32 }"
+        hits = self._write_and_scan(body, "Sample", 10)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("not found", hits[0])
+
+    def test_checker_context_field_count_check_is_registered(self):
+        for entry in self.arch_guard.STRUCT_FIELD_COUNT_CHECKS:
+            name, path, struct_name, _max = entry
+            if struct_name == "CheckerContext":
+                self.assertTrue(
+                    path.exists(),
+                    f"CheckerContext check points at missing path: {path}",
+                )
+                self.assertIn("CheckerContext", name)
+                return
+        self.fail(
+            "CheckerContext field-count check is missing from STRUCT_FIELD_COUNT_CHECKS"
+        )
+
+    def test_real_checker_context_passes_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.STRUCT_FIELD_COUNT_CHECKS:
+            name, path, struct_name, max_fields = entry
+            hits = self.arch_guard.scan_struct_field_count(
+                path, struct_name, max_fields
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
