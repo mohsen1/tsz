@@ -611,6 +611,91 @@ fn jsx_class_component_multi_construct_overload_children_tuple_mismatch() {
     );
 }
 
+/// JSX class components with multi-construct overloads (React.Component-style)
+/// must NOT report TS2769 when JSX body children are passed and the class's
+/// constructor props type doesn't itself include `children`. The synthesized
+/// `children` attribute (no source name token) must be exempt from the
+/// overload's excess-property check, since for class JSX the children are
+/// supplied by the JSX machinery, not by the constructor parameter.
+#[test]
+fn jsx_class_overload_synthesized_children_not_excess() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { __brand: 'element'; }
+            interface ElementClass { render(): any; }
+            interface ElementAttributesProperty { props: {}; }
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { div: {}; }
+        }
+        type ReactNode = string | number | boolean | null | undefined | Element;
+
+        type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+
+        declare class Component<P> {
+            constructor(props: Readonly<P>);
+            constructor(props: P, context?: any);
+            props: Readonly<P> & Readonly<{ children?: ReactNode }>;
+            render(): any;
+        }
+
+        interface BaseProps { error?: boolean; }
+        // No `children` in props — the constructor's first param is just BaseProps.
+        class Widget extends Component<BaseProps> {}
+
+        // JSX body children "Hi" must not trigger TS2769 — the synthesized
+        // `children` attribute is not user-written and must be exempt.
+        <Widget error>Hi</Widget>;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2769),
+        "Synthesized JSX children must not trigger TS2769 on class overloads, got: {diagnostics:?}"
+    );
+}
+
+/// JSX class components with multi-construct overloads must consult
+/// `static defaultProps` and treat its keys as supplied. A `<Comp />` call
+/// with no attributes must not fail overload resolution just because the
+/// constructor's props type marks a field required, when defaultProps
+/// supplies that field. This mirrors tsc's `LibraryManagedAttributes`
+/// relaxation under overload semantics.
+#[test]
+fn jsx_class_overload_default_props_relaxes_required() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { __brand: 'element'; }
+            interface ElementClass { render(): any; }
+            interface ElementAttributesProperty { props: {}; }
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { div: {}; }
+        }
+        type ReactNode = string | number | boolean | null | undefined | Element;
+        type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+
+        declare class Component<P> {
+            constructor(props: Readonly<P>);
+            constructor(props: P, context?: any);
+            props: Readonly<P> & Readonly<{ children?: ReactNode }>;
+            render(): any;
+        }
+
+        interface RequiredProps { when: (value: string) => boolean; }
+        class Widget<P extends RequiredProps = RequiredProps> extends Component<P> {
+            static defaultProps = { when: () => true };
+        }
+
+        // No attrs — `when` is supplied by defaultProps, so this is valid.
+        <Widget />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2769),
+        "defaultProps must relax required-prop overload check, got: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn jsx_single_child_mismatch_uses_react_element_display_and_child_anchors() {
     let source = r#"
