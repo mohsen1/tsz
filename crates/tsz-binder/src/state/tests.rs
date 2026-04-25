@@ -143,11 +143,7 @@ fn jsdoc_import_tag_binds_alias_symbols_in_js_files() {
  */
 class C {}
 "#;
-    let mut parser = ParserState::new("b.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("b.js", source);
 
     let ns_sym_id = binder
         .file_locals
@@ -201,11 +197,7 @@ export var x: number;
 export interface Thing { n: typeof x }
 export as namespace Foo;
 ";
-    let mut parser = ParserState::new("foo.d.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("foo.d.ts", source);
 
     let foo_sym_id = binder
         .file_locals
@@ -371,11 +363,7 @@ declare module "react" {
     }
 }
 "#;
-    let mut parser = ParserState::new("react.d.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("react.d.ts", source);
 
     // JSX namespace should be in file_locals because it's inside `declare global`
     let jsx_sym_id = binder
@@ -421,11 +409,7 @@ declare module "b" {
     export const x: a.T;
 }
 "#;
-    let mut parser = ParserState::new("test.d.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("test.d.ts", source);
 
     let b_sym_id = binder
         .file_locals
@@ -501,11 +485,7 @@ declare class Point {
 }
 export = Point;
 "#;
-    let mut parser = ParserState::new("point.d.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("point.d.ts", source);
 
     // file_locals should have "export=" but NOT "default"
     assert!(
@@ -545,11 +525,7 @@ declare module "nestNamespaceModule" {
     export = a1.a2;
 }
 "#;
-    let mut parser = ParserState::new("ambient.d.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("ambient.d.ts", source);
 
     let exports = binder
         .module_exports
@@ -571,11 +547,7 @@ declare module "renameModule" {
     export = d;
 }
 "#;
-    let mut parser = ParserState::new("ambient2.d.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("ambient2.d.ts", source);
 
     let exports = binder
         .module_exports
@@ -732,7 +704,15 @@ let x: number | undefined;
 /// Parse source text and bind it, returning the binder state and the parser
 /// (which owns the arena). Using a tuple return so callers can access both.
 fn parse_and_bind(source: &str) -> (BinderState, ParserState) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    parse_and_bind_named("test.ts", source)
+}
+
+/// Like `parse_and_bind` but lets the caller choose the file name. Used by
+/// tests that exercise file-name-sensitive behavior (`.d.ts` ambient
+/// declarations, `.js` JSDoc, `react.d.ts` and similar lib-shaped files,
+/// `point.d.ts` declaration-merging fixtures, etc.).
+fn parse_and_bind_named(file_name: &str, source: &str) -> (BinderState, ParserState) {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -2899,10 +2879,7 @@ var o = {};
 o.y = void 0;
 "#;
 
-    let mut parser = ParserState::new("a.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
+    let (binder, _parser) = parse_and_bind_named("a.js", source);
 
     assert!(
         !binder
