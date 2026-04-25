@@ -1039,6 +1039,19 @@ impl DefinitionStore {
     /// so the `TypeFormatter` can display named types (e.g., "A" instead of
     /// "{ a: string }") even across file boundaries.
     pub fn register_type_to_def(&self, type_id: TypeId, def_id: DefId) {
+        // Intrinsic TypeIds (number, string, boolean, etc.) are universal and
+        // must never be associated with a user-named def. Their canonical
+        // display is the keyword (`number`, `string`, ...), provided by the
+        // TypeFormatter's intrinsic short-circuit. If a checker path tries to
+        // register an intrinsic type to a class/interface/alias def, that
+        // mapping would later poison `find_def_for_type` lookups and cause
+        // diagnostics like "Type 'FlatArray' is not assignable to type
+        // 'Boolean'." for `let b: Boolean; b = 1;` (where the source is the
+        // primitive `number`).  Drop the registration so the formatter falls
+        // back to the intrinsic keyword.
+        if type_id.is_intrinsic() {
+            return;
+        }
         use dashmap::mapref::entry::Entry;
         match self.type_to_def.entry(type_id) {
             Entry::Vacant(e) => {
