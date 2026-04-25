@@ -50,7 +50,7 @@ Rules:
 Add new roadmap and DRY claims here before implementation begins.
 
 - **2026-04-25** · branch `claude/modest-archimedes-QBaXl` · **DRY active claim** · P0 Test-Harness Consolidation: replace local `check_with_options` helpers with `tsz_checker::test_utils::check_source` in `crates/tsz-checker/tests/class_member_closure_tests.rs`, `contextual_tuple_tests.rs`, `contextual_typing_tests.rs`, and `never_returning_narrowing_tests.rs`. Legacy draft title: `[do not merge] chore(checker-tests): replace local check_with_options helpers with test_utils::check_source`; treat as WIP until ready.
-- **2026-04-25** · branch `chore/parser-keyword-token-length-helper` · **DRY workstream-8 claim** · workstream 8.9 ("Move hardcoded modifier/keyword token lengths into scanner/parser metadata"): ~10 sites in `crates/tsz-parser/src/parser/state_*.rs` hardcode `6 // length of "export"`, `8 // length of "abstract"`, `5 // length of "throw"`, etc. for `parse_error_at` spans. Add `pub const fn keyword_text_len(SyntaxKind) -> u32` (or use existing `keyword_to_text_static().len()`) and migrate the call sites. Pure refactor — preserve byte-for-byte spans. Draft PR: `[WIP] chore(parser): replace hardcoded keyword lengths with scanner-metadata helper`.
+- **2026-04-25** · branch `chore/parser-keyword-token-length-helper` · **DRY workstream-8 ready** · workstream 8.9 ("Move hardcoded modifier/keyword token lengths into scanner/parser metadata"): added `pub const fn keyword_text_len(SyntaxKind) -> u32` in `tsz-scanner` and migrated 8 hardcoded sites across `state_declarations_exports.rs`, `state_expressions_literals.rs`, `state_expressions.rs`, `state_statements.rs`. Net-zero conformance. PR #1203.
 
 ## How To Keep This Current
 

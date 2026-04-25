@@ -20,7 +20,7 @@ use crate::parser::{
 };
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::interner::Atom;
-use tsz_scanner::{SyntaxKind, token_is_keyword};
+use tsz_scanner::{SyntaxKind, keyword_text_len, token_is_keyword};
 
 impl ParserState {
     fn look_ahead_is_invalid_shebang(&mut self) -> bool {
@@ -945,7 +945,7 @@ impl ParserState {
             let start_pos = self.token_pos();
             self.parse_error_at(
                 start_pos,
-                6, // length of "import"
+                keyword_text_len(SyntaxKind::ImportKeyword),
                 "Declaration or statement expected.",
                 diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
             );
