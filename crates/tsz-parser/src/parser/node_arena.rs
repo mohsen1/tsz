@@ -46,14 +46,25 @@ impl NodeArena {
     }
 
     /// Resolve an identifier text using `Atom` (fast) or `escaped_text` (fallback).
+    ///
+    /// When `data.atom` is set and the interner returns the canonical text,
+    /// that's the happy path. When `data.atom` is set but the interner
+    /// returns an empty string — for example, because the arena's interner
+    /// is stale relative to the scanner's (the workstream 7 coherence
+    /// regression that PR #1205 fixed for incremental parse) — fall back to
+    /// `data.escaped_text` so the function never silently returns `""` for a
+    /// real identifier. `escaped_text` is always populated at parse time.
     #[inline]
     #[must_use]
     pub fn resolve_identifier_text<'a>(&'a self, data: &'a IdentifierData) -> &'a str {
         if data.atom == Atom::NONE {
-            &data.escaped_text
-        } else {
-            self.interner.resolve(data.atom)
+            return &data.escaped_text;
         }
+        let resolved = self.interner.resolve(data.atom);
+        if resolved.is_empty() && !data.escaped_text.is_empty() {
+            return &data.escaped_text;
+        }
+        resolved
     }
 
     /// Create an arena with pre-allocated capacity.
@@ -2290,5 +2301,66 @@ mod tests {
             after > before,
             "estimated_size_bytes should grow with interned strings: {before} -> {after}"
         );
+    }
+
+    /// Workstream-7 deliverable 3 ("Add a defensive identifier text
+    /// resolution path only if it is consistent with the parser identity
+    /// model"): when an `IdentifierData.atom` is set but the arena's
+    /// interner returns `""` for it (the stale-interner regression PR #1205
+    /// fixed for incremental parse), `resolve_identifier_text` must fall
+    /// back to `escaped_text` rather than silently surface the empty
+    /// string.
+    #[test]
+    fn resolve_identifier_text_falls_back_to_escaped_when_interner_stale() {
+        let mut arena = NodeArena::new();
+        // Use `Interner::new()` so Atom(0) is reserved for the empty
+        // string (the production scanner setup); without this, the
+        // default-constructed interner gives Atom(0) to the first
+        // interned string, which the resolver classifies as Atom::NONE.
+        arena.set_interner(Interner::new());
+        // Construct an atom that the arena's freshly-created interner does
+        // not have — Atom(99_999) is well past any populated index.
+        let stale_atom = Atom(99_999);
+        assert!(arena.interner().resolve(stale_atom).is_empty());
+
+        let data = IdentifierData {
+            atom: stale_atom,
+            escaped_text: "uniquely_named_identifier".to_string(),
+            original_text: None,
+            type_arguments: None,
+        };
+
+        assert_eq!(
+            arena.resolve_identifier_text(&data),
+            "uniquely_named_identifier",
+            "stale interner must not produce an empty identifier — fall back to escaped_text"
+        );
+    }
+
+    /// Sanity check: when the interner has the atom's canonical text, that
+    /// canonical text wins (the happy path). The fallback only fires when
+    /// the interner's lookup is empty.
+    ///
+    /// Use `Interner::new()` (which reserves Atom(0) for the empty string,
+    /// matching the production scanner setup) rather than `Default::default`
+    /// so the first interned string gets `Atom(1)`, not `Atom(0)` (which
+    /// the resolver classifies as `Atom::NONE`).
+    #[test]
+    fn resolve_identifier_text_uses_interner_when_atom_resolves() {
+        let mut arena = NodeArena::new();
+        arena.set_interner(Interner::new());
+        let atom = arena.interner.intern("canonical_text");
+        assert_ne!(atom, Atom::NONE, "intern result must not be Atom::NONE");
+
+        let data = IdentifierData {
+            atom,
+            // escaped_text intentionally differs from the canonical so we
+            // can confirm which branch was taken.
+            escaped_text: "stale_escaped_form".to_string(),
+            original_text: None,
+            type_arguments: None,
+        };
+
+        assert_eq!(arena.resolve_identifier_text(&data), "canonical_text");
     }
 }
