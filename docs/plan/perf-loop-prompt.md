@@ -192,6 +192,12 @@ or branch with uncommitted work — only clean cargo caches.
 
 **Threading anomaly** (worth a separate look): only 1 hot worker thread at ~98% CPU; 11 rayon workers idle. The `par_iter` at `check.rs:317-334` is structurally parallel but the sample shows a serial fold path. Likely a serial second cross-file binder build elsewhere in `collect_diagnostics`, OR rayon starved by mimalloc allocator contention.
 
+### Post-#1202 measurement (2026-04-25):
+- **Peak RSS dropped 67 GB → 10 GB (6.7× reduction)** ✅
+- Process completes in ~47s but exits 137 (SIGKILL by macOS jetsam — OS still considers 10 GB too high on the constrained system)
+- Bench reports "TIMEOUT" but actual exit is 137 — bench harness conflates these failure modes
+- **#1202 worked but isn't sufficient alone**. Need MORE Arc-share migrations on remaining per-binder FxHashMaps: `node_symbols`, `node_flow`, `node_scope_ids`, `top_level_flow`, `switch_clause_to_switch` — each shaves more memory.
+
 ### Optional-chain regression — root cause investigation (2026-04-25):
 Hypothesis (Cache PR 3 cache-overhead) FALSIFIED — Shallow has no generics yet regresses identically with DeepPartial. Real cause: **request cache has 0% hit rate** (`Request cache hits: 0`, `misses: 8535`, `Contextual cache bypasses: 6206`). But the **direct fix attempt also failed**: extending `request_cache_key_for_node` + `is_request_cache_safe_expression_tree` in `state.rs:1069-1318` for `BINARY_EXPRESSION (??/+/-/*//)` and `PARENTHESIZED_EXPRESSION` was implemented + tested + conformance-clean, but bench showed 1.02-1.03× SLOWER (pure overhead, zero new cache hits). Each `score += …` line is a DISTINCT AST node id — never revisited → no hits possible.
 
