@@ -16,6 +16,58 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Build the parameter span list for `clear_stale_function_like_implicit_any_diagnostics`,
+    /// restricted to parameters whose post-refresh symbol type is no longer
+    /// `any`/`unknown`. A parameter that's still `any` after the refresh
+    /// means contextual typing didn't actually provide it a type — clearing
+    /// its TS7006 would be a false negative. This is the difference between
+    /// genuine contextual typing (`let f: { a: (n: number) => … } = { a:
+    /// function(n) {…} }`) and the IIFE-arg self-referential shape
+    /// (`(o => o.a(11))({ a: function(n) {…} })`) where the property's
+    /// "contextual type" loops back through the function's own value type
+    /// without actually constraining the parameter.
+    pub(super) fn contextually_typed_param_spans_for_node(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Vec<(u32, u32)> {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return Vec::new();
+        };
+        let params = if let Some(func) = self.ctx.arena.get_function(node) {
+            func.parameters.nodes.clone()
+        } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+            method.parameters.nodes.clone()
+        } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+            accessor.parameters.nodes.clone()
+        } else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::with_capacity(params.len());
+        for param_idx in params {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let param = match self.ctx.arena.get_parameter(param_node) {
+                Some(p) => p,
+                None => continue,
+            };
+            let span = (param_node.pos, param_node.end);
+            // Resolve the parameter's symbol and inspect its current type.
+            let sym_id = self
+                .ctx
+                .binder
+                .get_node_symbol(param.name)
+                .or_else(|| self.ctx.binder.get_node_symbol(param_idx));
+            let Some(sym_id) = sym_id else { continue };
+            let ty = self.get_type_of_symbol(sym_id);
+            if ty != TypeId::ANY && ty != TypeId::UNKNOWN {
+                out.push(span);
+            }
+        }
+        out
+    }
+
     pub(crate) fn function_like_param_spans_for_node(&self, idx: NodeIndex) -> Vec<(u32, u32)> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return Vec::new();
