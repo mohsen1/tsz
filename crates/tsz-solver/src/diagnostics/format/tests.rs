@@ -73,6 +73,24 @@ fn needs_property_name_quotes_basic() {
 }
 
 #[test]
+fn needs_property_name_quotes_decimal_and_scientific() {
+    // tsc displays numeric literal property names without quotes.
+    // Decimals:
+    assert!(!super::needs_property_name_quotes("1.5"));
+    assert!(!super::needs_property_name_quotes("0.123"));
+    assert!(!super::needs_property_name_quotes(".5"));
+    // Scientific notation — large numbers in object types.
+    assert!(!super::needs_property_name_quotes("9.671406556917009e+24"));
+    assert!(!super::needs_property_name_quotes("1e5"));
+    assert!(!super::needs_property_name_quotes("1.2E-3"));
+    // Not a valid numeric literal — must be quoted.
+    assert!(super::needs_property_name_quotes("1.2.3"));
+    assert!(super::needs_property_name_quotes("1e"));
+    assert!(super::needs_property_name_quotes("0x1F"));
+    assert!(super::needs_property_name_quotes("0b1010"));
+}
+
+#[test]
 fn tuple_type_alias_preserved_in_format() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();

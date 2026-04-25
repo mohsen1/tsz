@@ -22,6 +22,56 @@ use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Returns `true` if `name` parses as a JavaScript decimal numeric literal —
+/// integer, decimal, or scientific notation. tsc displays such property names
+/// without quotes (e.g., `9.671406556917009e+24: boolean` rather than the
+/// quoted form). Excludes hex/octal/binary literal *forms* like `0x1F` because
+/// those are not how property names appear after the parser canonicalises them
+/// to their decimal/string representation.
+fn is_decimal_numeric_literal(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    // Optional leading sign — JS property names never carry one, but tolerate
+    // it so callers don't need to strip first.
+    if matches!(bytes[i], b'+' | b'-') {
+        i += 1;
+    }
+    let int_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    let had_int = i > int_start;
+    let mut had_frac = false;
+    if i < bytes.len() && bytes[i] == b'.' {
+        i += 1;
+        let frac_start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        had_frac = i > frac_start;
+    }
+    if !had_int && !had_frac {
+        return false;
+    }
+    if i < bytes.len() && matches!(bytes[i], b'e' | b'E') {
+        i += 1;
+        if i < bytes.len() && matches!(bytes[i], b'+' | b'-') {
+            i += 1;
+        }
+        let exp_start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == exp_start {
+            return false;
+        }
+    }
+    i == bytes.len()
+}
+
 /// Returns `true` if a property name needs to be quoted in type display
 /// (i.e. it is not a valid JS identifier or numeric literal).
 fn needs_property_name_quotes(name: &str) -> bool {
@@ -33,8 +83,10 @@ fn needs_property_name_quotes(name: &str) -> bool {
     if name.starts_with('[') && name.ends_with(']') {
         return false;
     }
-    // Numeric property names don't need quotes
-    if name.chars().all(|ch| ch.is_ascii_digit()) {
+    // Decimal numeric literals (`123`, `1.5`, `9.671e+24`) display without
+    // quotes — they round-trip through the JS lexer as numeric literal property
+    // names.
+    if is_decimal_numeric_literal(name) {
         return false;
     }
     let mut chars = name.chars();
