@@ -408,6 +408,33 @@ def show_dashboard(data):
         print(f"    {code}: {w} tests ({m} missing, {x} extra)")
     print()
 
+    # KPI 1b: Other tracked codes per ROADMAP.md workstream 1 ("Track top-code
+    # deltas for TS2322, TS2345, TS2339, TS1005, and TS2353"). TS1005 is the
+    # parser-recovery catch-all; TS2353 is excess-property emission. Visible
+    # deltas here let parser-recovery and excess-prop work show up next to
+    # Big3 in the daily dashboard signal.
+    other_codes = ["TS1005", "TS2353"]
+    other_wrong = Counter()
+    other_missing = Counter()
+    other_extra = Counter()
+    for path, f in failures.items():
+        for code in other_codes:
+            if code in f.get("m", []):
+                other_missing[code] += f["m"].count(code)
+            if code in f.get("x", []):
+                other_extra[code] += f["x"].count(code)
+            if code in f.get("m", []) or code in f.get("x", []):
+                other_wrong[code] += 1
+
+    other_total = sum(other_wrong.values())
+    print(f"  KPI 1b: Other tracked codes (TS1005 + TS2353): {other_total}")
+    for code in other_codes:
+        m = other_missing.get(code, 0)
+        x = other_extra.get(code, 0)
+        w = other_wrong.get(code, 0)
+        print(f"    {code}: {w} tests ({m} missing, {x} extra)")
+    print()
+
     # KPI 2: Crash count (tests where we emit 0 diagnostics but tsc expects some)
     crashes = sum(1 for f in failures.values() if not f.get("a") and f.get("e"))
     print(f"  KPI 2: Likely crashes (0 actual, >0 expected): {crashes}")
