@@ -200,6 +200,13 @@ impl ParserState {
             .arena
             .add_token(SyntaxKind::EndOfFileToken as u16, end_pos, end_pos);
 
+        // Refresh the arena's interner so atoms produced during this suffix
+        // parse remain resolvable. Without this, identifiers introduced by
+        // the incremental parse are absent from the arena's clone and
+        // `resolve_identifier_text` returns the empty string, silently
+        // corrupting binder, LSP, and incremental diagnostic results.
+        self.arena.set_interner(self.scanner.interner().clone());
+
         IncrementalParseResult {
             statements,
             end_pos,

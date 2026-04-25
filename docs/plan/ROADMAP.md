@@ -50,6 +50,7 @@ Rules:
 Add new roadmap and DRY claims here before implementation begins.
 
 - **2026-04-25** · branch `claude/modest-archimedes-QBaXl` · **DRY active claim** · P0 Test-Harness Consolidation: replace local `check_with_options` helpers with `tsz_checker::test_utils::check_source` in `crates/tsz-checker/tests/class_member_closure_tests.rs`, `contextual_tuple_tests.rs`, `contextual_typing_tests.rs`, and `never_returning_narrowing_tests.rs`. Legacy draft title: `[do not merge] chore(checker-tests): replace local check_with_options helpers with test_utils::check_source`; treat as WIP until ready.
+- **2026-04-25** · branch `fix/incremental-parse-interner-coherence` · **Workstream 7 active claim** · Fix incremental parser/interner coherence: `parse_source_file_statements_from_offset` does not update `NodeArena`'s interner after a suffix re-parse, so identifiers introduced by the suffix are absent from the arena's clone and `resolve_identifier_text` returns `""`. Adds a regression test in `crates/tsz-parser/tests/parser_improvement_tests.rs` and refreshes `arena.set_interner(scanner.interner().clone())` at the end of the incremental path, mirroring the full-parse transfer. Draft PR title: `[WIP] fix(parser): keep arena interner coherent after incremental parse`.
 
 ## How To Keep This Current
 

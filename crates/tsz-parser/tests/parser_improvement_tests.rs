@@ -1427,6 +1427,49 @@ fn test_incremental_parse_records_reparse_start() {
 }
 
 #[test]
+fn test_incremental_parse_keeps_arena_interner_coherent() {
+    // Regression test for the incremental parser interner coherence bug.
+    //
+    // After a full parse, the arena's interner is a clone of the scanner's.
+    // If we then incrementally parse a suffix that introduces an identifier
+    // not present in the initial source, the scanner adds an atom but the
+    // arena's clone is stale — `arena.resolve_identifier_text` then returns
+    // the empty string for that identifier (silent corruption of binder /
+    // LSP-visible names). The fix updates the arena's interner at the end
+    // of the incremental parse, mirroring the full-parse path.
+    let initial_source = "const a = 1;\n";
+    let updated_source = "const a = 1;\nconst zyxw_uniq_ident = 2;\n";
+
+    let mut parser = ParserState::new("test.ts".to_string(), initial_source.to_string());
+    let _root = parser.parse_source_file();
+
+    let offset = u32::try_from(initial_source.len()).expect("offset fits in u32");
+    let _result = parser.parse_source_file_statements_from_offset(
+        "test.ts".to_string(),
+        updated_source.to_string(),
+        offset,
+    );
+
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected clean parse, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let new_ident_resolves = arena
+        .identifiers
+        .iter()
+        .any(|id| arena.resolve_identifier_text(id) == "zyxw_uniq_ident");
+    assert!(
+        new_ident_resolves,
+        "arena.resolve_identifier_text must resolve identifiers introduced \
+         by an incremental parse; the arena's interner appears stale relative \
+         to the scanner's (no identifier resolves to \"zyxw_uniq_ident\")"
+    );
+}
+
+#[test]
 fn test_incremental_parse_with_syntax_error() {
     // Test incremental parsing recovers from syntax errors
     let source = r"const a = 1;
