@@ -200,6 +200,14 @@ impl ParserState {
             .arena
             .add_token(SyntaxKind::EndOfFileToken as u16, end_pos, end_pos);
 
+        // Refresh the arena's interner with the scanner's so any identifier
+        // newly interned during this suffix parse is resolvable through the
+        // arena. Without this, `NodeArena::resolve_identifier_text` silently
+        // returns "" for atoms past the prior parse's tail, corrupting
+        // binder, LSP, and diagnostic identifier text. Mirrors the symmetric
+        // sync at the end of `parse_source_file`.
+        self.arena.set_interner(self.scanner.interner().clone());
+
         IncrementalParseResult {
             statements,
             end_pos,
