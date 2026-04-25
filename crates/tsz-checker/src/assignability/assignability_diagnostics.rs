@@ -1524,8 +1524,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Disambiguate same-short-named nominal pairs (e.g. `M.A` vs `N.A`)
+        // so the diagnostic doesn't collapse to `Type 'A' has no properties
+        // in common with type 'A'.`. Mirrors the pair-display logic used by
+        // the standard TS2322 emitter.
         let source_str = self.format_type_diagnostic(source);
         let target_str = self.format_type_diagnostic(target);
+        let (source_str, target_str) =
+            self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
 
         // Check if the source is callable/constructable and calling/constructing
         // would produce a type assignable to the target (TS2560 instead of TS2559).
@@ -1543,6 +1549,40 @@ impl<'a> CheckerState<'a> {
             crate::diagnostics::diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
             &[&source_str, &target_str],
         );
+    }
+
+    /// Per-property elaboration helper: when a property value would otherwise
+    /// produce TS2322, route to TS2559 if the source has no properties in
+    /// common with the property's weak target. Strips strictNullChecks'
+    /// implicit `| undefined` from the target and uses the literal source
+    /// type for display so the message reads `Type 'false' has no properties
+    /// in common with type 'OverridesInput'` instead of `Type 'boolean' is
+    /// not assignable to type 'OverridesInput | undefined'`.
+    pub(crate) fn try_emit_property_weak_type_violation(
+        &mut self,
+        source_prop_type: TypeId,
+        target_prop_type: TypeId,
+        target_prop_type_for_diagnostic: TypeId,
+        prop_value_idx: NodeIndex,
+        prop_name_idx: NodeIndex,
+    ) -> bool {
+        let weak_target = match self.split_nullish_type(target_prop_type) {
+            (Some(non_nullish), Some(_)) => non_nullish,
+            _ => target_prop_type,
+        };
+        let weak_target_for_display = match self.split_nullish_type(target_prop_type_for_diagnostic)
+        {
+            (Some(non_nullish), Some(_)) => non_nullish,
+            _ => target_prop_type_for_diagnostic,
+        };
+        let weak_source = self
+            .literal_type_from_initializer(prop_value_idx)
+            .unwrap_or(source_prop_type);
+        if !self.is_weak_union_violation(weak_source, weak_target) {
+            return false;
+        }
+        self.error_no_common_properties(weak_source, weak_target_for_display, prop_name_idx);
+        true
     }
 
     /// Check whether a "did you mean to call it?" suggestion is appropriate

@@ -1094,6 +1094,39 @@ fn test_weak_union_nested_union_source_rejects() {
     );
 }
 
+/// Boolean literal intrinsics (`BOOLEAN_FALSE`/`BOOLEAN_TRUE`) are reserved
+/// `TypeId`s distinct from `TypeId::BOOLEAN`. The weak-type primitive check
+/// must accept them as primitives so that `false`/`true` assigned to a weak
+/// object type produces `NoCommonProperties` (TS2559) rather than slipping
+/// through. Regression test for `is_weak_union_violation` returning false on
+/// boolean literal sources against single weak object targets.
+#[test]
+fn test_weak_type_rejects_boolean_literal_source() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let some_prop = interner.intern_string("someProp");
+    let weak_target = interner.object(vec![PropertyInfo::opt(some_prop, TypeId::STRING)]);
+
+    for source in [TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN] {
+        assert!(
+            !checker.is_assignable(source, weak_target),
+            "boolean source {source:?} should not be assignable to weak object",
+        );
+        assert!(
+            checker.is_weak_union_violation(source, weak_target),
+            "is_weak_union_violation should fire for boolean source {source:?} against weak object",
+        );
+        assert!(
+            matches!(
+                checker.explain_failure(source, weak_target),
+                Some(SubtypeFailureReason::NoCommonProperties { .. })
+            ),
+            "explain_failure should report NoCommonProperties for boolean source {source:?}",
+        );
+    }
+}
+
 #[test]
 fn test_weak_union_with_intersection_source() {
     // Test intersection source type
