@@ -514,6 +514,33 @@ INDEPENDENT_PIPELINE_CHECKS = [
     ),
 ]
 
+# Pin the count of non-test source files that import `tsz_solver` outside the
+# solver/checker boundary (architecture health metric 3 in
+# `docs/plan/ROADMAP.md`).  The checker crate contains the canonical
+# `query_boundaries` modules and is the one architecturally allowed consumer
+# of solver internals; every other crate (`tsz-cli`, `tsz-core`, `tsz-lsp`,
+# `tsz-wasm`, `tsz-emitter`, `tsz-lowering`) reaching directly into the solver
+# weakens the front door story (workstream 3) and shows up as drift on this
+# metric.
+#
+# A file "imports tsz_solver" if a non-comment line contains one of:
+#   - `use tsz_solver::...`
+#   - `pub use tsz_solver` (re-export, including `pub use tsz_solver;`)
+#   - `extern crate tsz_solver`
+#
+# Each entry: (description, search_roots, exclude_path_prefixes, max_imports).
+SOLVER_IMPORT_COUNT_CHECKS = [
+    (
+        "Frontend/emitter boundary: direct tsz_solver imports outside solver/checker (architecture health metric 3)",
+        [ROOT / "crates"],
+        (
+            "crates/tsz-solver/",
+            "crates/tsz-checker/",
+        ),
+        36,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -642,6 +669,81 @@ def scan_independent_pipelines(
             f"total independent parse-bind-check pipelines: {len(pipeline_files)} "
             f"(cap {max_pipelines}; bump cap intentionally and update ROADMAP.md, "
             f"or consolidate through the compiler service shell — workstream 3)"
+        )
+        return hits
+    return []
+
+
+_SOLVER_IMPORT_PATTERN = re.compile(
+    r"\buse\s+tsz_solver(?:::|\s*;|\s+as\b)|\bextern\s+crate\s+tsz_solver\b"
+)
+
+
+def scan_solver_import_count(
+    search_roots: list[pathlib.Path],
+    exclude_path_prefixes: tuple[str, ...],
+    max_imports: int,
+) -> list[str]:
+    """Count non-test source files that import `tsz_solver` outside the
+    solver/checker boundary (architecture health metric 3).
+
+    A file "imports tsz_solver" if a non-comment line matches
+    `_SOLVER_IMPORT_PATTERN` (covers `use tsz_solver::`, `pub use tsz_solver`,
+    `extern crate tsz_solver`).  Test files (`*_tests.rs`, `test_*.rs`, files
+    inside any `tests/` or `benches/` directory) are excluded; only the first
+    matching line per file is recorded.  Files whose ROOT-relative path starts
+    with any of `exclude_path_prefixes` (e.g. `crates/tsz-solver/`,
+    `crates/tsz-checker/`) are skipped — those are the architecturally
+    allowed consumers (solver internals + checker boundary modules).
+
+    Returns one hit per offending file when the total exceeds `max_imports`,
+    plus a summary line.  Walks each root directly so test fixtures under
+    temp dirs can reuse the same scanner via paths relative to the search
+    root.
+    """
+    importing_files: list[str] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                # Test fixture under a temp dir — fall back to a path
+                # relative to the search root for the report and exclusion
+                # heuristics.
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            if any(rel_to_root.startswith(prefix) for prefix in exclude_path_prefixes):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if line.lstrip().startswith("//"):
+                    continue
+                if _SOLVER_IMPORT_PATTERN.search(line):
+                    importing_files.append(rel_to_root)
+                    break
+
+    importing_files.sort()
+    if len(importing_files) > max_imports:
+        hits = [
+            f"direct tsz_solver import #{i + 1}: {rel}"
+            for i, rel in enumerate(importing_files)
+        ]
+        hits.append(
+            f"total direct tsz_solver imports outside solver/checker: "
+            f"{len(importing_files)} (cap {max_imports}; bump cap intentionally "
+            f"and update ROADMAP.md, or route the consumer through the compiler "
+            f"service shell or `tsz_checker::query_boundaries` — workstream 3)"
         )
         return hits
     return []
@@ -959,6 +1061,19 @@ def main() -> int:
 
     for name, search_roots, max_pipelines in INDEPENDENT_PIPELINE_CHECKS:
         hits = scan_independent_pipelines(search_roots, max_pipelines)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        search_roots,
+        exclude_path_prefixes,
+        max_imports,
+    ) in SOLVER_IMPORT_COUNT_CHECKS:
+        hits = scan_solver_import_count(
+            search_roots, exclude_path_prefixes, max_imports
+        )
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

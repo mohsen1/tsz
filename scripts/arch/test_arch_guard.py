@@ -637,5 +637,150 @@ class ArchGuardIndependentPipelineTests(unittest.TestCase):
             )
 
 
+class ArchGuardSolverImportCountTests(unittest.TestCase):
+    """Cover `SOLVER_IMPORT_COUNT_CHECKS` + `scan_solver_import_count`.
+
+    Architecture health metric 3 anchor — workstream 3 ("Compiler Service
+    Front Door") wants frontends and emitter/lowering crates to converge
+    through one compiler service. These tests pin the detection semantics
+    so future contributors who refactor `scan_solver_import_count` keep
+    the invariants:
+
+      - `use tsz_solver::...`, `pub use tsz_solver`, and
+        `extern crate tsz_solver` are all flagged
+      - test files (`*_tests.rs`, `test_*.rs`, files under `tests/` or
+        `benches/`) are excluded
+      - paths starting with the exclude prefixes (solver crate, checker
+        crate) are skipped
+      - comment-only lines are not counted
+      - the pinned cap matches the live count
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        """Materialize `files` into a temp directory; return the dir path."""
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_use_pub_use_and_extern_crate_imports(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-cli/src/use_form.rs": (
+                    "use tsz_solver::TypeId;\n"
+                ),
+                "crates/tsz-core/src/pub_use_form.rs": (
+                    "pub use tsz_solver;\n"
+                ),
+                "crates/tsz-lsp/src/extern_form.rs": (
+                    "extern crate tsz_solver;\n"
+                ),
+            }
+        )
+        # Cap at 0 — there are 3 importing files, so 3 hits + summary.
+        hits = self.arch_guard.scan_solver_import_count([root], (), 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("use_form.rs", hits[0])
+        self.assertIn("pub_use_form.rs", hits[1])
+        self.assertIn("extern_form.rs", hits[2])
+        self.assertIn(
+            "total direct tsz_solver imports outside solver/checker: 3",
+            hits[3],
+        )
+
+    def test_excludes_test_files_and_test_dirs(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-cli/src/foo_tests.rs": "use tsz_solver::TypeId;\n",
+                "crates/tsz-cli/src/test_helpers.rs": "use tsz_solver::TypeId;\n",
+                "crates/tsz-cli/tests/integration.rs": (
+                    "use tsz_solver::TypeId;\n"
+                ),
+                "crates/tsz-core/benches/bench.rs": (
+                    "use tsz_solver::TypeId;\n"
+                ),
+            }
+        )
+        # All four files are test/bench files — should pass at cap=0.
+        hits = self.arch_guard.scan_solver_import_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_excludes_paths_under_exclude_prefixes(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/internal.rs": (
+                    "use tsz_solver::TypeId;\n"
+                ),
+                "crates/tsz-checker/src/query_boundaries/foo.rs": (
+                    "use tsz_solver::TypeId;\n"
+                ),
+                "crates/tsz-checker/src/checker.rs": (
+                    "use tsz_solver::TypeId;\n"
+                ),
+                "crates/tsz-cli/src/driver.rs": (
+                    "use tsz_solver::TypeId;\n"
+                ),
+            }
+        )
+        exclude_prefixes = ("crates/tsz-solver/", "crates/tsz-checker/")
+        # Only `tsz-cli/src/driver.rs` is in scope — 1 hit + summary at cap=0.
+        hits = self.arch_guard.scan_solver_import_count([root], exclude_prefixes, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("driver.rs", hits[0])
+        self.assertNotIn("internal.rs", hits[0])
+        self.assertNotIn("query_boundaries", hits[0])
+        self.assertNotIn("checker.rs", hits[0])
+
+    def test_ignores_comment_only_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-cli/src/commented.rs": (
+                    "// use tsz_solver::TypeId;\n"
+                    "// pub use tsz_solver;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_solver_import_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-cli/src/a.rs": "use tsz_solver::TypeId;\n",
+                "crates/tsz-core/src/b.rs": "use tsz_solver::TypeId;\n",
+            }
+        )
+        # Two importing files, cap=2 → exact match → no hits.
+        self.assertEqual(self.arch_guard.scan_solver_import_count([root], (), 2), [])
+        # Cap above live count → still no hits.
+        self.assertEqual(self.arch_guard.scan_solver_import_count([root], (), 5), [])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.SOLVER_IMPORT_COUNT_CHECKS]
+        self.assertTrue(
+            any("metric 3" in name for name in names),
+            "Solver-import-count guard is missing from SOLVER_IMPORT_COUNT_CHECKS",
+        )
+
+    def test_real_imports_pass_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.SOLVER_IMPORT_COUNT_CHECKS:
+            name, search_roots, exclude_path_prefixes, max_imports = entry
+            hits = self.arch_guard.scan_solver_import_count(
+                search_roots, exclude_path_prefixes, max_imports
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
