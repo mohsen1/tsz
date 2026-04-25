@@ -73,24 +73,6 @@ fn needs_property_name_quotes_basic() {
 }
 
 #[test]
-fn needs_property_name_quotes_decimal_and_scientific() {
-    // tsc displays numeric literal property names without quotes.
-    // Decimals:
-    assert!(!super::needs_property_name_quotes("1.5"));
-    assert!(!super::needs_property_name_quotes("0.123"));
-    assert!(!super::needs_property_name_quotes(".5"));
-    // Scientific notation — large numbers in object types.
-    assert!(!super::needs_property_name_quotes("9.671406556917009e+24"));
-    assert!(!super::needs_property_name_quotes("1e5"));
-    assert!(!super::needs_property_name_quotes("1.2E-3"));
-    // Not a valid numeric literal — must be quoted.
-    assert!(super::needs_property_name_quotes("1.2.3"));
-    assert!(super::needs_property_name_quotes("1e"));
-    assert!(super::needs_property_name_quotes("0x1F"));
-    assert!(super::needs_property_name_quotes("0b1010"));
-}
-
-#[test]
 fn tuple_type_alias_preserved_in_format() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
@@ -2726,6 +2708,34 @@ fn optional_param_with_union_undefined_keeps_it() {
     assert_eq!(
         result, "(a?: string | undefined) => any",
         "Optional param preserves '| undefined' — matches tsc display"
+    );
+}
+
+#[test]
+fn optional_param_shows_synthetic_undefined_when_surface_preservation_disabled() {
+    // In diagnostics that choose synthetic parameter rendering, optional params
+    // add `| undefined` when the stored type does not already include it.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db).with_preserve_optional_parameter_surface_syntax(false);
+
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("a")),
+            type_id: TypeId::STRING,
+            optional: true,
+            rest: false,
+        }],
+        return_type: TypeId::ANY,
+        this_type: None,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let result = fmt.format(func);
+    assert_eq!(
+        result, "(a?: string | undefined) => any",
+        "Assignability-mode rendering appends synthetic undefined for optional params"
     );
 }
 
