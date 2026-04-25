@@ -75,3 +75,42 @@ pub fn check_source_code_messages(source: &str) -> Vec<(u32, String)> {
         .map(|d| (d.code, d.message_text))
         .collect()
 }
+
+/// Parse, bind, and type-check source with `experimental_decorators` enabled, returning codes.
+pub fn check_source_codes_experimental_decorators(source: &str) -> Vec<u32> {
+    check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            experimental_decorators: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .iter()
+    .map(|d| d.code)
+    .collect()
+}
+
+/// Parse, bind, and type-check source with `no_unused_parameters` enabled.
+pub fn check_source_no_unused_params(source: &str) -> Vec<Diagnostic> {
+    check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_unused_parameters: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// Parse, bind, and type-check source with `no_unused_locals` enabled.
+pub fn check_source_no_unused_locals(source: &str) -> Vec<Diagnostic> {
+    check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_unused_locals: true,
+            ..Default::default()
+        },
+    )
+}

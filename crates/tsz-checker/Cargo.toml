@@ -80,6 +80,10 @@ name = "ts1238_tests"
 path = "tests/ts1238_tests.rs"
 
 [[test]]
+name = "ts6133_unused_type_params_tests"
+path = "tests/ts6133_unused_type_params_tests.rs"
+
+[[test]]
 name = "private_brands"
 path = "tests/private_brands.rs"
 
