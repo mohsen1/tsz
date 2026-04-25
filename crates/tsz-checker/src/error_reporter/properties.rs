@@ -321,10 +321,34 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// When `type_id` is a `Lazy(DefId)` for a `TypeAlias` whose evaluated body
+    /// is an `Enum`, return the enum's nominal name. Returns `None` when the
+    /// receiver is not such an alias.
+    fn alias_to_enum_display_name(&mut self, type_id: TypeId) -> Option<String> {
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return None;
+        }
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        let enum_def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, evaluated)?;
+        let sym_id = self.ctx.def_to_symbol_id(enum_def_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        Some(symbol.escaped_name.to_string())
+    }
+
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
+        }
+        // When the receiver is a type alias whose body resolves to an Enum
+        // (e.g. `type C1 = Color` where `Color` is an enum), tsc displays the
+        // underlying enum's nominal name in TS2339 messages, not the alias.
+        // The default type formatter follows the Lazy(DefId) directly to the
+        // alias name, producing `'C1'` instead of `'Color'`.
+        if let Some(enum_name) = self.alias_to_enum_display_name(type_id) {
+            return enum_name;
         }
         if crate::query_boundaries::state::checking::is_type_parameter_like(self.ctx.types, type_id)
             && let Some(constraint) =
