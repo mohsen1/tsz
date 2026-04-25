@@ -2756,7 +2756,7 @@ fn build_lib_bound_file_for_interface_checks(
         file_name: lib_file.file_name.clone(),
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
-        node_symbols,
+        node_symbols: std::sync::Arc::new(node_symbols),
         symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: FxHashMap::default(),

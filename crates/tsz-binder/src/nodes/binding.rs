@@ -1,5 +1,7 @@
 //! AST node binding, hoisting, and scope management.
 
+use std::sync::Arc;
+
 use crate::{ContainerKind, ScopeContext, SymbolId, SymbolTable, flow_flags, symbol_flags};
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
@@ -1365,7 +1367,7 @@ impl BinderState {
                 // CRITICAL: Also update file_locals to shadow lib symbol in file-level scope
                 // This ensures symbol resolution finds the local symbol instead of the lib one
                 self.file_locals.set(owned_name.clone(), sym_id);
-                self.node_symbols.insert(declaration.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
                 self.declare_in_persistent_scope(owned_name, sym_id);
                 return sym_id;
             }
@@ -1438,7 +1440,7 @@ impl BinderState {
                 }
                 self.current_scope.set(owned_name.clone(), sym_id);
                 self.file_locals.set(owned_name.clone(), sym_id);
-                self.node_symbols.insert(declaration.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
                 self.declare_in_persistent_scope(owned_name, sym_id);
                 return sym_id;
             }
@@ -1476,7 +1478,7 @@ impl BinderState {
                     }
                 }
                 self.current_scope.set(owned_name.clone(), sym_id);
-                self.node_symbols.insert(declaration.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
                 self.declare_in_persistent_scope(owned_name, sym_id);
                 return sym_id;
             }
@@ -1527,7 +1529,7 @@ impl BinderState {
                 );
             }
 
-            self.node_symbols.insert(declaration.0, existing_id);
+            Arc::make_mut(&mut self.node_symbols).insert(declaration.0, existing_id);
             self.declare_in_persistent_scope(name.to_string(), existing_id);
             return existing_id;
         }
@@ -1603,7 +1605,7 @@ impl BinderState {
             self.file_locals.set(owned_name.clone(), sym_id);
         }
 
-        self.node_symbols.insert(declaration.0, sym_id);
+        Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
         self.declare_in_persistent_scope(owned_name, sym_id);
 
         // Record declaration event (new symbol)

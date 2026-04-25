@@ -693,7 +693,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     fn symbol_identifier_ref(&self, sym: SymbolId) -> Option<NodeIndex> {
         let mut declaration_ident = None;
-        for (&node_id, &node_sym) in &self.binder.node_symbols {
+        for (&node_id, &node_sym) in self.binder.node_symbols.iter() {
             if node_sym != sym {
                 continue;
             }

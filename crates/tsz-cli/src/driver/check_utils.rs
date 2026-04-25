@@ -1589,7 +1589,12 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
         file_locals,
-        file.node_symbols.clone(),
+        // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+        // underlying `FxHashMap<u32, SymbolId>`. Per-file binders consume this
+        // map read-only after construction (binder mutations during checking
+        // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+        // mutation ever does fire); sharing is safe.
+        Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
@@ -1711,7 +1716,12 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
         BinderOptions::default(),
         program.symbols.clone(),
         file_locals,
-        file.node_symbols.clone(),
+        // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+        // underlying `FxHashMap<u32, SymbolId>`. Per-file binders consume this
+        // map read-only after construction (binder mutations during checking
+        // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+        // mutation ever does fire); sharing is safe.
+        Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),

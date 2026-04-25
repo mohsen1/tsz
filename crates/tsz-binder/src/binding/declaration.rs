@@ -66,7 +66,7 @@ impl BinderState {
                 }
 
                 let sym_id = self.declare_symbol(arena, name, flags, idx, is_exported);
-                self.node_symbols.insert(decl.name.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(decl.name.0, sym_id);
                 self.record_semantic_def(
                     sym_id,
                     crate::state::SemanticDefKind::Variable,
@@ -224,7 +224,7 @@ impl BinderState {
                     idx,
                     false,
                 );
-                self.node_symbols.insert(param.name.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(param.name.0, sym_id);
                 tracing::debug!(param_name = %name, sym_id = sym_id.0, "Parameter bound");
             } else {
                 let mut names = Vec::new();
@@ -350,7 +350,7 @@ impl BinderState {
                         param_idx,
                         false,
                     );
-                    self.node_symbols.insert(type_param.name.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(type_param.name.0, sym_id);
                 }
             }
         }
@@ -682,7 +682,7 @@ impl BinderState {
                     flags |= symbol_flags::ABSTRACT;
                 }
                 let sym_id = self.declare_symbol(arena, name, flags, idx, false);
-                self.node_symbols.insert(class.name.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(class.name.0, sym_id);
             } else {
                 // Anonymous class expression: create a CLASS symbol so that
                 // the checker can use it as parent_id on instance properties,
@@ -697,7 +697,7 @@ impl BinderState {
                     sym.add_declaration(idx, span);
                     sym.set_value_declaration(idx, span);
                 }
-                self.node_symbols.insert(idx.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(idx.0, sym_id);
             }
 
             self.bind_type_parameters(arena, class.type_parameters.as_ref());
@@ -735,7 +735,7 @@ impl BinderState {
                     let flags = symbol_flags::METHOD
                         | Self::extract_member_modifier_flags(arena, method.modifiers.as_ref());
                     let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
-                    self.node_symbols.insert(method.name.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(method.name.0, sym_id);
                 }
                 self.bind_callable_body_with_type_params(
                     arena,
@@ -760,7 +760,7 @@ impl BinderState {
                     let flags = symbol_flags::PROPERTY
                         | Self::extract_member_modifier_flags(arena, prop.modifiers.as_ref());
                     let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
-                    self.node_symbols.insert(prop.name.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(prop.name.0, sym_id);
                 }
 
                 if prop.initializer.is_some() {
@@ -787,7 +787,7 @@ impl BinderState {
                     let flags = base_flags
                         | Self::extract_member_modifier_flags(arena, accessor.modifiers.as_ref());
                     let sym_id = self.declare_symbol(arena, &name, flags, idx, false);
-                    self.node_symbols.insert(accessor.name.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(accessor.name.0, sym_id);
                 }
                 self.bind_callable_body(arena, &accessor.parameters, accessor.body, idx);
             }
@@ -1011,7 +1011,7 @@ impl BinderState {
                 {
                     self.file_locals.set(name.to_string(), sym_id);
                 }
-                self.node_symbols.insert(idx.0, sym_id);
+                Arc::make_mut(&mut self.node_symbols).insert(idx.0, sym_id);
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 // Record partnership: TYPE_ALIAS → ALIAS
                 self.alias_partners.insert(sym_id, alias_id);
@@ -1157,7 +1157,7 @@ impl BinderState {
                         sym.parent = enum_sym_id; // Set parent to the enum symbol
                     }
                     self.current_scope.set(member_name.to_string(), sym_id);
-                    self.node_symbols.insert(member_idx.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(member_idx.0, sym_id);
                     // Add to exports for namespace merging
                     exports.set(member_name.to_string(), sym_id);
 

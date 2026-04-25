@@ -24,8 +24,11 @@ fn test_merge_lib_symbols() {
     lib_file_locals.set("Function".to_string(), function_id);
     lib_file_locals.set("console".to_string(), console_id);
 
-    let lib_binder =
-        BinderState::from_bound_state(arena, lib_file_locals, rustc_hash::FxHashMap::default());
+    let lib_binder = BinderState::from_bound_state(
+        arena,
+        lib_file_locals,
+        Arc::new(rustc_hash::FxHashMap::default()),
+    );
     let lib = Arc::new(LibFile::new(
         "lib.d.ts".to_string(),
         Arc::new(NodeArena::new()),
@@ -40,7 +43,7 @@ fn test_merge_lib_symbols() {
     let mut user_binder = BinderState::from_bound_state(
         user_arena,
         user_file_locals,
-        rustc_hash::FxHashMap::default(),
+        Arc::new(rustc_hash::FxHashMap::default()),
     );
 
     user_binder.merge_lib_symbols(&[lib]);
