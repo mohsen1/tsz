@@ -1340,12 +1340,6 @@ impl<'a> CheckerState<'a> {
         let target_is_tuple =
             crate::query_boundaries::common::tuple_elements(self.ctx.types, target_resolved)
                 .is_some();
-        // Tuples are already handled element-wise by the solver's
-        // `types_are_comparable_for_assertion` (see flow.rs); the property-bag
-        // view here would treat the implicit `length` literal as a shared
-        // comparable property and falsely report overlap for casts like
-        // `[C, D] as [A, I]` where the elements don't overlap. Defer to the
-        // solver's tuple logic.
         if source_is_tuple && target_is_tuple {
             return false;
         }
