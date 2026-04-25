@@ -22,6 +22,7 @@ pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 mod constructors;
 mod core;
 mod def_mapping;
+mod import_extension_flags;
 mod lib_queries;
 mod module_entity;
 mod request_cache;
@@ -1060,6 +1061,11 @@ pub struct CheckerContext<'a> {
     /// Resolved module paths keyed by the full driver request, including any
     /// explicit `resolution-mode` override from import attributes / import types.
     pub resolved_module_request_paths: Option<Arc<ResolvedModuleRequestPathMap>>,
+    /// `resolvedUsingTsExtension` flag per resolved import. See
+    /// [`ResolvedModuleTsExtensionMap`] — consulted by the TS2877 emission gate
+    /// to suppress the diagnostic when the package author's `exports`/`imports`
+    /// entry literally consumes the `.ts` extension.
+    pub resolved_module_ts_extension_flags: Option<Arc<ResolvedModuleTsExtensionMap>>,
 
     /// Current file index in multi-file mode (index into `all_arenas/all_binders`).
     /// Used with `resolved_module_paths` to look up cross-file imports.
@@ -1386,6 +1392,10 @@ pub struct ProjectEnv {
     pub resolved_module_paths: Arc<ResolvedModulePathMap>,
     /// Resolved module paths keyed by (`source_file_idx`, specifier, resolution-mode override).
     pub resolved_module_request_paths: Arc<ResolvedModuleRequestPathMap>,
+    /// `resolvedUsingTsExtension` flag per resolved import, mirroring tsc.
+    /// Populated by the driver from `ModuleLookupResult.resolved_using_ts_extension`
+    /// and consulted by the TS2877 emission gate.
+    pub resolved_module_ts_extension_flags: Arc<ResolvedModuleTsExtensionMap>,
     /// Resolved module errors: (`source_file_idx`, specifier) -> error details.
     pub resolved_module_errors: Arc<ResolvedModuleErrorMap>,
     /// Resolved module errors keyed by (`source_file_idx`, specifier, resolution-mode override).
@@ -1438,6 +1448,7 @@ impl Default for ProjectEnv {
             program_alias_partners: None,
             resolved_module_paths: Arc::new(FxHashMap::default()),
             resolved_module_request_paths: Arc::new(FxHashMap::default()),
+            resolved_module_ts_extension_flags: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
             resolved_module_request_errors: Arc::new(FxHashMap::default()),
             is_external_module_by_file: Arc::new(FxHashMap::default()),
@@ -1552,6 +1563,9 @@ impl ProjectEnv {
         }
         ctx.set_resolved_module_paths(Arc::clone(&self.resolved_module_paths));
         ctx.set_resolved_module_request_paths(Arc::clone(&self.resolved_module_request_paths));
+        ctx.set_resolved_module_ts_extension_flags(Arc::clone(
+            &self.resolved_module_ts_extension_flags,
+        ));
         ctx.set_resolved_module_errors(Arc::clone(&self.resolved_module_errors));
         ctx.set_resolved_module_request_errors(Arc::clone(&self.resolved_module_request_errors));
         ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));

@@ -977,6 +977,13 @@ impl<'a> CheckerState<'a> {
         // TS2877: rewriteRelativeImportExtensions — non-relative imports with
         // a TypeScript extension that resolve to an input TypeScript file are not
         // rewritten during emit.
+        //
+        // Suppress when the resolver consumed the `.ts` via a literal
+        // package.json `exports`/`imports` key (e.g. `"./*.ts": "./*.js"` or
+        // `"#foo.ts": ...`). In those cases the package author has explicitly
+        // opted into the `.ts`→`.js` mapping at runtime, so the import will
+        // resolve correctly without rewriting. This mirrors tsc's
+        // `resolvedUsingTsExtension` gate.
         if !emitted_extension_diagnostic
             && self.ctx.compiler_options.rewrite_relative_import_extensions
             && !is_type_only_import
@@ -985,6 +992,7 @@ impl<'a> CheckerState<'a> {
             && !self.resolved_via_directory_index(module_name)
             && self.module_target_is_typescript_input_file(module_name)
             && !self.resolved_module_is_from_node_modules(module_name)
+            && !self.ctx.import_resolved_using_ts_extension(module_name)
             && let Some(ext) = ts_extension_suffix(module_name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
