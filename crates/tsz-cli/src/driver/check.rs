@@ -891,7 +891,7 @@ pub(super) fn collect_diagnostics(
     {
         let mut all_semantic_defs = program.semantic_defs.clone();
         for file in &program.files {
-            for (sym_id, entry) in &file.semantic_defs {
+            for (sym_id, entry) in file.semantic_defs.iter() {
                 all_semantic_defs.insert(*sym_id, entry.clone());
             }
         }
@@ -2762,7 +2762,7 @@ fn build_lib_bound_file_for_interface_checks(
         expando_properties: FxHashMap::default(),
         file_features: tsz::binder::FileFeatures::NONE,
         lib_symbol_reverse_remap: FxHashMap::default(),
-        semantic_defs: FxHashMap::default(),
+        semantic_defs: std::sync::Arc::new(FxHashMap::default()),
     }
 }
 

@@ -551,7 +551,11 @@ pub struct BindResult {
     pub file_features: crate::binder::FileFeatures,
     /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Maps pre-remap `SymbolId` → `SemanticDefEntry`.
-    pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    ///
+    /// Shared via `Arc` because the binder owns it as `Arc<FxHashMap<...>>` to
+    /// avoid deep clones in cross-file binder reconstruction. The Arc is moved
+    /// out of the binder when finalizing the bind result.
+    pub semantic_defs: Arc<FxHashMap<SymbolId, crate::binder::SemanticDefEntry>>,
     /// Static import/export-from module specifiers collected during binding.
     pub file_import_sources: Vec<String>,
 }
@@ -1445,7 +1449,11 @@ pub struct BoundFile {
     /// Per-file semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Contains only entries that originated in this file (post-remap `SymbolIds`).
     /// This enables file-scoped identity without cloning the entire global map.
-    pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    ///
+    /// Shared via `Arc` so cross-file lookup binders can take an O(1) reference
+    /// instead of deep-cloning the underlying map per file. See
+    /// `tsz_cli::driver::check_utils::create_cross_file_lookup_binder_with_augmentations`.
+    pub semantic_defs: Arc<FxHashMap<SymbolId, crate::binder::SemanticDefEntry>>,
 }
 
 impl BoundFile {
@@ -2445,7 +2453,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // self-contained and deterministic.
     for lib_binder in &lib_binders {
         let lib_binder_ptr = Arc::as_ptr(lib_binder) as usize;
-        for (&old_sym_id, entry) in &lib_binder.semantic_defs {
+        for (&old_sym_id, entry) in lib_binder.semantic_defs.iter() {
             if let Some(&global_id) = lib_symbol_remap.get(&(lib_binder_ptr, old_sym_id)) {
                 // Keep first occurrence (declaration merging keeps first identity).
                 semantic_defs.entry(global_id).or_insert_with(|| {
@@ -2849,7 +2857,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // Also collect per-file entries for BoundFile.semantic_defs (file-scoped identity).
         let mut file_semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry> =
             FxHashMap::default();
-        for (old_sym_id, entry) in &result.semantic_defs {
+        for (old_sym_id, entry) in result.semantic_defs.iter() {
             if result.lib_symbol_ids.contains(old_sym_id) {
                 continue;
             }
@@ -3316,7 +3324,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         .map(|new_sym| (new_sym, (lib_idx, lib_local_sym)))
                 })
                 .collect(),
-            semantic_defs: file_semantic_defs,
+            semantic_defs: Arc::new(file_semantic_defs),
         });
     }
 
@@ -4066,7 +4074,7 @@ fn build_lib_bound_file_for_interface_checks(
         expando_properties: FxHashMap::default(),
         file_features: crate::binder::FileFeatures::NONE,
         lib_symbol_reverse_remap: FxHashMap::default(),
-        semantic_defs: FxHashMap::default(),
+        semantic_defs: Arc::new(FxHashMap::default()),
     }
 }
 
@@ -4602,10 +4610,10 @@ pub fn check_files_parallel(
         let mut binder =
             create_binder_from_bound_file(&lib_bound_file, program, program.files.len());
         let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in &lib_bound_file.semantic_defs {
+        for (sym_id, entry) in lib_bound_file.semantic_defs.iter() {
             composed_semantic_defs.insert(*sym_id, entry.clone());
         }
-        binder.semantic_defs = composed_semantic_defs;
+        binder.semantic_defs = Arc::new(composed_semantic_defs);
 
         let mut checker = CheckerState::with_options(
             &lib_bound_file.arena,
@@ -4904,10 +4912,10 @@ pub fn create_binder_from_bound_file(
     // Skip the expensive clone+overlay to avoid O(files * total_defs) work.
     if !program.definition_store.is_fully_populated() {
         let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in &file.semantic_defs {
+        for (sym_id, entry) in file.semantic_defs.iter() {
             composed_semantic_defs.insert(*sym_id, entry.clone());
         }
-        binder.semantic_defs = composed_semantic_defs;
+        binder.semantic_defs = Arc::new(composed_semantic_defs);
     }
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
@@ -4999,10 +5007,10 @@ pub fn create_binder_from_bound_file_with_shared(
 
     if !program.definition_store.is_fully_populated() {
         let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in &file.semantic_defs {
+        for (sym_id, entry) in file.semantic_defs.iter() {
             composed_semantic_defs.insert(*sym_id, entry.clone());
         }
-        binder.semantic_defs = composed_semantic_defs;
+        binder.semantic_defs = Arc::new(composed_semantic_defs);
     }
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();

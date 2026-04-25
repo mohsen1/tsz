@@ -2675,7 +2675,7 @@ impl BinderState {
         // from later declarations.  This ensures the pre-populated DefinitionInfo
         // has complete heritage information (e.g., `interface A extends B {}` +
         // `interface A extends C {}` yields extends_names = ["B", "C"]).
-        if let Some(existing) = self.semantic_defs.get_mut(&sym_id) {
+        if let Some(existing) = std::sync::Arc::make_mut(&mut self.semantic_defs).get_mut(&sym_id) {
             // Accumulate new extends_names that aren't already present.
             for h in &extends_names {
                 if !existing.extends_names.contains(h) {
@@ -2762,7 +2762,7 @@ impl BinderState {
             None
         };
 
-        self.semantic_defs.insert(
+        std::sync::Arc::make_mut(&mut self.semantic_defs).insert(
             sym_id,
             crate::state::SemanticDefEntry {
                 kind,

@@ -445,7 +445,7 @@ impl BinderState {
         for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
-            for (&old_sym_id, entry) in &lib_ctx.binder.semantic_defs {
+            for (&old_sym_id, entry) in lib_ctx.binder.semantic_defs.iter() {
                 if let Some(&new_id) = lib_symbol_remap.get(&(lib_binder_ptr, old_sym_id)) {
                     // Update file_id to match the remapped symbol's decl_file_idx
                     // so that DefinitionStore composite key lookups stay consistent.
@@ -474,12 +474,13 @@ impl BinderState {
                         is_global_augmentation: entry.is_global_augmentation,
                         is_declare: entry.is_declare,
                     };
-                    if let Some(existing) = self.semantic_defs.get_mut(&new_id) {
+                    let semantic_defs_mut = Arc::make_mut(&mut self.semantic_defs);
+                    if let Some(existing) = semantic_defs_mut.get_mut(&new_id) {
                         // User-declared entries take precedence for core identity,
                         // but accumulate heritage/members/exports from lib declarations.
                         existing.merge_cross_file(&remapped);
                     } else {
-                        self.semantic_defs.insert(new_id, remapped);
+                        semantic_defs_mut.insert(new_id, remapped);
                     }
                 }
             }

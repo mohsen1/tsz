@@ -1292,13 +1292,16 @@ impl<'a> CheckerContext<'a> {
         let sources: Vec<
             &rustc_hash::FxHashMap<tsz_binder::SymbolId, tsz_binder::SemanticDefEntry>,
         > = {
-            let mut v = vec![&self.binder.semantic_defs];
+            // `&*x.semantic_defs` dereferences the `Arc<FxHashMap<...>>` so the
+            // resulting reference targets the underlying map (the type the Vec
+            // expects), not the Arc wrapper.
+            let mut v = vec![&*self.binder.semantic_defs];
             for lib_ctx in self.lib_contexts.iter() {
-                v.push(&lib_ctx.binder.semantic_defs);
+                v.push(&*lib_ctx.binder.semantic_defs);
             }
             if let Some(ref binders) = self.all_binders {
                 for binder in binders.iter() {
-                    v.push(&binder.semantic_defs);
+                    v.push(&*binder.semantic_defs);
                 }
             }
             v
