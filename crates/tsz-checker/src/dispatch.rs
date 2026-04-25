@@ -1177,13 +1177,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                             ) && constraint != TypeId::UNKNOWN
                                                 && constraint != TypeId::ANY
                                             {
-                                                // Use the ORIGINAL asserted type (not constraint)
-                                                // for overlap checking. tsc's isTypeComparableTo
-                                                // checks against the type parameter itself, not its
-                                                // constraint. Using the constraint is too permissive
-                                                // and prevents TS2352 from firing when the expression
-                                                // type satisfies the constraint but not the type param.
-                                                (true, asserted_type)
+                                                // Use the constraint as the effective asserted type
+                                                // so overlap checks match TSC's `isTypeComparableTo`
+                                                // behavior. Otherwise `x as T` with `T extends object | undefined`
+                                                // can silently skip TS2352 when `x` only satisfies the
+                                                // constraint but not the actual type argument.
+                                                (true, constraint)
                                             } else {
                                                 (false, asserted_type)
                                             }
