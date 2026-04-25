@@ -1,13 +1,7 @@
 //! Tests for statement parsing in the parser.
-use crate::parser::{NodeIndex, ParserState};
+use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::position::LineMap;
-
-fn parse_source(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
-}
 
 fn assert_function_body_recovery_uses_statement_errors(source: &str) {
     let (parser, _root) = parse_source(source);

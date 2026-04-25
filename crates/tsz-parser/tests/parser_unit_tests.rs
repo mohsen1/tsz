@@ -4,6 +4,7 @@
 use crate::parser::node::NodeArena;
 use crate::parser::node_view::NodeAccess;
 use crate::parser::syntax_kind_ext;
+use crate::parser::test_fixture::parse_source;
 use crate::parser::{NodeIndex, ParserState};
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
@@ -11,12 +12,6 @@ use tsz_scanner::SyntaxKind;
 // =============================================================================
 // Helpers
 // =============================================================================
-
-fn parse_source(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
-}
 
 fn assert_no_errors(parser: &ParserState, context: &str) {
     let diags = parser.get_diagnostics();
