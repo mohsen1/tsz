@@ -617,10 +617,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             // inference type params (e.g., A in `{ fn: (a: A) => void; val: B[K] }`).
                             // Constrain those by matching source properties against the
                             // instantiated template for each key.
+                            //
+                            // Exclude the homomorphic type parameter from the var map:
+                            // its candidate has already been produced by reverse inference
+                            // (at HomomorphicMappedType priority). Re-running the property
+                            // inference for that var would let `any`-typed source properties
+                            // propagate `any` into T via `T[K]` placeholders — which, at the
+                            // outer call's higher priority (e.g. NakedTypeVariable), would
+                            // override the structural reverse-mapped candidate. tsc handles
+                            // this by treating reverse inference as the sole inference path
+                            // for the homomorphic parameter; we mirror that here.
                             if has_properties {
+                                let mut other_params_var_map = var_map.clone();
+                                other_params_var_map.remove(&keyof_target);
                                 self.constrain_template_against_properties(
                                     ctx,
-                                    var_map,
+                                    &other_params_var_map,
                                     &source_obj.properties,
                                     &mapped,
                                     priority,
