@@ -3351,6 +3351,59 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         &type_interner,
     ));
 
+    // Patch program-wide `declaration_arenas` so user script-file interface
+    // declarations that augment a same-named lib symbol (e.g.
+    // `interface Node { kind: SyntaxKind; }` in a script) carry the user
+    // file's arena. Phase 2 above appends the user declaration's `NodeIndex`
+    // onto the lib symbol's `declarations` list, but the binder's
+    // `add_declaration` does not record an arena mapping for it. Without this
+    // patch, downstream lookups (e.g. lib-interface re-checks for TS2430) try
+    // to read the user `NodeIndex` from the lib's arena and silently miss the
+    // augmented members.
+    {
+        use crate::parser::syntax_kind_ext as sk_ext;
+        for (file_idx, result) in results.iter().enumerate() {
+            if result.is_external_module {
+                continue;
+            }
+            let Some(source_file) = result.arena.get_source_file_at(result.source_file) else {
+                continue;
+            };
+            let Some(remapped_locals) = file_locals_list.get(file_idx) else {
+                continue;
+            };
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = result.arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != sk_ext::INTERFACE_DECLARATION {
+                    continue;
+                }
+                let Some(iface) = result.arena.get_interface(stmt_node) else {
+                    continue;
+                };
+                let Some(name_node) = result.arena.get(iface.name) else {
+                    continue;
+                };
+                let Some(ident) = result.arena.get_identifier(name_node) else {
+                    continue;
+                };
+                let name = ident.escaped_text.as_str();
+                let sym_id = remapped_locals.get(name).or_else(|| globals.get(name));
+                let Some(sym_id) = sym_id else {
+                    continue;
+                };
+                if !global_lib_symbol_ids.contains(&sym_id) {
+                    continue;
+                }
+                let target = declaration_arenas.entry((sym_id, stmt_idx)).or_default();
+                if !target.iter().any(|arena| Arc::ptr_eq(arena, &result.arena)) {
+                    target.push(Arc::clone(&result.arena));
+                }
+            }
+        }
+    }
+
     // Build the secondary `sym_to_decl_indices` index over the program-wide
     // `declaration_arenas`. Checker paths that previously iterated every entry
     // filtering by `entry_sym_id == sym_id` use this to do a point lookup.

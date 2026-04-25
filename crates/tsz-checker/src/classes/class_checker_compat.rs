@@ -1558,12 +1558,13 @@ impl<'a> CheckerState<'a> {
                         found = true;
                         let base_type = instantiate_type(self.ctx.types, base_type, &substitution);
 
+                        // Defer overloaded method names to the coverage pass below
+                        // (covers both base overloads and script-side augmentations).
                         if *derived_kind == METHOD_SIGNATURE
                             && base_member_node.kind == METHOD_SIGNATURE
-                            && overloaded_base_method_names.contains(member_name)
+                            && (overloaded_base_method_names.contains(member_name)
+                                || derived_method_counts.get(member_name).copied().unwrap_or(0) > 1)
                         {
-                            // Overloaded method names are validated by the
-                            // overload coverage check after this loop.
                             break;
                         }
 

@@ -840,13 +840,16 @@ impl BinderState {
                     ));
             }
 
-            // In script files (non-module files), top-level interface declarations that match
-            // built-in global type names should also be treated as augmentations.
-            // TypeScript allows `interface Array<T> { ... }` in scripts without `declare global`.
+            // In script files (non-module files), top-level interface declarations that
+            // collide with a same-named lib symbol augment the lib's global interface.
+            // TypeScript allows `interface Array<T> { ... }` (or `interface Node { ... }`)
+            // in scripts without `declare global`. The hardcoded `is_built_in_global_type`
+            // allow-list is kept as a fast path; the additional `lib_symbol_ids` check
+            // covers DOM/WebWorker/etc. globals that aren't in the static list.
             if !self.in_global_augmentation
                 && self.is_global_scope()
                 && !self.is_external_module
-                && Self::is_built_in_global_type(name)
+                && (Self::is_built_in_global_type(name) || self.name_collides_with_lib_symbol(name))
             {
                 Arc::make_mut(&mut self.global_augmentations)
                     .entry(name.to_string())
@@ -2787,6 +2790,21 @@ impl BinderState {
     fn is_global_scope(&self) -> bool {
         // Global scope is ScopeId(0) in script files
         self.current_scope_id == crate::ScopeId(0)
+    }
+
+    /// Check whether a name in the current binder already resolves to a lib symbol.
+    ///
+    /// Lib symbols are merged into the local binder before user binding via
+    /// `merge_lib_symbols`, so the symbol IDs in `current_scope`/`file_locals` for
+    /// these names are tracked in `lib_symbol_ids`. This lets us detect "the user
+    /// is declaring an interface whose name collides with a lib global" without
+    /// hardcoding a static allow-list of lib types — covering DOM, `WebWorker`,
+    /// `ScriptHost`, and any other ambient globals the project pulls in.
+    fn name_collides_with_lib_symbol(&self, name: &str) -> bool {
+        self.current_scope
+            .get(name)
+            .or_else(|| self.file_locals.get(name))
+            .is_some_and(|sym_id| self.lib_symbol_ids.contains(&sym_id))
     }
 
     /// Check if a type name is a built-in global type that can be augmented.
