@@ -1,6 +1,6 @@
 //! Cross-call `instantiate_type` cache wiring tests.
 //!
-//! PR 3/4 of `docs/plan/perf-instantiate-type-cache-design.md`. These tests
+//! PR 3/4 of the `docs/plan/ROADMAP.md` instantiation-cache workstream. These tests
 //! exercise the wiring of `InstantiationCache` into the five `instantiate_type*`
 //! entry points (the `_cached` variants). PR 2 already shipped the storage
 //! and trait methods on `QueryDatabase`; here we verify that:

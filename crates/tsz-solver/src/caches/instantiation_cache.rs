@@ -1,7 +1,7 @@
 //! Cross-call cache for `instantiate_type`.
 //!
 //! Storage and key types for the `instantiate_type` memoization cache. PR 2/4
-//! of `docs/plan/perf-instantiate-type-cache-design.md`. This PR ships the
+//! of the `docs/plan/ROADMAP.md` instantiation-cache workstream. This PR ships the
 //! plumbing only — the cache exists on `QueryCache` and is reachable via the
 //! `QueryDatabase` trait, but no production entry point probes it yet. PR 3/4
 //! will wire it into the five `instantiate_type*` entry points.

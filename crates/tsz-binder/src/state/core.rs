@@ -1155,7 +1155,7 @@ impl BinderState {
     /// [global query graph architecture][plan]; the parallel `NodeIndex`
     /// fields remain authoritative for existing consumers.
     ///
-    /// [plan]: ../../../../docs/plan/global-query-graph-architecture.md
+    /// [plan]: ../../../../docs/plan/ROADMAP.md
     fn stamp_file_idx(&mut self) {
         let idx = self.file_idx;
         let lib_symbol_ids = &self.lib_symbol_ids;
