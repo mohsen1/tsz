@@ -1932,6 +1932,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return CallResult::ThisTypeMismatch {
                     expected_this,
                     actual_this,
+                    emit_not_callable: false,
                 };
             }
         }

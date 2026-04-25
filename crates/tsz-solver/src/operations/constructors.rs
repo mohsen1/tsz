@@ -221,6 +221,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 CallResult::ThisTypeMismatch {
                     expected_this,
                     actual_this,
+                    ..
                 } => {
                     all_arg_count_mismatches = false;
                     this_mismatch_count += 1;
