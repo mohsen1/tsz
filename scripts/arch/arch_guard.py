@@ -541,6 +541,40 @@ SOLVER_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the count of non-test source files in the frontend crates
+# (`tsz-cli`, `tsz-core`, `tsz-lsp`, `tsz-wasm`) that import any of the
+# pipeline-internal crates `tsz_parser`, `tsz_binder`, `tsz_checker`,
+# `tsz_emitter`, `tsz_lowering` directly (architecture health metric 2 in
+# `docs/plan/ROADMAP.md`).
+#
+# Frontends should converge on the compiler service API (workstream 3); each
+# direct import of a pipeline-internal crate is a thread holding the
+# implementation porous.  This metric is complementary to metric 3, which
+# pins solver imports specifically; here we cover the rest of the pipeline.
+#
+# A file "imports a pipeline internal" if a non-comment line matches one of
+#   - `use tsz_<crate>::…`
+#   - `pub use tsz_<crate>` (including `pub use tsz_<crate>;`)
+#   - `extern crate tsz_<crate>`
+# where `<crate>` is one of `parser`, `binder`, `checker`, `emitter`,
+# `lowering`.  Each file is counted at most once even when it imports
+# multiple of these crates, so the raw count tracks "files reaching across
+# the boundary", not "import statements".
+#
+# Each entry: (description, search_roots, max_imports).
+FRONTEND_PIPELINE_IMPORT_CHECKS = [
+    (
+        "Frontend boundary: direct parser/binder/checker/emitter/lowering imports from cli/core/lsp/wasm (architecture health metric 2)",
+        [
+            ROOT / "crates" / "tsz-cli" / "src",
+            ROOT / "crates" / "tsz-core" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-wasm" / "src",
+        ],
+        73,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -744,6 +778,74 @@ def scan_solver_import_count(
             f"{len(importing_files)} (cap {max_imports}; bump cap intentionally "
             f"and update ROADMAP.md, or route the consumer through the compiler "
             f"service shell or `tsz_checker::query_boundaries` — workstream 3)"
+        )
+        return hits
+    return []
+
+
+_FRONTEND_PIPELINE_PATTERN = re.compile(
+    r"\b(?:use|pub\s+use|extern\s+crate)\s+"
+    r"tsz_(?:parser|binder|checker|emitter|lowering)"
+    r"(?:::|\s*;|\s+as\b)"
+)
+
+
+def scan_frontend_pipeline_imports(
+    search_roots: list[pathlib.Path],
+    max_imports: int,
+) -> list[str]:
+    """Count non-test source files inside the frontend search roots that
+    directly import any pipeline-internal crate (`tsz_parser`, `tsz_binder`,
+    `tsz_checker`, `tsz_emitter`, `tsz_lowering`) (architecture health
+    metric 2).
+
+    A file is counted at most once even if it imports several of these
+    crates — the goal is to track "files reaching across the front-door
+    boundary", which is what would have to move to the compiler service
+    layer (workstream 3).  Test files (`*_tests.rs`, `test_*.rs`, files
+    inside any `tests/` or `benches/` directory) are excluded.
+
+    Returns one hit per offending file plus a summary line when the total
+    exceeds `max_imports`.
+    """
+    importing_files: list[str] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if line.lstrip().startswith("//"):
+                    continue
+                if _FRONTEND_PIPELINE_PATTERN.search(line):
+                    importing_files.append(rel_to_root)
+                    break
+
+    importing_files.sort()
+    if len(importing_files) > max_imports:
+        hits = [
+            f"frontend pipeline-internal import #{i + 1}: {rel}"
+            for i, rel in enumerate(importing_files)
+        ]
+        hits.append(
+            f"total frontend files importing parser/binder/checker/emitter/lowering: "
+            f"{len(importing_files)} (cap {max_imports}; bump cap intentionally "
+            f"and update ROADMAP.md, or route the consumer through the compiler "
+            f"service shell — workstream 3)"
         )
         return hits
     return []
@@ -1074,6 +1176,12 @@ def main() -> int:
         hits = scan_solver_import_count(
             search_roots, exclude_path_prefixes, max_imports
         )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, search_roots, max_imports in FRONTEND_PIPELINE_IMPORT_CHECKS:
+        hits = scan_frontend_pipeline_imports(search_roots, max_imports)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

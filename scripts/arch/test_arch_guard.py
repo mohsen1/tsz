@@ -782,5 +782,143 @@ class ArchGuardSolverImportCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardFrontendPipelineImportsTests(unittest.TestCase):
+    """Cover `FRONTEND_PIPELINE_IMPORT_CHECKS` + `scan_frontend_pipeline_imports`.
+
+    Architecture health metric 2 anchor — workstream 3 ("Compiler Service
+    Front Door") wants frontends (`tsz-cli`, `tsz-core`, `tsz-lsp`,
+    `tsz-wasm`) to converge on a service API rather than reach directly
+    into pipeline-internal crates. These tests pin the detection
+    semantics:
+
+      - any of `use tsz_<crate>::...`, `pub use tsz_<crate>`, or
+        `extern crate tsz_<crate>` lines flag the file (where `<crate>`
+        is one of `parser`, `binder`, `checker`, `emitter`, `lowering`)
+      - test files (`*_tests.rs`, `test_*.rs`, files under `tests/` or
+        `benches/`) are excluded
+      - files importing several pipeline crates count once
+      - comment-only lines are not counted
+      - the pinned cap matches the live count
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_each_pipeline_crate_import_form(self):
+        root = self._make_tree(
+            {
+                "tsz-cli/src/use_parser.rs": "use tsz_parser::ParserState;\n",
+                "tsz-core/src/use_binder.rs": "use tsz_binder::BinderState;\n",
+                "tsz-lsp/src/pub_use_checker.rs": "pub use tsz_checker;\n",
+                "tsz-wasm/src/use_emitter.rs": "use tsz_emitter::Emitter;\n",
+                "tsz-cli/src/use_lowering.rs": (
+                    "use tsz_lowering::TypeLowering;\n"
+                ),
+                "tsz-core/src/extern_parser.rs": "extern crate tsz_parser;\n",
+            }
+        )
+        hits = self.arch_guard.scan_frontend_pipeline_imports([root], 0)
+        # 6 files reached the boundary + 1 summary line.
+        self.assertEqual(len(hits), 7, f"unexpected hits: {hits!r}")
+        joined = "\n".join(hits[:-1])
+        self.assertIn("use_parser.rs", joined)
+        self.assertIn("use_binder.rs", joined)
+        self.assertIn("pub_use_checker.rs", joined)
+        self.assertIn("use_emitter.rs", joined)
+        self.assertIn("use_lowering.rs", joined)
+        self.assertIn("extern_parser.rs", joined)
+        self.assertIn(
+            "total frontend files importing parser/binder/checker/emitter/lowering: 6",
+            hits[-1],
+        )
+
+    def test_does_not_flag_solver_imports(self):
+        # Solver imports are covered by metric 3 (SOLVER_IMPORT_COUNT_CHECKS),
+        # not metric 2; the frontend metric must not double-count them.
+        root = self._make_tree(
+            {
+                "tsz-cli/src/solver_only.rs": "use tsz_solver::TypeId;\n",
+                "tsz-lsp/src/solver_only.rs": "pub use tsz_solver;\n",
+            }
+        )
+        hits = self.arch_guard.scan_frontend_pipeline_imports([root], 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_counts_each_file_at_most_once(self):
+        # A file that imports parser AND binder AND checker should still
+        # contribute exactly one to the count.
+        root = self._make_tree(
+            {
+                "tsz-cli/src/many.rs": (
+                    "use tsz_parser::ParserState;\n"
+                    "use tsz_binder::BinderState;\n"
+                    "use tsz_checker::CheckerState;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_frontend_pipeline_imports([root], 0)
+        # 1 importing file + 1 summary line.
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn(
+            "total frontend files importing parser/binder/checker/emitter/lowering: 1",
+            hits[-1],
+        )
+
+    def test_excludes_test_files_and_test_dirs(self):
+        root = self._make_tree(
+            {
+                "tsz-cli/src/foo_tests.rs": "use tsz_parser::ParserState;\n",
+                "tsz-cli/src/test_helpers.rs": "use tsz_binder::BinderState;\n",
+                "tsz-cli/tests/integration.rs": "use tsz_checker::CheckerState;\n",
+                "tsz-core/benches/bench.rs": "use tsz_emitter::Emitter;\n",
+            }
+        )
+        hits = self.arch_guard.scan_frontend_pipeline_imports([root], 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_ignores_comment_only_lines(self):
+        root = self._make_tree(
+            {
+                "tsz-cli/src/commented.rs": (
+                    "// use tsz_parser::ParserState;\n"
+                    "// pub use tsz_binder;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_frontend_pipeline_imports([root], 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0] for entry in self.arch_guard.FRONTEND_PIPELINE_IMPORT_CHECKS
+        ]
+        self.assertTrue(
+            any("metric 2" in name for name in names),
+            "Frontend-pipeline-import guard missing from FRONTEND_PIPELINE_IMPORT_CHECKS",
+        )
+
+    def test_real_imports_pass_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.FRONTEND_PIPELINE_IMPORT_CHECKS:
+            name, search_roots, max_imports = entry
+            hits = self.arch_guard.scan_frontend_pipeline_imports(
+                search_roots, max_imports
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
