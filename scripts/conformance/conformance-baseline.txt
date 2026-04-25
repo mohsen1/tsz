@@ -4,9 +4,7 @@ FAIL TypeScript/tests/cases/compiler/arrayTypeInSignatureOfInterfaceAndClass.ts 
 FAIL TypeScript/tests/cases/compiler/booleanAssignment.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/builtinIterator.ts | expected:[TS2322,TS2345,TS2416,TS2511,TS2515] actual:[TS2351]
 FAIL TypeScript/tests/cases/compiler/classPropertyInferenceFromBroaderTypeConst.ts | expected:[] actual:[TS2345]
-FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts | expected:[TS2344,TS2430] actual:[]
-FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected:[TS2344,TS2430] actual:[TS2344]
-FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts | expected:[TS2344,TS2430] actual:[]
+FAIL TypeScript/tests/cases/compiler/coAndContraVariantInferences3.ts | expected:[TS2344,TS2430] actual:[TS2344,TS2430]
 FAIL TypeScript/tests/cases/compiler/complexRecursiveCollections.ts | expected:[TS2320,TS2344,TS2430] actual:[TS2344,TS2430]
 FAIL TypeScript/tests/cases/compiler/conditionalTypeAssignabilityWhenDeferred.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
 FAIL TypeScript/tests/cases/compiler/conditionalTypeDoesntSpinForever.ts | expected:[TS2322,TS2769] actual:[TS2322,TS2769]
@@ -72,7 +70,6 @@ FAIL TypeScript/tests/cases/compiler/inKeywordTypeguard.ts | expected:[TS2322,TS
 FAIL TypeScript/tests/cases/compiler/indexAt.ts | expected:[TS2550] actual:[TS2550]
 FAIL TypeScript/tests/cases/compiler/inexistentPropertyInsideToStringType.ts | expected:[TS2339,TS2394] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/inferFromGenericFunctionReturnTypes3.ts | expected:[TS2322,TS2345] actual:[TS2322,TS2345]
-FAIL TypeScript/tests/cases/compiler/inferenceDoesNotAddUndefinedOrNull.ts | expected:[] actual:[TS2339,TS7006]
 FAIL TypeScript/tests/cases/compiler/inferenceExactOptionalProperties2.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/inferenceFromIncompleteSource.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/compiler/inferenceShouldFailOnEvolvingArrays.ts | expected:[TS2322,TS2345] actual:[TS2345]
@@ -181,7 +178,7 @@ FAIL TypeScript/tests/cases/compiler/typeofAmbientExternalModules.ts | expected:
 FAIL TypeScript/tests/cases/compiler/unicodeEscapesInNames02.ts | expected:[TS1005,TS1068,TS1127,TS1128,TS1134,TS1351,TS1389,TS1434,TS2809] actual:[TS1127,TS1128,TS1434]
 FAIL TypeScript/tests/cases/compiler/unionSubtypeReductionErrors.ts | expected:[TS2590] actual:[TS2590]
 FAIL TypeScript/tests/cases/compiler/unionTypeWithRecursiveSubtypeReduction3.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/unknownSymbolOffContextualType1.ts | expected:[TS2339] actual:[]
+FAIL TypeScript/tests/cases/compiler/unknownSymbolOffContextualType1.ts | expected:[TS2339] actual:[TS2339,TS2403,TS2551]
 FAIL TypeScript/tests/cases/compiler/unreachableDeclarations.ts | expected:[TS1235,TS2448,TS2449,TS2450,TS2454,TS5024,TS7027] actual:[TS1235,TS2448,TS2449,TS2450,TS2454,TS5024,TS7027]
 FAIL TypeScript/tests/cases/compiler/unresolvableSelfReferencingAwaitedUnion.ts | expected:[TS1062,TS2322] actual:[TS1062,TS2322]
 FAIL TypeScript/tests/cases/compiler/unusedLocalsAndParameters.ts | expected:[TS1005,TS1109] actual:[TS1005,TS1109]
@@ -1240,6 +1237,8 @@ PASS TypeScript/tests/cases/compiler/cloduleWithPriorUninstantiatedModule.ts
 PASS TypeScript/tests/cases/compiler/cloduleWithRecursiveReference.ts
 PASS TypeScript/tests/cases/compiler/clodulesDerivedClasses.ts
 PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences.ts
+PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences2.ts
+PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences4.ts
 PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences5.ts
 PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences6.ts
 PASS TypeScript/tests/cases/compiler/coAndContraVariantInferences7.ts
@@ -3682,6 +3681,7 @@ PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion1.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion2.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion3.ts
 PASS TypeScript/tests/cases/compiler/inferenceContextualReturnTypeUnion4.ts
+PASS TypeScript/tests/cases/compiler/inferenceDoesNotAddUndefinedOrNull.ts
 PASS TypeScript/tests/cases/compiler/inferenceDoesntCompareAgainstUninstantiatedTypeParameter.ts
 PASS TypeScript/tests/cases/compiler/inferenceErasedSignatures.ts
 PASS TypeScript/tests/cases/compiler/inferenceExactOptionalProperties1.ts
