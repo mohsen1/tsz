@@ -6,67 +6,36 @@
 //! noUnusedParameters, NOT noUnusedLocals — see
 //! unusedTypeParametersNotCheckedByNoUnusedLocals conformance test).
 
-use crate::context::CheckerOptions;
-use crate::state::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::diagnostics::Diagnostic;
 
-fn check_with_no_unused_params(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        no_unused_parameters: true,
-        ..Default::default()
-    };
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+fn check_with_no_unused_params(source: &str) -> Vec<Diagnostic> {
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_unused_parameters: true,
+            ..Default::default()
+        },
+    )
 }
 
-fn check_with_no_unused_locals(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        no_unused_locals: true,
-        ..Default::default()
-    };
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+fn check_with_no_unused_locals(source: &str) -> Vec<Diagnostic> {
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_unused_locals: true,
+            ..Default::default()
+        },
+    )
 }
 
-fn ts6133_count(diags: &[crate::diagnostics::Diagnostic]) -> usize {
+fn ts6133_count(diags: &[Diagnostic]) -> usize {
     diags.iter().filter(|d| d.code == 6133).count()
 }
 
-fn ts6133_names(diags: &[crate::diagnostics::Diagnostic]) -> Vec<String> {
+fn ts6133_names(diags: &[Diagnostic]) -> Vec<String> {
     diags
         .iter()
         .filter(|d| d.code == 6133)
@@ -201,29 +170,9 @@ fn test_multiple_type_params_partial_usage() {
 #[test]
 fn test_no_unused_params_disabled_no_errors() {
     // Without noUnusedParameters, no TS6133 for type params should be emitted
-    let mut parser = ParserState::new(
-        "test.ts".to_string(),
-        "interface I<T> { x: number; }".to_string(),
-    );
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions::default(); // no_unused_parameters = false
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
+    let diags = tsz_checker::test_utils::check_source_diagnostics("interface I<T> { x: number; }");
     assert_eq!(
-        ts6133_count(&checker.ctx.diagnostics),
+        ts6133_count(&diags),
         0,
         "No TS6133 expected when noUnusedParameters is disabled"
     );
@@ -232,32 +181,16 @@ fn test_no_unused_params_disabled_no_errors() {
 #[test]
 fn test_no_unused_locals_only_no_type_param_errors() {
     // With only noUnusedLocals (not noUnusedParameters), type params should NOT be checked
-    let mut parser = ParserState::new(
-        "test.ts".to_string(),
-        "function f<T>(): void {} interface I<U> { x: number; }".to_string(),
+    let diags = tsz_checker::test_utils::check_source(
+        "function f<T>(): void {} interface I<U> { x: number; }",
+        "test.ts",
+        CheckerOptions {
+            no_unused_locals: true,
+            ..Default::default()
+        },
     );
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        no_unused_locals: true,
-        ..Default::default()
-    };
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
     assert_eq!(
-        ts6133_count(&checker.ctx.diagnostics),
+        ts6133_count(&diags),
         0,
         "No TS6133 for type params with only noUnusedLocals (not noUnusedParameters)"
     );
@@ -278,31 +211,16 @@ function f(this: A): number {
     return this.a;
 }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        no_unused_parameters: true,
-        no_unused_locals: true,
-        ..Default::default()
-    };
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
+    let diags = tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_unused_parameters: true,
+            no_unused_locals: true,
+            ..Default::default()
+        },
     );
-
-    checker.check_source_file(root);
-    let this_errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let this_errors: Vec<_> = diags
         .iter()
         .filter(|d| d.code == 6133 && d.message_text.contains("'this'"))
         .collect();
@@ -316,31 +234,15 @@ function f(this: A): number {
 fn test_using_declaration_not_reported_unused() {
     // `using` declarations always have dispose side effects,
     // so TSC never flags them as unused.
-    let source = r"using x = undefined as any;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        no_unused_locals: true,
-        ..Default::default()
-    };
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
+    let diags = tsz_checker::test_utils::check_source(
+        "using x = undefined as any;",
+        "test.ts",
+        CheckerOptions {
+            no_unused_locals: true,
+            ..Default::default()
+        },
     );
-
-    checker.check_source_file(root);
-    let using_errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let using_errors: Vec<_> = diags
         .iter()
         .filter(|d| d.code == 6133 && d.message_text.contains("'x'"))
         .collect();
@@ -364,30 +266,15 @@ class Employee {
 }
 ";
     // Private members are checked under noUnusedLocals, not noUnusedParameters
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let options = CheckerOptions {
-        no_unused_locals: true,
-        ..Default::default()
-    };
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
+    let diags = tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            no_unused_locals: true,
+            ..Default::default()
+        },
     );
-
-    checker.check_source_file(root);
-    let setter_errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let setter_errors: Vec<_> = diags
         .iter()
         .filter(|d| d.code == 6133 && d.message_text.contains("'p'"))
         .collect();
