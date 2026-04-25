@@ -5,6 +5,7 @@
 
 use crate::ObjectLiteralBuilder;
 use crate::caches::instantiation_cache::InstantiationCacheKey;
+use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::intern::type_factory::TypeFactory;
@@ -756,6 +757,33 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Store an `instantiate_type` result in the cross-call cache.
     /// Default is a no-op for the same reason as `lookup_instantiation_cache`.
     fn insert_instantiation_cache(&self, _key: InstantiationCacheKey, _result: TypeId) {}
+
+    /// Look up a cached `remove_subtypes_for_bct` result.
+    ///
+    /// Mirrors `lookup_instantiation_cache`. The default returns `None` so
+    /// non-`QueryCache` databases (raw `TypeInterner`, tests) don't need
+    /// to implement it. Hit/miss counters live on `QueryCache`.
+    ///
+    /// Closes the O(N²) hot loop in `compute_best_common_type` when the
+    /// same input candidate list shows up at multiple call sites — the
+    /// `BCT candidates=200` bench fixture exercises four such sites with
+    /// the same 200-element list, collapsing three of four to O(1).
+    fn lookup_subtype_reduction_cache(
+        &self,
+        _key: &SubtypeReductionKey,
+    ) -> Option<std::sync::Arc<[TypeId]>> {
+        None
+    }
+
+    /// Store a `remove_subtypes_for_bct` result in the cross-call cache.
+    /// Default is a no-op for the same reason as
+    /// `lookup_subtype_reduction_cache`.
+    fn insert_subtype_reduction_cache(
+        &self,
+        _key: SubtypeReductionKey,
+        _result: std::sync::Arc<[TypeId]>,
+    ) {
+    }
 
     fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
         crate::evaluation::evaluate::evaluate_keyof(self.as_type_database(), operand)

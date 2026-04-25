@@ -7,6 +7,7 @@
 use crate::caches::db::{QueryDatabase, TypeDatabase};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
+use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
@@ -146,6 +147,12 @@ pub struct QueryCacheStatistics {
     pub instantiation_cache_hits: u64,
     /// Number of times the instantiation cache was probed and missed.
     pub instantiation_cache_misses: u64,
+    /// Number of memoized `remove_subtypes_for_bct` results.
+    pub subtype_reduction_cache_entries: usize,
+    /// Number of times the subtype-reduction cache returned a hit.
+    pub subtype_reduction_cache_hits: u64,
+    /// Number of times the subtype-reduction cache was probed and missed.
+    pub subtype_reduction_cache_misses: u64,
     /// Relation (subtype + assignability) cache statistics.
     pub relation: RelationCacheStats,
 }
@@ -163,6 +170,9 @@ impl QueryCacheStatistics {
         self.instantiation_cache_entries += other.instantiation_cache_entries;
         self.instantiation_cache_hits += other.instantiation_cache_hits;
         self.instantiation_cache_misses += other.instantiation_cache_misses;
+        self.subtype_reduction_cache_entries += other.subtype_reduction_cache_entries;
+        self.subtype_reduction_cache_hits += other.subtype_reduction_cache_hits;
+        self.subtype_reduction_cache_misses += other.subtype_reduction_cache_misses;
         self.relation.subtype_hits += other.relation.subtype_hits;
         self.relation.subtype_misses += other.relation.subtype_misses;
         self.relation.subtype_entries += other.relation.subtype_entries;
@@ -222,6 +232,12 @@ impl QueryCacheStatistics {
         // u8=1, Option<TypeId>=8, value TypeId=4. Conservative per-bucket cost.
         let instantiation = self.instantiation_cache_entries * (BUCKET_OVERHEAD + 65);
 
+        // subtype_reduction_cache: (SortedTypeIds, u8) -> Arc<[TypeId]>
+        // SortedTypeIds inline = 8*4 + len + cap = ~48 bytes; u8=1; Arc=8.
+        // Value side is `Arc<[TypeId]>` — pointer+len fit in 16 bytes; the
+        // pointed-at slice is amortized via Arc sharing across hits.
+        let subtype_reduction = self.subtype_reduction_cache_entries * (BUCKET_OVERHEAD + 73);
+
         eval + app_eval
             + elem
             + spread
@@ -231,6 +247,7 @@ impl QueryCacheStatistics {
             + subtype
             + assignability
             + instantiation
+            + subtype_reduction
     }
 }
 
@@ -287,6 +304,13 @@ impl std::fmt::Display for QueryCacheStatistics {
             self.instantiation_cache_hits,
             self.instantiation_cache_misses,
         )?;
+        writeln!(
+            f,
+            "  subtype_reduction:      {} entries ({} hits, {} misses)",
+            self.subtype_reduction_cache_entries,
+            self.subtype_reduction_cache_hits,
+            self.subtype_reduction_cache_misses,
+        )?;
         write!(
             f,
             "  estimated_size:         {} bytes ({:.1} KB)",
@@ -332,12 +356,21 @@ pub struct QueryCache<'a> {
     /// wire this into the five `instantiate_type*` entry points; for now
     /// the cache exists but no production path probes it.
     instantiation_cache: InstantiationCache,
+    /// Cross-call cache for `remove_subtypes_for_bct` results, keyed by
+    /// `(SortedTypeIds, mode_bits)`. Mirrors `subtypeReductionCache` in tsc
+    /// (`TypeScript/src/compiler/checker.ts:18128-18132`). Closes the O(N²)
+    /// hot loop in `compute_best_common_type` for repeated BCT call sites
+    /// that share the same input list (e.g., the `BCT candidates=200` bench
+    /// fixture exercises four such sites).
+    subtype_reduction_cache: SubtypeReductionCache,
     subtype_cache_hits: Cell<u64>,
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
     assignability_cache_misses: Cell<u64>,
     instantiation_cache_hits: Cell<u64>,
     instantiation_cache_misses: Cell<u64>,
+    subtype_reduction_cache_hits: Cell<u64>,
+    subtype_reduction_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
     exact_optional_property_types: Cell<bool>,
     /// Optional shared cross-file cache for multi-file project checking.
@@ -377,12 +410,15 @@ impl<'a> QueryCache<'a> {
             canonical_cache: RefCell::new(FxHashMap::default()),
             intersection_merge_cache: RefCell::new(FxHashMap::default()),
             instantiation_cache: InstantiationCache::new(),
+            subtype_reduction_cache: SubtypeReductionCache::new(),
             subtype_cache_hits: Cell::new(0),
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
             assignability_cache_misses: Cell::new(0),
             instantiation_cache_hits: Cell::new(0),
             instantiation_cache_misses: Cell::new(0),
+            subtype_reduction_cache_hits: Cell::new(0),
+            subtype_reduction_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
             exact_optional_property_types: Cell::new(interner.exact_optional_property_types()),
             shared,
@@ -401,6 +437,7 @@ impl<'a> QueryCache<'a> {
         self.canonical_cache.borrow_mut().clear();
         self.intersection_merge_cache.borrow_mut().clear();
         self.instantiation_cache.clear();
+        self.subtype_reduction_cache.clear();
         self.reset_relation_cache_stats();
     }
 
@@ -432,6 +469,9 @@ impl<'a> QueryCache<'a> {
             instantiation_cache_entries: self.instantiation_cache.len(),
             instantiation_cache_hits: self.instantiation_cache_hits.get(),
             instantiation_cache_misses: self.instantiation_cache_misses.get(),
+            subtype_reduction_cache_entries: self.subtype_reduction_cache.len(),
+            subtype_reduction_cache_hits: self.subtype_reduction_cache_hits.get(),
+            subtype_reduction_cache_misses: self.subtype_reduction_cache_misses.get(),
             relation: self.relation_cache_stats(),
         }
     }
@@ -550,6 +590,14 @@ impl<'a> QueryCache<'a> {
                 + std::mem::size_of::<InstantiationCacheKey>()
                 + std::mem::size_of::<TypeId>());
 
+        // subtype_reduction_cache: (SortedTypeIds, u8) -> Arc<[TypeId]>
+        // Inline buffer is part of `SubtypeReductionKey`; the cached value
+        // is `Arc<[TypeId]>` (16 bytes) plus the heap slice it points at.
+        size += self.subtype_reduction_cache.capacity()
+            * (BUCKET_OVERHEAD
+                + std::mem::size_of::<SubtypeReductionKey>()
+                + std::mem::size_of::<std::sync::Arc<[TypeId]>>());
+
         size
     }
 
@@ -560,6 +608,8 @@ impl<'a> QueryCache<'a> {
         self.assignability_cache_misses.set(0);
         self.instantiation_cache_hits.set(0);
         self.instantiation_cache_misses.set(0);
+        self.subtype_reduction_cache_hits.set(0);
+        self.subtype_reduction_cache_misses.set(0);
     }
 
     pub fn probe_subtype_cache(&self, key: RelationCacheKey) -> RelationCacheProbe {
@@ -1306,6 +1356,36 @@ impl QueryDatabase for QueryCache<'_> {
     /// Store an `instantiate_type` result in the cross-call cache.
     fn insert_instantiation_cache(&self, key: InstantiationCacheKey, result: TypeId) {
         self.instantiation_cache.insert(key, result);
+    }
+
+    /// Look up a cached `remove_subtypes_for_bct` result. Hit/miss counters
+    /// mirror the instantiation-cache counters and feed
+    /// `QueryCacheStatistics`.
+    fn lookup_subtype_reduction_cache(
+        &self,
+        key: &SubtypeReductionKey,
+    ) -> Option<std::sync::Arc<[TypeId]>> {
+        match self.subtype_reduction_cache.lookup(key) {
+            Some(result) => {
+                self.subtype_reduction_cache_hits
+                    .set(self.subtype_reduction_cache_hits.get() + 1);
+                Some(result)
+            }
+            None => {
+                self.subtype_reduction_cache_misses
+                    .set(self.subtype_reduction_cache_misses.get() + 1);
+                None
+            }
+        }
+    }
+
+    /// Store a `remove_subtypes_for_bct` result in the cross-call cache.
+    fn insert_subtype_reduction_cache(
+        &self,
+        key: SubtypeReductionKey,
+        result: std::sync::Arc<[TypeId]>,
+    ) {
+        self.subtype_reduction_cache.insert(key, result);
     }
 
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
