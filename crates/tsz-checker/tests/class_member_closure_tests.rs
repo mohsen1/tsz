@@ -8,12 +8,8 @@
 //!   - Base/member closure consistency
 
 use crate::context::CheckerOptions;
-use crate::test_utils::check_source;
+use crate::test_utils::check_with_options;
 use tsz_common::diagnostics::Diagnostic;
-
-fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
-    check_source(source, "test.ts", options)
-}
 
 fn check_strict(source: &str) -> Vec<Diagnostic> {
     check_with_options(
