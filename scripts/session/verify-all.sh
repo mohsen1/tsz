@@ -46,6 +46,25 @@ done
 PASS=0
 FAIL=0
 RESULTS=()
+TEMP_ARTIFACTS=()
+
+cleanup_temp_artifacts() {
+    for path in "${TEMP_ARTIFACTS[@]+"${TEMP_ARTIFACTS[@]}"}"; do
+        [[ -z "$path" ]] && continue
+        rm -rf "$path" 2>/dev/null || true
+    done
+}
+trap cleanup_temp_artifacts EXIT
+
+make_temp_json() {
+    local name="$1"
+    local path
+    path="$(mktemp "${TMPDIR:-/tmp}/tsz-${name}.XXXXXX")"
+    rm -f "$path"
+    path="${path}.json"
+    TEMP_ARTIFACTS+=("$path")
+    printf '%s\n' "$path"
+}
 
 run_suite() {
     local name="$1"
@@ -206,7 +225,7 @@ fi
 if ! $QUICK; then
     echo ""
     echo -e "${CYAN}━━━ [emit tests] ━━━${RESET}"
-    EMIT_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-emit-verify.XXXXXX").json"
+    EMIT_JSON="$(make_temp_json "emit-verify")"
     echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/emit/run.sh --json-out=$EMIT_JSON"
     echo ""
 
@@ -252,7 +271,7 @@ fi
 if ! $QUICK && ! $SKIP_LSP; then
     echo ""
     echo -e "${CYAN}━━━ [fourslash/LSP] ━━━${RESET}"
-    FOURSLASH_JSON="$(mktemp "${TMPDIR:-/tmp}/tsz-fourslash-verify.XXXXXX").json"
+    FOURSLASH_JSON="$(make_temp_json "fourslash-verify")"
     FOURSLASH_VERIFY_MAX=50
     echo -e "${CYAN}→${RESET}  scripts/safe-run.sh ./scripts/fourslash/run-fourslash.sh --max=$FOURSLASH_VERIFY_MAX --workers=8 --json-out=$FOURSLASH_JSON"
     echo ""
@@ -299,8 +318,8 @@ else
     RESULTS+=("${YELLOW}⊘${RESET}  fourslash/LSP (skipped)")
 fi
 
-# --- Cleanup temp artifacts from test runs ---
-rm -rf /tmp/tsz-* /tmp/tmp.* 2>/dev/null || true
+# --- Cleanup temp artifacts from this verification run ---
+cleanup_temp_artifacts
 
 # --- Summary ---
 echo ""
