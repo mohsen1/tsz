@@ -1386,6 +1386,8 @@ fn bind_file_with_libs(
 
 // Skeleton types are in the skeleton submodule
 use super::skeleton::*;
+// Dependency graph built from skeleton import_sources
+use super::dep_graph::DepGraph;
 
 /// A bound file ready for type checking
 pub struct BoundFile {
@@ -1656,10 +1658,44 @@ pub struct MergedProgram {
     /// and stored here so downstream consumers can begin migrating off arena-backed
     /// lookups toward skeleton-based queries.
     pub skeleton_index: Option<SkeletonIndex>,
+    /// Dependency graph derived from skeleton `import_sources`.
+    ///
+    /// Built using `DepGraph::build_simple` during merge (name-matching heuristic).
+    /// Provides topological ordering for incremental invalidation and ordered
+    /// checking. `None` only if no skeletons were extracted (should not happen
+    /// in the normal pipeline).
+    pub dep_graph: Option<DepGraph>,
     /// Sum of `BindResult::estimated_size_bytes()` across all input files, computed
     /// before the merge consumes per-file data. This captures the pre-merge memory
     /// footprint so it can be compared to the post-merge `MergedProgram` residency.
     pub pre_merge_bind_total_bytes: usize,
+}
+
+impl MergedProgram {
+    /// Return the topological file ordering from the dependency graph.
+    ///
+    /// Dependencies come before dependents. Files in cycles are appended
+    /// in stable (input) order. Returns `None` if no dep graph was computed.
+    #[must_use]
+    pub fn topological_file_order(&self) -> Option<super::dep_graph::TopoResult> {
+        self.dep_graph.as_ref().map(|dg| dg.topological_order())
+    }
+
+    /// Return the set of file indices that directly depend on the given file.
+    ///
+    /// These are files that `import` from the target file. Useful for
+    /// incremental invalidation: when `file_idx` changes, its dependents
+    /// may need re-checking.
+    #[must_use]
+    pub fn dependents_of(&self, file_idx: usize) -> Option<&rustc_hash::FxHashSet<usize>> {
+        self.dep_graph.as_ref().map(|dg| dg.dependents(file_idx))
+    }
+
+    /// Return the set of file indices that the given file depends on.
+    #[must_use]
+    pub fn dependencies_of(&self, file_idx: usize) -> Option<&rustc_hash::FxHashSet<usize>> {
+        self.dep_graph.as_ref().map(|dg| dg.dependencies(file_idx))
+    }
 }
 
 /// Check if two symbols can be merged across multiple files.
@@ -1973,6 +2009,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // per-file symbol/augmentation/re-export data without any remapping.
     let skeletons: Vec<FileSkeleton> = results.iter().map(|r| extract_skeleton(r)).collect();
     let skeleton_index = reduce_skeletons(&skeletons);
+    let dep_graph = DepGraph::build_simple(&skeletons);
 
     // Capture aggregate pre-merge memory footprint before we start consuming data.
     let pre_merge_bind_total_bytes: usize = results.iter().map(|r| r.estimated_size_bytes()).sum();
@@ -3347,6 +3384,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         semantic_defs,
         definition_store,
         skeleton_index: Some(skeleton_index),
+        dep_graph: Some(dep_graph),
         pre_merge_bind_total_bytes,
     }
 }
