@@ -7,31 +7,12 @@
 //!   - Override visibility/type checks (TS4112-TS4115, TS2416)
 //!   - Base/member closure consistency
 
-use crate::CheckerState;
 use crate::context::CheckerOptions;
-use tsz_binder::BinderState;
+use crate::test_utils::check_source;
 use tsz_common::diagnostics::Diagnostic;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    check_source(source, "test.ts", options)
 }
 
 fn check_strict(source: &str) -> Vec<Diagnostic> {
