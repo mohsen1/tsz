@@ -7,10 +7,6 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 
-fn check_ts(source: &str) -> Vec<Diagnostic> {
-    tsz_checker::test_utils::check_source_diagnostics(source)
-}
-
 fn codes(diags: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
     diags.iter().filter(|d| d.code == code).collect()
 }
@@ -22,7 +18,7 @@ fn codes(diags: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
 /// Destructuring with defaults should strip `undefined` from optional properties.
 #[test]
 fn destructuring_property_default_strips_undefined() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(opts: { name?: string }) {
     const { name = "default" } = opts;
@@ -41,7 +37,7 @@ function f(opts: { name?: string }) {
 /// Destructuring element with default in array pattern.
 #[test]
 fn destructuring_element_default_strips_undefined() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(arr: [string | undefined]) {
     const [first = "fallback"] = arr;
@@ -60,7 +56,7 @@ function f(arr: [string | undefined]) {
 /// Nested destructuring with defaults.
 #[test]
 fn nested_destructuring_with_defaults() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Config {
     server?: {
@@ -88,7 +84,7 @@ function f(config: Config) {
 /// Optional chain in truthy branch should narrow the base to non-nullish.
 #[test]
 fn optional_chain_truthy_narrows_non_nullish() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(x: { y: number } | null | undefined) {
     if (x?.y) {
@@ -108,7 +104,7 @@ function f(x: { y: number } | null | undefined) {
 /// Chained optional access in condition.
 #[test]
 fn chained_optional_access_narrows() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface A { b?: { c: number } }
 function f(a: A | null) {
@@ -133,7 +129,7 @@ function f(a: A | null) {
 /// With useUnknownInCatchVariables (default strict), catch var should be `unknown`.
 #[test]
 fn catch_variable_is_unknown_by_default() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 try {
     throw new Error("oops");
@@ -180,7 +176,7 @@ try {
 /// Typeof narrowing on catch variable should work from unknown domain.
 #[test]
 fn catch_variable_typeof_narrows_from_unknown() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 try {
     throw new Error("oops");
@@ -206,7 +202,7 @@ try {
 /// For-of with simple variable binding.
 #[test]
 fn for_of_simple_variable() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 const arr: number[] = [1, 2, 3];
 for (const x of arr) {
@@ -225,7 +221,7 @@ for (const x of arr) {
 /// For-of with destructuring pattern.
 #[test]
 fn for_of_with_destructuring() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 const pairs: [string, number][] = [["a", 1], ["b", 2]];
 for (const [key, value] of pairs) {
@@ -245,7 +241,7 @@ for (const [key, value] of pairs) {
 /// For-of with object destructuring and defaults.
 #[test]
 fn for_of_object_destructuring_with_default() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Item { name?: string; value: number }
 const items: Item[] = [];
@@ -270,7 +266,7 @@ for (const { name = "unknown", value } of items) {
 /// Multiple bindings from same destructuring share the parent type.
 #[test]
 fn dependent_destructured_bindings() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Pair { first: string; second: number }
 function f(p: Pair) {
@@ -291,7 +287,7 @@ function f(p: Pair) {
 /// Rest element in destructuring.
 #[test]
 fn destructuring_rest_element() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(arr: [number, string, ...boolean[]]) {
     const [first, second, ...rest] = arr;
@@ -317,7 +313,7 @@ function f(arr: [number, string, ...boolean[]]) {
 #[test]
 fn flow_observation_boundary_catch_variable_integration() {
     // With strict mode (default), catch variable should be unknown
-    let diags_strict = check_ts(
+    let diags_strict = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 try {} catch (e) {
     let x = e;
@@ -379,7 +375,7 @@ const n: number = x;
 /// When strictNullChecks is on, `undefined` should NOT widen to `any`.
 #[test]
 fn destructuring_null_undefined_preserved_when_strict_on() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 declare const obj: { x: undefined };
 const { x } = obj;
@@ -450,7 +446,7 @@ const s: string = first;
 /// For-in expression with a non-null type should resolve to string.
 #[test]
 fn for_in_variable_type_is_string() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 const obj = { a: 1, b: 2 };
 for (const key in obj) {
@@ -473,7 +469,7 @@ for (const key in obj) {
 /// Catch variable with explicit unknown annotation should allow typeof narrowing.
 #[test]
 fn catch_variable_explicit_unknown_annotation_typeof() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 try {
     throw "oops";
@@ -495,7 +491,7 @@ try {
 /// Catch variable with explicit any annotation should suppress type errors.
 #[test]
 fn catch_variable_explicit_any_annotation() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 try {
     throw "oops";
@@ -519,7 +515,7 @@ try {
 /// For-of with string iteration yields string characters.
 #[test]
 fn for_of_string_iteration() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 const s = "hello";
 for (const ch of s) {
@@ -538,7 +534,7 @@ for (const ch of s) {
 /// For-of with nested destructuring from array of objects.
 #[test]
 fn for_of_nested_object_destructuring() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Entry { key: string; value: number }
 const entries: Entry[] = [];
@@ -563,7 +559,7 @@ for (const { key, value } of entries) {
 /// Destructuring a discriminated union type preserves property types.
 #[test]
 fn dependent_destructured_discriminated_union() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 type A = { kind: "a"; value: string };
 type B = { kind: "b"; value: number };
@@ -585,7 +581,7 @@ function f(x: AB) {
 /// Multiple property destructuring from a single source.
 #[test]
 fn dependent_destructured_multiple_properties() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Config {
     host: string;
@@ -611,7 +607,7 @@ function f(config: Config) {
 /// Destructuring with renaming preserves types.
 #[test]
 fn destructuring_with_rename() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Point { x: number; y: number }
 function f(p: Point) {
@@ -636,7 +632,7 @@ function f(p: Point) {
 /// Optional chain in ternary expression.
 #[test]
 fn optional_chain_ternary_narrows() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(x: { y: number } | null) {
     const result = x?.y ? x.y : 0;
@@ -659,7 +655,7 @@ function f(x: { y: number } | null) {
 /// Non-null assertion (`!`) should strip null/undefined through the boundary.
 #[test]
 fn non_null_assertion_strips_nullish() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(x: string | null | undefined) {
     const y: string = x!;
@@ -677,7 +673,7 @@ function f(x: string | null | undefined) {
 /// Non-null assertion on a narrowed-to-null variable should fall back to declared type.
 #[test]
 fn non_null_assertion_fallback_to_declared() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(x: string | null) {
     x = null;
@@ -700,7 +696,7 @@ function f(x: string | null) {
 /// Nullish coalescing (`??`) strips nullish from left operand through boundary.
 #[test]
 fn nullish_coalescing_strips_nullish() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(x: string | null) {
     const y: string = x ?? "default";
@@ -722,7 +718,7 @@ function f(x: string | null) {
 /// For-in variable type with potentially nullish expression uses boundary.
 #[test]
 fn for_in_nullish_expression_strips_nullish() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(obj: Record<string, number> | null) {
     if (obj) {
@@ -748,7 +744,7 @@ function f(obj: Record<string, number> | null) {
 /// Parameter with default value should strip undefined from its type.
 #[test]
 fn parameter_default_strips_undefined() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(x: string | undefined = "hello") {
     const s: string = x;
@@ -770,7 +766,7 @@ function f(x: string | undefined = "hello") {
 /// Destructuring default in computed binding context uses boundary.
 #[test]
 fn computed_binding_destructuring_default() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Opts { timeout?: number; retries?: number }
 function f(opts: Opts) {
@@ -795,7 +791,7 @@ function f(opts: Opts) {
 /// Assignment destructuring default should strip undefined through boundary.
 #[test]
 fn assignment_destructuring_default_strips_undefined() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 function f(opts: { x?: string }) {
     let y: string;
@@ -819,7 +815,7 @@ function f(opts: { x?: string }) {
 /// Nested destructuring with defaults should strip undefined in type checking.
 #[test]
 fn nested_destructuring_default_in_type_checking() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 interface Deep { a?: { b?: { c: number } } }
 function f(d: Deep) {
@@ -843,7 +839,7 @@ function f(d: Deep) {
 /// For-of with array destructuring and element defaults.
 #[test]
 fn for_of_array_destructuring_with_defaults() {
-    let diags = check_ts(
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
         r#"
 const data: [string | undefined, number | undefined][] = [];
 for (const [name = "default", val = 0] of data) {

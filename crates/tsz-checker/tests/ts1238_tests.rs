@@ -1,30 +1,10 @@
 //! Tests for TS1238: Unable to resolve signature of class decorator when called as an expression.
 
-use tsz_checker::context::CheckerOptions;
-
-fn check_with_experimental_decorators(source: &str) -> Vec<u32> {
-    tsz_checker::test_utils::check_source(
-        source,
-        "test.ts",
-        CheckerOptions {
-            experimental_decorators: true,
-            ..CheckerOptions::default()
-        },
-    )
-    .iter()
-    .map(|d| d.code)
-    .collect()
-}
-
-fn check_es_decorators(source: &str) -> Vec<u32> {
-    tsz_checker::test_utils::check_source_codes(source)
-}
-
 #[test]
 fn ts1238_class_used_as_decorator_emits_error() {
     // A class has construct signatures but no call signatures,
     // so using it as a decorator should emit TS1238.
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 class Decorate { }
 @Decorate
@@ -40,7 +20,7 @@ class C { }
 #[test]
 fn ts1238_function_decorator_no_error() {
     // A function declaration has a call signature, so no TS1238 should be emitted.
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 function decorate(target: any) { }
 @decorate
@@ -56,7 +36,7 @@ class C { }
 #[test]
 fn ts1238_declared_function_decorator_no_error() {
     // Declared function has a call signature — no TS1238.
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 declare function decorate(target: any): any;
 @decorate
@@ -72,7 +52,7 @@ class C { }
 #[test]
 fn ts1238_not_emitted_for_any_type() {
     // If the decorator expression has type `any`, no TS1238 — tsc allows it.
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 declare var dec: any;
 @dec
@@ -87,7 +67,7 @@ class C { }
 
 #[test]
 fn ts1238_not_emitted_for_any_decorator_on_class_with_static_this_members() {
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 declare const foo: any;
 
@@ -118,7 +98,7 @@ class D extends C {
 
 #[test]
 fn ts1238_not_emitted_for_any_decorator_on_class_with_static_method_name_collision() {
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 declare const foo: any;
 
@@ -138,7 +118,7 @@ class D {
 
 #[test]
 fn ts1238_not_emitted_for_any_decorator_on_class_with_static_this_only() {
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 declare const foo: any;
 
@@ -168,7 +148,7 @@ fn ts1238_not_emitted_without_experimental_decorators() {
 
 #[test]
 fn ts1238_generic_decorator_call_emits_error() {
-    let codes = check_with_experimental_decorators(
+    let codes = tsz_checker::test_utils::check_source_codes_experimental_decorators(
         r#"
 interface I<T> {
     prototype: T,
@@ -200,7 +180,7 @@ class C {
 #[test]
 fn ts1238_es_decorator_zero_arity_factory_emits_error() {
     // `() => {}` has no parameter to receive the class target.
-    let codes = check_es_decorators("@(() => {})\nclass C {}\n");
+    let codes = tsz_checker::test_utils::check_source_codes("@(() => {})\nclass C {}\n");
     assert!(
         codes.contains(&1238),
         "Expected TS1238 for zero-arity ES class decorator, got: {codes:?}"
@@ -213,7 +193,7 @@ fn ts1238_es_decorator_one_or_two_required_params_no_error() {
         "@((a: any) => {})\nclass C {}\n",
         "@((a: any, b: any) => {})\nclass C {}\n",
     ] {
-        let codes = check_es_decorators(source);
+        let codes = tsz_checker::test_utils::check_source_codes(source);
         assert!(
             !codes.contains(&1238),
             "Should not emit TS1238 for 1 or 2 required params, got: {codes:?} for {source}"
@@ -227,7 +207,7 @@ fn ts1238_es_decorator_too_many_required_params_emits_error() {
         "@((a: any, b: any, c: any) => {})\nclass C {}\n",
         "@((a: any, b: any, c: any, ...d: any[]) => {})\nclass C {}\n",
     ] {
-        let codes = check_es_decorators(source);
+        let codes = tsz_checker::test_utils::check_source_codes(source);
         assert!(
             codes.contains(&1238),
             "Expected TS1238 for >2 required params, got: {codes:?} for {source}"
