@@ -72,19 +72,28 @@ impl ModuleResolver {
                             None => ".".to_string(),
                         };
 
-                        if let Some(resolved) = self.resolve_package_exports_with_conditions(
-                            &current,
-                            exports,
-                            &subpath_key,
-                            conditions,
-                        ) {
+                        if let Some((resolved, resolved_using_ts_extension)) = self
+                            .resolve_package_exports_with_conditions(
+                                &current,
+                                exports,
+                                &subpath_key,
+                                conditions,
+                            )
+                        {
                             // Self-reference resolved successfully via exports.
                             // This includes .ts files found via .js -> .ts extension
                             // substitution, which is the standard Node16/NodeNext
                             // behavior for source-to-output mapping.
+                            //
+                            // `resolved_using_ts_extension` is propagated from the
+                            // matched export pattern key: when the package author
+                            // wrote `"./*.ts": ...` in exports, the import path's
+                            // `.ts` was consumed by the exports map (rather than
+                            // preserved through to the resolved file), suppressing
+                            // TS2877 in the checker's import-extension gate.
                             return SelfReferenceResultV2::Resolved(ResolvedModule {
                                 resolved_path: resolved.clone(),
-                                resolved_using_ts_extension: false,
+                                resolved_using_ts_extension,
                                 is_external: false,
                                 package_name: Some(package_name.to_string()),
                                 original_specifier: original_specifier.to_string(),

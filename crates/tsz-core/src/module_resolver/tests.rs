@@ -3130,7 +3130,7 @@ fn test_classify_resolved_path() {
 }
 
 #[test]
-fn test_package_imports_exact_mapping_does_not_mark_ts_extension_usage() {
+fn test_package_imports_exact_mapping_marks_ts_extension_usage_when_key_ends_with_ts() {
     use std::fs;
 
     let dir = std::env::temp_dir().join("tsz_test_package_imports_exact_ts_usage");
@@ -3171,16 +3171,19 @@ fn test_package_imports_exact_mapping_does_not_mark_ts_extension_usage() {
         .lookup(&request, |_, _| None, |_| false, None)
         .classify();
     assert!(outcome.resolved_path.is_some());
+    // The exact key `#foo.ts` literally ends in `.ts`, so the package author
+    // opted into the `.ts` mapping. Mirrors tsc's `resolvedUsingTsExtension`
+    // and lets the checker's TS2877 gate suppress the rewrite warning.
     assert!(
-        !outcome.resolved_using_ts_extension,
-        "exact package imports entry should suppress ts-extension rewrite diagnostics"
+        outcome.resolved_using_ts_extension,
+        "exact package imports key ending in .ts should mark resolvedUsingTsExtension"
     );
 
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn test_package_imports_pattern_marks_ts_extension_usage() {
+fn test_package_imports_pattern_does_not_mark_ts_extension_when_key_lacks_ts_suffix() {
     use std::fs;
 
     let dir = std::env::temp_dir().join("tsz_test_package_imports_pattern_ts_usage");
@@ -3221,9 +3224,70 @@ fn test_package_imports_pattern_marks_ts_extension_usage() {
         .lookup(&request, |_, _| None, |_| false, None)
         .classify();
     assert!(outcome.resolved_path.is_some());
+    // Pattern key `#internal/*` does NOT end in `.ts`. The wildcard captured
+    // `foo.ts` and substituted it into the target — the `.ts` was preserved
+    // through to the resolved file rather than consumed by the package
+    // author's mapping. That's exactly the situation TS2877 warns about, so
+    // `resolvedUsingTsExtension` must be `false`.
+    assert!(
+        !outcome.resolved_using_ts_extension,
+        "pattern imports key without .ts suffix must not mark resolvedUsingTsExtension"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_self_reference_exports_pattern_with_ts_key_marks_ts_extension_usage() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_test_self_reference_exports_ts_pattern");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("package.json"),
+        r##"{
+            "name": "pkg",
+            "type": "module",
+            "exports": {
+                "./*.ts": { "source": "./*.ts", "default": "./*.js" }
+            }
+        }"##,
+    )
+    .unwrap();
+    fs::write(dir.join("foo.ts"), "export {};").unwrap();
+    fs::write(dir.join("index.ts"), "import {} from \"pkg/foo.ts\";").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::NodeNext),
+        resolve_package_json_exports: true,
+        rewrite_relative_import_extensions: true,
+        ..Default::default()
+    };
+    let mut resolver = ModuleResolver::new(&options);
+    let request = ModuleLookupRequest {
+        specifier: "pkg/foo.ts",
+        containing_file: &dir.join("index.ts"),
+        specifier_span: Span::new(0, 12),
+        import_kind: ImportKind::EsmImport,
+        resolution_mode_override: None,
+        no_implicit_any: false,
+        implied_classic_resolution: false,
+    };
+
+    let outcome = resolver
+        .lookup(&request, |_, _| None, |_| false, None)
+        .classify();
+    assert!(
+        outcome.resolved_path.is_some(),
+        "self-reference via exports must resolve, got {outcome:?}"
+    );
+    // Exports key `./*.ts` literally ends in `.ts` and the matching default
+    // condition rewrites it to `.js` at runtime — the package author opted
+    // into the `.ts` → `.js` mapping. TS2877 must be suppressed.
     assert!(
         outcome.resolved_using_ts_extension,
-        "pattern package imports entry should preserve ts-extension usage for TS2877"
+        "self-reference via `./*.ts` exports key must mark resolvedUsingTsExtension"
     );
 
     let _ = fs::remove_dir_all(&dir);

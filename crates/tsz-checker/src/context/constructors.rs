@@ -246,6 +246,7 @@ impl<'a> CheckerContext<'a> {
             program_alias_partners: None,
             resolved_module_paths: None,
             resolved_module_request_paths: None,
+            resolved_module_ts_extension_flags: None,
             current_file_idx: 0,
             resolved_modules: None,
             module_augmentation_value_decls: FxHashMap::default(),

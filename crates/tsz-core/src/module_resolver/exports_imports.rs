@@ -12,6 +12,17 @@ use crate::module_resolver_helpers::*;
 use crate::span::Span;
 use std::path::{Path, PathBuf};
 
+/// Returns true when an exports/imports pattern key literally ends with a
+/// TypeScript source extension. This mirrors tsc's `resolvedUsingTsExtension`
+/// signal: the package author opted into the `.ts` mapping by writing it in
+/// the key (e.g. `"./*.ts": ...` or `"#foo.ts": ...`). Wildcard substitutions
+/// that happen to capture a `.ts` extension do NOT count — those preserve the
+/// user's `.ts` extension through to the resolved target, which is exactly the
+/// situation TS2877 warns about.
+pub(super) fn key_ends_with_ts_extension(key: &str) -> bool {
+    key.ends_with(".ts") || key.ends_with(".tsx") || key.ends_with(".mts") || key.ends_with(".cts")
+}
+
 impl ModuleResolver {
     /// Resolve package.json imports field (#-prefixed specifiers)
     pub(super) fn resolve_package_imports(
@@ -94,7 +105,16 @@ impl ModuleResolver {
         })
     }
 
-    /// Resolve imports field subpath (similar to exports but with # prefix)
+    /// Resolve imports field subpath (similar to exports but with # prefix).
+    ///
+    /// Returns `(resolved_target, resolved_using_ts_extension)`.
+    ///
+    /// `resolved_using_ts_extension` mirrors tsc's behavior: it is `true` when
+    /// the literal pattern key (the package author's declared mapping) ends in
+    /// a TypeScript source extension. It is **not** sufficient for the wildcard
+    /// substitution to end in `.ts` — that just preserves the user's `.ts`
+    /// through the substitution, which means Node would try to load a `.ts`
+    /// file at runtime (the situation TS2877 warns about).
     pub(super) fn resolve_imports_subpath(
         &self,
         imports: &rustc_hash::FxHashMap<String, PackageExports>,
@@ -106,33 +126,31 @@ impl ModuleResolver {
         if let Some((key, value)) = imports.get_key_value(specifier)
             && !key.contains('*')
         {
+            let resolved_using_ts_extension = key_ends_with_ts_extension(key);
             return Self::resolve_export_target_to_string(value, conditions)
-                .map(|target| (target, false));
+                .map(|target| (target, resolved_using_ts_extension));
         }
 
         // Try pattern matching (e.g., "#utils/*")
-        let mut best_match: Option<(usize, String, &PackageExports)> = None;
+        let mut best_match: Option<(usize, &str, String, &PackageExports)> = None;
 
         for (pattern, value) in imports {
             if let Some(wildcard) = match_imports_pattern(pattern, specifier) {
                 let specificity = pattern.len();
                 let is_better = match &best_match {
                     None => true,
-                    Some((best_len, _, _)) => specificity > *best_len,
+                    Some((best_len, _, _, _)) => specificity > *best_len,
                 };
                 if is_better {
-                    best_match = Some((specificity, wildcard, value));
+                    best_match = Some((specificity, pattern.as_str(), wildcard, value));
                 }
             }
         }
 
-        if let Some((_, wildcard, value)) = best_match
+        if let Some((_, pattern, wildcard, value)) = best_match
             && let Some(target) = Self::resolve_export_target_to_string(value, conditions)
         {
-            let resolved_using_ts_extension = wildcard.ends_with(".ts")
-                || wildcard.ends_with(".tsx")
-                || wildcard.ends_with(".mts")
-                || wildcard.ends_with(".cts");
+            let resolved_using_ts_extension = key_ends_with_ts_extension(pattern);
             return Some((
                 apply_wildcard_substitution(&target, &wildcard),
                 resolved_using_ts_extension,
@@ -258,20 +276,25 @@ impl ModuleResolver {
         match_types_versions_range(version_range, compiler_version).is_some()
     }
 
-    /// Resolve package exports with explicit conditions
+    /// Resolve package exports with explicit conditions.
+    ///
+    /// Returns `(resolved_path, resolved_using_ts_extension)`. The bool is `true`
+    /// when the matched subpath KEY ends in a TS source extension (e.g. the
+    /// author wrote `"./*.ts": "./*.js"`), mirroring tsc's
+    /// `resolvedUsingTsExtension` semantics.
     pub(super) fn resolve_package_exports_with_conditions(
         &self,
         package_dir: &Path,
         exports: &PackageExports,
         subpath: &str,
         conditions: &[String],
-    ) -> Option<PathBuf> {
+    ) -> Option<(PathBuf, bool)> {
         match exports {
             PackageExports::String(s) => {
                 if subpath == "." {
                     let resolved = package_dir.join(s.trim_start_matches("./"));
                     if let Some(r) = self.try_export_target(&resolved) {
-                        return Some(r);
+                        return Some((r, false));
                     }
                 }
                 None
@@ -282,40 +305,40 @@ impl ModuleResolver {
                 if let Some((key, value)) = map.get_key_value(subpath)
                     && !key.contains('*')
                 {
-                    return self.resolve_export_value_with_conditions(
-                        package_dir,
-                        value,
-                        conditions,
-                    );
+                    let key_uses_ts = key_ends_with_ts_extension(key);
+                    return self
+                        .resolve_export_value_with_conditions(package_dir, value, conditions)
+                        .map(|p| (p, key_uses_ts));
                 }
 
                 // Try pattern matching (e.g., "./*" or "./lib/*")
-                let mut best_match: Option<(usize, String, &PackageExports)> = None;
+                let mut best_match: Option<(usize, &str, String, &PackageExports)> = None;
 
                 for (pattern, value) in map {
                     if let Some(matched) = match_export_pattern(pattern, subpath) {
                         let specificity = pattern.len();
                         let is_better = match &best_match {
                             None => true,
-                            Some((best_len, _, _)) => specificity > *best_len,
+                            Some((best_len, _, _, _)) => specificity > *best_len,
                         };
                         if is_better {
-                            best_match = Some((specificity, matched, value));
+                            best_match = Some((specificity, pattern.as_str(), matched, value));
                         }
                     }
                 }
 
-                if let Some((_, wildcard, value)) = best_match {
+                if let Some((_, pattern, wildcard, value)) = best_match {
                     // Per Node.js PACKAGE_TARGET_RESOLVE spec, substitute * with the
                     // matched wildcard portion BEFORE resolving the target path.
                     // Without this, try_export_target would look for literal "*.cjs" files.
                     let substituted_value = substitute_wildcard_in_exports(value, &wildcard);
+                    let key_uses_ts = key_ends_with_ts_extension(pattern);
                     if let Some(resolved) = self.resolve_export_value_with_conditions(
                         package_dir,
                         &substituted_value,
                         conditions,
                     ) {
-                        return Some(resolved);
+                        return Some((resolved, key_uses_ts));
                     }
                 }
 
@@ -359,7 +382,10 @@ impl ModuleResolver {
         }
     }
 
-    /// Resolve a single export value with conditions
+    /// Resolve a single export value with conditions.
+    ///
+    /// This walks the value side of an exports entry only — it does not touch
+    /// subpath keys, so it does not contribute to `resolved_using_ts_extension`.
     pub(super) fn resolve_export_value_with_conditions(
         &self,
         package_dir: &Path,
