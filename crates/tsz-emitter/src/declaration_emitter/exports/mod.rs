@@ -974,7 +974,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     /// Whether `export = <expr>` can emit `<expr>` directly. True for entity
-    /// names (Identifier, qualified PropertyAccess), false for value
+    /// names (Identifier, qualified `PropertyAccess`), false for value
     /// expressions (object/array literals, calls, primitives) which require
     /// synthesizing a `_default` const with the inferred type.
     fn export_equals_expression_emits_directly(&self, expr_idx: NodeIndex) -> bool {
@@ -983,12 +983,11 @@ impl<'a> DeclarationEmitter<'a> {
         };
         match expr_node.kind {
             k if k == SyntaxKind::Identifier as u16 => true,
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
-                .arena
-                .get_access_expr(expr_node)
-                .is_some_and(|access| {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.arena.get_access_expr(expr_node).is_some_and(|access| {
                     self.export_equals_expression_emits_directly(access.expression)
-                }),
+                })
+            }
             _ => false,
         }
     }
