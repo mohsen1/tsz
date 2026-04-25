@@ -45,6 +45,18 @@ pub struct MergedProgramResidencyStats {
     /// Total estimated size of unique `NodeArena` allocations in bytes.
     /// Computed by calling `estimated_size_bytes()` on each deduplicated arena.
     pub unique_arena_estimated_bytes: usize,
+    /// Whether a dependency graph was computed from skeleton import sources.
+    pub has_dep_graph: bool,
+    /// Number of import edges in the dependency graph.
+    pub dep_graph_edge_count: usize,
+    /// Number of root files (no in-graph dependencies) in the dep graph.
+    pub dep_graph_root_count: usize,
+    /// Whether the dependency graph is acyclic (a DAG).
+    pub dep_graph_is_acyclic: bool,
+    /// Number of cycle groups (SCCs with >1 member) in the dep graph.
+    pub dep_graph_cycle_count: usize,
+    /// Number of unresolved import specifiers in the dep graph.
+    pub dep_graph_unresolved_count: usize,
 }
 
 impl MergedProgram {
@@ -94,6 +106,27 @@ impl MergedProgram {
         let total_bound_file_bytes: usize =
             self.files.iter().map(|f| f.estimated_size_bytes()).sum();
 
+        let (
+            has_dep_graph,
+            dep_edge_count,
+            dep_root_count,
+            dep_is_acyclic,
+            dep_cycle_count,
+            dep_unresolved,
+        ) = if let Some(ref dg) = self.dep_graph {
+            let topo = dg.topological_order();
+            (
+                true,
+                dg.edge_count,
+                dg.roots().len(),
+                topo.is_acyclic,
+                topo.cycles.len(),
+                dg.unresolved_specifiers.len(),
+            )
+        } else {
+            (false, 0, 0, true, 0, 0)
+        };
+
         MergedProgramResidencyStats {
             file_count: self.files.len(),
             bound_file_arena_count: self.files.len(),
@@ -112,6 +145,12 @@ impl MergedProgram {
             pre_merge_bind_total_bytes: self.pre_merge_bind_total_bytes,
             total_bound_file_bytes,
             unique_arena_estimated_bytes,
+            has_dep_graph,
+            dep_graph_edge_count: dep_edge_count,
+            dep_graph_root_count: dep_root_count,
+            dep_graph_is_acyclic: dep_is_acyclic,
+            dep_graph_cycle_count: dep_cycle_count,
+            dep_graph_unresolved_count: dep_unresolved,
         }
     }
 }
@@ -215,6 +254,12 @@ mod tests {
             pre_merge_bind_total_bytes: 300,
             total_bound_file_bytes: 200,
             unique_arena_estimated_bytes: 0,
+            has_dep_graph: false,
+            dep_graph_edge_count: 0,
+            dep_graph_root_count: 0,
+            dep_graph_is_acyclic: true,
+            dep_graph_cycle_count: 0,
+            dep_graph_unresolved_count: 0,
         };
         assert_eq!(budget.assess(&stats), MemoryPressure::Low);
     }
@@ -239,6 +284,12 @@ mod tests {
             pre_merge_bind_total_bytes: 1500,
             total_bound_file_bytes: 1000,
             unique_arena_estimated_bytes: 0,
+            has_dep_graph: false,
+            dep_graph_edge_count: 0,
+            dep_graph_root_count: 0,
+            dep_graph_is_acyclic: true,
+            dep_graph_cycle_count: 0,
+            dep_graph_unresolved_count: 0,
         };
         assert_eq!(budget.assess(&stats), MemoryPressure::High);
     }
@@ -259,6 +310,12 @@ mod tests {
             pre_merge_bind_total_bytes: 50_000,
             total_bound_file_bytes: 20_000,
             unique_arena_estimated_bytes: 0,
+            has_dep_graph: false,
+            dep_graph_edge_count: 0,
+            dep_graph_root_count: 0,
+            dep_graph_is_acyclic: true,
+            dep_graph_cycle_count: 0,
+            dep_graph_unresolved_count: 0,
         };
         // Savings = pre_merge - skeleton = 50000 - 1000 = 49000
         assert_eq!(ResidencyBudget::eviction_savings(&stats), 49_000);
@@ -280,6 +337,12 @@ mod tests {
             pre_merge_bind_total_bytes: 50_000,
             total_bound_file_bytes: 20_000,
             unique_arena_estimated_bytes: 0,
+            has_dep_graph: false,
+            dep_graph_edge_count: 0,
+            dep_graph_root_count: 0,
+            dep_graph_is_acyclic: true,
+            dep_graph_cycle_count: 0,
+            dep_graph_unresolved_count: 0,
         };
         assert_eq!(ResidencyBudget::eviction_savings(&stats), 0);
     }
