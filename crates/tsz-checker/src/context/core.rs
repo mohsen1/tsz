@@ -447,6 +447,7 @@ impl<'a> CheckerContext<'a> {
         self.program_alias_partners = parent.program_alias_partners.clone();
         self.global_symbol_file_index = parent.global_symbol_file_index.clone();
         self.resolved_module_paths = parent.resolved_module_paths.clone();
+        self.resolved_module_ts_extension_flags = parent.resolved_module_ts_extension_flags.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
         self.module_specifiers = parent.module_specifiers.clone();
         self.module_path_specifiers = parent.module_path_specifiers.clone();

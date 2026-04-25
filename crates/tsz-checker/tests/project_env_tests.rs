@@ -41,6 +41,7 @@ fn empty_project_env() -> ProjectEnv {
         program_alias_partners: None,
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_request_paths: Arc::new(FxHashMap::default()),
+        resolved_module_ts_extension_flags: Arc::new(FxHashMap::default()),
         resolved_module_errors: Arc::new(FxHashMap::default()),
         resolved_module_request_errors: Arc::new(FxHashMap::default()),
         is_external_module_by_file: Arc::new(FxHashMap::default()),

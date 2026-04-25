@@ -390,6 +390,11 @@ pub(super) fn collect_diagnostics(
     // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
     // Also build resolved_module_errors map for specific error codes
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> = FxHashMap::default();
+    // Per-resolution `resolvedUsingTsExtension` flag — populated when the
+    // resolver consumed a `.ts` extension via a literal package.json
+    // exports/imports key. Consumed by the checker's TS2877 gate.
+    let mut resolved_module_ts_extension_flags: FxHashMap<(usize, String), bool> =
+        FxHashMap::default();
     let mut resolved_module_request_paths: FxHashMap<
         (
             usize,
@@ -546,6 +551,10 @@ pub(super) fn collect_diagnostics(
                                 (file_idx, specifier.clone(), request_mode_key),
                                 target_idx,
                             );
+                            if outcome.resolved_using_ts_extension {
+                                resolved_module_ts_extension_flags
+                                    .insert((file_idx, specifier.clone()), true);
+                            }
                         }
                     } else if outcome.is_resolved {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
@@ -575,6 +584,7 @@ pub(super) fn collect_diagnostics(
 
     let resolved_module_paths = Arc::new(resolved_module_paths);
     let resolved_module_request_paths = Arc::new(resolved_module_request_paths);
+    let resolved_module_ts_extension_flags = Arc::new(resolved_module_ts_extension_flags);
     let resolved_module_specifiers = Arc::new(resolved_module_specifiers);
     let resolved_module_errors = Arc::new(resolved_module_errors);
     let resolved_module_request_errors = Arc::new(resolved_module_request_errors);
@@ -859,6 +869,7 @@ pub(super) fn collect_diagnostics(
         symbol_file_targets: Arc::clone(&symbol_file_targets),
         resolved_module_paths: Arc::clone(&resolved_module_paths),
         resolved_module_request_paths: Arc::clone(&resolved_module_request_paths),
+        resolved_module_ts_extension_flags: Arc::clone(&resolved_module_ts_extension_flags),
         resolved_module_errors: Arc::clone(&resolved_module_errors),
         resolved_module_request_errors: Arc::clone(&resolved_module_request_errors),
         is_external_module_by_file: Arc::clone(&is_external_module_by_file),

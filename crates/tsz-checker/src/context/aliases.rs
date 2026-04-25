@@ -54,6 +54,14 @@ pub type ResolvedModuleRequestPathMap =
 pub type ResolvedModuleRequestErrorMap =
     FxHashMap<(usize, String, Option<ResolutionModeOverride>), ResolutionError>;
 
+/// Per-`(source_file_idx, specifier)` flag mirroring tsc's
+/// `resolvedUsingTsExtension`: `true` when the resolver consumed a TS source
+/// extension from the specifier via a literal package.json `exports`/`imports`
+/// key (e.g. `"./*.ts"` or `"#foo.ts"`). Used by the import-extension gate
+/// (TS2877) to suppress the warning when the package author opted into the
+/// `.ts` mapping.
+pub type ResolvedModuleTsExtensionMap = FxHashMap<(usize, String), bool>;
+
 /// Program-wide type-only wildcard re-exports map: module specifier → entries of
 /// (re-exported module specifier, is-type-only flag). Mirrors
 /// `tsz_binder::Binder::wildcard_reexports_type_only` but wrapped in `Arc` so
