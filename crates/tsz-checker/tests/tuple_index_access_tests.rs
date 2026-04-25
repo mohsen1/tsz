@@ -112,3 +112,49 @@ namespace Test1 {
         ts2339.message_text
     );
 }
+
+/// Regression for `castingTuple.ts`: when comparing two same-length tuples whose
+/// element classes don't overlap, TS2352 must fire on the cast. Before the fix,
+/// `deep_evaluate_object_properties` skipped tuple element types, leaving them
+/// as `Lazy(DefId)` class refs that the solver's depth>0 Lazy heuristic
+/// short-circuited to "comparable", masking the real mismatch.
+#[test]
+fn test_ts2352_tuple_cast_with_unrelated_element_classes_emits_error() {
+    let diagnostics = check_source_diagnostics(
+        r"
+class A { a: number = 10; }
+class C { c: number = 1; }
+declare var pair: [C];
+var t = <[A]>pair;
+",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2352),
+        "Expected TS2352 for tuple cast between unrelated element classes, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Regression for the multi-element variant from `castingTuple.ts` line 32:
+/// `<[A, I]>classCDTuple` where element 0 (C → A) doesn't overlap but element
+/// 1 (D → I) does. Element-wise tsc semantics mean ANY non-overlapping element
+/// triggers TS2352 — the matching `length: 2` literal must NOT mask the
+/// element-0 mismatch.
+#[test]
+fn test_ts2352_tuple_cast_partial_element_overlap_still_emits_error() {
+    let diagnostics = check_source_diagnostics(
+        r"
+interface I {}
+class A { a: number = 10; }
+class C { c: number = 1; }
+class D implements I { d: number = 1; }
+declare var classCDTuple: [C, D];
+var t9 = <[A, I]>classCDTuple;
+",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2352),
+        "Expected TS2352 for [C, D] as [A, I] (element 0 doesn't overlap), got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
