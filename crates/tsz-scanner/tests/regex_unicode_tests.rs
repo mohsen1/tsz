@@ -14,13 +14,16 @@ use tsz_scanner::scanner_impl::ScannerState;
 use tsz_scanner::scanner_impl::TokenFlags;
 use tsz_scanner::{SyntaxKind, token_is_keyword, token_is_literal, token_is_punctuation};
 
+mod common;
+use common::make_scanner;
+
 // =============================================================================
 // Numeric Literal Tests
 // =============================================================================
 
 #[test]
 fn test_decimal_literal() {
-    let mut scanner = ScannerState::new("123".to_string(), true);
+    let mut scanner = make_scanner("123");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -29,7 +32,7 @@ fn test_decimal_literal() {
 
 #[test]
 fn test_decimal_with_fraction() {
-    let mut scanner = ScannerState::new("123.456".to_string(), true);
+    let mut scanner = make_scanner("123.456");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -38,7 +41,7 @@ fn test_decimal_with_fraction() {
 
 #[test]
 fn test_hex_literal() {
-    let mut scanner = ScannerState::new("0xFF".to_string(), true);
+    let mut scanner = make_scanner("0xFF");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -48,7 +51,7 @@ fn test_hex_literal() {
 
 #[test]
 fn test_octal_literal() {
-    let mut scanner = ScannerState::new("0o755".to_string(), true);
+    let mut scanner = make_scanner("0o755");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -58,7 +61,7 @@ fn test_octal_literal() {
 
 #[test]
 fn test_binary_literal() {
-    let mut scanner = ScannerState::new("0b1010".to_string(), true);
+    let mut scanner = make_scanner("0b1010");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -68,7 +71,7 @@ fn test_binary_literal() {
 
 #[test]
 fn test_bigint_literal_decimal() {
-    let mut scanner = ScannerState::new("9007199254740992n".to_string(), true);
+    let mut scanner = make_scanner("9007199254740992n");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::BigIntLiteral);
@@ -77,7 +80,7 @@ fn test_bigint_literal_decimal() {
 
 #[test]
 fn test_bigint_literal_hex() {
-    let mut scanner = ScannerState::new("0xFFn".to_string(), true);
+    let mut scanner = make_scanner("0xFFn");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::BigIntLiteral);
@@ -86,7 +89,7 @@ fn test_bigint_literal_hex() {
 
 #[test]
 fn test_bigint_literal_binary() {
-    let mut scanner = ScannerState::new("0b1010n".to_string(), true);
+    let mut scanner = make_scanner("0b1010n");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::BigIntLiteral);
@@ -95,7 +98,7 @@ fn test_bigint_literal_binary() {
 
 #[test]
 fn test_bigint_literal_octal() {
-    let mut scanner = ScannerState::new("0o755n".to_string(), true);
+    let mut scanner = make_scanner("0o755n");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::BigIntLiteral);
@@ -108,7 +111,7 @@ fn test_bigint_literal_octal() {
 
 #[test]
 fn test_numeric_separator() {
-    let mut scanner = ScannerState::new("1_000_000".to_string(), true);
+    let mut scanner = make_scanner("1_000_000");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -119,7 +122,7 @@ fn test_numeric_separator() {
 
 #[test]
 fn test_numeric_separator_hex() {
-    let mut scanner = ScannerState::new("0xFF_FF".to_string(), true);
+    let mut scanner = make_scanner("0xFF_FF");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -128,7 +131,7 @@ fn test_numeric_separator_hex() {
 
 #[test]
 fn test_numeric_separator_binary() {
-    let mut scanner = ScannerState::new("0b1010_1010".to_string(), true);
+    let mut scanner = make_scanner("0b1010_1010");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -137,7 +140,7 @@ fn test_numeric_separator_binary() {
 
 #[test]
 fn test_numeric_separator_bigint() {
-    let mut scanner = ScannerState::new("1_000_000n".to_string(), true);
+    let mut scanner = make_scanner("1_000_000n");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::BigIntLiteral);
@@ -146,7 +149,7 @@ fn test_numeric_separator_bigint() {
 
 #[test]
 fn test_numeric_separator_multiple() {
-    let mut scanner = ScannerState::new("1_2_3_4_5".to_string(), true);
+    let mut scanner = make_scanner("1_2_3_4_5");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -159,7 +162,7 @@ fn test_numeric_separator_multiple() {
 
 #[test]
 fn test_exponential_notation() {
-    let mut scanner = ScannerState::new("1e10".to_string(), true);
+    let mut scanner = make_scanner("1e10");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -169,7 +172,7 @@ fn test_exponential_notation() {
 
 #[test]
 fn test_exponential_notation_positive() {
-    let mut scanner = ScannerState::new("1.5e+10".to_string(), true);
+    let mut scanner = make_scanner("1.5e+10");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -178,7 +181,7 @@ fn test_exponential_notation_positive() {
 
 #[test]
 fn test_exponential_notation_negative() {
-    let mut scanner = ScannerState::new("1.5e-10".to_string(), true);
+    let mut scanner = make_scanner("1.5e-10");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -187,7 +190,7 @@ fn test_exponential_notation_negative() {
 
 #[test]
 fn test_exponential_uppercase() {
-    let mut scanner = ScannerState::new("1E10".to_string(), true);
+    let mut scanner = make_scanner("1E10");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -196,7 +199,7 @@ fn test_exponential_uppercase() {
 
 #[test]
 fn test_exponential_with_separator() {
-    let mut scanner = ScannerState::new("1_000e10".to_string(), true);
+    let mut scanner = make_scanner("1_000e10");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -209,7 +212,7 @@ fn test_exponential_with_separator() {
 
 #[test]
 fn test_string_literal_single_quotes() {
-    let mut scanner = ScannerState::new("'hello world'".to_string(), true);
+    let mut scanner = make_scanner("'hello world'");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::StringLiteral);
@@ -219,7 +222,7 @@ fn test_string_literal_single_quotes() {
 
 #[test]
 fn test_string_literal_double_quotes() {
-    let mut scanner = ScannerState::new("\"hello world\"".to_string(), true);
+    let mut scanner = make_scanner("\"hello world\"");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::StringLiteral);
@@ -229,7 +232,7 @@ fn test_string_literal_double_quotes() {
 
 #[test]
 fn test_template_literal_head() {
-    let mut scanner = ScannerState::new("`hello ${".to_string(), true);
+    let mut scanner = make_scanner("`hello ${");
     scanner.scan();
 
     // First scan should be TemplateHead or backtick
@@ -238,7 +241,7 @@ fn test_template_literal_head() {
 
 #[test]
 fn test_template_literal_no_substitution() {
-    let mut scanner = ScannerState::new("`hello world`".to_string(), true);
+    let mut scanner = make_scanner("`hello world`");
     scanner.scan();
 
     assert_eq!(
@@ -303,7 +306,7 @@ fn test_token_is_not_punctuation() {
 
 #[test]
 fn test_zero() {
-    let mut scanner = ScannerState::new("0".to_string(), true);
+    let mut scanner = make_scanner("0");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -312,7 +315,7 @@ fn test_zero() {
 
 #[test]
 fn test_leading_decimal() {
-    let mut scanner = ScannerState::new(".5".to_string(), true);
+    let mut scanner = make_scanner(".5");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -321,7 +324,7 @@ fn test_leading_decimal() {
 
 #[test]
 fn test_scientific_notation_fraction() {
-    let mut scanner = ScannerState::new(".5e10".to_string(), true);
+    let mut scanner = make_scanner(".5e10");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::NumericLiteral);
@@ -330,7 +333,7 @@ fn test_scientific_notation_fraction() {
 
 #[test]
 fn test_end_of_file() {
-    let mut scanner = ScannerState::new("".to_string(), true);
+    let mut scanner = make_scanner("");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::EndOfFileToken);
@@ -363,7 +366,7 @@ fn test_comment_multi_line() {
 
 #[test]
 fn test_identifier() {
-    let mut scanner = ScannerState::new("hello".to_string(), true);
+    let mut scanner = make_scanner("hello");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::Identifier);
@@ -372,7 +375,7 @@ fn test_identifier() {
 
 #[test]
 fn test_private_identifier() {
-    let mut scanner = ScannerState::new("#private".to_string(), true);
+    let mut scanner = make_scanner("#private");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::PrivateIdentifier);
@@ -381,7 +384,7 @@ fn test_private_identifier() {
 
 #[test]
 fn test_keyword() {
-    let mut scanner = ScannerState::new("function".to_string(), true);
+    let mut scanner = make_scanner("function");
     scanner.scan();
 
     assert_eq!(scanner.get_token(), SyntaxKind::FunctionKeyword);
@@ -390,7 +393,7 @@ fn test_keyword() {
 
 #[test]
 fn test_token_flags_scientific() {
-    let mut scanner = ScannerState::new("1e10".to_string(), true);
+    let mut scanner = make_scanner("1e10");
     scanner.scan();
 
     assert!(scanner.get_token_flags() & TokenFlags::Scientific as u32 != 0);
@@ -398,7 +401,7 @@ fn test_token_flags_scientific() {
 
 #[test]
 fn test_token_flags_hex() {
-    let mut scanner = ScannerState::new("0xFF".to_string(), true);
+    let mut scanner = make_scanner("0xFF");
     scanner.scan();
 
     assert!(scanner.get_token_flags() & TokenFlags::HexSpecifier as u32 != 0);
@@ -406,7 +409,7 @@ fn test_token_flags_hex() {
 
 #[test]
 fn test_token_flags_binary() {
-    let mut scanner = ScannerState::new("0b1010".to_string(), true);
+    let mut scanner = make_scanner("0b1010");
     scanner.scan();
 
     assert!(scanner.get_token_flags() & TokenFlags::BinarySpecifier as u32 != 0);
@@ -414,7 +417,7 @@ fn test_token_flags_binary() {
 
 #[test]
 fn test_token_flags_octal() {
-    let mut scanner = ScannerState::new("0o755".to_string(), true);
+    let mut scanner = make_scanner("0o755");
     scanner.scan();
 
     assert!(scanner.get_token_flags() & TokenFlags::OctalSpecifier as u32 != 0);
@@ -422,7 +425,7 @@ fn test_token_flags_octal() {
 
 #[test]
 fn test_token_flags_contains_separator() {
-    let mut scanner = ScannerState::new("1_000_000".to_string(), true);
+    let mut scanner = make_scanner("1_000_000");
     scanner.scan();
 
     assert!(scanner.get_token_flags() & TokenFlags::ContainsSeparator as u32 != 0);
@@ -430,7 +433,7 @@ fn test_token_flags_contains_separator() {
 
 #[test]
 fn test_multiple_tokens() {
-    let mut scanner = ScannerState::new("let x = 5;".to_string(), true);
+    let mut scanner = make_scanner("let x = 5;");
 
     scanner.scan();
     assert_eq!(scanner.get_token(), SyntaxKind::LetKeyword);
@@ -452,7 +455,7 @@ fn test_multiple_tokens() {
 
 #[test]
 fn test_position_tracking() {
-    let mut scanner = ScannerState::new("abc def".to_string(), true);
+    let mut scanner = make_scanner("abc def");
 
     scanner.scan();
     assert_eq!(scanner.get_token(), SyntaxKind::Identifier);
@@ -475,7 +478,7 @@ fn test_source_text() {
 
 #[test]
 fn test_interner() {
-    let mut scanner = ScannerState::new("hello world".to_string(), true);
+    let mut scanner = make_scanner("hello world");
     scanner.scan();
 
     // The interner should have been created
@@ -489,7 +492,7 @@ fn test_interner() {
 
 #[test]
 fn test_scanner_state_save_restore() {
-    let mut scanner = ScannerState::new("abc def".to_string(), true);
+    let mut scanner = make_scanner("abc def");
 
     // Scan first token
     scanner.scan();
