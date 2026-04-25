@@ -188,7 +188,7 @@ impl BinderState {
             declaration_arenas: Arc::new(FxHashMap::default()),
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
-            node_flow: FxHashMap::with_capacity_and_hasher(128, Default::default()),
+            node_flow: Arc::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
             hoisted_vars: Vec::new(),
@@ -258,7 +258,7 @@ impl BinderState {
         Arc::make_mut(&mut self.declaration_arenas).clear();
         Arc::make_mut(&mut self.sym_to_decl_indices).clear();
         self.cross_file_node_symbols.clear();
-        self.node_flow.clear();
+        Arc::make_mut(&mut self.node_flow).clear();
         self.top_level_flow.clear();
         self.switch_clause_to_switch.clear();
         self.hoisted_vars.clear();
@@ -430,7 +430,7 @@ impl BinderState {
             declaration_arenas: Arc::new(FxHashMap::default()),
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
             cross_file_node_symbols: FxHashMap::default(),
-            node_flow: FxHashMap::default(),
+            node_flow: Arc::new(FxHashMap::default()),
             top_level_flow: FxHashMap::default(),
             switch_clause_to_switch: FxHashMap::default(),
             hoisted_vars: Vec::new(),
@@ -993,8 +993,11 @@ impl BinderState {
                 node_symbols.clear();
                 node_symbols.reserve(estimated_nodes);
             }
-            self.node_flow.clear();
-            self.node_flow.reserve(estimated_nodes);
+            {
+                let node_flow = Arc::make_mut(&mut self.node_flow);
+                node_flow.clear();
+                node_flow.reserve(estimated_nodes);
+            }
         }
 
         // Initialize scope chain with source file scope (legacy)
@@ -1809,7 +1812,7 @@ impl BinderState {
                 .is_some_and(|node| node.pos < reparse_start)
         };
 
-        self.node_flow.retain(|node_id, _| keep_node(node_id));
+        Arc::make_mut(&mut self.node_flow).retain(|node_id, _| keep_node(node_id));
         self.node_scope_ids.retain(|node_id, _| keep_node(node_id));
         self.switch_clause_to_switch
             .retain(|node_id, _| keep_node(node_id));

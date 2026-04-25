@@ -1553,7 +1553,7 @@ impl BinderState {
                     "record_flow: associating node with flow"
                 );
             }
-            self.node_flow.insert(node.0, self.current_flow);
+            Arc::make_mut(&mut self.node_flow).insert(node.0, self.current_flow);
         }
     }
 

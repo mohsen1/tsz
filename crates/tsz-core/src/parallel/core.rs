@@ -543,8 +543,15 @@ pub struct BindResult {
     /// go through `Arc::make_mut` (free when refcount=1, the case during
     /// a single file's binding).
     pub flow_nodes: Arc<FlowNodeArena>,
-    /// Node-to-flow mapping: tracks which flow node was active at each AST node
-    pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Node-to-flow mapping: tracks which flow node was active at each AST node.
+    ///
+    /// Shared via `Arc` because the binder owns it as `Arc<FxHashMap<...>>`
+    /// to avoid deep clones when reconstructing per-file binders for the
+    /// cross-file lookup pipeline. The Arc is moved out of the binder when
+    /// finalizing the bind result. See PR #1202 (`semantic_defs`) and
+    /// PR #1227 (`node_symbols`); this is the same template applied to
+    /// `node_flow`.
+    pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
     /// Used by control flow analysis for switch exhaustiveness checking
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
@@ -1444,8 +1451,15 @@ pub struct BoundFile {
     /// on N-file projects this previously cost 2N deep clones of the
     /// per-file flow graph.
     pub flow_nodes: Arc<FlowNodeArena>,
-    /// Node-to-flow mapping: tracks which flow node was active at each AST node
-    pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Node-to-flow mapping: tracks which flow node was active at each AST node.
+    ///
+    /// Shared via `Arc` so cross-file lookup binders (one per file in the
+    /// parallel CLI pipeline) can take an O(1) reference to this file's
+    /// per-file map instead of deep-cloning the underlying `FxHashMap`. On
+    /// large repos (6086 files), the deep clone of `node_flow` was one of
+    /// the largest per-binder allocations after the `semantic_defs` (#1202)
+    /// and `node_symbols` (#1227) Arc migrations.
+    pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
     /// Used by control flow analysis for switch exhaustiveness checking
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
@@ -3326,7 +3340,9 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 })
                 .collect(),
             flow_nodes: result.flow_nodes.clone(),
-            node_flow: result.node_flow.clone(),
+            // Arc::clone is O(1); per-file `BoundFile` shares the same
+            // `node_flow` map as later `cross_file_*` binder constructions.
+            node_flow: Arc::clone(&result.node_flow),
             switch_clause_to_switch: result.switch_clause_to_switch.clone(),
             is_external_module: result.is_external_module,
             expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
@@ -4088,7 +4104,7 @@ fn build_lib_bound_file_for_interface_checks(
         module_augmentations: FxHashMap::default(),
         augmentation_target_modules: FxHashMap::default(),
         flow_nodes: Arc::new(FlowNodeArena::default()),
-        node_flow: FxHashMap::default(),
+        node_flow: Arc::new(FxHashMap::default()),
         switch_clause_to_switch: FxHashMap::default(),
         is_external_module: lib_file.binder.is_external_module,
         expando_properties: FxHashMap::default(),
@@ -4911,7 +4927,9 @@ pub fn create_binder_from_bound_file(
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),
-            node_flow: file.node_flow.clone(),
+            // Arc::clone is O(1); cross-file lookup binders share the per-file
+            // node_flow map by reference instead of deep-cloning it.
+            node_flow: Arc::clone(&file.node_flow),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
             alias_partners: program.alias_partners.clone(),
@@ -5016,7 +5034,9 @@ pub fn create_binder_from_bound_file_with_shared(
             shorthand_ambient_modules: program.shorthand_ambient_modules.clone(),
             modules_with_export_equals: FxHashSet::default(),
             flow_nodes: file.flow_nodes.clone(),
-            node_flow: file.node_flow.clone(),
+            // Arc::clone is O(1); cross-file lookup binders share the per-file
+            // node_flow map by reference instead of deep-cloning it.
+            node_flow: Arc::clone(&file.node_flow),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
             alias_partners: program.alias_partners.clone(),
