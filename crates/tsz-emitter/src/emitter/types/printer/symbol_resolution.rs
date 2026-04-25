@@ -372,9 +372,17 @@ impl<'a> TypePrinter<'a> {
         module_path: &str,
         qualified_name: &'b str,
     ) -> &'b str {
-        // Get the last segment of the module path (e.g., "url" from "@types/url")
+        // Try the full module path first (handles slash-containing specifiers
+        // like `ext/other`, where the qualified name starts with the full
+        // path). Matches typesVersionsDeclarationEmit.ambient.
+        if let Some(rest) = qualified_name.strip_prefix(module_path)
+            && let Some(stripped) = rest.strip_prefix('.')
+            && !stripped.is_empty()
+        {
+            return stripped;
+        }
+        // Then fall back to the last segment (e.g. "url" from "@types/url").
         let module_last = module_path.rsplit('/').next().unwrap_or(module_path);
-        // Check if qualified name starts with `<module_last>.`
         if let Some(rest) = qualified_name.strip_prefix(module_last)
             && let Some(stripped) = rest.strip_prefix('.')
             && !stripped.is_empty()
