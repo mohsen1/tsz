@@ -11,73 +11,13 @@ Output: JSON file with per-test results and pre-computed aggregates
 """
 
 import sys
-import re
+import os
 import json
 import argparse
 from collections import Counter, defaultdict
 
-
-def parse_runner_output(path):
-    """Parse the raw runner output into per-test records."""
-    tests = {}
-    current_path = None
-    current_status = None
-
-    with open(path) as f:
-        for line in f:
-            line = line.rstrip()
-
-            # PASS line
-            m = re.match(r"^PASS\s+(.+?)$", line)
-            if m:
-                test_path = m.group(1)
-                tests[test_path] = {"status": "PASS"}
-                current_path = None
-                continue
-
-            # FAIL/XFAIL line
-            m = re.match(r"^(FAIL|XFAIL)\s+(.+?)(?:\s+\((.+)\))?$", line)
-            if m:
-                current_path = m.group(2)
-                current_status = {"status": m.group(1), "expected": [], "actual": []}
-                if m.group(1) == "XFAIL" and m.group(3):
-                    current_status["known_failure"] = m.group(3)
-                tests[current_path] = current_status
-                continue
-
-            # expected/actual lines (indented, after a FAIL)
-            if current_path and current_status:
-                m = re.match(r"^\s+expected:\s+\[(.*?)?\]", line)
-                if m:
-                    codes = m.group(1).strip() if m.group(1) else ""
-                    current_status["expected"] = [c.strip() for c in codes.split(",") if c.strip()]
-                    continue
-                m = re.match(r"^\s+actual:\s+\[(.*?)?\]", line)
-                if m:
-                    codes = m.group(1).strip() if m.group(1) else ""
-                    current_status["actual"] = [c.strip() for c in codes.split(",") if c.strip()]
-                    continue
-                # Non-indented line means end of this FAIL block
-                if not line.startswith(" "):
-                    current_path = None
-                    current_status = None
-
-    return tests
-
-
-def compute_diff(expected, actual):
-    """Compute missing/extra codes between expected and actual."""
-    exp_counter = Counter(expected)
-    act_counter = Counter(actual)
-    missing = []
-    extra = []
-    for code in set(list(exp_counter.keys()) + list(act_counter.keys())):
-        diff = act_counter.get(code, 0) - exp_counter.get(code, 0)
-        if diff > 0:
-            extra.extend([code] * diff)
-        elif diff < 0:
-            missing.extend([code] * (-diff))
-    return sorted(missing), sorted(extra)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.results import parse_runner_output, compute_diff
 
 
 def build_aggregates(tests):
