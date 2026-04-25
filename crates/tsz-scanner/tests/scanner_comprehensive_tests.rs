@@ -1,12 +1,15 @@
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
 
+mod common;
+use common::make_scanner;
+
 // =============================================================================
 // Helper: collect all tokens from source
 // =============================================================================
 
 fn scan_all_tokens(source: &str) -> Vec<SyntaxKind> {
-    let mut scanner = ScannerState::new(source.to_string(), true);
+    let mut scanner = make_scanner(source);
     let mut tokens = Vec::new();
     loop {
         let token = scanner.scan();
@@ -20,7 +23,7 @@ fn scan_all_tokens(source: &str) -> Vec<SyntaxKind> {
 
 /// Scan a single token from source and return (kind, value)
 fn scan_single(source: &str) -> (SyntaxKind, String) {
-    let mut scanner = ScannerState::new(source.to_string(), true);
+    let mut scanner = make_scanner(source);
     let kind = scanner.scan();
     let value = scanner.get_token_value();
     (kind, value)
@@ -34,7 +37,7 @@ mod string_scanning {
 
     #[test]
     fn empty_double_quoted_string() {
-        let mut scanner = ScannerState::new(r#""""#.to_string(), true);
+        let mut scanner = make_scanner(r#""""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "");
@@ -43,7 +46,7 @@ mod string_scanning {
 
     #[test]
     fn empty_single_quoted_string() {
-        let mut scanner = ScannerState::new("''".to_string(), true);
+        let mut scanner = make_scanner("''");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "");
@@ -52,7 +55,7 @@ mod string_scanning {
 
     #[test]
     fn simple_double_quoted_string() {
-        let mut scanner = ScannerState::new(r#""hello""#.to_string(), true);
+        let mut scanner = make_scanner(r#""hello""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "hello");
@@ -60,7 +63,7 @@ mod string_scanning {
 
     #[test]
     fn simple_single_quoted_string() {
-        let mut scanner = ScannerState::new("'hello'".to_string(), true);
+        let mut scanner = make_scanner("'hello'");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "hello");
@@ -68,7 +71,7 @@ mod string_scanning {
 
     #[test]
     fn escape_newline() {
-        let mut scanner = ScannerState::new(r#""line\nbreak""#.to_string(), true);
+        let mut scanner = make_scanner(r#""line\nbreak""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "line\nbreak");
@@ -76,7 +79,7 @@ mod string_scanning {
 
     #[test]
     fn escape_carriage_return() {
-        let mut scanner = ScannerState::new(r#""before\rafter""#.to_string(), true);
+        let mut scanner = make_scanner(r#""before\rafter""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "before\rafter");
@@ -84,7 +87,7 @@ mod string_scanning {
 
     #[test]
     fn escape_tab() {
-        let mut scanner = ScannerState::new(r#""tab\there""#.to_string(), true);
+        let mut scanner = make_scanner(r#""tab\there""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "tab\there");
@@ -92,7 +95,7 @@ mod string_scanning {
 
     #[test]
     fn escape_backslash() {
-        let mut scanner = ScannerState::new(r#""back\\slash""#.to_string(), true);
+        let mut scanner = make_scanner(r#""back\\slash""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "back\\slash");
@@ -100,7 +103,7 @@ mod string_scanning {
 
     #[test]
     fn escape_single_quote_in_single_quoted_string() {
-        let mut scanner = ScannerState::new(r"'it\'s'".to_string(), true);
+        let mut scanner = make_scanner(r"'it\'s'");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "it's");
@@ -108,7 +111,7 @@ mod string_scanning {
 
     #[test]
     fn escape_double_quote_in_double_quoted_string() {
-        let mut scanner = ScannerState::new(r#""say \"hi\"""#.to_string(), true);
+        let mut scanner = make_scanner(r#""say \"hi\"""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), r#"say "hi""#);
@@ -116,7 +119,7 @@ mod string_scanning {
 
     #[test]
     fn escape_vertical_tab() {
-        let mut scanner = ScannerState::new(r#""vt\vtab""#.to_string(), true);
+        let mut scanner = make_scanner(r#""vt\vtab""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "vt\x0Btab");
@@ -124,7 +127,7 @@ mod string_scanning {
 
     #[test]
     fn escape_backspace() {
-        let mut scanner = ScannerState::new(r#""bs\bhere""#.to_string(), true);
+        let mut scanner = make_scanner(r#""bs\bhere""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "bs\x08here");
@@ -132,7 +135,7 @@ mod string_scanning {
 
     #[test]
     fn escape_form_feed() {
-        let mut scanner = ScannerState::new(r#""ff\fhere""#.to_string(), true);
+        let mut scanner = make_scanner(r#""ff\fhere""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "ff\x0Chere");
@@ -141,7 +144,7 @@ mod string_scanning {
     #[test]
     fn escape_hex_two_digit() {
         // \x41 = 'A'
-        let mut scanner = ScannerState::new(r#""\x41""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\x41""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "A");
@@ -150,7 +153,7 @@ mod string_scanning {
     #[test]
     fn escape_hex_lowercase() {
         // \x61 = 'a'
-        let mut scanner = ScannerState::new(r#""\x61""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\x61""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "a");
@@ -159,7 +162,7 @@ mod string_scanning {
     #[test]
     fn escape_hex_null() {
         // \x00 = null character
-        let mut scanner = ScannerState::new(r#""\x00""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\x00""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "\0");
@@ -168,7 +171,7 @@ mod string_scanning {
     #[test]
     fn escape_unicode_four_digit() {
         // \u0041 = 'A'
-        let mut scanner = ScannerState::new(r#""\u0041""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\u0041""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "A");
@@ -177,7 +180,7 @@ mod string_scanning {
     #[test]
     fn escape_unicode_bmp() {
         // \u00E9 = 'e' with acute accent
-        let mut scanner = ScannerState::new(r#""\u00E9""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\u00E9""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "\u{00E9}");
@@ -186,7 +189,7 @@ mod string_scanning {
     #[test]
     fn escape_unicode_braced() {
         // \u{1F600} = grinning face emoji
-        let mut scanner = ScannerState::new(r#""\u{1F600}""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\u{1F600}""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "\u{1F600}");
@@ -195,7 +198,7 @@ mod string_scanning {
     #[test]
     fn escape_unicode_braced_small_code_point() {
         // \u{41} = 'A'
-        let mut scanner = ScannerState::new(r#""\u{41}""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\u{41}""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "A");
@@ -204,7 +207,7 @@ mod string_scanning {
     #[test]
     fn escape_zero_null() {
         // \0 not followed by a digit => null character
-        let mut scanner = ScannerState::new("\"\\0\"".to_string(), true);
+        let mut scanner = make_scanner("\"\\0\"");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "\0");
@@ -213,7 +216,7 @@ mod string_scanning {
     #[test]
     fn escape_octal_single_digit() {
         // \1 = octal 1 = char code 1
-        let mut scanner = ScannerState::new("\"\\1\"".to_string(), true);
+        let mut scanner = make_scanner("\"\\1\"");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "\x01");
@@ -222,7 +225,7 @@ mod string_scanning {
     #[test]
     fn escape_octal_multi_digit() {
         // \101 = octal 101 = 65 = 'A'
-        let mut scanner = ScannerState::new("\"\\101\"".to_string(), true);
+        let mut scanner = make_scanner("\"\\101\"");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "A");
@@ -231,7 +234,7 @@ mod string_scanning {
     #[test]
     fn escape_octal_max_three_digits() {
         // \377 = octal 377 = 255
-        let mut scanner = ScannerState::new("\"\\377\"".to_string(), true);
+        let mut scanner = make_scanner("\"\\377\"");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "\u{00FF}");
@@ -239,7 +242,7 @@ mod string_scanning {
 
     #[test]
     fn unterminated_string_newline() {
-        let mut scanner = ScannerState::new("\"hello\nworld\"".to_string(), true);
+        let mut scanner = make_scanner("\"hello\nworld\"");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "hello");
@@ -248,7 +251,7 @@ mod string_scanning {
 
     #[test]
     fn unterminated_string_eof() {
-        let mut scanner = ScannerState::new("\"hello".to_string(), true);
+        let mut scanner = make_scanner("\"hello");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "hello");
@@ -258,7 +261,7 @@ mod string_scanning {
     #[test]
     fn line_continuation_backslash_newline() {
         // Backslash followed by newline is a line continuation (skips the newline)
-        let mut scanner = ScannerState::new("\"hello\\\nworld\"".to_string(), true);
+        let mut scanner = make_scanner("\"hello\\\nworld\"");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "helloworld");
@@ -266,7 +269,7 @@ mod string_scanning {
 
     #[test]
     fn string_with_multiple_escape_sequences() {
-        let mut scanner = ScannerState::new(r#""a\tb\nc\\\u0041""#.to_string(), true);
+        let mut scanner = make_scanner(r#""a\tb\nc\\\u0041""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "a\tb\nc\\A");
@@ -275,7 +278,7 @@ mod string_scanning {
     #[test]
     fn escape_unknown_char_passes_through() {
         // \z is not a recognized escape - it should produce 'z'
-        let mut scanner = ScannerState::new(r#""\z""#.to_string(), true);
+        let mut scanner = make_scanner(r#""\z""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "z");
@@ -290,7 +293,7 @@ mod number_scanning {
 
     #[test]
     fn simple_integer() {
-        let mut scanner = ScannerState::new("42".to_string(), true);
+        let mut scanner = make_scanner("42");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "42");
@@ -298,7 +301,7 @@ mod number_scanning {
 
     #[test]
     fn zero() {
-        let mut scanner = ScannerState::new("0".to_string(), true);
+        let mut scanner = make_scanner("0");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "0");
@@ -306,7 +309,7 @@ mod number_scanning {
 
     #[test]
     fn decimal_with_dot() {
-        let mut scanner = ScannerState::new("3.14".to_string(), true);
+        let mut scanner = make_scanner("3.14");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "3.14");
@@ -314,7 +317,7 @@ mod number_scanning {
 
     #[test]
     fn leading_dot_number() {
-        let mut scanner = ScannerState::new(".5".to_string(), true);
+        let mut scanner = make_scanner(".5");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), ".5");
@@ -323,7 +326,7 @@ mod number_scanning {
     #[test]
     fn trailing_dot_number() {
         // "5." should scan as "5." (NumericLiteral with trailing dot)
-        let mut scanner = ScannerState::new("5.".to_string(), true);
+        let mut scanner = make_scanner("5.");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "5.");
@@ -331,7 +334,7 @@ mod number_scanning {
 
     #[test]
     fn hex_lowercase() {
-        let mut scanner = ScannerState::new("0xff".to_string(), true);
+        let mut scanner = make_scanner("0xff");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "0xff");
@@ -343,7 +346,7 @@ mod number_scanning {
 
     #[test]
     fn hex_uppercase() {
-        let mut scanner = ScannerState::new("0XFF".to_string(), true);
+        let mut scanner = make_scanner("0XFF");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "0XFF");
@@ -355,7 +358,7 @@ mod number_scanning {
 
     #[test]
     fn octal_prefix() {
-        let mut scanner = ScannerState::new("0o77".to_string(), true);
+        let mut scanner = make_scanner("0o77");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "0o77");
@@ -367,7 +370,7 @@ mod number_scanning {
 
     #[test]
     fn octal_prefix_uppercase() {
-        let mut scanner = ScannerState::new("0O77".to_string(), true);
+        let mut scanner = make_scanner("0O77");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "0O77");
@@ -379,7 +382,7 @@ mod number_scanning {
 
     #[test]
     fn binary_prefix() {
-        let mut scanner = ScannerState::new("0b1010".to_string(), true);
+        let mut scanner = make_scanner("0b1010");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "0b1010");
@@ -391,7 +394,7 @@ mod number_scanning {
 
     #[test]
     fn binary_prefix_uppercase() {
-        let mut scanner = ScannerState::new("0B1010".to_string(), true);
+        let mut scanner = make_scanner("0B1010");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "0B1010");
@@ -403,7 +406,7 @@ mod number_scanning {
 
     #[test]
     fn scientific_notation_uppercase_e() {
-        let mut scanner = ScannerState::new("1E5".to_string(), true);
+        let mut scanner = make_scanner("1E5");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "1E5");
@@ -412,7 +415,7 @@ mod number_scanning {
 
     #[test]
     fn scientific_notation_lowercase_e() {
-        let mut scanner = ScannerState::new("1e5".to_string(), true);
+        let mut scanner = make_scanner("1e5");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "1e5");
@@ -421,7 +424,7 @@ mod number_scanning {
 
     #[test]
     fn scientific_notation_negative_exponent() {
-        let mut scanner = ScannerState::new("1.5e-3".to_string(), true);
+        let mut scanner = make_scanner("1.5e-3");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "1.5e-3");
@@ -430,7 +433,7 @@ mod number_scanning {
 
     #[test]
     fn scientific_notation_positive_exponent() {
-        let mut scanner = ScannerState::new("2.5e+10".to_string(), true);
+        let mut scanner = make_scanner("2.5e+10");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_text(), "2.5e+10");
@@ -439,7 +442,7 @@ mod number_scanning {
 
     #[test]
     fn numeric_separator() {
-        let mut scanner = ScannerState::new("1_000_000".to_string(), true);
+        let mut scanner = make_scanner("1_000_000");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_ne!(
@@ -451,7 +454,7 @@ mod number_scanning {
 
     #[test]
     fn numeric_separator_hex() {
-        let mut scanner = ScannerState::new("0xFF_FF".to_string(), true);
+        let mut scanner = make_scanner("0xFF_FF");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_ne!(
@@ -462,7 +465,7 @@ mod number_scanning {
 
     #[test]
     fn numeric_separator_binary() {
-        let mut scanner = ScannerState::new("0b1010_0101".to_string(), true);
+        let mut scanner = make_scanner("0b1010_0101");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_ne!(
@@ -473,7 +476,7 @@ mod number_scanning {
 
     #[test]
     fn bigint_literal() {
-        let mut scanner = ScannerState::new("123n".to_string(), true);
+        let mut scanner = make_scanner("123n");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::BigIntLiteral);
         assert_eq!(scanner.get_token_value(), "123n");
@@ -481,7 +484,7 @@ mod number_scanning {
 
     #[test]
     fn bigint_hex() {
-        let mut scanner = ScannerState::new("0xFFn".to_string(), true);
+        let mut scanner = make_scanner("0xFFn");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::BigIntLiteral);
         assert_eq!(scanner.get_token_value(), "0xFFn");
@@ -489,7 +492,7 @@ mod number_scanning {
 
     #[test]
     fn bigint_binary() {
-        let mut scanner = ScannerState::new("0b1010n".to_string(), true);
+        let mut scanner = make_scanner("0b1010n");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::BigIntLiteral);
         assert_eq!(scanner.get_token_value(), "0b1010n");
@@ -497,7 +500,7 @@ mod number_scanning {
 
     #[test]
     fn bigint_octal() {
-        let mut scanner = ScannerState::new("0o77n".to_string(), true);
+        let mut scanner = make_scanner("0o77n");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::BigIntLiteral);
         assert_eq!(scanner.get_token_value(), "0o77n");
@@ -505,7 +508,7 @@ mod number_scanning {
 
     #[test]
     fn legacy_octal() {
-        let mut scanner = ScannerState::new("0777".to_string(), true);
+        let mut scanner = make_scanner("0777");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_ne!(scanner.get_token_flags() & TokenFlags::Octal as u32, 0);
@@ -514,7 +517,7 @@ mod number_scanning {
     #[test]
     fn legacy_octal_not_pure_octal() {
         // 089 has non-octal digits, so it should NOT be treated as legacy octal
-        let mut scanner = ScannerState::new("089".to_string(), true);
+        let mut scanner = make_scanner("089");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_ne!(
@@ -547,7 +550,7 @@ mod number_scanning {
 
     #[test]
     fn decimal_bigint_suffix_emits_ts1353_and_stays_numeric() {
-        let mut scanner = ScannerState::new(".2n".to_string(), true);
+        let mut scanner = make_scanner(".2n");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_value(), ".2");
@@ -560,7 +563,7 @@ mod number_scanning {
 
     #[test]
     fn scientific_bigint_suffix_emits_ts1352_and_stays_numeric() {
-        let mut scanner = ScannerState::new("1e2n".to_string(), true);
+        let mut scanner = make_scanner("1e2n");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert_eq!(scanner.get_token_value(), "1e2");
@@ -573,7 +576,7 @@ mod number_scanning {
 
     #[test]
     fn invalid_separator_at_start() {
-        let mut scanner = ScannerState::new("_123".to_string(), true);
+        let mut scanner = make_scanner("_123");
         let token = scanner.scan();
         // _123 is an identifier, not a number with invalid separator
         assert_eq!(token, SyntaxKind::Identifier);
@@ -581,7 +584,7 @@ mod number_scanning {
 
     #[test]
     fn decimal_bigint() {
-        let mut scanner = ScannerState::new("0n".to_string(), true);
+        let mut scanner = make_scanner("0n");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::BigIntLiteral);
         assert_eq!(scanner.get_token_value(), "0n");
@@ -596,7 +599,7 @@ mod identifier_scanning {
 
     #[test]
     fn simple_identifier() {
-        let mut scanner = ScannerState::new("foo".to_string(), true);
+        let mut scanner = make_scanner("foo");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "foo");
@@ -604,7 +607,7 @@ mod identifier_scanning {
 
     #[test]
     fn identifier_with_digits() {
-        let mut scanner = ScannerState::new("foo123".to_string(), true);
+        let mut scanner = make_scanner("foo123");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "foo123");
@@ -612,7 +615,7 @@ mod identifier_scanning {
 
     #[test]
     fn identifier_starting_with_underscore() {
-        let mut scanner = ScannerState::new("_private".to_string(), true);
+        let mut scanner = make_scanner("_private");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "_private");
@@ -620,7 +623,7 @@ mod identifier_scanning {
 
     #[test]
     fn identifier_starting_with_dollar() {
-        let mut scanner = ScannerState::new("$scope".to_string(), true);
+        let mut scanner = make_scanner("$scope");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "$scope");
@@ -628,7 +631,7 @@ mod identifier_scanning {
 
     #[test]
     fn single_char_identifier() {
-        let mut scanner = ScannerState::new("x".to_string(), true);
+        let mut scanner = make_scanner("x");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "x");
@@ -636,91 +639,91 @@ mod identifier_scanning {
 
     #[test]
     fn keyword_if() {
-        let mut scanner = ScannerState::new("if".to_string(), true);
+        let mut scanner = make_scanner("if");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::IfKeyword);
     }
 
     #[test]
     fn keyword_const() {
-        let mut scanner = ScannerState::new("const".to_string(), true);
+        let mut scanner = make_scanner("const");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::ConstKeyword);
     }
 
     #[test]
     fn keyword_function() {
-        let mut scanner = ScannerState::new("function".to_string(), true);
+        let mut scanner = make_scanner("function");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::FunctionKeyword);
     }
 
     #[test]
     fn keyword_let() {
-        let mut scanner = ScannerState::new("let".to_string(), true);
+        let mut scanner = make_scanner("let");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::LetKeyword);
     }
 
     #[test]
     fn keyword_class() {
-        let mut scanner = ScannerState::new("class".to_string(), true);
+        let mut scanner = make_scanner("class");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::ClassKeyword);
     }
 
     #[test]
     fn keyword_return() {
-        let mut scanner = ScannerState::new("return".to_string(), true);
+        let mut scanner = make_scanner("return");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::ReturnKeyword);
     }
 
     #[test]
     fn keyword_true() {
-        let mut scanner = ScannerState::new("true".to_string(), true);
+        let mut scanner = make_scanner("true");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::TrueKeyword);
     }
 
     #[test]
     fn keyword_false() {
-        let mut scanner = ScannerState::new("false".to_string(), true);
+        let mut scanner = make_scanner("false");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::FalseKeyword);
     }
 
     #[test]
     fn keyword_null() {
-        let mut scanner = ScannerState::new("null".to_string(), true);
+        let mut scanner = make_scanner("null");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NullKeyword);
     }
 
     #[test]
     fn keyword_void() {
-        let mut scanner = ScannerState::new("void".to_string(), true);
+        let mut scanner = make_scanner("void");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::VoidKeyword);
     }
 
     #[test]
     fn contextual_keyword_async() {
-        let mut scanner = ScannerState::new("async".to_string(), true);
+        let mut scanner = make_scanner("async");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::AsyncKeyword);
     }
 
     #[test]
     fn contextual_keyword_type() {
-        let mut scanner = ScannerState::new("type".to_string(), true);
+        let mut scanner = make_scanner("type");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::TypeKeyword);
     }
 
     #[test]
     fn contextual_keyword_interface() {
-        let mut scanner = ScannerState::new("interface".to_string(), true);
+        let mut scanner = make_scanner("interface");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::InterfaceKeyword);
     }
@@ -728,7 +731,7 @@ mod identifier_scanning {
     #[test]
     fn keyword_prefix_is_identifier() {
         // "iff" is not a keyword
-        let mut scanner = ScannerState::new("iff".to_string(), true);
+        let mut scanner = make_scanner("iff");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
     }
@@ -736,7 +739,7 @@ mod identifier_scanning {
     #[test]
     fn keyword_suffix_is_identifier() {
         // "classes" is not a keyword
-        let mut scanner = ScannerState::new("classes".to_string(), true);
+        let mut scanner = make_scanner("classes");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
     }
@@ -744,7 +747,7 @@ mod identifier_scanning {
     #[test]
     fn unicode_escape_identifier_start() {
         // \u0041 = 'A'
-        let mut scanner = ScannerState::new("\\u0041bc".to_string(), true);
+        let mut scanner = make_scanner("\\u0041bc");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "Abc");
@@ -757,7 +760,7 @@ mod identifier_scanning {
     #[test]
     fn unicode_escape_braced_identifier_start() {
         // \u{42} = 'B'
-        let mut scanner = ScannerState::new("\\u{42}ar".to_string(), true);
+        let mut scanner = make_scanner("\\u{42}ar");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "Bar");
@@ -766,7 +769,7 @@ mod identifier_scanning {
     #[test]
     fn unicode_escape_mid_identifier() {
         // foo\u0042ar = "fooBar"
-        let mut scanner = ScannerState::new("foo\\u0042ar".to_string(), true);
+        let mut scanner = make_scanner("foo\\u0042ar");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "fooBar");
@@ -775,14 +778,14 @@ mod identifier_scanning {
     #[test]
     fn unicode_escape_keyword_detection() {
         // \u0069\u0066 = "if" which is a keyword
-        let mut scanner = ScannerState::new("\\u0069\\u0066".to_string(), true);
+        let mut scanner = make_scanner("\\u0069\\u0066");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::IfKeyword);
     }
 
     #[test]
     fn private_identifier() {
-        let mut scanner = ScannerState::new("#myField".to_string(), true);
+        let mut scanner = make_scanner("#myField");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::PrivateIdentifier);
         assert_eq!(scanner.get_token_value(), "#myField");
@@ -790,7 +793,7 @@ mod identifier_scanning {
 
     #[test]
     fn private_identifier_with_underscore() {
-        let mut scanner = ScannerState::new("#_internal".to_string(), true);
+        let mut scanner = make_scanner("#_internal");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::PrivateIdentifier);
         assert_eq!(scanner.get_token_value(), "#_internal");
@@ -798,7 +801,7 @@ mod identifier_scanning {
 
     #[test]
     fn hash_alone_is_hash_token() {
-        let mut scanner = ScannerState::new("#".to_string(), true);
+        let mut scanner = make_scanner("#");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::HashToken);
     }
@@ -806,14 +809,14 @@ mod identifier_scanning {
     #[test]
     fn hash_followed_by_digit_is_hash_token() {
         // #123 - digit cannot start an identifier
-        let mut scanner = ScannerState::new("#123".to_string(), true);
+        let mut scanner = make_scanner("#123");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::HashToken);
     }
 
     #[test]
     fn at_hashbang_sequence_tokenization() {
-        let mut scanner = ScannerState::new("@#!x".to_string(), true);
+        let mut scanner = make_scanner("@#!x");
         assert_eq!(scanner.scan(), SyntaxKind::AtToken);
         assert_eq!(scanner.scan(), SyntaxKind::HashToken);
         assert_eq!(scanner.scan(), SyntaxKind::ExclamationToken);
@@ -822,25 +825,25 @@ mod identifier_scanning {
 
     #[test]
     fn reserved_word_check() {
-        let mut scanner = ScannerState::new("break".to_string(), true);
+        let mut scanner = make_scanner("break");
         scanner.scan();
         assert!(scanner.is_reserved_word());
 
-        let mut scanner = ScannerState::new("with".to_string(), true);
+        let mut scanner = make_scanner("with");
         scanner.scan();
         assert!(scanner.is_reserved_word());
     }
 
     #[test]
     fn contextual_keyword_not_reserved() {
-        let mut scanner = ScannerState::new("async".to_string(), true);
+        let mut scanner = make_scanner("async");
         scanner.scan();
         assert!(!scanner.is_reserved_word());
     }
 
     #[test]
     fn is_identifier_check() {
-        let mut scanner = ScannerState::new("myVar".to_string(), true);
+        let mut scanner = make_scanner("myVar");
         scanner.scan();
         assert!(scanner.is_identifier());
     }
@@ -848,7 +851,7 @@ mod identifier_scanning {
     #[test]
     fn contextual_keyword_is_identifier() {
         // Contextual keywords (async, type, etc.) are past WithKeyword so is_identifier() returns true
-        let mut scanner = ScannerState::new("async".to_string(), true);
+        let mut scanner = make_scanner("async");
         scanner.scan();
         assert!(scanner.is_identifier());
     }
@@ -862,7 +865,7 @@ mod template_literal_scanning {
 
     #[test]
     fn simple_no_substitution_template() {
-        let mut scanner = ScannerState::new("`hello`".to_string(), true);
+        let mut scanner = make_scanner("`hello`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "hello");
@@ -870,7 +873,7 @@ mod template_literal_scanning {
 
     #[test]
     fn empty_template() {
-        let mut scanner = ScannerState::new("``".to_string(), true);
+        let mut scanner = make_scanner("``");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "");
@@ -878,7 +881,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_head_with_expression() {
-        let mut scanner = ScannerState::new("`hello ${".to_string(), true);
+        let mut scanner = make_scanner("`hello ${");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::TemplateHead);
         assert_eq!(scanner.get_token_value(), "hello ");
@@ -886,7 +889,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_newline() {
-        let mut scanner = ScannerState::new("`hello\\nworld`".to_string(), true);
+        let mut scanner = make_scanner("`hello\\nworld`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "hello\nworld");
@@ -894,7 +897,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_tab() {
-        let mut scanner = ScannerState::new("`hello\\tworld`".to_string(), true);
+        let mut scanner = make_scanner("`hello\\tworld`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "hello\tworld");
@@ -902,7 +905,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_backslash() {
-        let mut scanner = ScannerState::new("`back\\\\slash`".to_string(), true);
+        let mut scanner = make_scanner("`back\\\\slash`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "back\\slash");
@@ -910,7 +913,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_backtick() {
-        let mut scanner = ScannerState::new("`back\\`tick`".to_string(), true);
+        let mut scanner = make_scanner("`back\\`tick`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "back`tick");
@@ -918,7 +921,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_dollar() {
-        let mut scanner = ScannerState::new("`hello\\${string}`".to_string(), true);
+        let mut scanner = make_scanner("`hello\\${string}`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "hello${string}");
@@ -926,7 +929,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_hex() {
-        let mut scanner = ScannerState::new("`\\x41`".to_string(), true);
+        let mut scanner = make_scanner("`\\x41`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "A");
@@ -934,7 +937,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_unicode_four_digit() {
-        let mut scanner = ScannerState::new("`\\u0041`".to_string(), true);
+        let mut scanner = make_scanner("`\\u0041`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "A");
@@ -942,7 +945,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_unicode_braced() {
-        let mut scanner = ScannerState::new("`\\u{1F600}`".to_string(), true);
+        let mut scanner = make_scanner("`\\u{1F600}`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "\u{1F600}");
@@ -950,7 +953,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_multiline() {
-        let mut scanner = ScannerState::new("`line1\nline2`".to_string(), true);
+        let mut scanner = make_scanner("`line1\nline2`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "line1\nline2");
@@ -958,7 +961,7 @@ mod template_literal_scanning {
 
     #[test]
     fn unterminated_template() {
-        let mut scanner = ScannerState::new("`hello".to_string(), true);
+        let mut scanner = make_scanner("`hello");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "hello");
@@ -967,7 +970,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_rescan_tail() {
-        let mut scanner = ScannerState::new("}world`".to_string(), true);
+        let mut scanner = make_scanner("}world`");
         scanner.reset_token_state(0);
         let token = scanner.re_scan_template_token(false);
         assert_eq!(token, SyntaxKind::TemplateTail);
@@ -976,7 +979,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_rescan_middle() {
-        let mut scanner = ScannerState::new("}mid${".to_string(), true);
+        let mut scanner = make_scanner("}mid${");
         scanner.reset_token_state(0);
         let token = scanner.re_scan_template_token(false);
         assert_eq!(token, SyntaxKind::TemplateMiddle);
@@ -985,7 +988,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_escape_zero() {
-        let mut scanner = ScannerState::new("`\\0`".to_string(), true);
+        let mut scanner = make_scanner("`\\0`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "\0");
@@ -994,7 +997,7 @@ mod template_literal_scanning {
     #[test]
     fn template_octal_escape_is_invalid() {
         // In template literals, octal escapes (other than \0) are invalid
-        let mut scanner = ScannerState::new("`\\1`".to_string(), true);
+        let mut scanner = make_scanner("`\\1`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_ne!(
@@ -1006,7 +1009,7 @@ mod template_literal_scanning {
     #[test]
     fn template_cr_normalization() {
         // \r should be normalized to \n in templates
-        let mut scanner = ScannerState::new("`line1\rline2`".to_string(), true);
+        let mut scanner = make_scanner("`line1\rline2`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         // The rescan path normalizes CR to LF; the initial scan path preserves CR.
@@ -1017,7 +1020,7 @@ mod template_literal_scanning {
     fn template_rescan_cr_lf_normalization() {
         // Test via re_scan_template_head_or_no_substitution_template which uses
         // scan_template_and_set_token_value that normalizes CR/CRLF to LF
-        let mut scanner = ScannerState::new("`line1\r\nline2`".to_string(), true);
+        let mut scanner = make_scanner("`line1\r\nline2`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         // Now rescan
@@ -1028,7 +1031,7 @@ mod template_literal_scanning {
 
     #[test]
     fn template_with_unicode_characters() {
-        let mut scanner = ScannerState::new("`500\u{00B5}s`".to_string(), true);
+        let mut scanner = make_scanner("`500\u{00B5}s`");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
         assert_eq!(scanner.get_token_value(), "500\u{00B5}s");
@@ -1043,7 +1046,7 @@ mod comment_scanning {
 
     #[test]
     fn single_line_comment_skipped_in_skip_trivia_mode() {
-        let mut scanner = ScannerState::new("// comment\nfoo".to_string(), true);
+        let mut scanner = make_scanner("// comment\nfoo");
         let token = scanner.scan();
         // With skip_trivia=true, the comment is skipped
         assert_eq!(token, SyntaxKind::Identifier);
@@ -1059,7 +1062,7 @@ mod comment_scanning {
 
     #[test]
     fn multi_line_comment_skipped_in_skip_trivia_mode() {
-        let mut scanner = ScannerState::new("/* comment */foo".to_string(), true);
+        let mut scanner = make_scanner("/* comment */foo");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "foo");
@@ -1115,7 +1118,7 @@ mod comment_scanning {
 
     #[test]
     fn adjacent_comments() {
-        let mut scanner = ScannerState::new("// first\n// second\nfoo".to_string(), true);
+        let mut scanner = make_scanner("// first\n// second\nfoo");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "foo");
@@ -1131,7 +1134,7 @@ mod regex_scanning {
 
     #[test]
     fn simple_regex() {
-        let mut scanner = ScannerState::new("/abc/".to_string(), true);
+        let mut scanner = make_scanner("/abc/");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1140,7 +1143,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_with_all_valid_flags() {
-        let mut scanner = ScannerState::new("/abc/gimsyd".to_string(), true);
+        let mut scanner = make_scanner("/abc/gimsyd");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1150,7 +1153,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_with_v_flag() {
-        let mut scanner = ScannerState::new("/abc/v".to_string(), true);
+        let mut scanner = make_scanner("/abc/v");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1161,7 +1164,7 @@ mod regex_scanning {
     #[test]
     fn regex_with_character_class() {
         // The / inside [...] should not end the regex
-        let mut scanner = ScannerState::new("/[a/b]/".to_string(), true);
+        let mut scanner = make_scanner("/[a/b]/");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1170,7 +1173,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_with_escaped_slash() {
-        let mut scanner = ScannerState::new(r"/a\/b/".to_string(), true);
+        let mut scanner = make_scanner(r"/a\/b/");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1179,7 +1182,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_unterminated_at_newline() {
-        let mut scanner = ScannerState::new("/abc\ndef/".to_string(), true);
+        let mut scanner = make_scanner("/abc\ndef/");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1188,7 +1191,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_unterminated_at_eof() {
-        let mut scanner = ScannerState::new("/abc".to_string(), true);
+        let mut scanner = make_scanner("/abc");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1197,7 +1200,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_empty_body() {
-        let mut scanner = ScannerState::new("//".to_string(), true);
+        let mut scanner = make_scanner("//");
         let token = scanner.scan();
         // "//" is a single-line comment, not a regex
         // In skip_trivia mode, it becomes EOF
@@ -1207,7 +1210,7 @@ mod regex_scanning {
     #[test]
     fn regex_from_slash_equals() {
         // /=abc/ - starts as SlashEqualsToken, rescanned as regex
-        let mut scanner = ScannerState::new("/=abc/".to_string(), true);
+        let mut scanner = make_scanner("/=abc/");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::SlashEqualsToken);
         let token = scanner.re_scan_slash_token();
@@ -1217,7 +1220,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_triple_duplicate_flags() {
-        let mut scanner = ScannerState::new("/foo/ggg".to_string(), true);
+        let mut scanner = make_scanner("/foo/ggg");
         scanner.scan();
         scanner.re_scan_slash_token();
         let duplicates: Vec<_> = scanner
@@ -1231,7 +1234,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_multiple_invalid_flags() {
-        let mut scanner = ScannerState::new("/foo/gxz".to_string(), true);
+        let mut scanner = make_scanner("/foo/gxz");
         scanner.scan();
         scanner.re_scan_slash_token();
         let invalid: Vec<_> = scanner
@@ -1244,7 +1247,7 @@ mod regex_scanning {
 
     #[test]
     fn regex_with_backslash_in_class() {
-        let mut scanner = ScannerState::new(r"/[\]]/".to_string(), true);
+        let mut scanner = make_scanner(r"/[\]]/");
         scanner.scan();
         let token = scanner.re_scan_slash_token();
         assert_eq!(token, SyntaxKind::RegularExpressionLiteral);
@@ -1420,7 +1423,7 @@ mod whitespace_scanning {
 
     #[test]
     fn whitespace_skipped_in_skip_trivia_mode() {
-        let mut scanner = ScannerState::new("   foo".to_string(), true);
+        let mut scanner = make_scanner("   foo");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "foo");
@@ -1451,7 +1454,7 @@ mod whitespace_scanning {
 
     #[test]
     fn preceding_line_break_flag() {
-        let mut scanner = ScannerState::new("\nfoo".to_string(), true);
+        let mut scanner = make_scanner("\nfoo");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert!(scanner.has_preceding_line_break());
@@ -1459,7 +1462,7 @@ mod whitespace_scanning {
 
     #[test]
     fn no_preceding_line_break_on_same_line() {
-        let mut scanner = ScannerState::new("foo bar".to_string(), true);
+        let mut scanner = make_scanner("foo bar");
         scanner.scan(); // foo
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
@@ -1475,14 +1478,14 @@ mod whitespace_scanning {
 
     #[test]
     fn eof_on_empty_input() {
-        let mut scanner = ScannerState::new("".to_string(), true);
+        let mut scanner = make_scanner("");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::EndOfFileToken);
     }
 
     #[test]
     fn eof_after_all_tokens() {
-        let mut scanner = ScannerState::new("x".to_string(), true);
+        let mut scanner = make_scanner("x");
         scanner.scan(); // x
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::EndOfFileToken);
@@ -1497,7 +1500,7 @@ mod position_tracking {
 
     #[test]
     fn token_positions_simple() {
-        let mut scanner = ScannerState::new("foo bar".to_string(), true);
+        let mut scanner = make_scanner("foo bar");
         scanner.scan();
         assert_eq!(scanner.get_token_start(), 0);
         assert_eq!(scanner.get_token_end(), 3);
@@ -1509,7 +1512,7 @@ mod position_tracking {
 
     #[test]
     fn full_start_includes_trivia() {
-        let mut scanner = ScannerState::new("  foo".to_string(), true);
+        let mut scanner = make_scanner("  foo");
         scanner.scan();
         assert_eq!(scanner.get_token_full_start(), 0);
         assert_eq!(scanner.get_token_start(), 2);
@@ -1518,7 +1521,7 @@ mod position_tracking {
 
     #[test]
     fn token_text_matches_source() {
-        let mut scanner = ScannerState::new("foo + bar".to_string(), true);
+        let mut scanner = make_scanner("foo + bar");
         scanner.scan(); // foo
         assert_eq!(scanner.get_token_text(), "foo");
         scanner.scan(); // +
@@ -1536,7 +1539,7 @@ mod rescan_methods {
 
     #[test]
     fn rescan_greater_single() {
-        let mut scanner = ScannerState::new("x > y".to_string(), true);
+        let mut scanner = make_scanner("x > y");
         scanner.scan(); // x
         scanner.scan(); // >
         let token = scanner.re_scan_greater_token();
@@ -1546,7 +1549,7 @@ mod rescan_methods {
 
     #[test]
     fn rescan_greater_equals() {
-        let mut scanner = ScannerState::new("x >= y".to_string(), true);
+        let mut scanner = make_scanner("x >= y");
         scanner.scan(); // x
         scanner.scan(); // >
         let token = scanner.re_scan_greater_token();
@@ -1555,7 +1558,7 @@ mod rescan_methods {
 
     #[test]
     fn rescan_greater_shift_right() {
-        let mut scanner = ScannerState::new("x >> y".to_string(), true);
+        let mut scanner = make_scanner("x >> y");
         scanner.scan(); // x
         scanner.scan(); // >
         let token = scanner.re_scan_greater_token();
@@ -1564,7 +1567,7 @@ mod rescan_methods {
 
     #[test]
     fn rescan_greater_unsigned_shift_right() {
-        let mut scanner = ScannerState::new("x >>> y".to_string(), true);
+        let mut scanner = make_scanner("x >>> y");
         scanner.scan(); // x
         scanner.scan(); // >
         let token = scanner.re_scan_greater_token();
@@ -1573,7 +1576,7 @@ mod rescan_methods {
 
     #[test]
     fn rescan_greater_shift_right_assign() {
-        let mut scanner = ScannerState::new("x >>= y".to_string(), true);
+        let mut scanner = make_scanner("x >>= y");
         scanner.scan(); // x
         scanner.scan(); // >
         let token = scanner.re_scan_greater_token();
@@ -1582,7 +1585,7 @@ mod rescan_methods {
 
     #[test]
     fn rescan_asterisk_equals() {
-        let mut scanner = ScannerState::new("*=".to_string(), true);
+        let mut scanner = make_scanner("*=");
         scanner.scan(); // *=
         assert_eq!(scanner.get_token(), SyntaxKind::AsteriskEqualsToken);
         let token = scanner.re_scan_asterisk_equals_token();
@@ -1591,7 +1594,7 @@ mod rescan_methods {
 
     #[test]
     fn rescan_less_than_slash() {
-        let mut scanner = ScannerState::new("</tag>".to_string(), true);
+        let mut scanner = make_scanner("</tag>");
         scanner.scan(); // <
         let token = scanner.re_scan_less_than_token();
         assert_eq!(token, SyntaxKind::LessThanSlashToken);
@@ -1599,10 +1602,10 @@ mod rescan_methods {
 
     #[test]
     fn rescan_question_dot() {
-        let mut scanner = ScannerState::new("?.foo".to_string(), true);
+        let mut scanner = make_scanner("?.foo");
         scanner.scan(); // gets QuestionDotToken directly
         // But let's test re_scan_question_token from QuestionToken
-        let mut scanner = ScannerState::new("?".to_string(), true);
+        let mut scanner = make_scanner("?");
         scanner.scan();
         let token = scanner.re_scan_question_token();
         assert_eq!(token, SyntaxKind::QuestionToken); // nothing follows, stays ?
@@ -1617,7 +1620,7 @@ mod state_management {
 
     #[test]
     fn save_restore_basic() {
-        let mut scanner = ScannerState::new("a b c".to_string(), true);
+        let mut scanner = make_scanner("a b c");
         scanner.scan(); // a
         let snapshot = scanner.save_state();
         scanner.scan(); // b
@@ -1630,7 +1633,7 @@ mod state_management {
 
     #[test]
     fn set_text_replaces_source() {
-        let mut scanner = ScannerState::new("old text".to_string(), true);
+        let mut scanner = make_scanner("old text");
         scanner.set_text("fresh text".to_string(), None, None);
         scanner.reset_token_state(0);
         let token = scanner.scan();
@@ -1640,7 +1643,7 @@ mod state_management {
 
     #[test]
     fn set_text_with_offset_and_length() {
-        let mut scanner = ScannerState::new("".to_string(), true);
+        let mut scanner = make_scanner("");
         scanner.set_text("xxFOOxx".to_string(), Some(2), Some(3));
         scanner.reset_token_state(2);
         let token = scanner.scan();
@@ -1651,7 +1654,7 @@ mod state_management {
 
     #[test]
     fn reset_token_state_clears_flags() {
-        let mut scanner = ScannerState::new("\nfoo".to_string(), true);
+        let mut scanner = make_scanner("\nfoo");
         scanner.scan(); // foo - has PrecedingLineBreak
         assert!(scanner.has_preceding_line_break());
         scanner.reset_token_state(0);
@@ -1668,7 +1671,7 @@ mod shebang_scanning {
 
     #[test]
     fn shebang_at_start() {
-        let mut scanner = ScannerState::new("#!/usr/bin/env node\nvar x".to_string(), true);
+        let mut scanner = make_scanner("#!/usr/bin/env node\nvar x");
         let len = scanner.scan_shebang_trivia();
         assert!(len > 0);
         // After shebang, scanner position should be past the shebang + newline
@@ -1677,14 +1680,14 @@ mod shebang_scanning {
 
     #[test]
     fn no_shebang_returns_zero() {
-        let mut scanner = ScannerState::new("var x".to_string(), true);
+        let mut scanner = make_scanner("var x");
         let len = scanner.scan_shebang_trivia();
         assert_eq!(len, 0);
     }
 
     #[test]
     fn shebang_not_at_start_returns_zero() {
-        let mut scanner = ScannerState::new("var x".to_string(), true);
+        let mut scanner = make_scanner("var x");
         scanner.scan(); // advance past "var"
         // If we try to scan shebang now, it won't be at pos 0
         let len = scanner.scan_shebang_trivia();
@@ -1693,7 +1696,7 @@ mod shebang_scanning {
 
     #[test]
     fn shebang_with_crlf() {
-        let mut scanner = ScannerState::new("#!/usr/bin/env node\r\nvar x".to_string(), true);
+        let mut scanner = make_scanner("#!/usr/bin/env node\r\nvar x");
         let len = scanner.scan_shebang_trivia();
         assert!(len > 0);
         assert_eq!(scanner.get_pos(), 21); // includes \r\n
@@ -1701,7 +1704,7 @@ mod shebang_scanning {
 
     #[test]
     fn shebang_at_eof() {
-        let mut scanner = ScannerState::new("#!/usr/bin/env node".to_string(), true);
+        let mut scanner = make_scanner("#!/usr/bin/env node");
         let len = scanner.scan_shebang_trivia();
         assert!(len > 0);
     }
@@ -1876,7 +1879,7 @@ mod jsx_scanning {
 
     #[test]
     fn jsx_identifier_with_hyphen() {
-        let mut scanner = ScannerState::new("data-testid".to_string(), true);
+        let mut scanner = make_scanner("data-testid");
         scanner.scan(); // scans "data" initially
         // Now call scan_jsx_identifier to extend with hyphenated parts
         scanner.scan_jsx_identifier();
@@ -1886,7 +1889,7 @@ mod jsx_scanning {
 
     #[test]
     fn jsx_text_scanning() {
-        let mut scanner = ScannerState::new(">hello world<".to_string(), true);
+        let mut scanner = make_scanner(">hello world<");
         scanner.scan(); // >
         scanner.scan(); // scans "hello" as identifier
         let token = scanner.re_scan_jsx_token(true);
@@ -1896,7 +1899,7 @@ mod jsx_scanning {
 
     #[test]
     fn jsx_attribute_double_quoted() {
-        let mut scanner = ScannerState::new(r#""value""#.to_string(), true);
+        let mut scanner = make_scanner(r#""value""#);
         let token = scanner.scan_jsx_attribute_value();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "value");
@@ -1904,7 +1907,7 @@ mod jsx_scanning {
 
     #[test]
     fn jsx_attribute_single_quoted() {
-        let mut scanner = ScannerState::new("'value'".to_string(), true);
+        let mut scanner = make_scanner("'value'");
         let token = scanner.scan_jsx_attribute_value();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "value");
@@ -1919,7 +1922,7 @@ mod edge_cases {
 
     #[test]
     fn unicode_identifier() {
-        let mut scanner = ScannerState::new("variab\u{0142}e".to_string(), true);
+        let mut scanner = make_scanner("variab\u{0142}e");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert_eq!(scanner.get_token_value(), "variab\u{0142}e");
@@ -1927,7 +1930,7 @@ mod edge_cases {
 
     #[test]
     fn multiple_strings_in_sequence() {
-        let mut scanner = ScannerState::new(r#""a" + "b""#.to_string(), true);
+        let mut scanner = make_scanner(r#""a" + "b""#);
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::StringLiteral);
         assert_eq!(scanner.get_token_value(), "a");
@@ -1943,14 +1946,14 @@ mod edge_cases {
     #[test]
     fn backslash_not_unicode_escape_is_unknown() {
         // A lone backslash not followed by 'u' is Unknown
-        let mut scanner = ScannerState::new("\\z".to_string(), true);
+        let mut scanner = make_scanner("\\z");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Unknown);
     }
 
     #[test]
     fn interner_produces_consistent_atoms() {
-        let mut scanner = ScannerState::new("foo bar foo".to_string(), true);
+        let mut scanner = make_scanner("foo bar foo");
         scanner.scan(); // foo
         let atom1 = scanner.get_token_atom();
         scanner.scan(); // bar
@@ -1961,13 +1964,13 @@ mod edge_cases {
 
     #[test]
     fn get_text_returns_source() {
-        let scanner = ScannerState::new("hello world".to_string(), true);
+        let scanner = make_scanner("hello world");
         assert_eq!(scanner.get_text(), "hello world");
     }
 
     #[test]
     fn multiple_line_breaks() {
-        let mut scanner = ScannerState::new("\n\n\nfoo".to_string(), true);
+        let mut scanner = make_scanner("\n\n\nfoo");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::Identifier);
         assert!(scanner.has_preceding_line_break());
@@ -1975,7 +1978,7 @@ mod edge_cases {
 
     #[test]
     fn token_value_ref_for_identifiers() {
-        let mut scanner = ScannerState::new("myIdentifier".to_string(), true);
+        let mut scanner = make_scanner("myIdentifier");
         scanner.scan();
         let value_ref = scanner.get_token_value_ref();
         assert_eq!(value_ref, "myIdentifier");
@@ -1983,7 +1986,7 @@ mod edge_cases {
 
     #[test]
     fn token_value_ref_for_strings() {
-        let mut scanner = ScannerState::new(r#""hello""#.to_string(), true);
+        let mut scanner = make_scanner(r#""hello""#);
         scanner.scan();
         let value_ref = scanner.get_token_value_ref();
         assert_eq!(value_ref, "hello");
@@ -1991,7 +1994,7 @@ mod edge_cases {
 
     #[test]
     fn token_text_ref() {
-        let mut scanner = ScannerState::new(r#""hello""#.to_string(), true);
+        let mut scanner = make_scanner(r#""hello""#);
         scanner.scan();
         let text_ref = scanner.get_token_text_ref();
         // token_text includes the quotes
@@ -2000,13 +2003,13 @@ mod edge_cases {
 
     #[test]
     fn source_text_ref() {
-        let scanner = ScannerState::new("some source".to_string(), true);
+        let scanner = make_scanner("some source");
         assert_eq!(scanner.source_text(), "some source");
     }
 
     #[test]
     fn source_slice() {
-        let scanner = ScannerState::new("hello world".to_string(), true);
+        let scanner = make_scanner("hello world");
         assert_eq!(scanner.source_slice(6, 11), "world");
     }
 
@@ -2022,7 +2025,7 @@ mod edge_cases {
 
     #[test]
     fn numeric_separator_trailing_is_invalid() {
-        let mut scanner = ScannerState::new("100_".to_string(), true);
+        let mut scanner = make_scanner("100_");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert!(scanner.get_invalid_separator_pos().is_some());
@@ -2030,7 +2033,7 @@ mod edge_cases {
 
     #[test]
     fn numeric_separator_consecutive_is_invalid() {
-        let mut scanner = ScannerState::new("1__0".to_string(), true);
+        let mut scanner = make_scanner("1__0");
         let token = scanner.scan();
         assert_eq!(token, SyntaxKind::NumericLiteral);
         assert!(scanner.get_invalid_separator_pos().is_some());
