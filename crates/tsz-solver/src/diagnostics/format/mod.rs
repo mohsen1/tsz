@@ -218,23 +218,127 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .position(|param| param.name == check_tp.name)?;
         let check_arg = *args.get(check_index)?;
-        let TypeData::Union(member_list_id) = self.interner.lookup(check_arg)? else {
+
+        // For distributive conditionals, `boolean` distributes as `true | false`.
+        // Mirrors the instantiation policy in instantiate.rs that expands
+        // `BOOLEAN` to `[BOOLEAN_TRUE, BOOLEAN_FALSE]` before substitution.
+        let members: Vec<TypeId> = if check_arg == TypeId::BOOLEAN {
+            vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
+        } else if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check_arg) {
+            let list = self.interner.type_list(member_list_id);
+            if list.len() < 2 {
+                return None;
+            }
+            list.to_vec()
+        } else {
             return None;
         };
-        let members = self.interner.type_list(member_list_id);
-        if members.len() < 2 {
-            return None;
-        }
 
+        // Only evaluate the distributed branches when the *other* type args are
+        // fully concrete. If any non-check arg carries free type parameters
+        // (e.g. `ChannelOfType<T, Channel>` where `T` is bound in an outer
+        // scope), the conditional inside the body cannot be reliably resolved,
+        // and tsc preserves the alias-application form
+        // (`ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>`).
+        let other_args_concrete = args.iter().enumerate().all(|(i, &arg)| {
+            i == check_index
+                || !crate::visitors::visitor_predicates::contains_type_parameters(
+                    self.interner,
+                    arg,
+                )
+        });
+
+        // Distribute into per-member branches. When other args are concrete we
+        // can safely evaluate the conditional body and render the resolved
+        // branch (`{ kind: "b" }`). Otherwise we keep each branch as an
+        // Application so the formatter renders `Foo<member>` rather than a
+        // misleading evaluation (which can collapse to `never` when relations
+        // involve free type parameters).
         let distributed: Vec<TypeId> = members
             .iter()
             .map(|&member| {
                 let mut branch_args = args.to_vec();
                 branch_args[check_index] = member;
-                self.interner.application(base, branch_args)
+                if other_args_concrete {
+                    let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
+                    for (i, param) in def.type_params.iter().enumerate() {
+                        let Some(&arg) = branch_args.get(i) else {
+                            return TypeId::ERROR;
+                        };
+                        subst.insert(param.name, arg);
+                    }
+                    let substituted = crate::instantiation::instantiate::instantiate_type(
+                        self.interner,
+                        body,
+                        &subst,
+                    );
+                    crate::evaluation::evaluate::evaluate_type(self.interner, substituted)
+                } else {
+                    self.interner.application(base, branch_args)
+                }
             })
             .collect();
         Some(self.interner.union(distributed))
+    }
+
+    /// Returns `true` when the application points to a distributive conditional
+    /// alias whose `check_arg` is `boolean` or a union — i.e., the application
+    /// would distribute via `distributed_conditional_application_display`. The
+    /// display-alias chase should skip these so the formatter renders the
+    /// structurally evaluated branches rather than redirecting back to the
+    /// alias and re-entering the same evaluated form (which trips the
+    /// `format_visiting` cycle protection and prints `...`).
+    fn application_alias_distributes(&self, alias_origin: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => match def_store.find_def_for_type(app.base) {
+                Some(def_id) => def_id,
+                None => return false,
+            },
+        };
+        let Some(def) = def_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != crate::def::DefKind::TypeAlias {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+        let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(body) else {
+            return false;
+        };
+        let cond = self.interner.conditional_type(cond_id);
+        if !cond.is_distributive {
+            return false;
+        }
+        let Some(TypeData::TypeParameter(check_tp)) = self.interner.lookup(cond.check_type) else {
+            return false;
+        };
+        let Some(check_index) = def
+            .type_params
+            .iter()
+            .position(|param| param.name == check_tp.name)
+        else {
+            return false;
+        };
+        let Some(&check_arg) = app.args.get(check_index) else {
+            return false;
+        };
+        if check_arg == TypeId::BOOLEAN {
+            return true;
+        }
+        if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check_arg) {
+            return self.interner.type_list(member_list_id).len() >= 2;
+        }
+        false
     }
 
     /// Create a formatter with access to symbol names.
@@ -757,15 +861,25 @@ impl<'a> TypeFormatter<'a> {
                 )
                 && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
 
+            // Skip the alias chase when the alias points to a distributive
+            // conditional Application that will distribute (boolean or union
+            // check arg). Following the alias would land in the Application
+            // formatter, distribute back to the same evaluated form, and trip
+            // `format_visiting` cycle detection (printing `...`). tsc shows the
+            // expanded distributed form for these aliases anyway.
+            let skip_distributive_alias = self.application_alias_distributes(alias_origin);
+
             // For empty `{}`, do not follow applications of type aliases: the
             // empty object is a universally-shared shape and mapped/conditional
             // reductions can point many unrelated annotations at the same TypeId.
             // Named generic interfaces/classes with empty bodies still need their
             // application display (e.g. `AsyncGenerator<number, void, unknown>`).
+            let skip_alias_chase = skip_intersection_alias
+                || skip_distributive_alias
+                || (is_empty_object
+                    && self.display_alias_application_base_is_type_alias(alias_origin));
             if (!is_simple_type || use_keyof_alias || use_application_alias)
-                && !skip_intersection_alias
-                && !(is_empty_object
-                    && self.display_alias_application_base_is_type_alias(alias_origin))
+                && !skip_alias_chase
                 && self.display_alias_visiting.insert(alias_origin)
             {
                 let result = self.format(alias_origin);
