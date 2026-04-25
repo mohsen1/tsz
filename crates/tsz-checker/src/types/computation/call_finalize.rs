@@ -272,6 +272,19 @@ impl<'a> CheckerState<'a> {
                                     }
                                 })
                         };
+                        let expected_param =
+                            if is_type_parameter_type(self.ctx.types, expected_param) {
+                                common::type_parameter_constraint(self.ctx.types, expected_param)
+                                    .filter(|constraint| {
+                                        !common::contains_type_parameters(
+                                            self.ctx.types,
+                                            *constraint,
+                                        )
+                                    })
+                                    .unwrap_or(expected_param)
+                            } else {
+                                expected_param
+                            };
                         let reported_expected_param = get_contextual_signature_for_arity(
                             self.ctx.types,
                             callee_type_for_call,
@@ -348,7 +361,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-                        if !fresh_assignable && !excess_property_recovery {
+                        if !fresh_assignable
+                            && !excess_property_recovery
+                            && !self
+                                .should_defer_contextual_argument_mismatch(arg_type, expected_param)
+                        {
                             allow_contextual_mismatch_deferral = false;
                         }
                         recovered_argument_mismatch = fresh_assignable || excess_property_recovery;
