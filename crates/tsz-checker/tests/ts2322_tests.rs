@@ -3923,6 +3923,61 @@ fn test_missing_properties_not_suppressed_by_number_index_signatures() {
     );
 }
 
+/// Regression: didYouMeanElaborationsForExpressionsWhichCouldBeCalled.ts
+/// `toLocaleString` (and other Object-prototype methods) must always be filtered
+/// from TS2740/TS2739 missing-property lists — even when the target overrides it.
+/// tsc's `getMissingMembersOfType` treats a property as missing only when the
+/// source lacks any member with that name, and Object inheritance always
+/// satisfies the name lookup for `toLocaleString`.  Including it in the
+/// missing list inflates the "and N more" count by 1.
+#[test]
+fn test_ts2740_does_not_list_tolocalestring_as_missing() {
+    // Synthesize a target with 6+ missing properties so TS2740 (with truncation)
+    // fires.  The target adds a `toLocaleString` overload that the source does
+    // not match, which in tsz used to surface `toLocaleString` as a missing
+    // property.  tsz must always filter Object-prototype names from the missing
+    // list since the source has them by name via Object inheritance.
+    let source = r#"
+interface Target {
+    toLocaleString(): string;
+    toLocaleString(locale: string, options: object): string;
+    m1: number;
+    m2: number;
+    m3: number;
+    m4: number;
+    m5: number;
+    m6: number;
+    m7: number;
+}
+
+declare const s: { foo: string };
+const tt: Target = s;
+"#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2740 = diagnostics
+        .iter()
+        .find(|(code, _)| {
+            *code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        })
+        .expect("expected TS2740 for assigning narrower type to Target");
+    // The missing list is the substring after the colon.  Splitting at ": "
+    // yields the source display first, then the target display, then the list.
+    let missing_list = ts2740
+        .1
+        .split(": ")
+        .nth(2)
+        .expect("TS2740 message should contain `: <list>`");
+    assert!(
+        !missing_list.contains("toLocaleString"),
+        "TS2740 missing list must not include `toLocaleString` (Object-prototype method), got: {missing_list}"
+    );
+    assert!(
+        missing_list.contains("and 3 more"),
+        "TS2740 missing list should report `and 3 more` for 7 missing m1..m7, got: {missing_list}"
+    );
+}
+
 /// When `strictBuiltinIteratorReturn` is true, `BuiltinIteratorReturn` resolves to `undefined`.
 /// Assigning `undefined` to `number` must produce TS2322.
 #[test]
