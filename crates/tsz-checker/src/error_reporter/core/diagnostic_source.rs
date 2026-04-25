@@ -865,7 +865,23 @@ impl<'a> CheckerState<'a> {
         if binary.operator_token != tsz_scanner::SyntaxKind::EqualsToken as u16 {
             return false;
         }
-        self.is_commonjs_module_exports_assignment(binary.left)
+        if self.is_commonjs_module_exports_assignment(binary.left) {
+            return true;
+        }
+        // Same target-annotation carve-out for `Foo.prototype = X`.
+        let n = match self.ctx.arena.get(binary.left) {
+            Some(n) => n,
+            None => return false,
+        };
+        if n.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_access_expr(n)
+            .and_then(|a| self.ctx.arena.get(a.name_or_argument))
+            .and_then(|n| self.ctx.arena.get_identifier(n))
+            .is_some_and(|i| i.escaped_text == "prototype")
     }
 
     fn empty_array_literal_source_type_display(&self, expr_idx: NodeIndex) -> Option<String> {
