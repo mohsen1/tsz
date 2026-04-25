@@ -16,6 +16,7 @@ use crate::parser::{
 };
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::keyword_text_len;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
@@ -1794,7 +1795,7 @@ impl ParserState {
                         // position-based dedup with the TS1005 from parameter list.
                         self.parse_error_at(
                             start_pos,
-                            5, // length of "await"
+                            keyword_text_len(SyntaxKind::AwaitKeyword),
                             "Expression expected.",
                             diagnostic_codes::EXPRESSION_EXPECTED,
                         );

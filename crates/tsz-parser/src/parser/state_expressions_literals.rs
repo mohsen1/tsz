@@ -14,6 +14,7 @@ use crate::parser::{
 };
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::keyword_text_len;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
@@ -2099,9 +2100,11 @@ impl ParserState {
     pub(crate) fn parse_import_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ImportKeyword);
-        let import_node =
-            self.arena
-                .add_token(SyntaxKind::ImportKeyword as u16, start_pos, start_pos + 6);
+        let import_node = self.arena.add_token(
+            SyntaxKind::ImportKeyword as u16,
+            start_pos,
+            start_pos + keyword_text_len(SyntaxKind::ImportKeyword),
+        );
         let mut import_call_type_arguments: Option<NodeList> = None;
 
         // Check for import.meta / import.defer(...)
@@ -2186,7 +2189,7 @@ impl ParserState {
             // import<T>(...) — type arguments not allowed on import calls (TS1326)
             self.parse_error_at(
                 start_pos,
-                6, // length of "import"
+                keyword_text_len(SyntaxKind::ImportKeyword),
                 diagnostic_messages::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR,
                 diagnostic_codes::THIS_USE_OF_IMPORT_IS_INVALID_IMPORT_CALLS_CAN_BE_WRITTEN_BUT_THEY_MUST_HAVE_PAR,
             );
@@ -2227,7 +2230,7 @@ impl ParserState {
             // Emit TS1109 "Expression expected" (matches tsc behavior for e.g. `import { ... } from`)
             self.parse_error_at(
                 start_pos,
-                6, // length of "import"
+                keyword_text_len(SyntaxKind::ImportKeyword),
                 diagnostic_messages::EXPRESSION_EXPECTED,
                 diagnostic_codes::EXPRESSION_EXPECTED,
             );
