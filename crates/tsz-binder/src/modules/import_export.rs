@@ -261,7 +261,8 @@ impl BinderState {
             }
             // Propagate to semantic_defs (record_semantic_def was called before
             // the ExportDeclaration wrapper set is_exported on the symbol).
-            if let Some(entry) = self.semantic_defs.get_mut(&sym_id) {
+            if let Some(entry) = std::sync::Arc::make_mut(&mut self.semantic_defs).get_mut(&sym_id)
+            {
                 entry.is_exported = true;
             }
             return;
@@ -282,7 +283,9 @@ impl BinderState {
                             if let Some(sym) = self.symbols.get_mut(sym_id) {
                                 sym.is_exported = true;
                             }
-                            if let Some(entry) = self.semantic_defs.get_mut(&sym_id) {
+                            if let Some(entry) =
+                                std::sync::Arc::make_mut(&mut self.semantic_defs).get_mut(&sym_id)
+                            {
                                 entry.is_exported = true;
                             }
                         }

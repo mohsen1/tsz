@@ -1648,7 +1648,13 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
     // read the binder's map — copying `program.semantic_defs` into each
     // per-file binder was pure O(N · program_defs) waste (6%+ of total
     // CPU on ts-toolbelt subsets, all of it in `SemanticDefEntry::drop`).
-    binder.semantic_defs = file.semantic_defs.clone();
+    // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+    // underlying `FxHashMap<SymbolId, SemanticDefEntry>`. The previous deep
+    // clone was the largest single source of memory pressure on multi-file
+    // builds (e.g., 50-70 GB total virtual on the 6086-file large-ts-repo
+    // benchmark, multiplied across rayon worker threads). Cross-file lookup
+    // binders only read this map (post-construction), so sharing is safe.
+    binder.semantic_defs = Arc::clone(&file.semantic_defs);
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = tsz::binder::ScopeId(0);
@@ -1763,7 +1769,13 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
     // See `create_binder_from_bound_file_with_augmentations` for the
     // rationale: the cross-file semantic_defs live in the shared
     // `DefinitionStore`, not here.
-    binder.semantic_defs = file.semantic_defs.clone();
+    // Arc::clone is O(1) (atomic refcount bump) instead of deep-cloning the
+    // underlying `FxHashMap<SymbolId, SemanticDefEntry>`. The previous deep
+    // clone was the largest single source of memory pressure on multi-file
+    // builds (e.g., 50-70 GB total virtual on the 6086-file large-ts-repo
+    // benchmark, multiplied across rayon worker threads). Cross-file lookup
+    // binders only read this map (post-construction), so sharing is safe.
+    binder.semantic_defs = Arc::clone(&file.semantic_defs);
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
         binder.current_scope_id = tsz::binder::ScopeId(0);

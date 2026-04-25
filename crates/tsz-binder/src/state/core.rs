@@ -221,7 +221,7 @@ impl BinderState {
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
             alias_partners: FxHashMap::default(),
-            semantic_defs: FxHashMap::default(),
+            semantic_defs: Arc::new(FxHashMap::default()),
             file_import_sources: Vec::new(),
             file_idx: u32::MAX,
         };
@@ -293,7 +293,7 @@ impl BinderState {
         self.break_targets.clear();
         self.continue_targets.clear();
         self.return_targets.clear();
-        self.semantic_defs.clear();
+        Arc::make_mut(&mut self.semantic_defs).clear();
         self.file_import_sources.clear();
         // Note: file_idx is NOT reset here. It is set by the driver (LSP/CLI)
         // and should persist across re-binds of the same file.
@@ -463,7 +463,7 @@ impl BinderState {
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
             alias_partners: FxHashMap::default(),
-            semantic_defs: FxHashMap::default(),
+            semantic_defs: Arc::new(FxHashMap::default()),
             file_import_sources: Vec::new(),
             file_idx: u32::MAX,
         };
@@ -588,7 +588,7 @@ impl BinderState {
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
             alias_partners,
-            semantic_defs: FxHashMap::default(),
+            semantic_defs: Arc::new(FxHashMap::default()),
             file_import_sources: Vec::new(),
             file_idx: u32::MAX,
         };
@@ -1178,7 +1178,7 @@ impl BinderState {
         }
 
         // Stamp semantic_defs
-        for entry in self.semantic_defs.values_mut() {
+        for entry in Arc::make_mut(&mut self.semantic_defs).values_mut() {
             if entry.file_id == u32::MAX {
                 entry.file_id = idx;
             }
