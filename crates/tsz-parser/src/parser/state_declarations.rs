@@ -2490,6 +2490,14 @@ impl ParserState {
             {
                 // `import defer * ...` or `import defer { ... }` — defer is modifier
                 is_deferred = true;
+            } else if self.is_token(SyntaxKind::TypeKeyword) {
+                // `import defer type ...` — modifier conflict. tsc treats `defer`
+                // as the deferred modifier and `type` as the default-import name
+                // (a contextual keyword used as an identifier). The cursor stays
+                // at `type` so the existing default-name parser handles it; the
+                // `from` diagnostic then anchors at the next significant token
+                // (e.g. the `*` at column 19) rather than at `type` itself.
+                is_deferred = true;
             } else if self.is_identifier_or_keyword() && !self.is_token(SyntaxKind::TypeKeyword) {
                 // Could be `import defer foo from` (modifier + name)
                 // or `import defer from '...'` (defer is name).
