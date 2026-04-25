@@ -11,6 +11,8 @@ use tsz::emitter::{ModuleKind, Printer, PrinterOptions, ScriptTarget};
 use tsz::lowering::LoweringPass;
 use tsz::parser::{NodeArena, NodeIndex, ParserState};
 
+use super::options::{module_kind_from_u8, target_kind_from_u8};
+
 /// Emit result containing output files and diagnostics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -79,16 +81,11 @@ pub struct TranspileOptions {
 
 impl TranspileOptions {
     fn to_printer_options(&self) -> PrinterOptions {
-        let target = ScriptTarget::from_ts_numeric(u32::from(self.target.unwrap_or(1)))
-            .unwrap_or(ScriptTarget::ES5);
-        let module = ModuleKind::from_ts_numeric(u32::from(self.module.unwrap_or(0)))
-            .unwrap_or(ModuleKind::None);
         let mut opts = PrinterOptions {
-            target,
-            module,
+            target: target_kind_from_u8(self.target),
+            module: module_kind_from_u8(self.module),
             ..Default::default()
         };
-        // Map target
 
         opts.remove_comments = self.remove_comments.unwrap_or(false);
         opts.downlevel_iteration = self.downlevel_iteration.unwrap_or(false);
@@ -169,13 +166,9 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     let arena = parser.into_arena();
 
     // Create emit context with specified options
-    let target =
-        ScriptTarget::from_ts_numeric(u32::from(target.unwrap_or(1))).unwrap_or(ScriptTarget::ES5);
-    let module =
-        ModuleKind::from_ts_numeric(u32::from(module.unwrap_or(0))).unwrap_or(ModuleKind::None);
     let opts = PrinterOptions {
-        target,
-        module,
+        target: target_kind_from_u8(target),
+        module: module_kind_from_u8(module),
         ..Default::default()
     };
 
