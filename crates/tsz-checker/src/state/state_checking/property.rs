@@ -99,6 +99,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Track the earliest source-order candidate; pair with
+    /// [`emit_tracked_excess_property`] to emit one TS2353 per literal.
+    fn track_earliest_excess(
+        &self,
+        current: &mut Option<(Atom, NodeIndex, u32)>,
+        name: Atom,
+        report_idx: NodeIndex,
+    ) {
+        let pos = self.ctx.arena.get(report_idx).map_or(u32::MAX, |n| n.pos);
+        if current.is_none_or(|(_, _, best)| pos < best) {
+            *current = Some((name, report_idx, pos));
+        }
+    }
+
+    /// Emit the single TS2353 + implicit-any check for the earliest excess
+    /// property recorded by [`track_earliest_excess`]. No-op when no excess
+    /// was recorded.
+    fn emit_tracked_excess_property(
+        &mut self,
+        tracked: Option<(Atom, NodeIndex, u32)>,
+        target: TypeId,
+    ) {
+        if let Some((prop_atom, report_idx, _)) = tracked {
+            let prop_name = self.object_literal_property_display_name(
+                report_idx,
+                self.ctx.types.resolve_atom(prop_atom).as_ref(),
+            );
+            self.error_excess_property_at(&prop_name, target, report_idx);
+            self.check_excess_property_initializer_implicit_any(report_idx, target);
+        }
+    }
+
     fn nested_property_target_type(
         &mut self,
         owner_type: TypeId,
@@ -208,23 +240,15 @@ impl<'a> CheckerState<'a> {
                 let report_idx = self
                     .find_object_literal_property_element(idx, source_prop.name)
                     .unwrap_or(idx);
-                let pos = self
-                    .ctx
-                    .arena
-                    .get(report_idx)
-                    .map_or(u32::MAX, |node| node.pos);
-                if generic_mapped_excess.is_none_or(|(_, _, best_pos)| pos < best_pos) {
-                    generic_mapped_excess = Some((source_prop.name, report_idx, pos));
-                }
+                self.track_earliest_excess(
+                    &mut generic_mapped_excess,
+                    source_prop.name,
+                    report_idx,
+                );
             }
         }
-        if let Some((prop_name_atom, report_idx, _)) = generic_mapped_excess {
-            let prop_name = self.object_literal_property_display_name(
-                report_idx,
-                self.ctx.types.resolve_atom(prop_name_atom).as_ref(),
-            );
-            self.error_excess_property_at(&prop_name, target, report_idx);
-            self.check_excess_property_initializer_implicit_any(report_idx, target);
+        if generic_mapped_excess.is_some() {
+            self.emit_tracked_excess_property(generic_mapped_excess, target);
             return;
         }
 
@@ -375,6 +399,8 @@ impl<'a> CheckerState<'a> {
                 discriminant_shapes
             };
 
+            // First excess by source order (see `track_earliest_excess`).
+            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
             for source_prop in source_props {
                 if explicit_property_names.is_some()
                     && !explicit_property_names
@@ -407,12 +433,7 @@ impl<'a> CheckerState<'a> {
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
-                    let prop_name = self.object_literal_property_display_name(
-                        report_idx,
-                        self.ctx.types.resolve_atom(source_prop.name).as_ref(),
-                    );
-                    self.error_excess_property_at(&prop_name, target, report_idx);
-                    self.check_excess_property_initializer_implicit_any(report_idx, target);
+                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 } else {
                     // =============================================================
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
@@ -459,6 +480,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+            self.emit_tracked_excess_property(first_excess, target);
             return;
         }
 
@@ -523,6 +545,8 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            // First excess by source order (see `track_earliest_excess`).
+            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
             for source_prop in source_props {
                 if explicit_property_names.is_some()
                     && !explicit_property_names
@@ -572,12 +596,7 @@ impl<'a> CheckerState<'a> {
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
-                    let prop_name = self.object_literal_property_display_name(
-                        report_idx,
-                        self.ctx.types.resolve_atom(source_prop.name).as_ref(),
-                    );
-                    self.error_excess_property_at(&prop_name, target, report_idx);
-                    self.check_excess_property_initializer_implicit_any(report_idx, target);
+                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 } else {
                     // Combine named property types with index signature value types
                     // for the nested excess check. This ensures that for intersections
@@ -604,10 +623,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            self.emit_tracked_excess_property(first_excess, target);
             return;
         }
 
         if crate::query_boundaries::common::is_mapped_type(self.ctx.types, effective_target) {
+            // First excess by source order (see `track_earliest_excess`).
+            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
             for source_prop in source_props {
                 if explicit_property_names.is_some()
                     && !explicit_property_names
@@ -640,16 +662,12 @@ impl<'a> CheckerState<'a> {
                         let report_idx = self
                             .find_object_literal_property_element(idx, source_prop.name)
                             .unwrap_or(idx);
-                        let prop_name = self.object_literal_property_display_name(
-                            report_idx,
-                            self.ctx.types.resolve_atom(source_prop.name).as_ref(),
-                        );
-                        self.error_excess_property_at(&prop_name, target, report_idx);
-                        self.check_excess_property_initializer_implicit_any(report_idx, target);
+                        self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                     }
                     _ => return,
                 }
             }
+            self.emit_tracked_excess_property(first_excess, target);
             return;
         }
 
@@ -726,7 +744,8 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Report excess properties identified by the boundary, then check nested.
+            // First excess by source order (see `track_earliest_excess`).
+            let mut first_excess: Option<(Atom, NodeIndex, u32)> = None;
             for source_prop in source_props {
                 if explicit_property_names.is_some()
                     && !explicit_property_names
@@ -782,12 +801,7 @@ impl<'a> CheckerState<'a> {
                     let report_idx = self
                         .find_object_literal_property_element(idx, source_prop.name)
                         .unwrap_or(idx);
-                    let prop_name = self.object_literal_property_display_name(
-                        report_idx,
-                        self.ctx.types.resolve_atom(source_prop.name).as_ref(),
-                    );
-                    self.error_excess_property_at(&prop_name, target, report_idx);
-                    self.check_excess_property_initializer_implicit_any(report_idx, target);
+                    self.track_earliest_excess(&mut first_excess, source_prop.name, report_idx);
                 } else {
                     // Property exists in target — check nested object literals.
                     let target_prop_type = target_props
@@ -808,6 +822,14 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+            }
+            if let Some((prop_name_atom, report_idx, _)) = first_excess {
+                let prop_name = self.object_literal_property_display_name(
+                    report_idx,
+                    self.ctx.types.resolve_atom(prop_name_atom).as_ref(),
+                );
+                self.error_excess_property_at(&prop_name, target, report_idx);
+                self.check_excess_property_initializer_implicit_any(report_idx, target);
             }
         }
         // Note: Missing property checks are handled by solver's explain_failure

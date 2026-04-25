@@ -783,3 +783,81 @@ x = { y: { a: 0, b: 0, c: 0 } };
         "Expected TS2353 for excess property 'c' against {{a: 0}} & {{b: 0}}, got: {relevant:?}"
     );
 }
+
+#[test]
+fn simple_object_literal_with_three_excess_properties_reports_only_first() {
+    // tsc reports only the first excess property in source order per object
+    // literal — even when several properties are excess. Repro from
+    // conformance test destructuringParameterProperties5.ts:
+    // `{ x1: 10, x2: "", x3: true }` against `{ x: number; y: string; z: boolean }`
+    // should produce exactly one TS2353 (for 'x1'), not three.
+    let source = r#"
+type ObjType1 = { x: number; y: string; z: boolean };
+let v: ObjType1 = { x1: 10, x2: "", x3: true };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected exactly one TS2353 for the first excess property, got {} ({:?})",
+        ts2353.len(),
+        diags
+    );
+    let msg = &ts2353[0].1;
+    assert!(
+        msg.contains("'x1'"),
+        "Expected the first excess property 'x1' to be reported, got: {msg}"
+    );
+}
+
+#[test]
+fn union_target_multiple_excess_properties_reports_only_first() {
+    // For a non-discriminated union target where multiple source properties
+    // are missing from every union member, tsc still reports only the first.
+    let source = r#"
+type A = { x: number; y: number };
+type B = { x: number; z: string };
+type AB = A | B;
+let v: AB = { x: 1, foo: 1, bar: 2, baz: 3 };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected exactly one TS2353 across union excess checks, got {} ({:?})",
+        ts2353.len(),
+        diags
+    );
+    let msg = &ts2353[0].1;
+    assert!(
+        msg.contains("'foo'"),
+        "Expected the first excess property 'foo' (earliest in source) to be reported, got: {msg}"
+    );
+}
+
+#[test]
+fn intersection_target_multiple_excess_properties_reports_only_first() {
+    // tsc emits a single TS2353 for the first excess property when several
+    // properties miss every member of an intersection target.
+    let source = r#"
+interface A { a: number }
+interface B { b: number }
+let v: A & B = { a: 1, b: 2, foo: 1, bar: 2 };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected exactly one TS2353 for intersection excess, got {} ({:?})",
+        ts2353.len(),
+        diags
+    );
+    let msg = &ts2353[0].1;
+    assert!(
+        msg.contains("'foo'"),
+        "Expected the first excess property 'foo' to be reported, got: {msg}"
+    );
+}
