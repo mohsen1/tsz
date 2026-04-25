@@ -156,6 +156,11 @@ or branch with uncommitted work — only clean cargo caches.
 
 ### Cache infra (Phase 4 prerequisites):
 - **#1040 MERGED** — PR 1/4: canonical-pairs `TypeSubstitution` (deterministic content-hashable form)
+- **#1128 MERGED** (2026-04-25) — PR 2/4: `InstantiationCache` storage on `QueryCache` + `lookup_instantiation_cache`/`insert_instantiation_cache` on `QueryDatabase`. No entry-point wiring yet.
+- **PR 3/4 IN FLIGHT** (agent `cache-pr3-wire-opus`, 2026-04-25) — wire 5 entry points; perf win lands here.
+
+### Phase 2 — SKELETON IR consumers:
+- **#1127 MERGED** (2026-04-25) — Phase 2 step 1: `is_ambient_module` resolver served from `SkeletonIndex` alone (Phase 5 invariant test included). First skeleton consumer migrated.
 
 ### Solver hot-path optimizations:
 - **#1125 [open]** — `remove_subtypes_for_bct` name-fingerprint pre-filter: skip impossible subtype pairs in O(N²) loop without invoking `SubtypeChecker`. Conservative — only definitive negatives short-circuit. (Salvaged from stalled BCT agent.)
@@ -236,21 +241,35 @@ shape as Phase 1 step 2 PR #1066.
 
 ## Open questions / next concrete work
 
-1. **Phase 1 step 2**: migrate ONE consumer from `NodeIndex` to
-   `StableLocation` to prove the pattern. Start with
-   `crates/tsz-checker/src/types/queries/lib_resolution.rs` (small
-   surface, clear ownership). After #1045 merges.
-2. **Phase 2**: design a binder-produced skeleton IR (the doc points at
-   this; no design PR yet). Should answer: what's the minimum data
-   needed for the deterministic reduce that gives stable identity?
-3. **Phase 3**: investigate whether `crates/tsz-cli/src/project/incremental.rs`
-   `compute_export_signature` can route through `tsz_lsp::ExportSignature`.
-   Note: tsbuildinfo serialization format constrains this — needs care.
-4. **Profile the Check phase** on `manyConstExports.ts` — 80% of time
-   with 0 cache hits means there's an O(N_symbols) per-declaration pass
-   we don't have attribution for. Use `cargo flamegraph` or `samply`.
-   The current bench gap (1.4× slower than tsgo) on symbol-heavy files
-   is unaccounted-for and not a known Arc-share target.
+1. **Cache PR 3/4 (IN FLIGHT)** — wire the 5 `instantiate_type*` entry
+   points to the cache landed in #1128. Constraints in design doc §5.
+   Agent: `cache-pr3-wire-opus`. This is where the perf win lands on
+   utility types (`ts-essentials/deep-readonly.ts` cited as 16.56×
+   gap pre-fix).
+2. **Cache PR 4/4** — optional shared cross-file cache on
+   `SharedQueryCache`. Gate on PR 3 stats showing cross-file
+   hit rate is non-trivial.
+3. **Phase 2 step 2** — pick the next skeleton consumer. Candidates:
+   `lookup_by_name` (currently iterates all 6086 binders per call —
+   `crates/tsz-checker/src/state/type_resolution/module.rs:2070-2087`),
+   global augmentations resolver, or wildcard re-export graph.
+4. **Phase 1 step 3 (IN FLIGHT)** — migrate `identifier_source_display`
+   from `NodeIndex` to `StableLocation`. Agent has +354/-36 staged but
+   no commits yet (status nudge sent).
+5. **Phase 3** — CLI/LSP fingerprint unification. `compute_export_signature`
+   in `crates/tsz-cli/src/project/incremental.rs` may be able to route
+   through `tsz_lsp::ExportSignature`. tsbuildinfo serialization format
+   constrains this — needs care.
+6. **Known followup (NOT IN ANY PR)** — `lookup_by_name` global name
+   index. Iterates all 6086 binders per call. Fix: global
+   `Arc<FxHashMap<&str, SmallVec<[(BinderIdx, SymbolId); 2]>>>` built
+   at merge, plumb through `CheckerContext`. Multi-hour task; defer
+   until Cache PR 3/4 lands (potential conflict on checker fields).
+7. **Investigate 3.28× regression** between fe3e457d3f (pre-session
+   baseline) and current main on `manyConstExports.ts` (77ms → 253ms
+   across 495 commits). Not from Arc-share migrations (neutral on
+   single-file noemit). Multi-hour bisect — defer unless explicitly
+   requested.
 
 This document should evolve. When a directive lands wrong (regression,
 review change, design pivot), update this file and re-feed it as the
