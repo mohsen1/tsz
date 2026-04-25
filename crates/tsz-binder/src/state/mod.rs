@@ -314,9 +314,18 @@ pub struct BinderState {
     /// Cross-file `node_symbols`: maps arena pointer → `node_symbols` for that arena.
     /// Enables resolving type references in cross-file interface declarations.
     pub cross_file_node_symbols: CrossFileNodeSymbols,
-    /// Node-to-flow mapping: tracks which flow node was active at each AST node
-    /// Used by the checker for control flow analysis (type narrowing)
-    pub node_flow: FxHashMap<u32, FlowNodeId>,
+    /// Node-to-flow mapping: tracks which flow node was active at each AST node.
+    /// Used by the checker for control flow analysis (type narrowing).
+    ///
+    /// Stored behind `Arc` so cross-file lookup binders (one per file in the
+    /// parallel CLI pipeline) can share each file's per-file map by reference
+    /// instead of deep-cloning the underlying `FxHashMap` on every binder
+    /// reconstruction. On large repos (6086 files), the deep clone of
+    /// `node_flow` was one of the largest per-binder allocations after the
+    /// `semantic_defs` (#1202) and `node_symbols` (#1227) Arc migrations.
+    /// Mutations during binding use `Arc::make_mut` (free when refcount=1,
+    /// the case during a single binder's construction).
+    pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     /// Flow node after each top-level statement (for incremental binding).
     pub(crate) top_level_flow: FxHashMap<u32, FlowNodeId>,
     /// Map case/default clause nodes to their containing switch statement.
@@ -904,7 +913,7 @@ pub struct BinderStateScopeInputs {
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: Arc<FlowNodeArena>,
-    pub node_flow: FxHashMap<u32, FlowNodeId>,
+    pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
