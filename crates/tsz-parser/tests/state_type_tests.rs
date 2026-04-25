@@ -1,17 +1,5 @@
 //! Tests for type expression parsing in the parser.
-use crate::parser::{NodeIndex, ParserState};
-
-fn parse_source(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
-}
-
-fn parse_source_named(file_name: &str, source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
-}
+use crate::parser::test_fixture::{parse_source, parse_source_named};
 
 #[test]
 fn parse_complex_type_expressions_have_no_errors() {

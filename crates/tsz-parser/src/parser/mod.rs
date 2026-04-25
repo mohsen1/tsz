@@ -38,6 +38,10 @@ mod state_types;
 mod state_types_jsx;
 
 #[cfg(test)]
+#[path = "../../tests/test_fixture.rs"]
+mod test_fixture;
+
+#[cfg(test)]
 #[path = "../../tests/parser_improvement_tests.rs"]
 mod parser_improvement_tests;
 #[cfg(test)]

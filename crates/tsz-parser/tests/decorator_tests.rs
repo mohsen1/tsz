@@ -1,11 +1,6 @@
 //! Tests for decorator parsing, particularly ES decorator support (TC39 Stage 3).
-use crate::parser::{NodeIndex, ParserState};
-
-fn parse_source(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
-}
+use crate::parser::ParserState;
+use crate::parser::test_fixture::parse_source;
 
 fn has_error_code(parser: &ParserState, code: u32) -> bool {
     parser.get_diagnostics().iter().any(|d| d.code == code)
