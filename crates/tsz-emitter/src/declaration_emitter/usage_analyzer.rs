@@ -479,6 +479,54 @@ impl<'a> UsageAnalyzer<'a> {
         } else {
             // No explicit annotation - use inferred type from node_types
             self.walk_inferred_type(func_idx);
+            // Also walk return-statement type assertions in the body so
+            // imports referenced only via `return {} as X;` survive elision.
+            // The inferred TypeId may resolve to an ambient symbol that
+            // doesn't transitively mark the local import alias as used.
+            // Matches typeReferenceRelatedFiles.
+            if func.body.is_some() {
+                self.analyze_return_statement_assertions(func.body);
+            }
+        }
+    }
+
+    /// Walk return statements in a function/method body and analyze any
+    /// `as Type` / `<Type>expr` assertion's type-position node so imports
+    /// referenced only there are marked used.
+    fn analyze_return_statement_assertions(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return;
+        };
+        for &stmt_idx in &block.statements.nodes {
+            self.analyze_return_assertion_in_statement(stmt_idx);
+        }
+    }
+
+    fn analyze_return_assertion_in_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return;
+        }
+        let Some(ret) = self.arena.get_return_statement(stmt_node) else {
+            return;
+        };
+        if !ret.expression.is_some() {
+            return;
+        }
+        self.analyze_type_assertion_chain(ret.expression);
+    }
+
+    fn analyze_type_assertion_chain(&mut self, expr_idx: NodeIndex) {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return;
+        };
+        if let Some(assertion) = self.arena.get_type_assertion(expr_node) {
+            self.analyze_type_node(assertion.type_node);
         }
     }
 
