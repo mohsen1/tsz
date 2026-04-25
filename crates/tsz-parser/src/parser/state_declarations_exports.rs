@@ -17,6 +17,7 @@ use crate::parser::{
     syntax_kind_ext,
 };
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::keyword_text_len;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
@@ -73,7 +74,7 @@ impl ParserState {
             // (tsc points the error at the modifier, not the `import` keyword)
             self.parse_error_at(
                 start_pos,
-                6, // length of "export"
+                keyword_text_len(SyntaxKind::ExportKeyword),
                 "An import declaration cannot have modifiers.",
                 diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
             );
@@ -695,14 +696,14 @@ impl ParserState {
                 }) {
                     self.parse_error_at(
                         start_pos,
-                        6, // length of "export"
+                        keyword_text_len(SyntaxKind::ExportKeyword),
                         "Declaration or statement expected.",
                         diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
                     );
                     let abstract_pos = self.token_pos();
                     self.parse_error_at(
                         abstract_pos,
-                        8, // length of "abstract"
+                        keyword_text_len(SyntaxKind::AbstractKeyword),
                         "Unexpected keyword or identifier.",
                         diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     );
@@ -814,7 +815,7 @@ impl ParserState {
                     // Genuine duplicate export modifier
                     self.parse_error_at(
                         second_export_pos,
-                        6, // length of "export"
+                        keyword_text_len(SyntaxKind::ExportKeyword),
                         &format!("'{}' modifier already seen.", "export"),
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
@@ -1020,9 +1021,11 @@ impl ParserState {
         // Create an export modifier to pass to the ambient declaration
         // The export keyword was already consumed in parse_export_declaration
         // We need to create a token for it at the start_pos
-        let export_modifier =
-            self.arena
-                .add_token(SyntaxKind::ExportKeyword as u16, start_pos, start_pos + 6); // "export" is 6 chars
+        let export_modifier = self.arena.add_token(
+            SyntaxKind::ExportKeyword as u16,
+            start_pos,
+            start_pos + keyword_text_len(SyntaxKind::ExportKeyword),
+        );
         self.parse_ambient_declaration_with_modifiers(vec![export_modifier])
     }
 
@@ -1966,7 +1969,7 @@ impl ParserState {
         {
             // Line break after throw - TS1142: Line break not permitted here
             // The error position should be at the end of the `throw` keyword
-            let throw_end = start_pos + 5; // "throw" is 5 chars
+            let throw_end = start_pos + keyword_text_len(SyntaxKind::ThrowKeyword);
             self.parse_error_at(
                 throw_end,
                 0,

@@ -689,6 +689,20 @@ pub fn keyword_to_text(token: SyntaxKind) -> Option<String> {
     keyword_to_text_static(token).map(std::convert::Into::into)
 }
 
+/// Byte length of a keyword's source text, as a `u32` for `parse_error_at`
+/// span arguments. Returns `0` for non-keyword tokens.
+///
+/// All keyword texts in `keyword_to_text_static` are pure ASCII, so byte length
+/// equals character length. Using this avoids hardcoding `6 // length of "export"`
+/// at every parser-recovery diagnostic site.
+#[must_use]
+pub const fn keyword_text_len(token: SyntaxKind) -> u32 {
+    match keyword_to_text_static(token) {
+        Some(text) => text.len() as u32,
+        None => 0,
+    }
+}
+
 /// Internal non-allocating version - returns static str reference.
 /// Use this for Rust-internal code to avoid allocations.
 #[must_use]
