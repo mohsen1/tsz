@@ -774,6 +774,20 @@ impl<'a> CheckerState<'a> {
             return (source_candidate, target_candidate);
         }
 
+        // Enum-member → enum-type widening: upstream produces `W` while the
+        // disambiguator regenerates `W.a`.  When the upstream `source_display`
+        // is exactly the dotted *parent* of `pair_source` (i.e. `pair_source`
+        // is `<source_display>.<member>`), the disambiguator is undoing
+        // upstream's deliberate widening.  Cross-package symlink
+        // disambiguation is unaffected because there `pair_source` matches
+        // `source_display` (no parent-of relationship triggered).
+        let pair_source_parent = pair_source
+            .rsplit_once('.')
+            .map(|(parent, _)| parent.trim_end());
+        if pair_source_parent == Some(source_display.as_str()) && source_display != target_display {
+            return (source_display, target_display);
+        }
+
         (pair_source, pair_target)
     }
 
