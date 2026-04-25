@@ -37,6 +37,7 @@ pub mod diagnostics;
 pub mod emit;
 pub mod enums;
 pub mod language_service;
+pub mod options;
 pub mod program;
 pub mod source_file;
 pub mod type_checker;

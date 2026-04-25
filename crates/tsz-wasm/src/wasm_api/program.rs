@@ -17,6 +17,7 @@ use tsz::parser::ParserState;
 use tsz_checker::diagnostics::DiagnosticCategory;
 use tsz_solver::TypeInterner;
 
+use super::options::{module_kind_from_u8, target_kind_from_u8};
 use super::source_file::TsSourceFile;
 use super::type_checker::TsTypeChecker;
 
@@ -68,9 +69,7 @@ pub struct TsCompilerOptions {
 
 impl TsCompilerOptions {
     fn resolve_module(&self) -> tsz::common::ModuleKind {
-        self.module
-            .and_then(|module| tsz::common::ModuleKind::from_ts_numeric(u32::from(module)))
-            .unwrap_or(tsz::common::ModuleKind::None)
+        module_kind_from_u8(self.module)
     }
 
     /// Convert to internal `CheckerOptions`
@@ -521,14 +520,8 @@ impl TsProgram {
         let mut emitted_files: Vec<serde_json::Value> = Vec::new();
 
         // Determine target and module from options
-        let target = tsz::emitter::ScriptTarget::from_ts_numeric(u32::from(
-            self.options.target.unwrap_or(1),
-        ))
-        .unwrap_or(tsz::emitter::ScriptTarget::ES5);
-
-        let module =
-            tsz::emitter::ModuleKind::from_ts_numeric(u32::from(self.options.module.unwrap_or(0)))
-                .unwrap_or(tsz::emitter::ModuleKind::None);
+        let target = target_kind_from_u8(self.options.target);
+        let module = module_kind_from_u8(self.options.module);
 
         // Emit each file
         for (idx, bound_file) in merged.files.iter().enumerate() {
@@ -592,15 +585,8 @@ impl TsProgram {
                     ""
                 };
 
-                let target = tsz::emitter::ScriptTarget::from_ts_numeric(u32::from(
-                    self.options.target.unwrap_or(1),
-                ))
-                .unwrap_or(tsz::emitter::ScriptTarget::ES5);
-
-                let module = tsz::emitter::ModuleKind::from_ts_numeric(u32::from(
-                    self.options.module.unwrap_or(0),
-                ))
-                .unwrap_or(tsz::emitter::ModuleKind::None);
+                let target = target_kind_from_u8(self.options.target);
+                let module = module_kind_from_u8(self.options.module);
 
                 return super::emit::emit_file(
                     &bound_file.arena,
