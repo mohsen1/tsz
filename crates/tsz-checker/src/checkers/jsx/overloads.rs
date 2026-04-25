@@ -4,7 +4,7 @@
 //! tries each overload against the provided JSX attributes. If no overload
 //! matches, emits TS2769 ("No overload matches this call.").
 
-use crate::context::speculation::DiagnosticSpeculationGuard;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -72,7 +72,7 @@ impl<'a> CheckerState<'a> {
         // Speculative attribute collection: save diagnostic checkpoint so side-effect
         // diagnostics (e.g. TS7006 from callback params without contextual typing) are
         // rolled back. Only the final TS2769 (if no overload matches) is kept.
-        let guard = DiagnosticSpeculationGuard::new(&self.ctx);
+        let guard = DiagnosticSpeculationSnapshot::new(&self.ctx);
 
         // Collect JSX attributes: explicit + spread-merged, with override tracking
         let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
