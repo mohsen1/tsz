@@ -499,8 +499,15 @@ pub struct BindResult {
     pub declaration_arenas: Arc<DeclarationArenaMap>,
     /// Persistent scopes for stateless checking
     pub scopes: Vec<Scope>,
-    /// Map from AST node to scope ID
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    /// Map from AST node to scope ID.
+    ///
+    /// Shared via `Arc` because the binder owns it as `Arc<FxHashMap<...>>`
+    /// to avoid deep clones when reconstructing per-file binders for the
+    /// cross-file lookup pipeline. The Arc is moved out of the binder when
+    /// finalizing the bind result. See PR #1202 (`semantic_defs`),
+    /// PR #1227 (`node_symbols`), and PR #1235 (`node_flow`); this is the
+    /// same template applied to `node_scope_ids`.
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Shorthand ambient modules (`declare module "foo"` without body)
@@ -1431,8 +1438,16 @@ pub struct BoundFile {
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Persistent scopes (symbol IDs are global after merge)
     pub scopes: Vec<Scope>,
-    /// Map from AST node to scope ID
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    /// Map from AST node to scope ID.
+    ///
+    /// Shared via `Arc` so cross-file lookup binders (one per file in the
+    /// parallel CLI pipeline) can take an O(1) reference to this file's
+    /// per-file map instead of deep-cloning the underlying `FxHashMap`. On
+    /// large repos (6086 files), the deep clone of `node_scope_ids` was one
+    /// of the largest per-binder allocations after the `semantic_defs`
+    /// (#1202), `node_symbols` (#1227), and `node_flow` (#1235) Arc
+    /// migrations.
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
@@ -3327,7 +3342,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             declaration_arenas: remapped_declaration_arenas,
             module_declaration_exports_publicly: result.module_declaration_exports_publicly.clone(),
             scopes: remapped_scopes,
-            node_scope_ids: result.node_scope_ids.clone(),
+            // Arc::clone is O(1); per-file `BoundFile` shares the same
+            // `node_scope_ids` map as later `cross_file_*` binder
+            // constructions.
+            node_scope_ids: Arc::clone(&result.node_scope_ids),
             parse_diagnostics: result.parse_diagnostics.clone(),
             global_augmentations: (*result.global_augmentations).clone(),
             module_augmentations,
@@ -4098,7 +4116,7 @@ fn build_lib_bound_file_for_interface_checks(
         declaration_arenas,
         module_declaration_exports_publicly: FxHashMap::default(),
         scopes: Vec::new(),
-        node_scope_ids: FxHashMap::default(),
+        node_scope_ids: Arc::new(FxHashMap::default()),
         parse_diagnostics: Vec::new(),
         global_augmentations: FxHashMap::default(),
         module_augmentations: FxHashMap::default(),
@@ -4911,7 +4929,9 @@ pub fn create_binder_from_bound_file(
         Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
-            node_scope_ids: file.node_scope_ids.clone(),
+            // Arc::clone is O(1); cross-file lookup binders share the per-file
+            // node_scope_ids map by reference instead of deep-cloning it.
+            node_scope_ids: Arc::clone(&file.node_scope_ids),
             global_augmentations: Arc::new(file.global_augmentations.clone()),
             module_augmentations: Arc::new(file.module_augmentations.clone()),
             augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
@@ -5018,7 +5038,9 @@ pub fn create_binder_from_bound_file_with_shared(
         Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
-            node_scope_ids: file.node_scope_ids.clone(),
+            // Arc::clone is O(1); cross-file lookup binders share the per-file
+            // node_scope_ids map by reference instead of deep-cloning it.
+            node_scope_ids: Arc::clone(&file.node_scope_ids),
             global_augmentations: Arc::new(file.global_augmentations.clone()),
             module_augmentations: Arc::new(file.module_augmentations.clone()),
             augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),

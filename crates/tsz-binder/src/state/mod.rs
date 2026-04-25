@@ -338,8 +338,18 @@ pub struct BinderState {
     // ===== Persistent Scope System (for stateless checking) =====
     /// Persistent scopes - enables querying scope information without traversal order
     pub scopes: Vec<Scope>,
-    /// Map from AST node (that creates a scope) to its `ScopeId`
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    /// Map from AST node (that creates a scope) to its `ScopeId`.
+    ///
+    /// Stored behind `Arc` so cross-file lookup binders (one per file in the
+    /// parallel CLI pipeline) can share each file's per-file map by reference
+    /// instead of deep-cloning the underlying `FxHashMap` on every binder
+    /// reconstruction. On large repos (6086 files), the deep clone of
+    /// `node_scope_ids` was one of the largest per-binder allocations after
+    /// the `semantic_defs` (#1202), `node_symbols` (#1227), and `node_flow`
+    /// (#1235) Arc migrations. Mutations during binding use `Arc::make_mut`
+    /// (free when refcount=1, the case during a single binder's
+    /// construction).
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     /// Current active `ScopeId` during binding
     pub current_scope_id: ScopeId,
 
@@ -897,7 +907,7 @@ pub struct ResolutionStats {
 #[derive(Debug, Default)]
 pub struct BinderStateScopeInputs {
     pub scopes: Vec<Scope>,
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     pub global_augmentations: Arc<FxHashMap<String, Vec<GlobalAugmentation>>>,
     pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,

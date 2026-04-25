@@ -1597,7 +1597,13 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
         Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
-            node_scope_ids: file.node_scope_ids.clone(),
+            // Arc::clone is O(1); per-file binders share the same
+            // `node_scope_ids` map as the `BoundFile` instead of deep-cloning
+            // the underlying `FxHashMap<u32, ScopeId>`. Per-file binders
+            // consume this map read-only after construction (binder mutations
+            // during checking are gated by `Arc::make_mut`, which copy-on-
+            // writes safely if a mutation ever does fire); sharing is safe.
+            node_scope_ids: Arc::clone(&file.node_scope_ids),
             global_augmentations: augmentations.global_augmentations.clone(),
             module_augmentations: augmentations.module_augmentations.clone(),
             augmentation_target_modules: augmentations.augmentation_target_modules.clone(),
@@ -1730,7 +1736,13 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
         Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
-            node_scope_ids: file.node_scope_ids.clone(),
+            // Arc::clone is O(1); per-file binders share the same
+            // `node_scope_ids` map as the `BoundFile` instead of deep-cloning
+            // the underlying `FxHashMap<u32, ScopeId>`. Per-file binders
+            // consume this map read-only after construction (binder mutations
+            // during checking are gated by `Arc::make_mut`, which copy-on-
+            // writes safely if a mutation ever does fire); sharing is safe.
+            node_scope_ids: Arc::clone(&file.node_scope_ids),
             global_augmentations: augmentations.global_augmentations.clone(),
             module_augmentations: augmentations.module_augmentations.clone(),
             augmentation_target_modules: augmentations.augmentation_target_modules.clone(),

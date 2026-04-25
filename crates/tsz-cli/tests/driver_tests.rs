@@ -2649,7 +2649,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
         original_binder.node_symbols.clone(),
         BinderStateScopeInputs {
             scopes: original_binder.scopes.clone(),
-            node_scope_ids: original_binder.node_scope_ids.clone(),
+            node_scope_ids: Arc::clone(&original_binder.node_scope_ids),
             global_augmentations: original_binder.global_augmentations.clone(),
             module_augmentations: original_binder.module_augmentations.clone(),
             augmentation_target_modules: original_binder.augmentation_target_modules.clone(),

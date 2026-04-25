@@ -8482,7 +8482,7 @@ var e: Date = c.b();
         file1_bound.node_symbols.clone(),
         crate::binder::state::BinderStateScopeInputs {
             scopes: file1_bound.scopes.clone(),
-            node_scope_ids: file1_bound.node_scope_ids.clone(),
+            node_scope_ids: std::sync::Arc::clone(&file1_bound.node_scope_ids),
             global_augmentations: std::sync::Arc::new(file1_bound.global_augmentations.clone()),
             module_augmentations: std::sync::Arc::new(file1_bound.module_augmentations.clone()),
             augmentation_target_modules: std::sync::Arc::new(
