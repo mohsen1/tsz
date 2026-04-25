@@ -28,22 +28,20 @@ Usage:
   python3 scripts/emit/query-emit.py --js-failures --paths-only
 """
 
+import os
 import sys
-import json
 import argparse
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from lib.query_snapshot import load_snapshot, print_top_counter
 
 DETAIL_FILE = Path(__file__).parent / "emit-detail.json"
 
 
 def load_detail():
-    if not DETAIL_FILE.exists():
-        print(f"Error: {DETAIL_FILE} not found.")
-        print("Run: ./scripts/emit/run.sh --json-out")
-        sys.exit(1)
-    with open(DETAIL_FILE) as f:
-        return json.load(f)
+    return load_snapshot(DETAIL_FILE, "Run: ./scripts/emit/run.sh --json-out")
 
 
 def show_overview(data):
@@ -79,8 +77,7 @@ def show_overview(data):
         msg = r.get("jsError", "unknown")
         # Normalize to first 80 chars
         js_error_counter[msg[:80]] += 1
-    for msg, count in js_error_counter.most_common(10):
-        print(f"  {count:>4d}  {msg}")
+    print_top_counter(js_error_counter, 10)
     print()
 
     print("Top DTS failure messages:")
@@ -88,8 +85,7 @@ def show_overview(data):
     for r in dts_fails:
         msg = r.get("dtsError", "unknown")
         dts_error_counter[msg[:80]] += 1
-    for msg, count in dts_error_counter.most_common(10):
-        print(f"  {count:>4d}  {msg}")
+    print_top_counter(dts_error_counter, 10)
 
 
 def show_js_failures(data, top=40, paths_only=False):
@@ -136,8 +132,7 @@ def show_top_errors(data, top=20):
     for r in results:
         if r["jsStatus"] == "fail" and r.get("jsError"):
             js_counter[r["jsError"][:100]] += 1
-    for msg, count in js_counter.most_common(top):
-        print(f"  {count:>4d}  {msg}")
+    print_top_counter(js_counter, top)
 
     print()
     print("Top DTS error messages:")
@@ -145,8 +140,7 @@ def show_top_errors(data, top=20):
     for r in results:
         if r["dtsStatus"] == "fail" and r.get("dtsError"):
             dts_counter[r["dtsError"][:100]] += 1
-    for msg, count in dts_counter.most_common(top):
-        print(f"  {count:>4d}  {msg}")
+    print_top_counter(dts_counter, top)
 
 
 def show_close(data, top=40):
