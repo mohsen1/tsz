@@ -248,6 +248,79 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Classify a binary-expression LHS as a CommonJS export target.
+    ///
+    /// Returns `Some((property_name, expando_root))` when the LHS matches:
+    /// - `exports.<name>` / `exports["<name>"]`
+    /// - `module.exports.<name>` / `module["exports"].<name>`
+    /// - `<alias>.<name>` where `alias` is in `export_aliases`
+    fn classify_commonjs_lhs(
+        arena: &tsz_parser::parser::NodeArena,
+        binary_left: NodeIndex,
+        export_aliases: &FxHashSet<String>,
+    ) -> Option<(String, Option<String>)> {
+        let left_node = arena.get(binary_left).filter(|n| {
+            n.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        })?;
+        let left_access = arena.get_access_expr(left_node)?;
+        let expr_idx = left_access.expression;
+        let name_or_arg = left_access.name_or_argument;
+
+        // exports.<name> / exports["<name>"]
+        if let Some(ident) = arena.get_identifier_at(expr_idx) {
+            if ident.escaped_text == "exports" {
+                return Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
+                    .map(|name| (name, None));
+            }
+        }
+
+        // module.exports.<name> / module["exports"].<name>
+        if let Some(container_node) = arena.get(expr_idx) {
+            if container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || container_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                if let Some(container_access) = arena.get_access_expr(container_node) {
+                    let is_module_exports =
+                        if container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                            arena
+                                .get_identifier_at(container_access.expression)
+                                .is_some_and(|i| i.escaped_text == "module")
+                                && arena
+                                    .get_identifier_at(container_access.name_or_argument)
+                                    .is_some_and(|i| i.escaped_text == "exports")
+                        } else {
+                            arena
+                                .get_identifier_at(container_access.expression)
+                                .is_some_and(|i| i.escaped_text == "module")
+                                && Self::commonjs_static_member_name_in_arena(
+                                    arena,
+                                    container_access.name_or_argument,
+                                )
+                                .is_some_and(|n| n == "exports")
+                        };
+                    if is_module_exports {
+                        return Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
+                            .map(|n| (n, None));
+                    }
+                }
+            }
+        }
+
+        // <alias>.<name> where alias is in export_aliases
+        arena
+            .get_identifier_at(expr_idx)
+            .and_then(|ident| {
+                export_aliases
+                    .contains(ident.escaped_text.as_str())
+                    .then(|| {
+                        Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
+                            .map(|n| (n, None))
+                    })
+            })
+            .flatten()
+    }
+
     fn collect_future_commonjs_assignment_candidates(
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
@@ -269,109 +342,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let direct_exports = arena
-            .get(binary.left)
-            .filter(|left_node| {
-                left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            })
-            .and_then(|left_node| arena.get_access_expr(left_node))
-            .and_then(|left_access| {
-                arena
-                    .get_identifier_at(left_access.expression)
-                    .and_then(|ident| {
-                        (ident.escaped_text == "exports").then(|| {
-                            Self::commonjs_static_member_name_in_arena(
-                                arena,
-                                left_access.name_or_argument,
-                            )
-                            .map(|name| (name, None))
-                        })
-                    })
-            })
-            .flatten();
-
-        let module_exports = arena
-            .get(binary.left)
-            .filter(|left_node| {
-                left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            })
-            .and_then(|left_node| arena.get_access_expr(left_node))
-            .and_then(|left_access| {
-                arena
-                    .get(left_access.expression)
-                    .filter(|target_node| {
-                        target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                            || target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    })
-                    .and_then(|target_node| arena.get_access_expr(target_node))
-                    .and_then(|target_access| {
-                        let is_module_exports = if let Some(target_node) =
-                            arena.get(left_access.expression)
-                        {
-                            if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                                arena
-                                    .get_identifier_at(target_access.expression)
-                                    .is_some_and(|ident| ident.escaped_text == "module")
-                                    && arena
-                                        .get_identifier_at(target_access.name_or_argument)
-                                        .is_some_and(|ident| ident.escaped_text == "exports")
-                            } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                            {
-                                arena
-                                    .get_identifier_at(target_access.expression)
-                                    .is_some_and(|ident| ident.escaped_text == "module")
-                                    && Self::commonjs_static_member_name_in_arena(
-                                        arena,
-                                        target_access.name_or_argument,
-                                    )
-                                    .is_some_and(|name| name == "exports")
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                        is_module_exports.then(|| {
-                            Self::commonjs_static_member_name_in_arena(
-                                arena,
-                                left_access.name_or_argument,
-                            )
-                            .map(|name| (name, None))
-                        })?
-                    })
-            });
-
-        let alias_exports = if direct_exports.is_none() && module_exports.is_none() {
-            arena
-                .get(binary.left)
-                .filter(|left_node| {
-                    left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                })
-                .and_then(|left_node| arena.get_access_expr(left_node))
-                .and_then(|left_access| {
-                    arena
-                        .get_identifier_at(left_access.expression)
-                        .and_then(|ident| {
-                            export_aliases
-                                .contains(ident.escaped_text.as_str())
-                                .then(|| {
-                                    Self::commonjs_static_member_name_in_arena(
-                                        arena,
-                                        left_access.name_or_argument,
-                                    )
-                                    .map(|name| (name, None))
-                                })
-                        })
-                })
-                .flatten()
-        } else {
-            None
-        };
-
-        if let Some((name_text, expando_root)) = direct_exports.or(module_exports).or(alias_exports)
+        if let Some((name_text, expando_root)) =
+            Self::classify_commonjs_lhs(arena, binary.left, export_aliases)
             && name_text == property_name
             && node.pos > read_pos
         {
@@ -409,109 +381,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let direct_exports = arena
-            .get(binary.left)
-            .filter(|left_node| {
-                left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            })
-            .and_then(|left_node| arena.get_access_expr(left_node))
-            .and_then(|left_access| {
-                arena
-                    .get_identifier_at(left_access.expression)
-                    .and_then(|ident| {
-                        (ident.escaped_text == "exports").then(|| {
-                            Self::commonjs_static_member_name_in_arena(
-                                arena,
-                                left_access.name_or_argument,
-                            )
-                            .map(|name| (name, None))
-                        })
-                    })
-            })
-            .flatten();
-
-        let module_exports = arena
-            .get(binary.left)
-            .filter(|left_node| {
-                left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            })
-            .and_then(|left_node| arena.get_access_expr(left_node))
-            .and_then(|left_access| {
-                arena
-                    .get(left_access.expression)
-                    .filter(|target_node| {
-                        target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                            || target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                    })
-                    .and_then(|target_node| arena.get_access_expr(target_node))
-                    .and_then(|target_access| {
-                        let is_module_exports = if let Some(target_node) =
-                            arena.get(left_access.expression)
-                        {
-                            if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                                arena
-                                    .get_identifier_at(target_access.expression)
-                                    .is_some_and(|ident| ident.escaped_text == "module")
-                                    && arena
-                                        .get_identifier_at(target_access.name_or_argument)
-                                        .is_some_and(|ident| ident.escaped_text == "exports")
-                            } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                            {
-                                arena
-                                    .get_identifier_at(target_access.expression)
-                                    .is_some_and(|ident| ident.escaped_text == "module")
-                                    && Self::commonjs_static_member_name_in_arena(
-                                        arena,
-                                        target_access.name_or_argument,
-                                    )
-                                    .is_some_and(|name| name == "exports")
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                        is_module_exports.then(|| {
-                            Self::commonjs_static_member_name_in_arena(
-                                arena,
-                                left_access.name_or_argument,
-                            )
-                            .map(|name| (name, None))
-                        })?
-                    })
-            });
-
-        let alias_exports = if direct_exports.is_none() && module_exports.is_none() {
-            arena
-                .get(binary.left)
-                .filter(|left_node| {
-                    left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                        || left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                })
-                .and_then(|left_node| arena.get_access_expr(left_node))
-                .and_then(|left_access| {
-                    arena
-                        .get_identifier_at(left_access.expression)
-                        .and_then(|ident| {
-                            export_aliases
-                                .contains(ident.escaped_text.as_str())
-                                .then(|| {
-                                    Self::commonjs_static_member_name_in_arena(
-                                        arena,
-                                        left_access.name_or_argument,
-                                    )
-                                    .map(|name| (name, None))
-                                })
-                        })
-                })
-                .flatten()
-        } else {
-            None
-        };
-
-        if let Some((name_text, expando_root)) = direct_exports.or(module_exports).or(alias_exports)
+        if let Some((name_text, expando_root)) =
+            Self::classify_commonjs_lhs(arena, binary.left, export_aliases)
             && name_text == property_name
             && node.pos < read_pos
             && best_match
@@ -1120,5 +991,85 @@ impl<'a> CheckerState<'a> {
         let ty = checker.get_type_of_function_impl(method_idx, &request);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
         ty
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustc_hash::FxHashSet;
+    use tsz_parser::parser::{NodeArena, NodeIndex, ParserState};
+
+    use super::CheckerState;
+
+    fn binary_lhs_of(source: &str) -> (NodeArena, NodeIndex) {
+        let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+        parser.parse_source_file();
+        let arena = parser.get_arena().clone();
+        let sf = arena.source_files.first().expect("source file");
+        let stmt_idx = sf.statements.nodes[0];
+        let stmt_node = arena.get(stmt_idx).expect("stmt");
+        let stmt = arena
+            .get_expression_statement(stmt_node)
+            .expect("expr stmt");
+        let bin_node = arena.get(stmt.expression).expect("binary node");
+        let left = arena.get_binary_expr(bin_node).expect("binary").left;
+        (arena, left)
+    }
+
+    fn no_aliases() -> FxHashSet<String> {
+        FxHashSet::default()
+    }
+
+    fn aliases(names: &[&str]) -> FxHashSet<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn classify_exports_dot_prop() {
+        let (arena, left) = binary_lhs_of("exports.foo = 1;");
+        let result = CheckerState::classify_commonjs_lhs(&arena, left, &no_aliases());
+        assert_eq!(result, Some(("foo".to_string(), None)));
+    }
+
+    #[test]
+    fn classify_exports_bracket_prop() {
+        let (arena, left) = binary_lhs_of(r#"exports["bar"] = 2;"#);
+        let result = CheckerState::classify_commonjs_lhs(&arena, left, &no_aliases());
+        assert_eq!(result, Some(("bar".to_string(), None)));
+    }
+
+    #[test]
+    fn classify_module_exports_dot_prop() {
+        let (arena, left) = binary_lhs_of("module.exports.baz = 3;");
+        let result = CheckerState::classify_commonjs_lhs(&arena, left, &no_aliases());
+        assert_eq!(result, Some(("baz".to_string(), None)));
+    }
+
+    #[test]
+    fn classify_module_bracket_exports_dot_prop() {
+        let (arena, left) = binary_lhs_of(r#"module["exports"].qux = 4;"#);
+        let result = CheckerState::classify_commonjs_lhs(&arena, left, &no_aliases());
+        assert_eq!(result, Some(("qux".to_string(), None)));
+    }
+
+    #[test]
+    fn classify_alias_prop() {
+        let (arena, left) = binary_lhs_of("e.thing = 5;");
+        let result = CheckerState::classify_commonjs_lhs(&arena, left, &aliases(&["e"]));
+        assert_eq!(result, Some(("thing".to_string(), None)));
+    }
+
+    #[test]
+    fn classify_non_export_returns_none() {
+        let (arena, left) = binary_lhs_of("obj.prop = 6;");
+        let result = CheckerState::classify_commonjs_lhs(&arena, left, &no_aliases());
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn classify_alias_not_in_set_returns_none() {
+        let (arena, left) = binary_lhs_of("e.thing = 7;");
+        let result = CheckerState::classify_commonjs_lhs(&arena, left, &no_aliases());
+        assert_eq!(result, None);
     }
 }
