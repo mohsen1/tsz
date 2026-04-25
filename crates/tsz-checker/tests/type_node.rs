@@ -59,3 +59,40 @@ fn type_level_tuple_negative_index_emits_t2514() {
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn optional_function_signature_type_includes_undefined() {
+    let source = r#"
+declare var f: (s: string, n?: number) => void;
+declare var g: (s: string, b?: boolean) => void;
+f = g;
+"#;
+    let diags = check_source_with_default_libs(source);
+
+    let relevant: Vec<_> = diags
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect();
+    assert!(
+        !relevant.is_empty(),
+        "Expected a function assignability diagnostic, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    let messages: Vec<_> = relevant
+        .iter()
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    let joined = messages.join("\n");
+    assert!(
+        joined.contains("boolean | undefined"),
+        "Expected optional signature diagnostic to preserve undefined for boolean params.\n{joined}"
+    );
+    assert!(
+        joined.contains("number | undefined"),
+        "Expected optional signature diagnostic to preserve undefined for number params.\n{joined}"
+    );
+}

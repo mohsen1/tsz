@@ -59,7 +59,7 @@ class A { foo() { return ""; } }
 class B extends A { bar() { return 1; } }
 function foo2<T extends A>(x: T) {
     var y = x;
-    y = <T>new B();
+    y = <T>1;
 }
 "#,
     );
