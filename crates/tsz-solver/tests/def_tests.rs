@@ -1715,3 +1715,54 @@ fn test_type_environment_get_lazy_type_params_definition_store_fallback() {
     assert_eq!(params.len(), 1);
     assert_eq!(params[0].name, t_param.name);
 }
+
+/// Intrinsic TypeIds (number, string, boolean, etc.) must never carry a
+/// `type_to_def` mapping.  Their canonical display is the keyword
+/// (`number`, `string`, ...) provided by the TypeFormatter's intrinsic
+/// short-circuit. If a checker path tries to register an intrinsic type
+/// to a class/interface/alias def, that mapping later poisons
+/// `find_def_for_type` lookups and produces wrong-source-name diagnostics
+/// such as `Type 'FlatArray' is not assignable to type 'Boolean'.` for
+/// `let b: Boolean; b = 1;` (where the source is the primitive `number`).
+#[test]
+fn test_register_type_to_def_rejects_intrinsic_type_ids() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+    let name = interner.intern_string("FlatArray");
+    let info = DefinitionInfo::type_alias(name, vec![], TypeId::NEVER);
+    let def_id = store.register(info);
+
+    // All intrinsic TypeIds covered by the formatter short-circuit must be
+    // rejected. Listing them explicitly locks the invariant per intrinsic
+    // (a future intrinsic addition that escapes the formatter's match arm
+    // will still be safely rejected here).
+    let intrinsics = [
+        TypeId::ANY,
+        TypeId::UNKNOWN,
+        TypeId::NEVER,
+        TypeId::VOID,
+        TypeId::UNDEFINED,
+        TypeId::NULL,
+        TypeId::BOOLEAN,
+        TypeId::BOOLEAN_TRUE,
+        TypeId::BOOLEAN_FALSE,
+        TypeId::NUMBER,
+        TypeId::STRING,
+        TypeId::BIGINT,
+        TypeId::SYMBOL,
+        TypeId::OBJECT,
+        TypeId::FUNCTION,
+        TypeId::ERROR,
+    ];
+    for &intrinsic in &intrinsics {
+        store.register_type_to_def(intrinsic, def_id);
+        assert_eq!(
+            store.find_def_for_type(intrinsic),
+            None,
+            "intrinsic TypeId {} (is_intrinsic={}) must not be associated \
+             with a user-named def via register_type_to_def",
+            intrinsic.0,
+            intrinsic.is_intrinsic(),
+        );
+    }
+}
