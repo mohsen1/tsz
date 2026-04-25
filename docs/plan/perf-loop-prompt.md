@@ -176,6 +176,22 @@ or branch with uncommitted work — only clean cargo caches.
 - **REGRESSIONS**: DeepPartial optional-chain N=50: 1.25× SLOWER; Shallow optional-chain N=50: 1.21× SLOWER.
 - **large-ts-repo: TIMED OUT at 300s** — the actual 2× target case still doesn't complete. Phase 5 arena eviction still required.
 
+### large-ts-repo TIMEOUT root cause (2026-04-25, HIGH confidence):
+**Failure mode: OOM-by-paging.** macOS `sample` shows tsz allocating **67 GB virtual on 32 GB RAM** at t=27s; jetsam kills 17 background daemons (TrustdAgent, CommCenter, dmd) due to system-wide memory pressure; tsz exits silently at ~71-75s (no diagnostics, empty stdout/stderr).
+
+**Hot stack (>2400/3900 samples)**: `collect_diagnostics` → `Vec<Arc<BinderState>>::from_iter` (serial!) → `create_cross_file_lookup_binder_with_augmentations` (`crates/tsz-cli/src/driver/check_utils.rs:1673`) → `BinderState::from_bound_state_with_scopes_and_augmentations` (`crates/tsz-binder/src/state/core.rs:500`) → **`BinderState::recompute_module_export_equals_non_module` (`core.rs:1533`)** → `hashbrown::RawTable<(SymbolId, SemanticDefEntry)>::clone` + `Vec<String>::clone` + mimalloc churn.
+
+**Memory is O(files × modules × symbols)**: each per-file binder deep-clones the cross-file module-exports map. At 6086 files × hundreds of modules × thousands of symbols → 50-70 GB.
+
+**Fix path** (HIGH leverage, ROOT CAUSE CORRECTED 2026-04-25):
+1. ~~Arc-share `module_export_equals_non_module`~~ — INCORRECT. Verified: this map is EMPTY on cross-file lookup binders (their `module_exports` is empty by design at `check_utils.rs:1722`). The `RawTable<(SymbolId, SemanticDefEntry)>::clone` stack frames were misattributed — they come from `file.semantic_defs.clone()`, NOT this recompute.
+2. **Arc-share `semantic_defs`** — the REAL hotspot is `binder.semantic_defs = file.semantic_defs.clone()` at `check_utils.rs:1651` and `:1766`. Each file's `SemanticDefEntry` (String + Vec<String> fields) is unique, but the per-file map can be wrapped in `Arc<FxHashMap<SymbolId, SemanticDefEntry>>` and stored on `BoundFile` so cross-file binder construction does `Arc::clone` instead of element-wise deep-clone. Or intern strings into `Atom` to make clones cheap.
+3. **Other unshared per-binder fields**: `node_symbols`, `node_flow`, `node_scope_ids`, `top_level_flow`, `switch_clause_to_switch` are all FxHashMaps cloned per file. Same Arc-share pattern applies. The 67 GB peak is parallel-rayon-worker × per-binder-size (many large unshared maps).
+4. **Tear down `Vec<Arc<BinderState>>` entirely** — finish the Phase 2 migration so per-file `BinderState` reconstruction is no longer needed (the architectural endgame).
+5. **Stop-gap**: chunk-process files (256 at a time), drop each chunk's binder vec before next — caps peak RSS at chunk_size × per-binder.
+
+**Threading anomaly** (worth a separate look): only 1 hot worker thread at ~98% CPU; 11 rayon workers idle. The `par_iter` at `check.rs:317-334` is structurally parallel but the sample shows a serial fold path. Likely a serial second cross-file binder build elsewhere in `collect_diagnostics`, OR rayon starved by mimalloc allocator contention.
+
 ### Optional-chain regression — root cause investigation (2026-04-25):
 Hypothesis (Cache PR 3 cache-overhead) FALSIFIED — Shallow has no generics yet regresses identically with DeepPartial. Real cause: **request cache has 0% hit rate** (`Request cache hits: 0`, `misses: 8535`, `Contextual cache bypasses: 6206`). But the **direct fix attempt also failed**: extending `request_cache_key_for_node` + `is_request_cache_safe_expression_tree` in `state.rs:1069-1318` for `BINARY_EXPRESSION (??/+/-/*//)` and `PARENTHESIZED_EXPRESSION` was implemented + tested + conformance-clean, but bench showed 1.02-1.03× SLOWER (pure overhead, zero new cache hits). Each `score += …` line is a DISTINCT AST node id — never revisited → no hits possible.
 
