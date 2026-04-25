@@ -14,31 +14,7 @@
 //!       r.data;   // tsz (before fix): TS2339 "does not exist on type 'number'"
 //!   }
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn get_diagnostic_codes(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        Default::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
-}
+use tsz_checker::test_utils::check_source_codes;
 
 #[test]
 fn await_promise_of_generic_interface_preserves_interface_type() {
@@ -51,7 +27,7 @@ async function f() {
     const body = r.data;
 }
 "#;
-    let codes = get_diagnostic_codes(source);
+    let codes = check_source_codes(source);
     assert!(
         !codes.contains(&2339),
         "unexpected TS2339 after `await p` where p: Promise<Box<number>> — the await loop must stop at Box<number>, not unwrap further into `number`. got: {codes:?}"
@@ -72,7 +48,7 @@ async function main() {
     const body = response.data;
 }
 "#;
-    let codes = get_diagnostic_codes(source);
+    let codes = check_source_codes(source);
     assert!(
         !codes.contains(&2339),
         "unexpected TS2339 after `await get()` — response must type as AxiosResponse<never>, not `never`. got: {codes:?}"
