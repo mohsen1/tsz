@@ -782,5 +782,228 @@ class ArchGuardSolverImportCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardSnapshotRollbackTests(unittest.TestCase):
+    """Cover `SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS` +
+    `scan_snapshot_rollback_file_count`.
+
+    Architecture health metric 5 anchor — workstream 4 ("Checker State /
+    Speculation"). These tests pin the detection semantics so future
+    contributors who refactor `scan_snapshot_rollback_file_count` keep the
+    invariants:
+
+      - all `CheckerContext::rollback_*` methods are flagged
+      - snapshot restorers (`restore_ts2454_state`,
+        `restore_implicit_any_closures`) are flagged
+      - `*guard.rollback(` SpeculationGuard calls are flagged
+      - test files (`*_tests.rs`, `test_*.rs`, files under `tests/` or
+        `benches/`) are excluded
+      - paths starting with the exclude prefixes (speculation.rs) are skipped
+      - comment-only lines are not counted
+      - the pinned cap matches the live count
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        """Materialize `files` into a temp directory; return the dir path."""
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_rollback_full_and_diagnostics_methods(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/a.rs": (
+                    "self.ctx.rollback_full(&snap);\n"
+                ),
+                "crates/tsz-checker/src/b.rs": (
+                    "ctx.rollback_diagnostics(&snap);\n"
+                ),
+                "crates/tsz-checker/src/c.rs": (
+                    "ctx.rollback_diagnostics_filtered(&snap, |_| true);\n"
+                ),
+                "crates/tsz-checker/src/d.rs": (
+                    "ctx.rollback_and_replace_diagnostics(&snap, vec![]);\n"
+                ),
+                "crates/tsz-checker/src/e.rs": (
+                    "ctx.rollback_return_type(&snap);\n"
+                ),
+            }
+        )
+        # 5 files, cap=0 → 5 caller hits + 1 summary line.
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(len(hits), 6, f"unexpected hits: {hits!r}")
+        self.assertIn(
+            "total snapshot-rollback caller files outside speculation.rs: 5",
+            hits[5],
+        )
+
+    def test_flags_snapshot_restorers(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/ts2454.rs": (
+                    "ctx.restore_ts2454_state(&snap);\n"
+                ),
+                "crates/tsz-checker/src/implicit.rs": (
+                    "ctx.restore_implicit_any_closures(&snap);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn(
+            "total snapshot-rollback caller files outside speculation.rs: 2",
+            hits[2],
+        )
+
+    def test_flags_speculation_guard_rollback_calls(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/plain.rs": (
+                    "guard.rollback(&mut self.ctx);\n"
+                ),
+                "crates/tsz-checker/src/prefixed.rs": (
+                    "method_diag_guard.rollback(&mut self.ctx);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn(
+            "total snapshot-rollback caller files outside speculation.rs: 2",
+            hits[2],
+        )
+
+    def test_does_not_flag_unrelated_rollback_methods(self):
+        """A bare `.rollback(` on a non-guard receiver must not be counted."""
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/unrelated.rs": (
+                    "transaction.rollback();\n"
+                    "db.rollback(&conn);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_excludes_test_files_and_test_dirs(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/foo_tests.rs": (
+                    "ctx.rollback_full(&snap);\n"
+                ),
+                "crates/tsz-checker/src/test_helpers.rs": (
+                    "ctx.rollback_full(&snap);\n"
+                ),
+                "crates/tsz-checker/tests/integration.rs": (
+                    "ctx.rollback_full(&snap);\n"
+                ),
+                "crates/tsz-checker/benches/bench.rs": (
+                    "ctx.rollback_full(&snap);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_excludes_paths_under_exclude_prefixes(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/context/speculation.rs": (
+                    "self.rollback_full(&snap);\n"
+                ),
+                "crates/tsz-checker/src/checker.rs": (
+                    "ctx.rollback_full(&snap);\n"
+                ),
+            }
+        )
+        exclude_prefixes = ("crates/tsz-checker/src/context/speculation.rs",)
+        hits = self.arch_guard.scan_snapshot_rollback_file_count(
+            [root], exclude_prefixes, 0
+        )
+        # Only `checker.rs` is in scope — 1 hit + summary at cap=0.
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("checker.rs", hits[0])
+        self.assertNotIn("speculation.rs", hits[0])
+
+    def test_ignores_comment_only_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/commented.rs": (
+                    "// ctx.rollback_full(&snap);\n"
+                    "// guard.rollback(&mut self.ctx);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_counts_each_file_at_most_once(self):
+        """A file with many rollback calls still counts as 1 file."""
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/many.rs": (
+                    "ctx.rollback_full(&a);\n"
+                    "ctx.rollback_diagnostics(&b);\n"
+                    "guard.rollback(&mut self.ctx);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn(
+            "total snapshot-rollback caller files outside speculation.rs: 1",
+            hits[1],
+        )
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/a.rs": "ctx.rollback_full(&s);\n",
+                "crates/tsz-checker/src/b.rs": "ctx.rollback_full(&s);\n",
+            }
+        )
+        # Two files, cap=2 → exact match → no hits.
+        self.assertEqual(
+            self.arch_guard.scan_snapshot_rollback_file_count([root], (), 2),
+            [],
+        )
+        # Cap above live count → still no hits.
+        self.assertEqual(
+            self.arch_guard.scan_snapshot_rollback_file_count([root], (), 5),
+            [],
+        )
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS
+        ]
+        self.assertTrue(
+            any("metric 5" in name for name in names),
+            "Snapshot-rollback guard is missing from "
+            "SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS",
+        )
+
+    def test_real_callers_pass_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS:
+            name, search_roots, exclude_path_prefixes, max_files = entry
+            hits = self.arch_guard.scan_snapshot_rollback_file_count(
+                search_roots, exclude_path_prefixes, max_files
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
