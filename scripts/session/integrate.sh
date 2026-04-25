@@ -33,10 +33,15 @@ SPECIFIC_BRANCH=""
 
 # Cleanup temp worktrees on exit/interrupt
 TEMP_DIRS=()
+TEMP_FILES=()
 cleanup_temps() {
     for dir in "${TEMP_DIRS[@]+"${TEMP_DIRS[@]}"}"; do
         [[ -z "$dir" ]] && continue
         git -C "$REPO_ROOT" worktree remove "$dir" --force 2>/dev/null || rm -rf "$dir"
+    done
+    for file in "${TEMP_FILES[@]+"${TEMP_FILES[@]}"}"; do
+        [[ -z "$file" ]] && continue
+        rm -f "$file" 2>/dev/null || true
     done
     # Clean up any temp merge branches
     git -C "$REPO_ROOT" branch --list 'merge-validation-*' 2>/dev/null | while read -r b; do
@@ -44,6 +49,47 @@ cleanup_temps() {
     done
 }
 trap cleanup_temps EXIT INT TERM
+
+run_cargo_check() {
+    local manifest="$1"
+    local log
+    log="$(mktemp "${TMPDIR:-/tmp}/tsz-integrate-cargo.XXXXXX")"
+    TEMP_FILES+=("$log")
+
+    if cargo check --manifest-path "$manifest" >"$log" 2>&1; then
+        tail -3 "$log"
+        return 0
+    fi
+
+    tail -3 "$log"
+    return 1
+}
+
+read_conformance_passes() {
+    local last_run="$1"
+    local log="$2"
+    python3 - "$last_run" "$log" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+last_run = Path(sys.argv[1])
+log = Path(sys.argv[2])
+
+if last_run.is_file():
+    passed = 0
+    with last_run.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.startswith("PASS "):
+                passed += 1
+    print(passed)
+    raise SystemExit(0)
+
+text = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+match = re.search(r"FINAL RESULTS:\s+(\d+)/(\d+)\s+passed", text)
+print(match.group(1) if match else "0")
+PY
+}
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -161,7 +207,7 @@ for branch in "${branches[@]}"; do
 
     # Build check
     echo "  Building..."
-    if ! cargo check --manifest-path "$MERGE_DIR/Cargo.toml" 2>&1 | tail -3; then
+    if ! run_cargo_check "$MERGE_DIR/Cargo.toml"; then
         echo "BUILD FAILED — rejecting $branch"
         git -C "$REPO_ROOT" worktree remove "$MERGE_DIR" --force 2>/dev/null || rm -rf "$MERGE_DIR"
         git -C "$REPO_ROOT" branch -D "$MERGE_BRANCH" 2>/dev/null || true
@@ -171,8 +217,10 @@ for branch in "${branches[@]}"; do
 
     # Conformance check
     echo "  Running conformance tests..."
-    # Strip ANSI color codes before parsing conformance output
-    MERGE_PASS=$(cd "$MERGE_DIR" && scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -Eo '[0-9]+/[0-9]+ passed' | grep -Eo '^[0-9]+' || echo "0")
+    CONFORMANCE_LOG="$(mktemp "${TMPDIR:-/tmp}/tsz-integrate-conformance.XXXXXX")"
+    TEMP_FILES+=("$CONFORMANCE_LOG")
+    (cd "$MERGE_DIR" && scripts/safe-run.sh ./scripts/conformance/conformance.sh run >"$CONFORMANCE_LOG" 2>&1) || true
+    MERGE_PASS="$(read_conformance_passes "$MERGE_DIR/scripts/conformance/conformance-last-run.txt" "$CONFORMANCE_LOG")"
 
     if [[ "$MERGE_PASS" -lt "$BASELINE_PASS" ]]; then
         REGRESSION=$((BASELINE_PASS - MERGE_PASS))

@@ -195,6 +195,9 @@ scripts/session/healthcheck.sh
 # Pick ONE random conformance failure to fix (prints path + codes + run cmd)
 scripts/session/quick-pick.sh
 
+# Shared implementation for advanced picker modes
+scripts/session/pick.py --help
+
 # Run a single test with verbose fingerprint diff
 ./scripts/conformance/conformance.sh run --filter "<name>" --verbose
 
