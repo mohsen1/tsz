@@ -164,6 +164,7 @@ or branch with uncommitted work — only clean cargo caches.
 
 ### Phase 2 — SKELETON IR consumers:
 - **#1127 MERGED** (2026-04-25) — Phase 2 step 1: `is_ambient_module` resolver served from `SkeletonIndex` alone (Phase 5 invariant test included). First skeleton consumer migrated.
+- **#1135 OPEN** (2026-04-25) — Phase 2 step 2: `global_module_augmentations_index` migration. Enriches `SkeletonAugmentation` with `Vec<(name, StableLocation)>`, adds `module_augmentations_for(spec)` accessor + `build_module_augmentations_index(arenas)` projection helper on `SkeletonIndex`. CLI driver pre-computes the index and installs on `ProjectEnv`; `build_global_indices` skips per-binder loop when pre-built map is present. 19,014 pre-commit tests pass; same Phase 5 unblock pattern as #1127.
 
 ### Solver hot-path optimizations:
 - **#1125 [open]** — `remove_subtypes_for_bct` name-fingerprint pre-filter: skip impossible subtype pairs in O(N²) loop without invoking `SubtypeChecker`. Conservative — only definitive negatives short-circuit. (Salvaged from stalled BCT agent.)
