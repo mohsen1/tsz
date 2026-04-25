@@ -325,6 +325,31 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return;
             }
+            // For non-entity-name expressions (object/array literals, calls,
+            // primitives), tsc synthesizes a `_default` const with the inferred
+            // type and emits `export = _default`. Mirror that for parity with
+            // declarationEmitInferredDefaultExportType2.
+            if !self.source_is_js_file
+                && !self.export_equals_expression_emits_directly(assign.expression)
+            {
+                let var_name = self.unique_default_export_name();
+                self.write("declare const ");
+                self.write(&var_name);
+                self.write(": ");
+                if let Some(type_id) = self.get_node_type(assign.expression) {
+                    self.write(&self.print_type_id(type_id));
+                } else {
+                    self.write("any");
+                }
+                self.write(";");
+                self.write_line();
+                self.write_indent();
+                self.write("export = ");
+                self.write(&var_name);
+                self.write(";");
+                self.write_line();
+                return;
+            }
             self.write("export = ");
             self.emit_expression(assign.expression);
             self.write(";");
@@ -946,6 +971,26 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&var_name);
         self.write(";");
         self.write_line();
+    }
+
+    /// Whether `export = <expr>` can emit `<expr>` directly. True for entity
+    /// names (Identifier, qualified PropertyAccess), false for value
+    /// expressions (object/array literals, calls, primitives) which require
+    /// synthesizing a `_default` const with the inferred type.
+    fn export_equals_expression_emits_directly(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => true,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .arena
+                .get_access_expr(expr_node)
+                .is_some_and(|access| {
+                    self.export_equals_expression_emits_directly(access.expression)
+                }),
+            _ => false,
+        }
     }
 
     /// Generate a unique name for the default export synthesized variable.
