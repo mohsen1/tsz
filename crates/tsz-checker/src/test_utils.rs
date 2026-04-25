@@ -114,3 +114,11 @@ pub fn check_source_no_unused_locals(source: &str) -> Vec<Diagnostic> {
         },
     )
 }
+
+/// Parse, bind, and type-check a TypeScript source string with the given options.
+///
+/// Uses `"test.ts"` as the file name. Convenience wrapper for tests that need
+/// custom options but not a custom file name.
+pub fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    check_source(source, "test.ts", options)
+}

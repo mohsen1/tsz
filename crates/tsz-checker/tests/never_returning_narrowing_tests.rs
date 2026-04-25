@@ -10,14 +10,7 @@
 //! those branches out.
 
 use crate::context::CheckerOptions;
-use crate::test_utils::check_source;
-
-fn check_with_options(source: &str, options: CheckerOptions) -> Vec<u32> {
-    check_source(source, "test.ts", options)
-        .iter()
-        .map(|d| d.code)
-        .collect()
-}
+use crate::test_utils::check_with_options;
 
 fn check_strict(source: &str) -> Vec<u32> {
     check_with_options(
@@ -29,6 +22,9 @@ fn check_strict(source: &str) -> Vec<u32> {
             ..Default::default()
         },
     )
+    .iter()
+    .map(|d| d.code)
+    .collect()
 }
 
 /// After `if (x === undefined) fail()`, x should be narrowed to exclude undefined.
@@ -116,7 +112,7 @@ function f() {
     fns;
 }
 "#;
-    let codes = check_with_options(
+    let codes: Vec<u32> = check_with_options(
         source,
         CheckerOptions {
             strict: true,
@@ -125,7 +121,10 @@ function f() {
             allow_unreachable_code: Some(false),
             ..Default::default()
         },
-    );
+    )
+    .iter()
+    .map(|d| d.code)
+    .collect();
     assert!(
         !codes.contains(&7027),
         "Expected no TS7027 after calling an inferred-never local identifier, got codes: {codes:?}"
@@ -143,9 +142,8 @@ try {
     ) {}
 } catch (e) {}
 "#;
-    let diagnostics = check_source(
+    let diagnostics = check_with_options(
         source,
-        "test.ts",
         CheckerOptions {
             allow_unreachable_code: Some(false),
             ..Default::default()
