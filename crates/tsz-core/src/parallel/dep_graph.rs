@@ -366,6 +366,7 @@ mod tests {
             symbols: vec![],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],

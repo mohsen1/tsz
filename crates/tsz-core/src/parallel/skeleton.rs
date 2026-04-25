@@ -75,6 +75,31 @@ pub struct SkeletonAugmentation {
     pub declarations: Vec<SkeletonAugmentationDecl>,
 }
 
+/// Augmentation-target entry as seen from the skeleton layer (Phase 2 step 3).
+///
+/// One entry per `(symbol, module_spec)` pair recorded by the binder in
+/// [`tsz_binder::BinderState::augmentation_target_modules`]. The
+/// [`StableLocation`] points back to the augmenting declaration's AST node so
+/// consumers can rehydrate without retaining the arena (Phase 5).
+///
+/// This is the minimal data needed to reconstruct the checker's
+/// `global_augmentation_targets_index` (`module_spec -> Vec<(SymbolId, file_idx)>`)
+/// from skeleton data alone — without iterating per-file binders.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SkeletonAugmentationTarget {
+    /// Symbol whose declaration sits inside `declare module 'spec' { ... }`.
+    pub symbol_id: tsz_binder::SymbolId,
+    /// Module specifier of the augmenting `declare module 'spec' { ... }`
+    /// block (raw form, as stored on the binder — quotes already stripped).
+    pub module_spec: String,
+    /// File-stable pointer to the augmenting declaration's AST node.
+    ///
+    /// Defaults to [`StableLocation::NONE`] when the binder did not record a
+    /// span for the symbol's value/first declaration. Consumers should use
+    /// [`StableLocation::is_known`] before dereferencing.
+    pub stable_location: StableLocation,
+}
+
 /// Re-export edge as seen from the skeleton layer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SkeletonReexport {
@@ -118,6 +143,13 @@ pub struct FileSkeleton {
     pub global_augmentations: Vec<SkeletonAugmentation>,
     /// Module augmentation targets from `declare module 'x' {}` blocks.
     pub module_augmentations: Vec<SkeletonAugmentation>,
+    /// Per-file augmentation-target entries (Phase 2 step 3).
+    ///
+    /// One entry per `(symbol, module_spec)` pair recorded by the binder in
+    /// [`tsz_binder::BinderState::augmentation_target_modules`] — i.e. each
+    /// symbol declared inside a `declare module 'spec' { ... }` block. The
+    /// reducer projects these into [`SkeletonIndex::augmentation_targets_by_spec`].
+    pub augmentation_targets: Vec<SkeletonAugmentationTarget>,
     /// Named re-exports (`export { x } from 'module'`).
     pub reexports: Vec<SkeletonReexport>,
     /// Wildcard re-exports (`export * from 'module'`).
@@ -161,6 +193,7 @@ impl FileSkeleton {
         self.symbols.hash(&mut hasher);
         self.global_augmentations.hash(&mut hasher);
         self.module_augmentations.hash(&mut hasher);
+        self.augmentation_targets.hash(&mut hasher);
         self.reexports.hash(&mut hasher);
         self.wildcard_reexports.hash(&mut hasher);
         self.declared_modules.hash(&mut hasher);
@@ -298,6 +331,45 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         .collect();
     module_augmentations.sort_unstable_by(|a, b| a.target.cmp(&b.target));
 
+    // Augmentation targets (Phase 2 step 3): one entry per (symbol, module_spec)
+    // pair recorded by the binder. The `StableLocation` is sourced from the
+    // symbol's `stable_value_declaration` when known, falling back to the first
+    // `stable_declarations` entry. The location's `file_idx` is left at
+    // `u32::MAX` (unstamped) when the binder has not yet stamped it; the
+    // reducer stamps it from the owning skeleton's file index.
+    let mut augmentation_targets: Vec<SkeletonAugmentationTarget> = result
+        .augmentation_target_modules
+        .iter()
+        .map(|(&sym_id, module_spec)| {
+            let stable_location = result
+                .symbols
+                .get(sym_id)
+                .map(|sym| {
+                    if sym.stable_value_declaration.is_known() {
+                        sym.stable_value_declaration
+                    } else {
+                        sym.stable_declarations
+                            .first()
+                            .copied()
+                            .unwrap_or(StableLocation::NONE)
+                    }
+                })
+                .unwrap_or(StableLocation::NONE);
+            SkeletonAugmentationTarget {
+                symbol_id: sym_id,
+                module_spec: module_spec.clone(),
+                stable_location,
+            }
+        })
+        .collect();
+    // Sort deterministically by (module_spec, symbol_id) so the per-file
+    // skeleton fingerprint is stable across HashMap iteration order.
+    augmentation_targets.sort_by(|a, b| {
+        a.module_spec
+            .cmp(&b.module_spec)
+            .then(a.symbol_id.0.cmp(&b.symbol_id.0))
+    });
+
     // Named re-exports
     let mut reexports = Vec::new();
     for (file_name, file_reexports) in result.reexports.iter() {
@@ -361,6 +433,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         symbols,
         global_augmentations,
         module_augmentations,
+        augmentation_targets,
         reexports,
         wildcard_reexports,
         declared_modules,
@@ -417,6 +490,21 @@ pub struct SkeletonIndex {
     /// Entries are recorded in driver file order (the same order the reducer
     /// observes the input skeletons).
     pub module_augmentations_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentation)>>,
+    /// Per-module-specifier list of `(file_idx, augmentation_target)` entries
+    /// (Phase 2 step 3 enrichment).
+    ///
+    /// Whereas [`Self::module_augmentation_targets`] tracks only which files
+    /// declare augmentations for a target, this field carries the per-symbol
+    /// [`SkeletonAugmentationTarget`] entries (with each augmenting symbol's
+    /// id + [`StableLocation`]) so the checker can rebuild
+    /// `global_augmentation_targets_index` from skeleton data alone — without
+    /// iterating per-file binders.
+    ///
+    /// Entries are recorded in driver file order (the same order the reducer
+    /// observes the input skeletons). Within a single `(spec, file)` slot,
+    /// targets are appended in `FileSkeleton::augmentation_targets` order
+    /// (already sorted by `(module_spec, symbol_id)` at extract time).
+    pub augmentation_targets_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentationTarget)>>,
     /// All declared ambient modules across all files.
     pub declared_modules: FxHashSet<String>,
     /// All shorthand ambient modules across all files.
@@ -457,6 +545,10 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
     let mut module_augmentation_targets: FxHashMap<String, Vec<usize>> = FxHashMap::default();
     let mut module_augmentations_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentation)>> =
         FxHashMap::default();
+    let mut augmentation_targets_by_spec: FxHashMap<
+        String,
+        Vec<(usize, SkeletonAugmentationTarget)>,
+    > = FxHashMap::default();
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_export_specifiers = FxHashSet::default();
@@ -507,6 +599,22 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
             }
             module_augmentations_by_spec
                 .entry(aug.target.clone())
+                .or_default()
+                .push((file_idx, stamped));
+        }
+
+        // Phase 2 step 3: project per-file augmentation-target entries into
+        // the cross-file `(file_idx, target)` index. The reducer stamps each
+        // entry's `StableLocation` with the owning file index so post-Phase-5
+        // consumers can route through `node_at_stable_location` without a
+        // separate file_idx arg.
+        for target in &skeleton.augmentation_targets {
+            let mut stamped = target.clone();
+            stamped
+                .stable_location
+                .set_file_idx_if_unassigned(file_idx as u32);
+            augmentation_targets_by_spec
+                .entry(target.module_spec.clone())
                 .or_default()
                 .push((file_idx, stamped));
         }
@@ -565,6 +673,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         global_augmentation_targets,
         module_augmentation_targets,
         module_augmentations_by_spec,
+        augmentation_targets_by_spec,
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
@@ -622,6 +731,21 @@ impl SkeletonIndex {
         for key in &mod_aug_keys {
             key.hash(&mut hasher);
             index.module_augmentation_targets[*key].hash(&mut hasher);
+        }
+
+        // 4b) Per-spec augmentation-target entries (Phase 2 step 3),
+        //     sorted by spec for determinism. Each entry contributes its
+        //     (file_idx, symbol_id, stable_location) so any change to the
+        //     skeleton-projected augmentation-target topology invalidates
+        //     downstream caches.
+        let mut aug_target_keys: Vec<&String> = index.augmentation_targets_by_spec.keys().collect();
+        aug_target_keys.sort();
+        for key in &aug_target_keys {
+            key.hash(&mut hasher);
+            for (file_idx, target) in &index.augmentation_targets_by_spec[*key] {
+                file_idx.hash(&mut hasher);
+                target.hash(&mut hasher);
+            }
         }
 
         // 5) Declared modules (sorted for determinism).
@@ -709,6 +833,17 @@ impl SkeletonIndex {
                 for decl in &aug.declarations {
                     size += decl.name.capacity();
                 }
+            }
+        }
+
+        // Augmentation targets by spec (Phase 2 step 3):
+        // FxHashMap<String, Vec<(usize, SkeletonAugmentationTarget)>>
+        for (key, entries) in &self.augmentation_targets_by_spec {
+            size += key.capacity();
+            size += std::mem::size_of::<(String, Vec<(usize, SkeletonAugmentationTarget)>)>();
+            size += entries.capacity() * std::mem::size_of::<(usize, SkeletonAugmentationTarget)>();
+            for (_, target) in entries {
+                size += target.module_spec.capacity();
             }
         }
 
@@ -940,6 +1075,70 @@ impl SkeletonIndex {
         }
     }
 
+    /// Lookup augmentation-target entries for a given module specifier.
+    ///
+    /// Returns the per-file [`SkeletonAugmentationTarget`] entries (each
+    /// carrying a `(SymbolId, module_spec, StableLocation)` triple) recorded
+    /// for `module_spec`. Empty slice if no augmentation targets reference
+    /// this specifier.
+    ///
+    /// This is the Phase 2 step 3 skeleton-only path for
+    /// `global_augmentation_targets_index`: the consumer can rebuild the
+    /// merged checker-side index from this accessor alone, without iterating
+    /// per-file binders. Once arenas become evictable in Phase 5 the
+    /// augmenting AST node can be rehydrated from the [`StableLocation`] via
+    /// `CheckerContext::node_at_stable_location`.
+    ///
+    /// Entries are recorded in driver file order — the same order the legacy
+    /// `binder.augmentation_target_modules.iter()` loop's enumeration would
+    /// produce when walking files in driver order.
+    #[must_use]
+    pub fn augmentation_targets_for(
+        &self,
+        module_spec: &str,
+    ) -> &[(usize, SkeletonAugmentationTarget)] {
+        self.augmentation_targets_by_spec
+            .get(module_spec)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Build the legacy `module_specifier -> Vec<(SymbolId, file_idx)>` map
+    /// from skeleton-recorded augmentation-target entries.
+    ///
+    /// Phase 2 step 3 helper: projects the skeleton-recorded
+    /// `(file_idx, SkeletonAugmentationTarget)` entries into the legacy shape
+    /// (`Vec<(SymbolId, file_idx)>`) understood by the checker's
+    /// `global_augmentation_targets_index` consumers (e.g.
+    /// `module_augmentation.rs`). This lets the build path skip the
+    /// per-binder `augmentation_target_modules` loop entirely.
+    ///
+    /// Spec keys are visited in sorted order; per-spec entries preserve the
+    /// driver file order recorded by [`reduce_skeletons`]. Within a single
+    /// `(spec, file)` slot, targets are appended in
+    /// `SkeletonAugmentationTarget` order (already sorted by
+    /// `(module_spec, symbol_id)` at extract time).
+    #[must_use]
+    pub fn build_augmentation_targets_index(
+        &self,
+    ) -> FxHashMap<String, Vec<(tsz_binder::SymbolId, usize)>> {
+        let mut map: FxHashMap<String, Vec<(tsz_binder::SymbolId, usize)>> = FxHashMap::default();
+
+        let mut keys: Vec<&String> = self.augmentation_targets_by_spec.keys().collect();
+        keys.sort();
+
+        for spec in keys {
+            let entries = &self.augmentation_targets_by_spec[spec];
+            let mut out: Vec<(tsz_binder::SymbolId, usize)> = Vec::with_capacity(entries.len());
+            for (file_idx, target) in entries {
+                out.push((target.symbol_id, *file_idx));
+            }
+            map.insert(spec.clone(), out);
+        }
+
+        map
+    }
+
     /// Validate that the skeleton-derived `module_augmentations_by_spec`
     /// matches the legacy per-binder `module_augmentations` topology.
     ///
@@ -996,6 +1195,60 @@ impl SkeletonIndex {
             "skeleton module_augmentations_by_spec differs from legacy per-binder module_augmentations"
         );
     }
+
+    /// Validate that the skeleton-derived `augmentation_targets_by_spec`
+    /// matches the legacy per-binder `augmentation_target_modules` topology.
+    ///
+    /// `legacy_per_file` is the legacy projection of every file's
+    /// `binder.augmentation_target_modules`: a `Vec<FxHashMap<SymbolId, String>>`
+    /// in driver file order. The skeleton is expected to record, for every
+    /// `(file_idx, spec)`, the same multiset of `(symbol_id)` entries (with
+    /// matching counts).
+    ///
+    /// In debug builds, asserts the per-spec, per-file `(SymbolId, file_idx)`
+    /// multisets are equal. In release builds this is a no-op.
+    pub fn validate_augmentation_targets_against_legacy(
+        &self,
+        legacy_per_file: &[FxHashMap<tsz_binder::SymbolId, String>],
+    ) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        // Build the legacy map: spec -> sorted Vec<(file_idx, symbol_id)>
+        let mut legacy: FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>> =
+            FxHashMap::default();
+        for (file_idx, per_file) in legacy_per_file.iter().enumerate() {
+            for (sym_id, spec) in per_file {
+                legacy
+                    .entry(spec.clone())
+                    .or_default()
+                    .push((file_idx, *sym_id));
+            }
+        }
+        for entries in legacy.values_mut() {
+            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.0.cmp(&b.1.0)));
+        }
+
+        let mut skeleton: FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>> =
+            FxHashMap::default();
+        for (spec, entries) in &self.augmentation_targets_by_spec {
+            for (file_idx, target) in entries {
+                skeleton
+                    .entry(spec.clone())
+                    .or_default()
+                    .push((*file_idx, target.symbol_id));
+            }
+        }
+        for entries in skeleton.values_mut() {
+            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.0.cmp(&b.1.0)));
+        }
+
+        assert_eq!(
+            skeleton, legacy,
+            "skeleton augmentation_targets_by_spec differs from legacy per-binder augmentation_target_modules"
+        );
+    }
 }
 
 /// Estimate the in-memory size of a `FileSkeleton` in bytes.
@@ -1032,6 +1285,10 @@ impl FileSkeleton {
             for decl in &aug.declarations {
                 size += decl.name.capacity();
             }
+        }
+        for target in &self.augmentation_targets {
+            size += std::mem::size_of::<SkeletonAugmentationTarget>();
+            size += target.module_spec.capacity();
         }
         for re in &self.reexports {
             size += std::mem::size_of::<SkeletonReexport>();
@@ -1170,6 +1427,7 @@ mod tests {
             symbols: vec![],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1272,6 +1530,7 @@ mod tests {
             symbols: vec![sym_no_heritage],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1290,6 +1549,7 @@ mod tests {
             symbols: vec![sym_with_heritage],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1368,6 +1628,7 @@ mod tests {
             symbols: vec![sym1],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1386,6 +1647,7 @@ mod tests {
             symbols: vec![sym2],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1426,6 +1688,7 @@ mod tests {
             symbols: vec![],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1524,6 +1787,7 @@ mod tests {
             symbols: vec![],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1540,6 +1804,7 @@ mod tests {
             symbols: vec![],
             global_augmentations: vec![],
             module_augmentations: vec![],
+            augmentation_targets: vec![],
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1557,14 +1822,21 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 2 step 2: module-augmentations index served from SkeletonIndex.
+    // Phase 2 step 2 / step 3: module-augmentations and augmentation-targets
+    // indexes served from SkeletonIndex.
     //
     // The checker's `global_module_augmentations_index` was previously built
     // by iterating every binder's `module_augmentations` map. Phase 2 step 2
     // moves the build to `SkeletonIndex::module_augmentations_for(...)` /
-    // `build_module_augmentations_index(...)` so the checker can rebuild the
-    // merged index from skeleton data alone — required for Phase 5 (arena
-    // eviction).
+    // `build_module_augmentations_index(...)`.
+    //
+    // The checker's `global_augmentation_targets_index` was previously built
+    // by iterating every binder's `augmentation_target_modules` map. Phase 2
+    // step 3 moves the build to `SkeletonIndex::augmentation_targets_for(...)` /
+    // `build_augmentation_targets_index(...)`.
+    //
+    // Both let the checker rebuild the merged index from skeleton data alone
+    // — required for Phase 5 (arena eviction).
     // -------------------------------------------------------------------------
 
     /// Helper: build a skeleton with the given module-augmentation entries.
@@ -1593,6 +1865,44 @@ mod tests {
             symbols: vec![],
             global_augmentations: vec![],
             module_augmentations,
+            augmentation_targets: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        skel.fingerprint = skel.compute_fingerprint();
+        skel
+    }
+
+    /// Helper: build a skeleton with the given augmentation-target entries.
+    /// Each tuple is `(symbol_id, module_spec, pos, end)`.
+    fn skeleton_with_augmentation_targets(
+        file_name: &str,
+        targets: Vec<(u32, String, u32, u32)>,
+    ) -> FileSkeleton {
+        let augmentation_targets: Vec<SkeletonAugmentationTarget> = targets
+            .into_iter()
+            .map(
+                |(sym_id, module_spec, pos, end)| SkeletonAugmentationTarget {
+                    symbol_id: tsz_binder::SymbolId(sym_id),
+                    module_spec,
+                    stable_location: StableLocation::with_unassigned_file(pos, end),
+                },
+            )
+            .collect();
+        let mut skel = FileSkeleton {
+            file_name: file_name.to_string(),
+            is_external_module: true,
+            symbols: vec![],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            augmentation_targets,
             reexports: vec![],
             wildcard_reexports: vec![],
             expando_properties: vec![],
@@ -1737,6 +2047,129 @@ mod tests {
             ("./mod".to_string(), 0, "First".to_string()),
             ("./mod".to_string(), 0, "Second".to_string()),
             ("./mod".to_string(), 1, "Third".to_string()),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn augmentation_targets_for_returns_per_file_entries() {
+        let skel_a =
+            skeleton_with_augmentation_targets("a.ts", vec![(7, "./shared".to_string(), 10, 20)]);
+        let skel_b =
+            skeleton_with_augmentation_targets("b.ts", vec![(11, "./shared".to_string(), 30, 40)]);
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+
+        let entries = idx.augmentation_targets_for("./shared");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, 0);
+        assert_eq!(entries[0].1.symbol_id, tsz_binder::SymbolId(7));
+        assert_eq!(entries[1].0, 1);
+        assert_eq!(entries[1].1.symbol_id, tsz_binder::SymbolId(11));
+    }
+
+    #[test]
+    fn augmentation_targets_for_returns_empty_for_unknown_spec() {
+        let idx = reduce_skeletons(&[]);
+        assert!(idx.augmentation_targets_for("./nope").is_empty());
+    }
+
+    #[test]
+    fn augmentation_targets_stamps_file_idx_into_locations() {
+        // The reducer must stamp each entry's StableLocation with the owning
+        // file index so post-Phase-5 consumers can route through
+        // `node_at_stable_location` without a separate file_idx arg.
+        let skel_a =
+            skeleton_with_augmentation_targets("a.ts", vec![(3, "./m".to_string(), 5, 12)]);
+        let skel_b =
+            skeleton_with_augmentation_targets("b.ts", vec![(4, "./m".to_string(), 100, 200)]);
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+        let entries = idx.augmentation_targets_for("./m");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].1.stable_location.file_idx, 0);
+        assert_eq!(entries[1].1.stable_location.file_idx, 1);
+        // Per-file pos/end preserved.
+        assert_eq!(entries[0].1.stable_location.pos, 5);
+        assert_eq!(entries[0].1.stable_location.end, 12);
+        assert_eq!(entries[1].1.stable_location.pos, 100);
+        assert_eq!(entries[1].1.stable_location.end, 200);
+    }
+
+    #[test]
+    fn augmentation_targets_consumer_works_after_legacy_program_emptied() {
+        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // from `SkeletonIndex` alone, even if the legacy `MergedProgram`'s
+        // per-binder `augmentation_target_modules` field has been emptied.
+        //
+        // We model the post-eviction state by building the index using only
+        // the skeleton — no MergedProgram and no per-binder loop. The expected
+        // (spec, sym_id, file_idx) set recovered from the skeleton must match
+        // what the legacy loop would have produced for the same inputs.
+        let skel_a = skeleton_with_augmentation_targets(
+            "a.ts",
+            vec![
+                (1, "./shared".to_string(), 10, 20),
+                (2, "./shared".to_string(), 25, 35),
+            ],
+        );
+        let skel_b =
+            skeleton_with_augmentation_targets("b.ts", vec![(3, "./shared".to_string(), 0, 5)]);
+        let skeletons = vec![skel_a, skel_b];
+        let idx = reduce_skeletons(&skeletons);
+
+        // Recover the legacy `(spec, sym_id, file_idx)` triples directly from
+        // the skeleton accessor — no MergedProgram involvement.
+        let mut recovered: Vec<(String, u32, usize)> = Vec::new();
+        for (spec, entries) in &idx.augmentation_targets_by_spec {
+            for (file_idx, target) in entries {
+                recovered.push((spec.clone(), target.symbol_id.0, *file_idx));
+            }
+        }
+        recovered.sort();
+
+        let mut expected: Vec<(String, u32, usize)> = vec![
+            ("./shared".to_string(), 1, 0),
+            ("./shared".to_string(), 2, 0),
+            ("./shared".to_string(), 3, 1),
+        ];
+        expected.sort();
+
+        assert_eq!(
+            recovered, expected,
+            "Skeleton-only recovery must reproduce legacy per-binder topology"
+        );
+    }
+
+    #[test]
+    fn build_augmentation_targets_index_matches_legacy_topology() {
+        // Cross-check `build_augmentation_targets_index` against the
+        // skeleton's per-spec data: every (spec, sym_id, file_idx) triple
+        // recorded in the skeleton must surface in the rebuilt map in the
+        // legacy `Vec<(SymbolId, file_idx)>` shape.
+        let skel_a = skeleton_with_augmentation_targets(
+            "a.ts",
+            vec![
+                (5, "./mod".to_string(), 1, 2),
+                (6, "./mod".to_string(), 3, 4),
+            ],
+        );
+        let skel_b =
+            skeleton_with_augmentation_targets("b.ts", vec![(7, "./mod".to_string(), 5, 6)]);
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+
+        let map = idx.build_augmentation_targets_index();
+
+        let mut got: Vec<(String, u32, usize)> = Vec::new();
+        for (spec, entries) in &map {
+            for (sym_id, file_idx) in entries {
+                got.push((spec.clone(), sym_id.0, *file_idx));
+            }
+        }
+        got.sort();
+        let mut want: Vec<(String, u32, usize)> = vec![
+            ("./mod".to_string(), 5, 0),
+            ("./mod".to_string(), 6, 0),
+            ("./mod".to_string(), 7, 1),
         ];
         want.sort();
         assert_eq!(got, want);
