@@ -22,6 +22,7 @@ fn empty_project_env() -> ProjectEnv {
         skeleton_expando_index: None,
         skeleton_module_augmentations_index: None,
         skeleton_augmentation_targets_index: None,
+        skeleton_module_binder_index: None,
         symbol_file_targets: Arc::new(vec![]),
         global_symbol_file_index: None,
         global_file_locals_index: None,

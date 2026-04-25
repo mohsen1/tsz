@@ -1305,6 +1305,22 @@ pub struct ProjectEnv {
     /// arenas become evictable in Phase 5 — the merged augmentation-targets
     /// index can be built without retaining per-file binder state.
     pub skeleton_augmentation_targets_index: Option<GlobalAugmentationTargetsIndex>,
+    /// Pre-computed module-binder index built from `SkeletonIndex`
+    /// (Phase 2 step 4).
+    ///
+    /// When set, [`Self::build_global_indices`] skips the per-binder
+    /// `module_binder_index.entry(...).push(file_idx)` lines in the
+    /// `binder.module_exports.iter()` loop and reuses this `Arc` for the
+    /// `global_module_binder_index` slot. Drivers populate this from
+    /// `SkeletonIndex::build_module_binder_index(...)` so that — once arenas
+    /// become evictable in Phase 5 — the merged module-binder index can be
+    /// built without retaining per-file binder state.
+    ///
+    /// Note: the surrounding loop also builds `module_exports_index` and the
+    /// `declared_modules` projection from the same iteration, so only the
+    /// `module_binder_index` portion is skipped — the rest of the loop body
+    /// continues to run.
+    pub skeleton_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
     /// Pre-computed symbol-to-file ownership targets (legacy vec form).
     pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
     /// Pre-built O(1) index: `SymbolId` -> owning file index.
@@ -1383,6 +1399,7 @@ impl Default for ProjectEnv {
             skeleton_expando_index: None,
             skeleton_module_augmentations_index: None,
             skeleton_augmentation_targets_index: None,
+            skeleton_module_binder_index: None,
             symbol_file_targets: Arc::new(vec![]),
             global_symbol_file_index: None,
             global_file_locals_index: None,
@@ -1547,6 +1564,13 @@ impl ProjectEnv {
         // index no longer needs per-file binder state.
         let has_skeleton_aug_targets = self.skeleton_augmentation_targets_index.is_some();
         let mut aug_targets_index: FxHashMap<String, Vec<(SymbolId, usize)>> = FxHashMap::default();
+        // Phase 2 step 4: when the driver pre-built
+        // `skeleton_module_binder_index` from `SkeletonIndex`, skip the
+        // module-binder-index push lines inside the per-binder
+        // `module_exports.iter()` loop and reuse the pre-built map. This
+        // unblocks Phase 5 — the merged module-binder index no longer needs
+        // per-file binder state.
+        let has_skeleton_module_binders = self.skeleton_module_binder_index.is_some();
         let mut module_binder_index: FxHashMap<String, Vec<usize>> = FxHashMap::default();
 
         // Also build declared_modules if not already from skeleton.
@@ -1570,17 +1594,23 @@ impl ProjectEnv {
                     .push((file_idx, sym_id));
             }
             for (module_spec, exports) in binder.module_exports.iter() {
-                // Build module_binder_index: module_spec -> [binder_idx]
-                module_binder_index
-                    .entry(module_spec.clone())
-                    .or_default()
-                    .push(file_idx);
-                let normalized = module_spec.trim_matches('"').trim_matches('\'');
-                if normalized != module_spec {
+                // Phase 2 step 4: skip the per-binder module_binder_index
+                // pushes when the skeleton-built map is already installed.
+                // The driver pre-built it from
+                // `SkeletonIndex::build_module_binder_index(...)`.
+                if !has_skeleton_module_binders {
+                    // Build module_binder_index: module_spec -> [binder_idx]
                     module_binder_index
-                        .entry(normalized.to_string())
+                        .entry(module_spec.clone())
                         .or_default()
                         .push(file_idx);
+                    let normalized = module_spec.trim_matches('"').trim_matches('\'');
+                    if normalized != module_spec {
+                        module_binder_index
+                            .entry(normalized.to_string())
+                            .or_default()
+                            .push(file_idx);
+                    }
                 }
                 for (export_name, &sym_id) in exports.iter() {
                     module_exports_index
@@ -1684,7 +1714,13 @@ impl ProjectEnv {
             .as_ref()
             .map(Arc::clone)
             .or_else(|| Some(Arc::new(aug_targets_index)));
-        self.global_module_binder_index = Some(Arc::new(module_binder_index));
+        // Phase 2 step 4: prefer the skeleton-pre-built map when available;
+        // otherwise install the binder-derived one we just computed.
+        self.global_module_binder_index = self
+            .skeleton_module_binder_index
+            .as_ref()
+            .map(Arc::clone)
+            .or_else(|| Some(Arc::new(module_binder_index)));
 
         // Build arena-pointer → file-index map
         let mut arena_idx: FxHashMap<usize, usize> = FxHashMap::default();

@@ -505,6 +505,22 @@ pub struct SkeletonIndex {
     /// targets are appended in `FileSkeleton::augmentation_targets` order
     /// (already sorted by `(module_spec, symbol_id)` at extract time).
     pub augmentation_targets_by_spec: FxHashMap<String, Vec<(usize, SkeletonAugmentationTarget)>>,
+    /// Per-module-specifier list of file indices that contain a
+    /// `module_exports[module_spec]` entry (Phase 2 step 4).
+    ///
+    /// This is the skeleton-only projection of the checker's legacy
+    /// `global_module_binder_index` (`module_spec -> Vec<file_idx>`). Each
+    /// entry records that file `file_idx` declared at least one exported
+    /// member under the (raw) module specifier `spec`. The reducer also
+    /// records the de-quoted ("normalized") variant when it differs from the
+    /// raw form, mirroring the legacy per-binder loop in
+    /// `ProjectEnv::build_global_indices`.
+    ///
+    /// Entries are recorded in driver file order (the same order the reducer
+    /// observes the input skeletons). For a single file that declares both
+    /// `"foo"` and `'foo'` (extremely rare), the file index is pushed once
+    /// per matching specifier — same as the legacy loop.
+    pub module_binder_index_by_spec: FxHashMap<String, Vec<usize>>,
     /// All declared ambient modules across all files.
     pub declared_modules: FxHashSet<String>,
     /// All shorthand ambient modules across all files.
@@ -549,6 +565,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         String,
         Vec<(usize, SkeletonAugmentationTarget)>,
     > = FxHashMap::default();
+    let mut module_binder_index_by_spec: FxHashMap<String, Vec<usize>> = FxHashMap::default();
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_export_specifiers = FxHashSet::default();
@@ -619,6 +636,25 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
                 .push((file_idx, stamped));
         }
 
+        // Phase 2 step 4: project per-file module-export specifiers into the
+        // cross-file `module_spec -> [file_idx]` index. Mirrors the legacy
+        // per-binder loop in `ProjectEnv::build_global_indices` which iterates
+        // `binder.module_exports.iter()` and pushes `file_idx` for both the
+        // raw spec and its de-quoted ("normalized") form when they differ.
+        for spec in &skeleton.module_export_specifiers {
+            module_binder_index_by_spec
+                .entry(spec.clone())
+                .or_default()
+                .push(file_idx);
+            let normalized = spec.trim_matches('"').trim_matches('\'');
+            if normalized != spec {
+                module_binder_index_by_spec
+                    .entry(normalized.to_string())
+                    .or_default()
+                    .push(file_idx);
+            }
+        }
+
         declared_modules.extend(skeleton.declared_modules.iter().cloned());
         shorthand_ambient_modules.extend(skeleton.shorthand_ambient_modules.iter().cloned());
         module_export_specifiers.extend(skeleton.module_export_specifiers.iter().cloned());
@@ -674,6 +710,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         module_augmentation_targets,
         module_augmentations_by_spec,
         augmentation_targets_by_spec,
+        module_binder_index_by_spec,
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
@@ -746,6 +783,17 @@ impl SkeletonIndex {
                 file_idx.hash(&mut hasher);
                 target.hash(&mut hasher);
             }
+        }
+
+        // 4c) Per-spec module-binder index (Phase 2 step 4), sorted by spec
+        //     for determinism. Each entry contributes the (spec, [file_idx])
+        //     vector so any change to the skeleton-projected module-binder
+        //     topology invalidates downstream caches.
+        let mut binder_idx_keys: Vec<&String> = index.module_binder_index_by_spec.keys().collect();
+        binder_idx_keys.sort();
+        for key in &binder_idx_keys {
+            key.hash(&mut hasher);
+            index.module_binder_index_by_spec[*key].hash(&mut hasher);
         }
 
         // 5) Declared modules (sorted for determinism).
@@ -845,6 +893,14 @@ impl SkeletonIndex {
             for (_, target) in entries {
                 size += target.module_spec.capacity();
             }
+        }
+
+        // Module binder index by spec (Phase 2 step 4):
+        // FxHashMap<String, Vec<usize>>
+        for (key, files) in &self.module_binder_index_by_spec {
+            size += key.capacity();
+            size += files.capacity() * std::mem::size_of::<usize>();
+            size += std::mem::size_of::<(String, Vec<usize>)>();
         }
 
         // Declared modules (HashSet<String>)
@@ -1247,6 +1303,111 @@ impl SkeletonIndex {
         assert_eq!(
             skeleton, legacy,
             "skeleton augmentation_targets_by_spec differs from legacy per-binder augmentation_target_modules"
+        );
+    }
+
+    /// Lookup module-binder file indices for a given module specifier.
+    ///
+    /// Returns the per-spec file indices recorded for `module_spec` — i.e. the
+    /// list of files whose `module_exports[module_spec]` is non-empty. Empty
+    /// slice if no file declares exports under this specifier.
+    ///
+    /// This is the Phase 2 step 4 skeleton-only path for
+    /// `global_module_binder_index`: the consumer can rebuild the merged
+    /// checker-side index from this accessor alone, without iterating
+    /// per-file binders. Once arenas become evictable in Phase 5 the
+    /// per-binder `module_exports` map is no longer needed for this lookup.
+    ///
+    /// Both the raw module specifier (e.g. `"\"foo\""`) and its de-quoted
+    /// ("normalized") variant (e.g. `"foo"`) resolve to the same file index
+    /// list — same as the legacy per-binder loop in
+    /// `ProjectEnv::build_global_indices`.
+    ///
+    /// Entries are recorded in driver file order — the same order the legacy
+    /// `binder.module_exports.iter()` loop's enumeration would produce when
+    /// walking files in driver order.
+    #[must_use]
+    pub fn module_binders_for(&self, module_spec: &str) -> &[usize] {
+        self.module_binder_index_by_spec
+            .get(module_spec)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Build the legacy `module_specifier -> Vec<file_idx>` map from
+    /// skeleton-recorded module-export-specifier entries.
+    ///
+    /// Phase 2 step 4 helper: projects the skeleton-recorded
+    /// `module_binder_index_by_spec` into the legacy shape understood by
+    /// `ProjectEnv::global_module_binder_index` consumers (e.g.
+    /// `import/declaration.rs`, `module_entity.rs`, `type_resolution/module.rs`).
+    /// This lets the build path skip the per-binder `module_exports` loop
+    /// entirely for the binder-index slot.
+    ///
+    /// Spec keys are visited in sorted order; per-spec entries preserve the
+    /// driver file order recorded by [`reduce_skeletons`]. Both the raw and
+    /// normalized (de-quoted) spec keys are present when they differ — same
+    /// as the legacy per-binder loop.
+    #[must_use]
+    pub fn build_module_binder_index(&self) -> FxHashMap<String, Vec<usize>> {
+        let mut map: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+
+        let mut keys: Vec<&String> = self.module_binder_index_by_spec.keys().collect();
+        keys.sort();
+
+        for spec in keys {
+            map.insert(spec.clone(), self.module_binder_index_by_spec[spec].clone());
+        }
+
+        map
+    }
+
+    /// Validate that the skeleton-derived `module_binder_index_by_spec`
+    /// matches the legacy per-binder `module_exports` topology.
+    ///
+    /// `legacy_per_file` is the legacy projection of every file's
+    /// `binder.module_exports`: a `Vec<Vec<String>>` in driver file order
+    /// where the inner `Vec<String>` is the list of module-spec keys. The
+    /// skeleton is expected to record, for every `(file_idx, spec)`, the
+    /// same multiset of file indices (with matching counts), including the
+    /// de-quoted normalized variant when it differs.
+    ///
+    /// In debug builds, asserts the per-spec, sorted `file_idx` vectors are
+    /// equal. In release builds this is a no-op.
+    pub fn validate_module_binders_against_legacy(&self, legacy_per_file: &[Vec<String>]) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        // Build the legacy map: spec -> sorted Vec<file_idx>, mirroring the
+        // legacy per-binder loop's raw + normalized push behavior.
+        let mut legacy: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+        for (file_idx, per_file) in legacy_per_file.iter().enumerate() {
+            for spec in per_file {
+                legacy.entry(spec.clone()).or_default().push(file_idx);
+                let normalized = spec.trim_matches('"').trim_matches('\'');
+                if normalized != spec {
+                    legacy
+                        .entry(normalized.to_string())
+                        .or_default()
+                        .push(file_idx);
+                }
+            }
+        }
+        for entries in legacy.values_mut() {
+            entries.sort();
+        }
+
+        let mut skeleton: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+        for (spec, entries) in &self.module_binder_index_by_spec {
+            let mut sorted = entries.clone();
+            sorted.sort();
+            skeleton.insert(spec.clone(), sorted);
+        }
+
+        assert_eq!(
+            skeleton, legacy,
+            "skeleton module_binder_index_by_spec differs from legacy per-binder module_exports"
         );
     }
 }
@@ -2170,6 +2331,154 @@ mod tests {
             ("./mod".to_string(), 5, 0),
             ("./mod".to_string(), 6, 0),
             ("./mod".to_string(), 7, 1),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 2 step 4: module-binder index served from SkeletonIndex.
+    //
+    // The checker's `global_module_binder_index` was previously built by
+    // iterating every binder's `module_exports` map. Phase 2 step 4 moves the
+    // build to `SkeletonIndex::module_binders_for(...)` /
+    // `build_module_binder_index(...)`, letting the checker rebuild the
+    // merged index from skeleton data alone — required for Phase 5 (arena
+    // eviction).
+    // -------------------------------------------------------------------------
+
+    /// Helper: build a skeleton with the given module-export specifier list.
+    /// `specs` carries the raw (possibly quoted) module specifier keys, exactly
+    /// as the binder records them in `module_exports.keys()`.
+    fn skeleton_with_module_export_specifiers(file_name: &str, specs: Vec<String>) -> FileSkeleton {
+        let mut sorted = specs;
+        sorted.sort();
+        let mut skel = FileSkeleton {
+            file_name: file_name.to_string(),
+            is_external_module: true,
+            symbols: vec![],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            augmentation_targets: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: sorted,
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        skel.fingerprint = skel.compute_fingerprint();
+        skel
+    }
+
+    #[test]
+    fn module_binders_for_returns_per_file_indices() {
+        let skel_a = skeleton_with_module_export_specifiers("a.ts", vec!["my-lib".to_string()]);
+        let skel_b = skeleton_with_module_export_specifiers("b.ts", vec!["my-lib".to_string()]);
+        let skel_c = skeleton_with_module_export_specifiers("c.ts", vec!["other".to_string()]);
+        let idx = reduce_skeletons(&[skel_a, skel_b, skel_c]);
+
+        let mut got = idx.module_binders_for("my-lib").to_vec();
+        got.sort();
+        assert_eq!(got, vec![0, 1]);
+
+        let other = idx.module_binders_for("other").to_vec();
+        assert_eq!(other, vec![2]);
+    }
+
+    #[test]
+    fn module_binders_for_returns_empty_for_unknown_spec() {
+        let idx = reduce_skeletons(&[]);
+        assert!(idx.module_binders_for("./nope").is_empty());
+    }
+
+    #[test]
+    fn module_binders_records_normalized_variant_when_quoted() {
+        // The legacy per-binder loop pushes file_idx for both the raw spec
+        // (e.g. `"\"my-lib\""`) and its de-quoted form (`"my-lib"`).
+        let skel = skeleton_with_module_export_specifiers("a.ts", vec!["\"my-lib\"".to_string()]);
+        let idx = reduce_skeletons(&[skel]);
+
+        let raw = idx.module_binders_for("\"my-lib\"").to_vec();
+        assert_eq!(raw, vec![0]);
+
+        let normalized = idx.module_binders_for("my-lib").to_vec();
+        assert_eq!(normalized, vec![0]);
+    }
+
+    #[test]
+    fn module_binders_consumer_works_after_legacy_program_emptied() {
+        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // from `SkeletonIndex` alone, even if the legacy `MergedProgram`'s
+        // per-binder `module_exports` field has been emptied.
+        //
+        // We model the post-eviction state by building the index using only
+        // the skeleton — no MergedProgram and no per-binder loop. The expected
+        // (spec, file_idx) set recovered from the skeleton must match what the
+        // legacy loop would have produced for the same inputs.
+        let skel_a = skeleton_with_module_export_specifiers(
+            "a.ts",
+            vec!["\"shared\"".to_string(), "other".to_string()],
+        );
+        let skel_b = skeleton_with_module_export_specifiers("b.ts", vec!["\"shared\"".to_string()]);
+        let skeletons = vec![skel_a, skel_b];
+        let idx = reduce_skeletons(&skeletons);
+
+        // Recover the legacy `(spec, file_idx)` pairs directly from the
+        // skeleton accessor — no MergedProgram involvement.
+        let mut recovered: Vec<(String, usize)> = Vec::new();
+        for (spec, files) in &idx.module_binder_index_by_spec {
+            for f in files {
+                recovered.push((spec.clone(), *f));
+            }
+        }
+        recovered.sort();
+
+        let mut expected: Vec<(String, usize)> = vec![
+            // Raw quoted entries:
+            ("\"shared\"".to_string(), 0),
+            ("\"shared\"".to_string(), 1),
+            // Normalized entries (de-quoted):
+            ("shared".to_string(), 0),
+            ("shared".to_string(), 1),
+            // Unquoted spec only contributes once:
+            ("other".to_string(), 0),
+        ];
+        expected.sort();
+
+        assert_eq!(
+            recovered, expected,
+            "Skeleton-only recovery must reproduce legacy per-binder topology"
+        );
+    }
+
+    #[test]
+    fn build_module_binder_index_matches_legacy_topology() {
+        // Cross-check `build_module_binder_index` against the skeleton's
+        // per-spec data: every (spec, file_idx) pair recorded in the skeleton
+        // must surface in the rebuilt map, including the de-quoted normalized
+        // variant.
+        let skel_a = skeleton_with_module_export_specifiers("a.ts", vec!["\"my-lib\"".to_string()]);
+        let skel_b = skeleton_with_module_export_specifiers("b.ts", vec!["\"other\"".to_string()]);
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+
+        let map = idx.build_module_binder_index();
+
+        let mut got: Vec<(String, usize)> = Vec::new();
+        for (spec, files) in &map {
+            for f in files {
+                got.push((spec.clone(), *f));
+            }
+        }
+        got.sort();
+        let mut want: Vec<(String, usize)> = vec![
+            ("\"my-lib\"".to_string(), 0),
+            ("my-lib".to_string(), 0),
+            ("\"other\"".to_string(), 1),
+            ("other".to_string(), 1),
         ];
         want.sort();
         assert_eq!(got, want);
