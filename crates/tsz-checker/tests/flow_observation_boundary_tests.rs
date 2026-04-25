@@ -4,33 +4,11 @@
 //! routed through the boundary layer rather than being made locally in the
 //! checker.  Each test targets a specific observation kind.
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let source_file = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), source_file);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(source_file);
-    checker.ctx.diagnostics.clone()
-}
 
 fn check_ts(source: &str) -> Vec<Diagnostic> {
-    check_source(source, "test.ts", CheckerOptions::default())
+    tsz_checker::test_utils::check_source_diagnostics(source)
 }
 
 fn codes(diags: &[Diagnostic], code: u32) -> Vec<&Diagnostic> {
@@ -177,7 +155,7 @@ try {
 /// With useUnknownInCatchVariables=false, catch var should be `any`.
 #[test]
 fn catch_variable_is_any_when_disabled() {
-    let diags = check_source(
+    let diags = tsz_checker::test_utils::check_source(
         r#"
 try {
     throw new Error("oops");
@@ -350,7 +328,7 @@ try {} catch (e) {
     assert!(ts2322_strict.is_empty());
 
     // Without useUnknownInCatchVariables, catch variable should be any
-    let diags_lax = check_source(
+    let diags_lax = tsz_checker::test_utils::check_source(
         r#"
 try {} catch (e) {
     let x: number = e;
@@ -377,7 +355,7 @@ try {} catch (e) {
 /// `undefined | null` should be widened to `any`.
 #[test]
 fn destructuring_null_undefined_widens_to_any_when_strict_off() {
-    let diags = check_source(
+    let diags = tsz_checker::test_utils::check_source(
         r#"
 declare const obj: { x: undefined };
 const { x } = obj;
@@ -418,7 +396,7 @@ const n: number = x;
 /// Variable declaration null/undefined widening through boundary.
 #[test]
 fn variable_null_undefined_widens_to_any_when_strict_off() {
-    let diags = check_source(
+    let diags = tsz_checker::test_utils::check_source(
         r#"
 let x = undefined;
 const n: number = x;
@@ -446,7 +424,7 @@ const n: number = x;
 /// during destructuring.
 #[test]
 fn unchecked_indexed_access_adds_undefined_in_destructuring() {
-    let diags = check_source(
+    let diags = tsz_checker::test_utils::check_source(
         r#"
 const arr: string[] = ["a", "b"];
 const [first] = arr;
