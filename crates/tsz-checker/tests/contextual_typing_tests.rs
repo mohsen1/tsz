@@ -8,40 +8,17 @@
 //! The fix pushes `TypeId::ANY` as the return type context when the return type
 //! is purely inferred, so `check_return_statement` skips the circular check.
 
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
+use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::test_utils::check_source;
 use tsz_common::common::ScriptTarget;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
-/// Helper: parse, bind, check with default options.
-fn check_default(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
-    check_with_options(source, CheckerOptions::default())
+fn check_default(source: &str) -> Vec<Diagnostic> {
+    check_source(source, "test.ts", CheckerOptions::default())
 }
 
-fn check_with_options(
-    source: &str,
-    options: CheckerOptions,
-) -> Vec<tsz_checker::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    check_source(source, "test.ts", options)
 }
 
 /// Function returning nested array literals with different object shapes should
@@ -304,18 +281,9 @@ const fn2 =
   };
 "#;
 
-    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.js".to_string(),
+    let diagnostics = check_source(
+        source,
+        "test.js",
         CheckerOptions {
             check_js: true,
             no_implicit_any: true,
@@ -324,9 +292,6 @@ const fn2 =
             ..Default::default()
         },
     );
-
-    checker.check_source_file(root);
-    let diagnostics = checker.ctx.diagnostics.clone();
     let ts2345_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
 
     assert_eq!(
