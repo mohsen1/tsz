@@ -2884,3 +2884,94 @@ fn object_union_no_optionalization_in_diagnostic_mode() {
         "Second member should have original shape without synthetic props, got: {result}"
     );
 }
+
+// =================================================================
+// Distributive conditional alias display
+// =================================================================
+//
+// When an alias of the form
+//   type Foo<T> = T extends X ? A : B  (T naked → distributive)
+// is applied to `boolean`, tsc distributes `boolean` as `true | false`
+// and shows the fully evaluated branches in error messages — not the
+// alias-application form (`Foo<boolean>`). The formatter mirrors that
+// policy in `distributed_conditional_application_display`.
+
+fn build_distributive_foo_alias(
+    db: &TypeInterner,
+    def_store: &crate::def::DefinitionStore,
+) -> TypeId {
+    let t_param = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t = db.type_param(t_param);
+
+    // Foo<T> = T extends boolean ? { kind: 'b' } : { kind: 'o' }
+    let true_branch = db.object(vec![PropertyInfo::new(
+        db.intern_string("kind"),
+        db.literal_string("b"),
+    )]);
+    let false_branch = db.object(vec![PropertyInfo::new(
+        db.intern_string("kind"),
+        db.literal_string("o"),
+    )]);
+    let cond = db.conditional(crate::types::ConditionalType {
+        check_type: t,
+        extends_type: TypeId::BOOLEAN,
+        true_type: true_branch,
+        false_type: false_branch,
+        is_distributive: true,
+    });
+    let foo_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Foo"),
+        vec![t_param],
+        cond,
+    ));
+    db.lazy(foo_def)
+}
+
+#[test]
+fn distributive_conditional_alias_with_boolean_renders_branches_not_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let foo_lazy = build_distributive_foo_alias(&db, &def_store);
+
+    // Application(Foo, [boolean])
+    let app = db.application(foo_lazy, vec![TypeId::BOOLEAN]);
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(app);
+
+    // tsc distributes `boolean` to `true | false`. Both branches evaluate
+    // to `{ kind: "b" }` (true and false both extend boolean), so the
+    // union normalizes to a single `{ kind: "b"; }` — not `Foo<boolean>`.
+    assert!(
+        !result.contains("Foo<boolean>"),
+        "Distributive conditional applied to `boolean` should not display \
+         as the alias-application form. Got: {result}"
+    );
+    assert!(
+        result.contains("kind: \"b\""),
+        "Distributed branches must be evaluated and rendered structurally. Got: {result}"
+    );
+}
+
+#[test]
+fn distributive_conditional_alias_with_non_boolean_singleton_keeps_alias() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let foo_lazy = build_distributive_foo_alias(&db, &def_store);
+
+    // Application(Foo, [string]) — singleton arg; no distribution.
+    let app = db.application(foo_lazy, vec![TypeId::STRING]);
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let result = fmt.format(app);
+
+    // No distribution because `string` is neither `boolean` nor a Union.
+    // The formatter should preserve the alias-application form.
+    assert_eq!(
+        result, "Foo<string>",
+        "Singleton non-distributable args must keep the alias name. Got: {result}"
+    );
+}
