@@ -173,8 +173,13 @@ or branch with uncommitted work — only clean cargo caches.
 **Score: tsz 13 wins vs tsgo 3 wins.** 13 of 16 measurable tests show tsz faster.
 - **utility-types/index.ts: 1.83× faster** (closest to 2× target)
 - ts-essentials/paths.ts: 1.59×; ts-toolbelt/Iteration: 1.26×; many ~1.10–1.24×
-- **REGRESSIONS**: DeepPartial optional-chain N=50: 1.25× SLOWER; Shallow optional-chain N=50: 1.21× SLOWER. Recursive type-walking pattern — possibly Cache PR 3/4 cache-overhead exceeds gains for cycle-heavy substitutions.
+- **REGRESSIONS**: DeepPartial optional-chain N=50: 1.25× SLOWER; Shallow optional-chain N=50: 1.21× SLOWER.
 - **large-ts-repo: TIMED OUT at 300s** — the actual 2× target case still doesn't complete. Phase 5 arena eviction still required.
+
+### Optional-chain regression — root cause investigation (2026-04-25):
+Hypothesis (Cache PR 3 cache-overhead) FALSIFIED — Shallow has no generics yet regresses identically with DeepPartial. Real cause: **request cache has 0% hit rate** (`Request cache hits: 0`, `misses: 8535`, `Contextual cache bypasses: 6206`). But the **direct fix attempt also failed**: extending `request_cache_key_for_node` + `is_request_cache_safe_expression_tree` in `state.rs:1069-1318` for `BINARY_EXPRESSION (??/+/-/*//)` and `PARENTHESIZED_EXPRESSION` was implemented + tested + conformance-clean, but bench showed 1.02-1.03× SLOWER (pure overhead, zero new cache hits). Each `score += …` line is a DISTINCT AST node id — never revisited → no hits possible.
+
+The actual bypass count is dominated by `is_audited_contextual_request_cache_kind` in `expr.rs:95-99`, NOT `request_cache_key_for_node` in state.rs. Productive next step: **profile node-id histogram** on the fixture to see WHICH nodes are bypassed and IF ANY are revisited, then either extend the expr.rs audit list (different predicate) or target a different bottleneck (e.g., property-access evaluation per chain rung).
 - **#1145 CLOSED** (2026-04-25) — Phase 2 step 5: `global_file_locals_index` migration introduced a CONFORMANCE REGRESSION (6 shards failing on retrigger — not flaky).
   - **ROOT CAUSE (HIGH confidence, 2026-04-25 investigation)**: the cross-file lookup binders the checker iterates are RECONSTRUCTED post-merge in `crates/tsz-cli/src/driver/check_utils.rs:1685-1702`. They contain `program.file_locals[file_idx]` (REMAPPED to global SymbolIds) PLUS `program.globals` (lib symbols like Array, console, replicated per file_idx). The skeleton extracts from PRE-MERGE binders (`crates/tsz-core/src/parallel/skeleton.rs:430-449`) which have only file's own locals with LOCAL SymbolIds (don't index into the global SymbolArena post-merge). So PR #1145's projection had WRONG SymbolIds AND MISSING global replicas.
   - **WHY #1135/#1138/#1141 WORKED**: those indexes carry `module_spec → file_idx[]` only — no SymbolIds, no global-namespace replication.
