@@ -9,7 +9,9 @@ from collections import defaultdict
 from itertools import combinations
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from lib.results import parse_runner_output, compute_diff
+from lib.conformance_query import basename
 
 
 def main():
@@ -59,9 +61,6 @@ def main():
                 close.append(t)
 
     close.sort(key=lambda t: t["diff_size"])
-
-    def basename(p):
-        return p.rsplit("/", 1)[-1] if "/" in p else p
 
     def print_section(title, items, show_fn, limit=None):
         limit = limit or top_n

@@ -45,13 +45,19 @@ Usage:
   python3 scripts/conformance/query-conformance.py --code TS2454 --paths-only
 """
 
+import os
 import sys
-import json
 import argparse
 from collections import Counter
-from pathlib import Path
 
-DETAIL_FILE = Path(__file__).parent / "conformance-detail.json"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from lib.conformance_query import (
+    basename,
+    code_counts,
+    is_fingerprint_only,
+    is_same_code_count_drift,
+    load_detail,
+)
 
 # =============================================================================
 # Failure-category definitions (used by --campaign / --campaigns).
@@ -235,19 +241,6 @@ NODE_LANE_AREAS = [
 ]
 
 
-def load_detail():
-    if not DETAIL_FILE.exists():
-        print(f"Error: {DETAIL_FILE} not found.")
-        print("Run: ./scripts/conformance/conformance.sh snapshot")
-        sys.exit(1)
-    with open(DETAIL_FILE) as f:
-        return json.load(f)
-
-
-def basename(path):
-    return path.rsplit("/", 1)[-1] if "/" in path else path
-
-
 def area_of(path):
     markers = [
         "/cases/compiler/",
@@ -270,26 +263,6 @@ def count_codes(failure):
     for code in failure.get("x", []):
         counts[code] += 1
     return counts
-
-
-def code_counts(codes):
-    return Counter(codes)
-
-
-def is_fingerprint_only(failure):
-    expected = failure.get("e", [])
-    actual = failure.get("a", [])
-    return bool(expected) and bool(actual) and code_counts(expected) == code_counts(actual)
-
-
-def is_same_code_count_drift(failure):
-    expected = failure.get("e", [])
-    actual = failure.get("a", [])
-    if not expected or not actual:
-        return False
-    expected_counts = code_counts(expected)
-    actual_counts = code_counts(actual)
-    return expected_counts != actual_counts and set(expected_counts) == set(actual_counts)
 
 
 def match_campaign(path, failure, config):
@@ -620,8 +593,7 @@ def show_false_positives(data):
         tests = fp_tests.get(code, [])
         print(f"\n{code} false positives ({len(tests)} tests):")
         for t in sorted(tests)[:10]:
-            basename = t.rsplit("/", 1)[-1] if "/" in t else t
-            print(f"  {basename}")
+            print(f"  {basename(t)}")
         if len(tests) > 10:
             print(f"  ... and {len(tests) - 10} more")
 
@@ -651,9 +623,8 @@ def show_code(data, code, paths_only=False):
         only_this = [(p, f) for p, f in missing_tests if f.get("m") == [code] and not f.get("x")]
         print(f"  Would-pass-if-added (only missing code, 0 extra): {len(only_this)}")
         for p, f in only_this[:20]:
-            basename = p.rsplit("/", 1)[-1] if "/" in p else p
             exp = ",".join(f.get("e", []))
-            print(f"    {basename}  expected=[{exp}]")
+            print(f"    {basename(p)}  expected=[{exp}]")
         if len(only_this) > 20:
             print(f"    ... and {len(only_this) - 20} more")
         print()
@@ -662,10 +633,9 @@ def show_code(data, code, paths_only=False):
         if also_need:
             print(f"  Also missing {code} but need other fixes too: {len(also_need)}")
             for p, f in also_need[:10]:
-                basename = p.rsplit("/", 1)[-1] if "/" in p else p
                 m = ",".join(f.get("m", []))
                 x = ",".join(f.get("x", []))
-                print(f"    {basename}  missing=[{m}]  extra=[{x}]")
+                print(f"    {basename(p)}  missing=[{m}]  extra=[{x}]")
             if len(also_need) > 10:
                 print(f"    ... and {len(also_need) - 10} more")
 
@@ -674,8 +644,7 @@ def show_code(data, code, paths_only=False):
         only_this = [(p, f) for p, f in extra_tests if f.get("x") == [code] and not f.get("m")]
         print(f"    Would-pass-if-removed (only extra code, 0 missing): {len(only_this)}")
         for p, f in only_this[:10]:
-            basename = p.rsplit("/", 1)[-1] if "/" in p else p
-            print(f"      {basename}")
+            print(f"      {basename(p)}")
 
 
 def show_fingerprint_only(data, code=None, paths_only=False, top=40):
@@ -788,11 +757,10 @@ def show_extra_code(data, code):
 
     print(f"Tests where {code} is emitted as EXTRA ({len(tests)} tests):")
     for p, f in tests[:30]:
-        basename = p.rsplit("/", 1)[-1] if "/" in p else p
         m = ",".join(f.get("m", []))
         x = ",".join(f.get("x", []))
         e = ",".join(f.get("e", []))
-        print(f"  {basename}  expected=[{e}]  missing=[{m}]  extra=[{x}]")
+        print(f"  {basename(p)}  expected=[{e}]  missing=[{m}]  extra=[{x}]")
     if len(tests) > 30:
         print(f"  ... and {len(tests) - 30} more")
 
@@ -809,10 +777,9 @@ def show_close(data, max_diff):
     close.sort()
     print(f"Tests within diff <= {max_diff} of passing: {len(close)}")
     for diff, path, f in close[:40]:
-        basename = path.rsplit("/", 1)[-1] if "/" in path else path
         m = ",".join(f.get("m", []))
         x = ",".join(f.get("x", []))
-        print(f"  [diff={diff}] {basename}  missing=[{m}]  extra=[{x}]")
+        print(f"  [diff={diff}] {basename(path)}  missing=[{m}]  extra=[{x}]")
     if len(close) > 40:
         print(f"  ... and {len(close) - 40} more")
 
