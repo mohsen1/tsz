@@ -6,10 +6,13 @@ to show which areas (parser, salsa, types/tuple, etc.) need the most attention.
 """
 
 import sys
-import re
+import os
 import json
 import argparse
 from collections import defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.results import parse_runner_output
 
 
 # ANSI colors
@@ -27,18 +30,13 @@ PATH_PREFIX = "TypeScript/tests/cases/"
 
 def parse_results(tmpfile):
     """Parse runner output into a list of (path, status) tuples."""
+    tests = parse_runner_output(tmpfile)
     results = []
-    with open(tmpfile) as f:
-        for line in f:
-            line = line.rstrip()
-            m = re.match(r"^(PASS|FAIL|XFAIL|SKIP|CRASH)\s+(.+?)(?:\s+\(.+\))?$", line)
-            if m:
-                status = "FAIL" if m.group(1) == "XFAIL" else m.group(1)
-                results.append((m.group(2), status))
-                continue
-            m = re.match(r"^⏱️\s+TIMEOUT\s+(.+?)(?:\s+\(.+\))?$", line)
-            if m:
-                results.append((m.group(1), "TIMEOUT"))
+    for path, rec in tests.items():
+        status = rec["status"]
+        if status == "XFAIL":
+            status = "FAIL"
+        results.append((path, status))
     return results
 
 
