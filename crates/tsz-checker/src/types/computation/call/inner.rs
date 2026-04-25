@@ -1999,12 +1999,13 @@ impl<'a> CheckerState<'a> {
                 )
             };
         let needs_real_type_recheck = is_generic_call
-            && args.iter().enumerate().any(|(i, &arg_idx)| {
-                self.argument_needs_refresh_for_contextual_call(
-                    arg_idx,
-                    base_contextual_param_types.get(i).copied().flatten(),
-                )
-            });
+            && (!is_super_call
+                || args.iter().enumerate().any(|(i, &arg_idx)| {
+                    self.argument_needs_refresh_for_contextual_call(
+                        arg_idx,
+                        base_contextual_param_types.get(i).copied().flatten(),
+                    )
+                }));
 
         if !is_generic_call
             && let CallResult::ArgumentTypeMismatch {
