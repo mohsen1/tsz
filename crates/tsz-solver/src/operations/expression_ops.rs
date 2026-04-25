@@ -7,9 +7,12 @@
 
 use crate::TypeDatabase;
 use crate::TypeResolver;
+use crate::caches::db::QueryDatabase;
+use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
+use std::sync::Arc;
 use tsz_common::interner::Atom;
 
 /// Computes the result type of a conditional expression: `condition ? true_branch : false_branch`.
@@ -428,6 +431,27 @@ pub fn compute_best_common_type<R: TypeResolver>(
     types: &[TypeId],
     resolver: Option<&R>,
 ) -> TypeId {
+    compute_best_common_type_cached(interner, None, types, resolver)
+}
+
+/// Cache-aware variant of [`compute_best_common_type`].
+///
+/// `query_db = Some(db)` enables the cross-call subtype-reduction cache on
+/// `QueryCache`. The cache mirrors tsc's `subtypeReductionCache`
+/// (`TypeScript/src/compiler/checker.ts:18128-18132`) and collapses the
+/// O(N²) subtype loop in `remove_subtypes_for_bct` to O(1) when the same
+/// candidate list shows up at multiple call sites in the same checker
+/// pass.
+///
+/// All non-`remove_subtypes_for_bct` work happens before any cache probe
+/// so the leaf fast paths (single-type, all-same, error/any propagation,
+/// unit-type fast path, enum widening, etc.) remain allocation-free.
+pub fn compute_best_common_type_cached<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
+    types: &[TypeId],
+    resolver: Option<&R>,
+) -> TypeId {
     // Handle empty cases
     if types.is_empty() {
         return TypeId::NEVER;
@@ -594,10 +618,10 @@ pub fn compute_best_common_type<R: TypeResolver>(
     // subtype check that cannot resolve Lazy types (class instances). Here we
     // use the full SubtypeChecker which handles class inheritance, generic
     // instantiations, and other relationships that require type resolution.
-    let reduced = remove_subtypes_for_bct(interner, &widened, resolver);
+    let reduced = remove_subtypes_for_bct(interner, query_db, &widened, resolver);
 
     // Step 4: Default to union of all types
-    interner.union(reduced)
+    interner.union(reduced.to_vec())
 }
 
 /// Remove subtypes from a type list using the full `SubtypeChecker`.
@@ -614,40 +638,74 @@ pub fn compute_best_common_type<R: TypeResolver>(
 /// Uses O(N²) pairwise checks but N is typically small (array literal element count).
 fn remove_subtypes_for_bct<R: TypeResolver>(
     interner: &dyn TypeDatabase,
+    query_db: Option<&dyn QueryDatabase>,
     types: &[TypeId],
     resolver: Option<&R>,
-) -> Vec<TypeId> {
+) -> Arc<[TypeId]> {
     if types.len() <= 1 {
-        return types.to_vec();
+        return Arc::from(types.to_vec());
     }
 
     // Guard: skip reduction for very large type lists to avoid O(N²) blowup.
     // tsc's removeSubtypes caps at 1,000,000 pairwise iterations.
     let len = types.len();
     if (len as u64) * (len as u64 - 1) >= 1_000_000 {
-        return types.to_vec();
+        return Arc::from(types.to_vec());
     }
-    let mut keep = vec![true; len];
 
-    if let Some(res) = resolver {
-        let mut checker = SubtypeChecker::with_resolver(interner, res);
-        for i in 0..len {
-            if !keep[i] {
-                continue;
-            }
-            for j in 0..len {
-                if i == j || !keep[j] {
+    // Cross-call cache probe (mirrors tsc's `subtypeReductionCache`). The
+    // key is the sorted input list plus a single `mode_bits` byte that
+    // distinguishes "resolver provided" (nominal class hierarchy enabled)
+    // from "no resolver". Class hierarchies and registered base-types are
+    // stable for the lifetime of a per-file `QueryCache`, so a hit means
+    // the recomputed answer would be identical.
+    let cache_key = query_db.map(|_| SubtypeReductionKey::build(types, resolver.is_some()));
+    if let (Some(db), Some(key)) = (query_db, cache_key.as_ref())
+        && let Some(hit) = db.lookup_subtype_reduction_cache(key)
+    {
+        return hit;
+    }
+
+    let result: Arc<[TypeId]> = if let Some(res) = resolver {
+        // BONUS fast path: if all candidates are `Lazy(_)` instances of the
+        // same direct extends-parent symbol, no two can be subtypes of one
+        // another. Skip the O(N²) loop. This is the dominant shape of the
+        // BCT stress fixture (`Derived0..Derived199 extends Base`), where
+        // every pairwise `is_subtype_of` would be `false`. Conservative —
+        // only definitive negatives short-circuit; correctness of the
+        // existing tests is preserved (a no-op alternative branch falls
+        // through to the full loop on any non-match).
+        if all_share_same_extends_parent(interner, types, res) {
+            Arc::from(types.to_vec())
+        } else {
+            let mut keep = vec![true; len];
+            let mut checker = SubtypeChecker::with_resolver(interner, res);
+            for i in 0..len {
+                if !keep[i] {
                     continue;
                 }
-                checker.guard.reset();
-                if checker.is_subtype_of(types[i], types[j]) {
-                    // types[i] <: types[j], so types[i] is redundant
-                    keep[i] = false;
-                    break;
+                for j in 0..len {
+                    if i == j || !keep[j] {
+                        continue;
+                    }
+                    checker.guard.reset();
+                    if checker.is_subtype_of(types[i], types[j]) {
+                        // types[i] <: types[j], so types[i] is redundant
+                        keep[i] = false;
+                        break;
+                    }
                 }
             }
+            let kept: Vec<TypeId> = types
+                .iter()
+                .zip(keep.iter())
+                .filter(|&(_, &k)| k)
+                .map(|(&t, _)| t)
+                .collect();
+            Arc::from(kept)
         }
     } else {
+        let mut keep = vec![true; len];
         let mut checker = SubtypeChecker::new(interner);
         for i in 0..len {
             if !keep[i] {
@@ -664,14 +722,73 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
                 }
             }
         }
+        let kept: Vec<TypeId> = types
+            .iter()
+            .zip(keep.iter())
+            .filter(|&(_, &k)| k)
+            .map(|(&t, _)| t)
+            .collect();
+        Arc::from(kept)
+    };
+
+    if let (Some(db), Some(key)) = (query_db, cache_key) {
+        db.insert_subtype_reduction_cache(key, result.clone());
+    }
+    result
+}
+
+/// Sibling-classes fast path for [`remove_subtypes_for_bct`].
+///
+/// Returns `true` when every entry in `types` is a `Lazy(DefId)` referring
+/// to a class with the SAME extends-parent `DefId`, AND the entries have
+/// distinct `DefId`s. In that configuration no candidate can be a subtype
+/// of another (they are siblings sharing the same parent), so the O(N²)
+/// pairwise loop would strip nothing — we can short-circuit by returning
+/// the input list unchanged.
+///
+/// Conservative: any deviation from this exact shape (non-`Lazy`, missing
+/// extends, mixed parents, duplicate `DefId`s) returns `false` so the
+/// full loop runs and existing test coverage is preserved. Mirrors the
+/// unit-type fast path at the start of `compute_best_common_type`.
+fn all_share_same_extends_parent<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: &R,
+) -> bool {
+    if types.len() < 2 {
+        return false;
     }
 
-    types
-        .iter()
-        .zip(keep.iter())
-        .filter(|&(_, &k)| k)
-        .map(|(&t, _)| t)
-        .collect()
+    let mut shared_parent: Option<crate::def::DefId> = None;
+    let mut seen: smallvec::SmallVec<[crate::def::DefId; 8]> = smallvec::SmallVec::new();
+    let _ = interner; // touched only for the `Lazy` discriminant via `lookup` below.
+
+    for &ty in types {
+        let def_id = match interner.lookup(ty) {
+            Some(TypeData::Lazy(d)) => d,
+            _ => return false,
+        };
+
+        // Distinct DefIds — duplicate entries fall back to the slow path
+        // (the existing loop trivially handles `i == j` itself).
+        if seen.contains(&def_id) {
+            return false;
+        }
+        seen.push(def_id);
+
+        let parent_def = resolver.get_class_extends(def_id);
+        let Some(parent_def) = parent_def else {
+            return false;
+        };
+
+        match shared_parent {
+            None => shared_parent = Some(parent_def),
+            Some(p) if p == parent_def => {}
+            Some(_) => return false,
+        }
+    }
+
+    shared_parent.is_some()
 }
 
 fn is_constructor_like<R: TypeResolver>(

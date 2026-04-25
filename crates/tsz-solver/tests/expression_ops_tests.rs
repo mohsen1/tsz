@@ -376,6 +376,278 @@ fn test_bct_removes_structural_subtypes_in_fallback_union() {
 }
 
 // =========================================================================
+// Subtype-Reduction Cache Wiring Tests
+// =========================================================================
+
+#[test]
+fn test_bct_cached_matches_uncached_for_subtype_reduction() {
+    // The cached path must produce the same result as the uncached path —
+    // this guards against the cache silently changing observable behavior.
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
+
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::NUMBER),
+        PropertyInfo::new(name_y, TypeId::STRING),
+    ]);
+    let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
+
+    let uncached = crate::expression_ops::compute_best_common_type::<NoopResolver>(
+        &interner,
+        &[base, derived, unrelated],
+        None,
+    );
+    let cached = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[base, derived, unrelated],
+        None,
+    );
+    assert_eq!(uncached, cached);
+}
+
+#[test]
+fn test_bct_cache_records_miss_then_hit() {
+    // Two back-to-back BCT calls with the same input list must produce one
+    // cache miss followed by one cache hit. Mirrors the wiring contract
+    // verified for the instantiation cache by `cache_hit_after_first_*`.
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
+
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::NUMBER),
+        PropertyInfo::new(name_y, TypeId::STRING),
+    ]);
+    let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
+
+    let stats0 = db.statistics();
+
+    let r1 = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[base, derived, unrelated],
+        None,
+    );
+    let r2 = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[base, derived, unrelated],
+        None,
+    );
+
+    assert_eq!(r1, r2, "cached BCT result must equal recomputed result");
+
+    let stats1 = db.statistics();
+    assert!(
+        stats1.subtype_reduction_cache_misses > stats0.subtype_reduction_cache_misses,
+        "first call must record a miss"
+    );
+    assert!(
+        stats1.subtype_reduction_cache_hits > stats0.subtype_reduction_cache_hits,
+        "second call must record a hit (got hits={})",
+        stats1.subtype_reduction_cache_hits
+    );
+    assert!(
+        stats1.subtype_reduction_cache_entries >= 1,
+        "cache must contain >= 1 entry"
+    );
+}
+
+#[test]
+fn test_bct_cache_distinguishes_input_lists() {
+    // Different input candidate lists that BOTH reach the
+    // `remove_subtypes_for_bct` fallback must produce distinct cache
+    // slots (a hash collision here would corrupt downstream BCT results).
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
+    let name_w = interner.intern_string("w");
+
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::NUMBER),
+        PropertyInfo::new(name_y, TypeId::STRING),
+    ]);
+    let unrelated_a = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
+    let unrelated_b = interner.object(vec![PropertyInfo::new(name_w, TypeId::STRING)]);
+
+    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[base, derived, unrelated_a],
+        None,
+    );
+    let entries_after_first = db.statistics().subtype_reduction_cache_entries;
+    assert!(
+        entries_after_first >= 1,
+        "first call must populate the cache (got {entries_after_first} entries)"
+    );
+
+    // A list that ALSO falls through to remove_subtypes_for_bct (no unit
+    // types, no winning supertype, no constructor-only short-circuit).
+    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[base, derived, unrelated_b],
+        None,
+    );
+    let entries_after_second = db.statistics().subtype_reduction_cache_entries;
+
+    assert!(
+        entries_after_second > entries_after_first,
+        "distinct input lists must occupy distinct cache slots ({entries_after_first} -> {entries_after_second})"
+    );
+}
+
+#[test]
+fn test_bct_cache_input_order_independence() {
+    // The cache key sorts the input slice, so two BCT calls whose input
+    // lists are permutations of each other share a cache slot. (BCT itself
+    // is set-valued, so the same answer is correct.)
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
+
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::NUMBER),
+        PropertyInfo::new(name_y, TypeId::STRING),
+    ]);
+    let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
+
+    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[base, derived, unrelated],
+        None,
+    );
+    let stats_after_first = db.statistics();
+
+    // Reorder the inputs — the sorted-key cache must hit.
+    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[unrelated, base, derived],
+        None,
+    );
+    let stats_after_second = db.statistics();
+
+    assert!(
+        stats_after_second.subtype_reduction_cache_hits
+            > stats_after_first.subtype_reduction_cache_hits,
+        "permuted-input call must hit the same cache slot"
+    );
+}
+
+#[test]
+fn test_bct_cache_no_query_db_disables_cache() {
+    // Calling with `query_db = None` must compute the correct result
+    // without populating any cache entry. This preserves the existing
+    // backwards-compatible call path used by ad-hoc tests.
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
+
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::NUMBER),
+        PropertyInfo::new(name_y, TypeId::STRING),
+    ]);
+    let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
+
+    let stats0 = db.statistics();
+
+    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        None,
+        &[base, derived, unrelated],
+        None,
+    );
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.subtype_reduction_cache_entries, stats0.subtype_reduction_cache_entries,
+        "calls with query_db=None must NOT populate the cache"
+    );
+}
+
+#[test]
+fn test_bct_cache_resolver_present_distinct_from_absent() {
+    // Same input TypeIds, but `resolver = Some(_)` vs `None` must occupy
+    // distinct cache slots — a no-resolver answer cached and served back
+    // when class-hierarchy resolution is enabled would be wrong.
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+
+    let a = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let b = interner.object(vec![PropertyInfo::new(name_y, TypeId::STRING)]);
+
+    // No-resolver path.
+    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[a, b],
+        None,
+    );
+    let entries_no_res = db.statistics().subtype_reduction_cache_entries;
+
+    // Same TypeIds but with a (no-op) resolver — must take a different slot.
+    let resolver = NoopResolver;
+    let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[a, b],
+        Some(&resolver),
+    );
+    let entries_with_res = db.statistics().subtype_reduction_cache_entries;
+
+    assert!(
+        entries_with_res > entries_no_res,
+        "resolver-present must be a distinct cache slot ({entries_no_res} -> {entries_with_res})"
+    );
+}
+
+// =========================================================================
 // Template Literal Expression Tests
 // =========================================================================
 

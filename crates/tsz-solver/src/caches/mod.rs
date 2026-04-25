@@ -2,3 +2,4 @@ pub(crate) mod db;
 pub(crate) mod instantiation_cache;
 pub(crate) mod query_cache;
 pub(crate) mod query_trace;
+pub(crate) mod subtype_reduction_cache;

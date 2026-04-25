@@ -843,8 +843,9 @@ impl<'a> CheckerState<'a> {
         let element_type = if self.ctx.preserve_literal_types {
             self.ctx.types.union(element_types.clone())
         } else {
-            expr_ops::compute_best_common_type(
+            expr_ops::compute_best_common_type_cached(
                 self.ctx.types,
+                Some(self.ctx.types),
                 &element_types,
                 Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
             )
