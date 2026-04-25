@@ -120,6 +120,10 @@ name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 
 [[test]]
+name = "tuple_index_access_tests"
+path = "tests/tuple_index_access_tests.rs"
+
+[[test]]
 name = "control_flow_type_guard_tests"
 path = "tests/control_flow_type_guard_tests.rs"
 

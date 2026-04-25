@@ -388,18 +388,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         if !has_index_sig
                             && let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type)
                         {
-                            let mut formatter = self.ctx.create_type_formatter();
-                            let type_str = formatter.format(object_type);
+                            // When the receiver is a type alias whose body resolves
+                            // to an Enum (e.g. `type C1 = Color`), tsc displays the
+                            // underlying enum's nominal name in TS2339 messages.
+                            // The default formatter would follow the Lazy(DefId) to
+                            // the alias name, producing `'C1'` instead of `'Color'`.
+                            let alias_enum_name = crate::query_boundaries::common::lazy_def_id(
+                                self.ctx.types,
+                                object_type,
+                            )
+                            .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                            .filter(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+                            .and_then(|_| {
+                                crate::query_boundaries::common::enum_def_id(
+                                    self.ctx.types,
+                                    resolved_object,
+                                )
+                            })
+                            .and_then(|enum_def_id| self.ctx.def_to_symbol_id(enum_def_id))
+                            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                            .map(|symbol| symbol.escaped_name.to_string());
+                            let type_str = alias_enum_name.unwrap_or_else(|| {
+                                let mut formatter = self.ctx.create_type_formatter();
+                                formatter.format(object_type).into_owned()
+                            });
                             let message = crate::diagnostics::format_message(
-                                    crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                                    &[&key, &type_str],
-                                );
+                                crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                                &[&key, &type_str],
+                            );
                             self.ctx.error(
-                                    idx_node.pos,
-                                    idx_node.end - idx_node.pos,
-                                    message,
-                                    crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                                );
+                                idx_node.pos,
+                                idx_node.end - idx_node.pos,
+                                message,
+                                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                            );
                         }
                     }
                 }
