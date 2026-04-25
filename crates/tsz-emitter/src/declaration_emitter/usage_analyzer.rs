@@ -1681,6 +1681,7 @@ impl<'a> UsageAnalyzer<'a> {
         );
 
         // Add to used_symbols with bitwise OR to handle symbols used as both types and values
+        let is_new = !self.used_symbols.contains_key(&sym_id);
         self.used_symbols
             .entry(sym_id)
             .and_modify(|kind| *kind |= usage_kind)
@@ -1693,6 +1694,33 @@ impl<'a> UsageAnalyzer<'a> {
                 sym_id
             );
             self.foreign_symbols.insert(sym_id);
+        }
+
+        // For non-exported type-alias declarations referenced by an exported
+        // declaration, mark-as-used means the alias body must be walked too —
+        // its references (other aliases, imports) need to survive elision.
+        // Top-level non-exported aliases are otherwise only walked when they
+        // carry the export modifier. Matches
+        // declarationEmitMappedTypePreservesTypeParameterConstraint.
+        if is_new {
+            self.analyze_referenced_alias_body(sym_id);
+        }
+    }
+
+    fn analyze_referenced_alias_body(&mut self, sym_id: SymbolId) {
+        let decls = self
+            .binder
+            .symbols
+            .get(sym_id)
+            .map(|s| s.all_declarations())
+            .unwrap_or_default();
+        for decl_idx in decls {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                self.analyze_type_alias_declaration(decl_idx);
+            }
         }
     }
 
