@@ -1,19 +1,19 @@
 use tsz_common::common::ScriptTarget;
 use tsz_emitter::emitter::JsxEmit;
-use tsz_emitter::output::printer::{PrintOptions, Printer};
-use tsz_parser::ParserState;
+use tsz_emitter::output::printer::PrintOptions;
+
+#[path = "test_support.rs"]
+mod test_support;
+
+use test_support::parse_and_print_named_with_opts;
 
 fn emit_jsx(source: &str, jsx: JsxEmit, target: ScriptTarget) -> String {
-    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
-    let root = parser.parse_source_file();
     let opts = PrintOptions {
         jsx,
         target,
         ..Default::default()
     };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.print(root);
-    printer.finish().code
+    parse_and_print_named_with_opts("test.tsx", source, opts)
 }
 
 // =============================================================================

@@ -1,16 +1,12 @@
-use tsz_emitter::output::printer::PrintOptions;
-use tsz_parser::ParserState;
+#[path = "test_support.rs"]
+mod test_support;
+
+use test_support::parse_and_print;
 
 #[test]
 fn empty_let_declaration_has_no_space_before_semicolon() {
     let source = "\"use strict\";\nlet;";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    use tsz_emitter::output::printer::Printer;
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(output.contains("\nlet;"), "unexpected output: {output}");
     assert!(!output.contains("\nlet ;"), "unexpected output: {output}");

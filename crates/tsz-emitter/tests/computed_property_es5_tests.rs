@@ -6,17 +6,19 @@
 //!       _a);
 
 use tsz_common::common::ScriptTarget;
-use tsz_emitter::output::printer::{PrintOptions, lower_and_print};
-use tsz_parser::ParserState;
+use tsz_emitter::output::printer::PrintOptions;
+
+#[path = "test_support.rs"]
+mod test_support;
+
+use test_support::parse_and_lower_print;
 
 fn emit_es5(source: &str) -> String {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
     let opts = PrintOptions {
         target: ScriptTarget::ES5,
         ..Default::default()
     };
-    lower_and_print(&parser.arena, root, opts).code
+    parse_and_lower_print(source, opts)
 }
 
 /// Multiple computed properties should be emitted multi-line, one per line.
