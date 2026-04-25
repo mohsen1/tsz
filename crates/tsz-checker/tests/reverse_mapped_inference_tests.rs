@@ -247,6 +247,78 @@ oub.b;
 }
 
 #[test]
+fn reverse_mapped_recursive_any_property_does_not_collapse_t_to_any() {
+    // Regression test for mappedTypeRecursiveInference.ts:
+    // when a homomorphic mapped type `Deep<T> = { [K in keyof T]: Deep<T[K]> }`
+    // is inferred against an object source whose property has type `any`,
+    // T must be inferred as the structural reverse-mapped object
+    // (e.g. `{ p: unknown }`), NOT as `T = any`.
+    //
+    // Before the fix, reverse-mapped inference produced the structural
+    // candidate `{ p: unknown }` at HomomorphicMappedType priority, but the
+    // post-reverse `constrain_template_against_properties` then ran
+    // `constrain_types(any, Deep<T[K]>)` which propagated `any` to T via the
+    // `T[K]` placeholder at the OUTER call's higher priority — overriding
+    // the reverse-mapped result and collapsing T to `any`. The downstream
+    // assignability check then failed with the wrong inferred parameter
+    // (`Deep<any>` instead of `Deep<{ p: unknown }>`).
+    //
+    // The fix excludes the homomorphic type parameter from the var map
+    // when running the residual property-template inference: tsc treats
+    // reverse inference as the sole inference path for the homomorphic
+    // parameter, and we now mirror that.
+    let code = r#"
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+interface XHR { readonly p: any; }
+declare let xhr: XHR;
+const out = foo(xhr);
+type _Probe = typeof out;
+const probe: { p: unknown } = out;
+"#;
+    // The `probe` annotation forces tsz to compare `T` (typeof out) against
+    // `{ p: unknown }`. If the fix is correct, T resolves to `{ p: unknown }`
+    // and there are no diagnostics. If T collapses to `any`, the structural
+    // check would still permit the assignment (any is assignable everywhere),
+    // so the strongest signal is that `foo(xhr)` does NOT produce a TS2345
+    // about `Deep<any>` and that no `Index signature for type 'string'`
+    // diagnostic is emitted (which is the symptom of T collapsing to any
+    // for sources without a string index).
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2345),
+        "Expected no TS2345 (T should be structural `{{ p: unknown }}`, not `any` which would force the parameter to `Deep<any>` and break assignability), got: {codes:?}",
+    );
+}
+
+#[test]
+fn reverse_mapped_recursive_any_property_with_extra_props_keeps_structural_t() {
+    // Companion test: even when the source has multiple properties — some
+    // `any`-typed and some not — the homomorphic parameter T must remain a
+    // structural object derived from reverse mapping, not collapse to `any`.
+    //
+    // The inferred `T` should be `{ p: unknown; q: unknown }`. Accessing
+    // `out.q` should therefore produce TS18046 ("of type 'unknown'"), not
+    // be silently typed `any` (which would happen if T collapsed to any).
+    let code = r#"
+type Deep<T> = { [K in keyof T]: Deep<T[K]> }
+declare function foo<T>(deep: Deep<T>): T;
+interface XHR { readonly p: any; readonly q: number; }
+declare let xhr: XHR;
+const out = foo(xhr);
+out.q.toFixed(2);
+"#;
+    let codes = check_and_get_codes(code);
+    // `out.q` should be `unknown`, so calling `.toFixed` on it is an error.
+    // If T had collapsed to `any`, `out.q` would be `any` and the call
+    // would silently succeed.
+    assert!(
+        codes.contains(&18046),
+        "Expected TS18046 on `out.q` (which should be `unknown` after structural reverse-mapped inference); got: {codes:?}",
+    );
+}
+
+#[test]
 fn reverse_mapped_preserves_source_property_declaration_order_in_ts2353() {
     // Regression test for reverseMappedTypeLimitedConstraint.ts:
     // the excess-property (TS2353) diagnostic must render the inferred
