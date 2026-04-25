@@ -38,6 +38,72 @@ interface OutputPaths {
   dtsCandidates: string[];
 }
 
+interface CompilerFlagOptions {
+  alwaysStrict?: boolean;
+  sourceMap?: boolean;
+  inlineSourceMap?: boolean;
+  declarationMap?: boolean;
+  downlevelIteration?: boolean;
+  noEmitHelpers?: boolean;
+  noEmitOnError?: boolean;
+  importHelpers?: boolean;
+  esModuleInterop?: boolean;
+  useDefineForClassFields?: boolean;
+  experimentalDecorators?: boolean;
+  emitDecoratorMetadata?: boolean;
+  strictNullChecks?: boolean;
+  jsx?: string;
+  jsxFactory?: string;
+  jsxFragmentFactory?: string;
+  jsxImportSource?: string;
+  moduleDetection?: string;
+  preserveConstEnums?: boolean;
+  verbatimModuleSyntax?: boolean;
+  rewriteRelativeImportExtensions?: boolean;
+  isolatedModules?: boolean;
+  importsNotUsedAsValues?: string;
+  preserveValueImports?: boolean;
+  removeComments?: boolean;
+  stripInternal?: boolean;
+  outFile?: string;
+}
+
+// Append shared compiler-option flags onto a tsz CLI args array. Used by both
+// the primary emit invocation and the declaration-emit retry path so that the
+// two stay in lockstep — previously the retry path silently dropped
+// --strictNullChecks (and was at structural risk of dropping any future flag).
+function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): void {
+  if (opts.alwaysStrict) args.push('--alwaysStrict', 'true');
+  if (opts.sourceMap) args.push('--sourceMap');
+  if (opts.inlineSourceMap) args.push('--inlineSourceMap');
+  if (opts.declarationMap) args.push('--declarationMap');
+  if (opts.downlevelIteration) args.push('--downlevelIteration');
+  if (opts.noEmitHelpers) args.push('--noEmitHelpers');
+  if (opts.noEmitOnError) args.push('--noEmitOnError');
+  if (opts.importHelpers) args.push('--importHelpers');
+  if (opts.esModuleInterop) args.push('--esModuleInterop');
+  if (opts.useDefineForClassFields !== undefined) {
+    args.push('--useDefineForClassFields', opts.useDefineForClassFields ? 'true' : 'false');
+  }
+  if (opts.experimentalDecorators) args.push('--experimentalDecorators');
+  if (opts.emitDecoratorMetadata) args.push('--emitDecoratorMetadata');
+  if (opts.strictNullChecks !== undefined) args.push('--strictNullChecks', String(opts.strictNullChecks));
+  if (opts.jsx) args.push('--jsx', opts.jsx);
+  if (opts.jsxFactory) args.push('--jsxFactory', opts.jsxFactory);
+  if (opts.jsxFragmentFactory) args.push('--jsxFragmentFactory', opts.jsxFragmentFactory);
+  if (opts.jsxImportSource) args.push('--jsxImportSource', opts.jsxImportSource);
+  if (opts.moduleDetection) args.push('--moduleDetection', opts.moduleDetection);
+  if (opts.preserveConstEnums) args.push('--preserveConstEnums');
+  if (opts.verbatimModuleSyntax) args.push('--verbatimModuleSyntax');
+  if (opts.rewriteRelativeImportExtensions) args.push('--rewriteRelativeImportExtensions');
+  if (opts.isolatedModules) args.push('--isolatedModules');
+  if (opts.importsNotUsedAsValues) args.push('--importsNotUsedAsValues', opts.importsNotUsedAsValues);
+  if (opts.preserveValueImports) args.push('--preserveValueImports');
+  if (opts.removeComments) args.push('--removeComments');
+  if (opts.stripInternal) args.push('--stripInternal');
+  if (opts.outFile) args.push('--outFile', opts.outFile);
+}
+
 function dedupeUseStrictPreamble(text: string): string {
   // Only deduplicate "use strict" directives that appear in the leading preamble
   // (before any non-empty, non-directive content). Inner "use strict" inside
@@ -293,35 +359,35 @@ export class CliTranspiler {
       const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
       if (hasJsInput) args.push('--allowJs');
       if (lib && lib.length > 0) args.push('--lib', lib.join(','));
-      if (alwaysStrict) args.push('--alwaysStrict', 'true');
-      if (sourceMap) args.push('--sourceMap');
-      if (inlineSourceMap) args.push('--inlineSourceMap');
-      if (declarationMap) args.push('--declarationMap');
-      if (downlevelIteration) args.push('--downlevelIteration');
-      if (noEmitHelpers) args.push('--noEmitHelpers');
-      if (noEmitOnError) args.push('--noEmitOnError');
-      if (importHelpers) args.push('--importHelpers');
-      if (esModuleInterop) args.push('--esModuleInterop');
-      if (useDefineForClassFields !== undefined) {
-        args.push('--useDefineForClassFields', useDefineForClassFields ? 'true' : 'false');
-      }
-      if (experimentalDecorators) args.push('--experimentalDecorators');
-      if (emitDecoratorMetadata) args.push('--emitDecoratorMetadata');
-      if (strictNullChecks !== undefined) args.push('--strictNullChecks', String(strictNullChecks));
-      if (jsx) args.push('--jsx', jsx);
-      if (jsxFactory) args.push('--jsxFactory', jsxFactory);
-      if (jsxFragmentFactory) args.push('--jsxFragmentFactory', jsxFragmentFactory);
-      if (jsxImportSource) args.push('--jsxImportSource', jsxImportSource);
-      if (moduleDetection) args.push('--moduleDetection', moduleDetection);
-      if (preserveConstEnums) args.push('--preserveConstEnums');
-      if (verbatimModuleSyntax) args.push('--verbatimModuleSyntax');
-      if (rewriteRelativeImportExtensions) args.push('--rewriteRelativeImportExtensions');
-      if (isolatedModules) args.push('--isolatedModules');
-      if (importsNotUsedAsValues) args.push('--importsNotUsedAsValues', importsNotUsedAsValues);
-      if (preserveValueImports) args.push('--preserveValueImports');
-      if (removeComments) args.push('--removeComments');
-      if (stripInternal) args.push('--stripInternal');
-      if (outFile) args.push('--outFile', outFile);
+      appendCompilerOptionFlags(args, {
+        alwaysStrict,
+        sourceMap,
+        inlineSourceMap,
+        declarationMap,
+        downlevelIteration,
+        noEmitHelpers,
+        noEmitOnError,
+        importHelpers,
+        esModuleInterop,
+        useDefineForClassFields,
+        experimentalDecorators,
+        emitDecoratorMetadata,
+        strictNullChecks,
+        jsx,
+        jsxFactory,
+        jsxFragmentFactory,
+        jsxImportSource,
+        moduleDetection,
+        preserveConstEnums,
+        verbatimModuleSyntax,
+        rewriteRelativeImportExtensions,
+        isolatedModules,
+        importsNotUsedAsValues,
+        preserveValueImports,
+        removeComments,
+        stripInternal,
+        outFile,
+      });
       const trailingArgs = ['--target', targetArg, '--module', moduleArg, ...inputFiles];
       args.push(...trailingArgs);
 
@@ -382,34 +448,35 @@ export class CliTranspiler {
           }
         } else {
           const retryArgs = ['--declaration', '--noCheck', '--noLib'];
-          if (alwaysStrict) retryArgs.push('--alwaysStrict', 'true');
-          if (sourceMap) retryArgs.push('--sourceMap');
-          if (inlineSourceMap) retryArgs.push('--inlineSourceMap');
-          if (declarationMap) retryArgs.push('--declarationMap');
-          if (downlevelIteration) retryArgs.push('--downlevelIteration');
-          if (noEmitHelpers) retryArgs.push('--noEmitHelpers');
-          if (noEmitOnError) retryArgs.push('--noEmitOnError');
-          if (importHelpers) retryArgs.push('--importHelpers');
-          if (esModuleInterop) retryArgs.push('--esModuleInterop');
-          if (useDefineForClassFields !== undefined) {
-            retryArgs.push('--useDefineForClassFields', useDefineForClassFields ? 'true' : 'false');
-          }
-          if (experimentalDecorators) retryArgs.push('--experimentalDecorators');
-          if (emitDecoratorMetadata) retryArgs.push('--emitDecoratorMetadata');
-          if (jsx) retryArgs.push('--jsx', jsx);
-          if (jsxFactory) retryArgs.push('--jsxFactory', jsxFactory);
-          if (jsxFragmentFactory) retryArgs.push('--jsxFragmentFactory', jsxFragmentFactory);
-          if (jsxImportSource) retryArgs.push('--jsxImportSource', jsxImportSource);
-          if (moduleDetection) retryArgs.push('--moduleDetection', moduleDetection);
-          if (preserveConstEnums) retryArgs.push('--preserveConstEnums');
-          if (verbatimModuleSyntax) retryArgs.push('--verbatimModuleSyntax');
-          if (rewriteRelativeImportExtensions) retryArgs.push('--rewriteRelativeImportExtensions');
-          if (isolatedModules) retryArgs.push('--isolatedModules');
-          if (importsNotUsedAsValues) retryArgs.push('--importsNotUsedAsValues', importsNotUsedAsValues);
-          if (preserveValueImports) retryArgs.push('--preserveValueImports');
-          if (removeComments) retryArgs.push('--removeComments');
-          if (stripInternal) retryArgs.push('--stripInternal');
-          if (outFile) retryArgs.push('--outFile', outFile);
+          appendCompilerOptionFlags(retryArgs, {
+            alwaysStrict,
+            sourceMap,
+            inlineSourceMap,
+            declarationMap,
+            downlevelIteration,
+            noEmitHelpers,
+            noEmitOnError,
+            importHelpers,
+            esModuleInterop,
+            useDefineForClassFields,
+            experimentalDecorators,
+            emitDecoratorMetadata,
+            strictNullChecks,
+            jsx,
+            jsxFactory,
+            jsxFragmentFactory,
+            jsxImportSource,
+            moduleDetection,
+            preserveConstEnums,
+            verbatimModuleSyntax,
+            rewriteRelativeImportExtensions,
+            isolatedModules,
+            importsNotUsedAsValues,
+            preserveValueImports,
+            removeComments,
+            stripInternal,
+            outFile,
+          });
           retryArgs.push(...trailingArgs);
           await runWithArgs(retryArgs);
         }
