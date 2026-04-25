@@ -867,7 +867,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// without requiring concrete expansion. This resolves the base type alias/interface
     /// body and instantiates it with the provided type arguments.
     fn try_resolve_application_body(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::{TypeSubstitution, instantiate_type};
+        use crate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -902,9 +902,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
-        let mut instantiated = instantiate_type(self.interner, effective_body, &substitution);
+        let mut instantiated = crate::instantiate_type_cached(
+            self.interner,
+            self.query_db,
+            effective_body,
+            &substitution,
+        );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type(self.interner, instantiated, app_type);
+            instantiated = crate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                instantiated,
+                app_type,
+            );
         }
         Some(instantiated)
     }
@@ -1465,7 +1475,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns None if the application cannot be expanded (missing type params or body).
     ///
     pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
-        use crate::{TypeSubstitution, instantiate_type};
+        use crate::TypeSubstitution;
 
         let app = self.interner.type_application(app_id);
 
@@ -1542,9 +1552,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
         let app_type = self.interner.application(app.base, app.args.clone());
 
-        let mut instantiated = instantiate_type(self.interner, effective_body, &substitution);
+        let mut instantiated = crate::instantiate_type_cached(
+            self.interner,
+            self.query_db,
+            effective_body,
+            &substitution,
+        );
         if crate::contains_this_type(self.interner, instantiated) {
-            instantiated = crate::substitute_this_type(self.interner, instantiated, app_type);
+            instantiated = crate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                instantiated,
+                app_type,
+            );
         }
 
         Some(instantiated)

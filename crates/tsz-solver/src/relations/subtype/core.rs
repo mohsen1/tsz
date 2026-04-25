@@ -454,7 +454,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn bind_polymorphic_this(&self, receiver: TypeId, resolved: TypeId) -> TypeId {
         if crate::contains_this_type(self.interner, resolved) {
-            crate::substitute_this_type(self.interner, resolved, receiver)
+            crate::substitute_this_type_cached(self.interner, self.query_db, resolved, receiver)
         } else {
             resolved
         }
