@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_binder::state::LibContext;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::ParserState;
@@ -140,6 +141,79 @@ fn declare_global_interface_merges_into_existing_interface() {
         sym.declarations.len() >= 2,
         "IteratorObject should have declarations from both libs, got {}",
         sym.declarations.len()
+    );
+}
+
+#[test]
+fn script_top_level_interface_augments_non_builtin_lib_global() {
+    // Regression test for the conformance failure on `coAndContraVariantInferences2.ts`
+    // (and any similar test that augments a lib.dom/webworker/etc. global like
+    // `Node`, `Element`, `EventTarget`, etc.).
+    //
+    // Before the fix, only a hardcoded allow-list of "built-in" type names
+    // (`Object`, `Array`, `Promise`, …) would be tracked as augmentations when
+    // a script-level `interface X { ... }` shared the name of a lib symbol.
+    // Names like `Node` (defined in lib.dom.d.ts) were silently ignored, so
+    // user-side declaration merging never propagated to the merged program
+    // and downstream lib re-checks couldn't see the new members.
+    //
+    // The fix replaces the static allow-list with a dynamic check against
+    // the binder's `lib_symbol_ids`, so any same-named lib symbol counts.
+
+    // Simulate a "lib.dom" file declaring a `Node` interface.
+    let lib = Arc::new(LibFile::from_source(
+        "lib.dom.d.ts".to_string(),
+        "interface Node {
+            nodeType: number;
+        }"
+        .to_string(),
+    ));
+
+    // User script (not a module) augments `Node` with a new property.
+    // Use `bind_source_file_with_libs` so lib symbols are visible in the
+    // current scope before we bind the user file — this matches how the
+    // CLI/parallel binder pipeline drives binding.
+    let mut user_parser = ParserState::new(
+        "user.ts".to_string(),
+        "interface Node { kind: string; }".to_string(),
+    );
+    let user_root = user_parser.parse_source_file();
+    let mut user_binder = BinderState::new();
+    user_binder.bind_source_file_with_libs(user_parser.get_arena(), user_root, &[Arc::clone(&lib)]);
+
+    assert!(
+        !user_binder.is_external_module,
+        "test source should be a script, not a module"
+    );
+
+    assert!(
+        user_binder.global_augmentations.contains_key("Node"),
+        "user `interface Node` in a script must be tracked as a global \
+         augmentation even though `Node` is not in the static built-in list"
+    );
+
+    // Sanity: the corresponding allow-list entry that already worked
+    // (Object) keeps working — augmentation tracking should not regress.
+    let mut object_parser = ParserState::new(
+        "object.ts".to_string(),
+        "interface Object { extra: number; }".to_string(),
+    );
+    let object_root = object_parser.parse_source_file();
+    let mut object_binder = BinderState::new();
+    let object_lib = Arc::new(LibFile::from_source(
+        "lib.es5.d.ts".to_string(),
+        "interface Object { toString(): string; }".to_string(),
+    ));
+    object_binder.bind_source_file_with_libs(
+        object_parser.get_arena(),
+        object_root,
+        &[Arc::clone(&object_lib)],
+    );
+    assert!(
+        object_binder.global_augmentations.contains_key("Object"),
+        "Object (built-in lib type) must keep being tracked as a global \
+         augmentation — the new dynamic check must not regress the existing \
+         allow-list path"
     );
 }
 
