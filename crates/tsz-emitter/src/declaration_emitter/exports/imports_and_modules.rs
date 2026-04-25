@@ -767,8 +767,22 @@ impl<'a> DeclarationEmitter<'a> {
                                 .get_binding_pattern(n)
                                 .is_none_or(|bp| bp.elements.nodes.is_empty())
                     });
+                    let is_empty_array_binding = self.arena.get(param.name).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            && self
+                                .arena
+                                .get_binding_pattern(n)
+                                .is_none_or(|bp| bp.elements.nodes.is_empty())
+                    });
                     if is_empty_object_binding {
                         self.write(": {}");
+                    } else if is_empty_array_binding {
+                        // Empty array binding pattern `[]` desugars to an
+                        // iterator-protocol consumption; tsc widens to
+                        // `Iterable<any, void, undefined>` (the 3-arg shape
+                        // matches the lib `Iterable<T, TReturn, TNext>`).
+                        // Matches emptyArrayBindingPatternParameter02.
+                        self.write(": Iterable<any, void, undefined>");
                     } else {
                         // In declaration emit from source, parameters without
                         // explicit type annotations default to `any` (matching tsc)
