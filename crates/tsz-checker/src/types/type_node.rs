@@ -1603,14 +1603,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let optional = param_data.question_token || param_data.initializer.is_some();
                 let rest = param_data.dot_dot_dot_token;
 
-                // Store the declared type for optional params — do NOT add
-                // `| undefined` here.  The solver's `check_argument_types_with`
-                // already unions `| undefined` at check time (call_args.rs:354),
-                // and tsc uses the declared type (without undefined) in error
-                // messages like TS2345 "not assignable to parameter of type 'X'".
+                let sig_type_id = if param_data.question_token
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::UNKNOWN
+                    && type_id != TypeId::ERROR
+                    && !crate::query_boundaries::common::type_contains_undefined(
+                        self.ctx.types,
+                        type_id,
+                    ) {
+                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
+                } else {
+                    type_id
+                };
                 params.push(ParamInfo {
                     name: Some(self.ctx.types.intern_string(&name)),
-                    type_id,
+                    type_id: sig_type_id,
                     optional,
                     rest,
                 });

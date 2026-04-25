@@ -109,6 +109,24 @@ fn test_optional_parameter_property_emits_undefined_in_constructor_and_property(
 }
 
 #[test]
+fn test_optional_function_type_preserves_explicit_undefined() {
+    let output = emit_dts(
+        r#"
+    export type Fn = (x?: string | undefined, y?: number | undefined) => void;
+    "#,
+    );
+
+    assert!(
+        output.contains("x?: string | undefined"),
+        "Expected optional parameter to keep explicit undefined in alias: {output}"
+    );
+    assert!(
+        output.contains("y?: number | undefined"),
+        "Expected optional parameter to keep explicit undefined in alias: {output}"
+    );
+}
+
+#[test]
 fn test_parameter_property_initializer_infers_property_type() {
     let output = emit_dts(
         r#"

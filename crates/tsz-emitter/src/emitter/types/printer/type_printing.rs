@@ -6,7 +6,7 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::types::TypeId;
-use tsz_solver::{remove_undefined, visitor};
+use tsz_solver::visitor;
 
 use super::{TypePrinter, needs_property_name_quoting_with_flag, quote_property_name};
 
@@ -255,10 +255,8 @@ impl<'a> TypePrinter<'a> {
         }
     }
 
-    /// For optional parameters, strip `| undefined` from the display type.
-    /// tsc omits `| undefined` when the parameter has `?` since it's implied.
-    fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
-        remove_undefined(self.interner, type_id)
+    const fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+        type_id
     }
 
     pub(crate) fn property_is_accessor(&self, property: &tsz_solver::types::PropertyInfo) -> bool {
