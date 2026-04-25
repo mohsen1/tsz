@@ -174,6 +174,21 @@ impl<'a> CodeActionProvider<'a> {
         }
     }
 
+    /// Build the provider from a borrowed
+    /// [`crate::project::LspProviderContext`]. Equivalent to
+    /// [`Self::new`] with default builder options.
+    pub fn from_context(ctx: crate::project::LspProviderContext<'a>) -> Self {
+        Self {
+            arena: ctx.arena,
+            binder: ctx.binder,
+            line_map: ctx.line_map,
+            file_name: ctx.file_name.to_string(),
+            source: ctx.source_text,
+            organize_imports_ignore_case: true,
+            new_line_override: None,
+        }
+    }
+
     pub const fn with_organize_imports_ignore_case(mut self, ignore_case: bool) -> Self {
         self.organize_imports_ignore_case = ignore_case;
         self

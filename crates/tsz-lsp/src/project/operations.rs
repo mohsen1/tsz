@@ -1111,13 +1111,7 @@ impl Project {
                     .line_map
                     .position_to_offset(position, file.parser.get_source_text())?;
 
-                let provider = GoToImplementationProvider::new(
-                    file.parser.get_arena(),
-                    &file.binder,
-                    &file.line_map,
-                    file.file_name.clone(),
-                    file.parser.get_source_text(),
-                );
+                let provider = GoToImplementationProvider::from_context(file.provider_context());
 
                 // Resolve the target kind for the symbol at the position
                 let node_idx = find_node_at_offset(file.parser.get_arena(), offset);
@@ -1157,13 +1151,8 @@ impl Project {
                     };
 
                     // Search this candidate file for implementations
-                    let provider = GoToImplementationProvider::new(
-                        candidate_file.parser.get_arena(),
-                        &candidate_file.binder,
-                        &candidate_file.line_map,
-                        candidate_file.file_name.clone(),
-                        candidate_file.parser.get_source_text(),
-                    );
+                    let provider =
+                        GoToImplementationProvider::from_context(candidate_file.provider_context());
 
                     let found = provider.find_implementations_for_name(&curr_name, curr_kind);
 
@@ -1220,13 +1209,7 @@ impl Project {
                 .files
                 .get(file_name)
                 .ok_or_else(|| "You cannot rename this element.".to_string())?;
-            let provider = RenameProvider::new(
-                file.parser.get_arena(),
-                &file.binder,
-                &file.line_map,
-                file.file_name.clone(),
-                file.parser.get_source_text(),
-            );
+            let provider = RenameProvider::from_context(file.provider_context());
             provider.normalize_rename_at_position(position, &new_name)?
         };
 
@@ -1310,15 +1293,10 @@ impl Project {
                     .files
                     .get_mut(file_name)
                     .ok_or_else(|| "You cannot rename this element.".to_string())?;
-                let provider = RenameProvider::new(
-                    file.parser.get_arena(),
-                    &file.binder,
-                    &file.line_map,
-                    file.file_name.clone(),
-                    file.parser.get_source_text(),
-                );
+                let root = file.root();
+                let provider = RenameProvider::from_context(file.provider_context());
                 provider.provide_rename_edits_for_symbol(
-                    file.root(),
+                    root,
                     symbol_id,
                     normalized_name.clone(),
                 )?
@@ -1595,19 +1573,14 @@ impl Project {
                 };
 
                 // Create a RenameProvider for this file
-                let provider = RenameProvider::new(
-                    target_file.parser.get_arena(),
-                    &target_file.binder,
-                    &target_file.line_map,
-                    target_file.file_name.clone(),
-                    target_file.parser.get_source_text(),
-                );
+                let target_root = target_file.root();
+                let provider = RenameProvider::from_context(target_file.provider_context());
 
                 // Get rename edits for this specific heritage symbol in this file
                 // Note: We must use the heritage_symbol_id, not the original symbol_id,
                 // because Base.foo and Derived.foo are different SymbolIds
                 match provider.provide_rename_edits_for_symbol(
-                    target_file.root(),
+                    target_root,
                     heritage_symbol_id,
                     new_name.clone(),
                 ) {

@@ -32,13 +32,7 @@ impl Project {
         let file = self.files.get(file_name)?;
 
         use crate::navigation::type_definition::TypeDefinitionProvider;
-        let provider = TypeDefinitionProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
-        );
+        let provider = TypeDefinitionProvider::from_context(file.provider_context());
 
         provider.get_type_definition(file.root(), position)
     }
@@ -232,13 +226,7 @@ impl Project {
 
             // Create CodeActionProvider for generating import edits
             use crate::code_actions::CodeActionProvider;
-            let code_action_provider = CodeActionProvider::new(
-                file.arena(),
-                &file.binder,
-                &file.line_map,
-                file.file_name.clone(),
-                file.source_text(),
-            );
+            let code_action_provider = CodeActionProvider::from_context(file.provider_context());
 
             for candidate in candidates {
                 if existing_file_symbols.contains(&candidate.local_name) {
@@ -453,13 +441,7 @@ impl Project {
         let file = self.files.get(file_name)?;
 
         use crate::editor_decorations::code_lens::CodeLensProvider;
-        let provider = CodeLensProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
-        );
+        let provider = CodeLensProvider::from_context(file.provider_context());
 
         Some(provider.provide_code_lenses(file.root()))
     }
@@ -566,13 +548,7 @@ impl Project {
         let file = self.files.get(file_name)?;
         let import_candidates = self.import_candidates_for_diagnostics(file, &diagnostics);
 
-        let provider = CodeActionProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
-        );
+        let provider = CodeActionProvider::from_context(file.provider_context());
 
         let actions = provider.provide_code_actions(
             file.root(),
@@ -612,13 +588,7 @@ impl Project {
                 data.get("actionType").and_then(|v| v.as_str()),
             ) && let Some(file) = self.files.get(file_name)
             {
-                let provider = CodeActionProvider::new(
-                    file.arena(),
-                    file.binder(),
-                    file.line_map(),
-                    file.file_name().to_string(),
-                    file.source_text(),
-                );
+                let provider = CodeActionProvider::from_context(file.provider_context());
 
                 // Resolve the specific action type
                 match action_type {
@@ -666,13 +636,7 @@ impl Project {
         let file = self.files.get(file_name)?;
 
         use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
-        let provider = TypeHierarchyProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
-        );
+        let provider = TypeHierarchyProvider::from_context(file.provider_context());
 
         provider.prepare(file.root(), position)
     }
@@ -694,13 +658,7 @@ impl Project {
             None => return Vec::new(),
         };
 
-        let provider = TypeHierarchyProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
-        );
+        let provider = TypeHierarchyProvider::from_context(file.provider_context());
 
         // Get file-local supertypes first
         let local_results = provider.supertypes(file.root(), position);
@@ -738,13 +696,8 @@ impl Project {
                     continue; // Already searched locally
                 }
                 if let Some(other_file) = self.files.get(&candidate_file) {
-                    let other_provider = TypeHierarchyProvider::new(
-                        other_file.arena(),
-                        other_file.binder(),
-                        other_file.line_map(),
-                        other_file.file_name().to_string(),
-                        other_file.source_text(),
-                    );
+                    let other_provider =
+                        TypeHierarchyProvider::from_context(other_file.provider_context());
                     if let Some(item) = other_provider.find_type_declaration_item_by_name(&name) {
                         results.push(item);
                         break; // Found it, no need to check more files
@@ -773,13 +726,7 @@ impl Project {
             None => return Vec::new(),
         };
 
-        let provider = TypeHierarchyProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
-        );
+        let provider = TypeHierarchyProvider::from_context(file.provider_context());
 
         // Get file-local subtypes first
         let mut results = provider.subtypes(file.root(), position);
@@ -798,13 +745,8 @@ impl Project {
                 continue; // Already searched locally
             }
             if let Some(other_file) = self.files.get(&heritage_file) {
-                let other_provider = TypeHierarchyProvider::new(
-                    other_file.arena(),
-                    other_file.binder(),
-                    other_file.line_map(),
-                    other_file.file_name().to_string(),
-                    other_file.source_text(),
-                );
+                let other_provider =
+                    TypeHierarchyProvider::from_context(other_file.provider_context());
                 // Find all class/interface declarations in this file that
                 // reference the target name in their heritage clauses
                 results.extend(other_provider.find_subtypes_of(&target_name));
@@ -924,12 +866,8 @@ impl Project {
         position: Position,
     ) -> Option<crate::hierarchy::call_hierarchy::CallHierarchyItem> {
         let file = self.files.get(file_name)?;
-        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
+        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::from_context(
+            file.provider_context(),
         );
         provider.prepare(file.root(), position)
     }
@@ -950,13 +888,7 @@ impl Project {
             None => return Vec::new(),
         };
 
-        let provider = CallHierarchyProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
-        );
+        let provider = CallHierarchyProvider::from_context(file.provider_context());
 
         // Get the target function name for cross-file search
         let target_name = provider.get_target_function_name(file.root(), position);
@@ -976,13 +908,8 @@ impl Project {
                 continue; // Already searched locally
             }
             if let Some(other_file) = self.files.get(&candidate_file) {
-                let other_provider = CallHierarchyProvider::new(
-                    other_file.arena(),
-                    other_file.binder(),
-                    other_file.line_map(),
-                    other_file.file_name().to_string(),
-                    other_file.source_text(),
-                );
+                let other_provider =
+                    CallHierarchyProvider::from_context(other_file.provider_context());
                 // Find calls to the target function name in this other file
                 results.extend(other_provider.find_incoming_calls_by_name(&target_name));
             }
@@ -1001,12 +928,8 @@ impl Project {
             Some(f) => f,
             None => return Vec::new(),
         };
-        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::new(
-            file.arena(),
-            file.binder(),
-            file.line_map(),
-            file.file_name().to_string(),
-            file.source_text(),
+        let provider = crate::hierarchy::call_hierarchy::CallHierarchyProvider::from_context(
+            file.provider_context(),
         );
         provider.outgoing_calls(file.root(), position)
     }
