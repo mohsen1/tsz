@@ -227,7 +227,7 @@ impl TypeSubstitution {
     /// otherwise produce different iteration shapes.
     ///
     /// PR 1 of the `instantiate_type` cross-call cache
-    /// (`docs/plan/perf-instantiate-type-cache-design.md`). The returned
+    /// workstream in `docs/plan/ROADMAP.md`. The returned
     /// form is the eventual cache key seed; PR 2 will key
     /// `QueryCache::instantiation_cache` on an `Arc<[(Atom, TypeId)]>`
     /// built directly from this output. Substitution *interning* (a
@@ -1510,7 +1510,7 @@ pub fn instantiate_type(
 /// Cache-aware variant of [`instantiate_type`].
 ///
 /// `query_db = Some(db)` enables the cross-call instantiation cache on
-/// `QueryCache` (PR 3/4 of `docs/plan/perf-instantiate-type-cache-design.md`).
+/// `QueryCache` (PR 3/4 of the `docs/plan/ROADMAP.md` cache workstream).
 ///
 /// The leaf fast paths (`TypeParameter` direct hit, `IndexAccess(T, P)`) run
 /// BEFORE any cache-key construction so they remain allocation-free.

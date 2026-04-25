@@ -328,7 +328,7 @@ pub struct QueryCache<'a> {
     /// Cross-call cache for `instantiate_type` results, keyed by
     /// `(TypeId, CanonicalSubst, mode_bits, Option<this_type>)`.
     /// PR 2/4 of the `instantiate_type` cache plumbing
-    /// (`docs/plan/perf-instantiate-type-cache-design.md`). PR 3/4 will
+    /// tracked in `docs/plan/ROADMAP.md`. PR 3/4 will
     /// wire this into the five `instantiate_type*` entry points; for now
     /// the cache exists but no production path probes it.
     instantiation_cache: InstantiationCache,
@@ -1286,7 +1286,7 @@ impl QueryDatabase for QueryCache<'_> {
 
     /// Look up a cross-call `instantiate_type` result.
     ///
-    /// PR 3/4 of `docs/plan/perf-instantiate-type-cache-design.md`. Hit/miss
+    /// PR 3/4 of the `docs/plan/ROADMAP.md` instantiation-cache workstream. Hit/miss
     /// counters mirror the subtype counters and feed `QueryCacheStatistics`.
     fn lookup_instantiation_cache(&self, key: &InstantiationCacheKey) -> Option<TypeId> {
         match self.instantiation_cache.lookup(key) {

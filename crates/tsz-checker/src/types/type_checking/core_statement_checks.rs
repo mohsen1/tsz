@@ -845,9 +845,6 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .type_parameter_scope
             .insert(name.clone(), constrained_type_id);
-        if data.type_node != ParserNodeIndex::NONE {
-            self.check_type_node(data.type_node);
-        }
 
         self.ctx.type_parameter_scope.remove(&name);
         if let Some(prev_type) = previous {

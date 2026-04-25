@@ -97,5 +97,5 @@ You can try the current demo in the [Playground](/playground/?example=sound_mode
 
 ## Read More
 
-1. [Internal Sound Mode Plan](https://github.com/mohsen1/tsz/blob/main/docs/plan/SOUND_MODE.md)
+1. [Internal Roadmap](https://github.com/mohsen1/tsz/blob/main/docs/plan/ROADMAP.md)
 2. [Playground](/playground/)

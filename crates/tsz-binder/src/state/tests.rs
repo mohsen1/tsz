@@ -6570,7 +6570,7 @@ fn flow_nodes_arc_share_is_zero_copy() {
 //
 // These tests verify the binder populates arena-free declaration locations
 // in lockstep with the existing `NodeIndex` fields. See
-// `docs/plan/global-query-graph-architecture.md` Phase 1.
+// `docs/plan/ROADMAP.md` stable-identity workstream.
 // =============================================================================
 
 #[test]

@@ -729,13 +729,20 @@ impl<'a> CheckerState<'a> {
                     {
                         let name = ident.escaped_text.clone();
                         let atom = self.ctx.types.intern_string(&name);
+                        let mut constraint_type = TypeId::UNKNOWN;
+                        if tp_data.constraint != tsz_parser::parser::NodeIndex::NONE {
+                            let resolved = self.get_type_from_type_node(tp_data.constraint);
+                            if resolved != TypeId::ERROR {
+                                constraint_type = resolved;
+                            }
+                        }
                         let provisional =
                             self.ctx
                                 .types
                                 .factory()
                                 .type_param(tsz_solver::TypeParamInfo {
                                     name: atom,
-                                    constraint: None,
+                                    constraint: Some(constraint_type),
                                     default: None,
                                     is_const: false,
                                 });
