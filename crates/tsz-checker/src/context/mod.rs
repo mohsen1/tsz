@@ -1321,6 +1321,21 @@ pub struct ProjectEnv {
     /// `module_binder_index` portion is skipped — the rest of the loop body
     /// continues to run.
     pub skeleton_module_binder_index: Option<Arc<FxHashMap<String, Vec<usize>>>>,
+    /// Pre-computed file-locals index built from `SkeletonIndex`
+    /// (Phase 2 step 5).
+    ///
+    /// When set, [`Self::build_global_indices`] skips the per-binder
+    /// `file_locals.iter()` push lines inside the per-binder iteration loop
+    /// and reuses this `Arc` for the `global_file_locals_index` slot.
+    /// Drivers populate this from `SkeletonIndex::build_file_locals_index(...)`
+    /// so that — once arenas become evictable in Phase 5 — the merged
+    /// file-locals index can be built without retaining per-file binder state.
+    ///
+    /// Note: the surrounding loop also builds `module_exports_index`,
+    /// `module_binder_index`, and the `declared_modules` projection from the
+    /// same iteration, so only the `file_locals_index` portion is skipped —
+    /// the rest of the loop body continues to run.
+    pub skeleton_file_locals_index: Option<GlobalFileLocalsIndex>,
     /// Pre-computed symbol-to-file ownership targets (legacy vec form).
     pub symbol_file_targets: Arc<Vec<(SymbolId, usize)>>,
     /// Pre-built O(1) index: `SymbolId` -> owning file index.
@@ -1400,6 +1415,7 @@ impl Default for ProjectEnv {
             skeleton_module_augmentations_index: None,
             skeleton_augmentation_targets_index: None,
             skeleton_module_binder_index: None,
+            skeleton_file_locals_index: None,
             symbol_file_targets: Arc::new(vec![]),
             global_symbol_file_index: None,
             global_file_locals_index: None,
@@ -1547,6 +1563,11 @@ impl ProjectEnv {
     /// so drivers can compute it once and share via `Arc` across all checkers.
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
+        // Phase 2 step 5: when the driver pre-built `skeleton_file_locals_index`
+        // from `SkeletonIndex`, skip the per-binder `file_locals.iter()` push
+        // lines and reuse the pre-built map. This unblocks Phase 5 — the
+        // merged file-locals index no longer needs per-file binder state.
+        let has_skeleton_file_locals = self.skeleton_file_locals_index.is_some();
         let mut file_locals_index: FxHashMap<String, Vec<(usize, SymbolId)>> = FxHashMap::default();
         let mut module_exports_index: ModuleExportsIndexMap = FxHashMap::default();
         // Phase 2 step 2: when the driver pre-built
@@ -1587,11 +1608,16 @@ impl ProjectEnv {
             .collect();
 
         for (file_idx, binder) in self.all_binders.iter().enumerate() {
-            for (name, &sym_id) in binder.file_locals.iter() {
-                file_locals_index
-                    .entry(name.to_string())
-                    .or_default()
-                    .push((file_idx, sym_id));
+            // Phase 2 step 5: skip the per-binder file_locals pushes when the
+            // skeleton-built map is already installed. The driver pre-built it
+            // from `SkeletonIndex::build_file_locals_index(...)`.
+            if !has_skeleton_file_locals {
+                for (name, &sym_id) in binder.file_locals.iter() {
+                    file_locals_index
+                        .entry(name.to_string())
+                        .or_default()
+                        .push((file_idx, sym_id));
+                }
             }
             for (module_spec, exports) in binder.module_exports.iter() {
                 // Phase 2 step 4: skip the per-binder module_binder_index
@@ -1698,7 +1724,13 @@ impl ProjectEnv {
             self.skeleton_declared_modules = Some(Arc::new(dm));
         }
 
-        self.global_file_locals_index = Some(Arc::new(file_locals_index));
+        // Phase 2 step 5: prefer the skeleton-pre-built map when available;
+        // otherwise install the binder-derived one we just computed.
+        self.global_file_locals_index = self
+            .skeleton_file_locals_index
+            .as_ref()
+            .map(Arc::clone)
+            .or_else(|| Some(Arc::new(file_locals_index)));
         self.global_module_exports_index = Some(Arc::new(module_exports_index));
         // Phase 2 step 2: prefer the skeleton-pre-built map when available;
         // otherwise install the binder-derived one we just computed.

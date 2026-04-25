@@ -798,6 +798,18 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::new(skel.build_module_binder_index()));
 
+    // Phase 2 step 5: pre-compute the merged file-locals index from skeleton
+    // data. The skeleton recorded each file's `file_locals` `(name, sym_id)`
+    // pairs at extract time; this projection rebuilds the legacy
+    // `name -> Vec<(file_idx, SymbolId)>` map so checker consumers
+    // (cross-file name resolution, symbol lookup) see no behavior change.
+    // The legacy `file_locals_index` push lines inside the per-binder loop
+    // in `ProjectEnv::build_global_indices` are skipped when this is `Some`.
+    let skeleton_file_locals_index: Option<tsz::checker::context::GlobalFileLocalsIndex> = program
+        .skeleton_index
+        .as_ref()
+        .map(|skel| Arc::new(skel.build_file_locals_index()));
+
     // Build the project-wide shared environment once for all checkers (prime, parallel, sequential).
     // build_global_indices computes the 4 binder-derived indices once here so that
     // per-file checker creation via apply_to skips the O(N) binder scans.
@@ -833,6 +845,7 @@ pub(super) fn collect_diagnostics(
         skeleton_module_augmentations_index,
         skeleton_augmentation_targets_index,
         skeleton_module_binder_index,
+        skeleton_file_locals_index,
         symbol_file_targets: Arc::clone(&symbol_file_targets),
         resolved_module_paths: Arc::clone(&resolved_module_paths),
         resolved_module_request_paths: Arc::clone(&resolved_module_request_paths),

@@ -162,6 +162,18 @@ pub struct FileSkeleton {
     /// These represent module specifiers that have explicit export declarations
     /// (e.g., from `declare module "xxx" { export ... }`).
     pub module_export_specifiers: Vec<String>,
+    /// File-local symbols (Phase 2 step 5): the per-file `(name, sym_id)` pairs
+    /// from [`tsz_binder::BinderState::file_locals`].
+    ///
+    /// One entry per name → symbol mapping recorded by the binder. The reducer
+    /// projects these into [`SkeletonIndex::file_locals_index_by_name`]
+    /// (name → `Vec<(file_idx, SymbolId)>`) so the checker can rebuild the
+    /// merged `global_file_locals_index` from skeleton data alone — without
+    /// iterating per-file binders.
+    ///
+    /// Entries are sorted by `name` at extract time so the per-file fingerprint
+    /// is stable across `FxHashMap` iteration order.
+    pub file_locals: Vec<(String, tsz_binder::SymbolId)>,
     /// Expando property assignments: maps identifier name -> set of property names
     /// assigned via `X.prop = value` patterns. Used to suppress false TS2339 errors.
     pub expando_properties: Vec<(String, Vec<String>)>,
@@ -199,6 +211,13 @@ impl FileSkeleton {
         self.declared_modules.hash(&mut hasher);
         self.shorthand_ambient_modules.hash(&mut hasher);
         self.module_export_specifiers.hash(&mut hasher);
+        // Phase 2 step 5: include file_locals so a binder-level change to the
+        // per-file (name -> sym_id) topology bumps the per-file fingerprint
+        // and propagates through the aggregate `SkeletonIndex` fingerprint.
+        for (name, sym_id) in &self.file_locals {
+            name.hash(&mut hasher);
+            sym_id.0.hash(&mut hasher);
+        }
         self.expando_properties.hash(&mut hasher);
         self.import_sources.hash(&mut hasher);
         self.file_features.hash(&mut hasher);
@@ -415,6 +434,16 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
     let mut module_export_specifiers: Vec<String> = result.module_exports.keys().cloned().collect();
     module_export_specifiers.sort();
 
+    // File-local symbols (Phase 2 step 5): collect every (name, sym_id) pair
+    // from the binder's `file_locals` SymbolTable and sort by name so the
+    // per-file fingerprint is stable across FxHashMap iteration order.
+    let mut file_locals: Vec<(String, tsz_binder::SymbolId)> = result
+        .file_locals
+        .iter()
+        .map(|(name, sym_id)| (name.clone(), *sym_id))
+        .collect();
+    file_locals.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.0.cmp(&b.1.0)));
+
     // Expando properties: convert FxHashMap<String, FxHashSet<String>> to sorted Vec
     let mut expando_properties: Vec<(String, Vec<String>)> = result
         .expando_properties
@@ -439,6 +468,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
+        file_locals,
         expando_properties,
         import_sources: result.file_import_sources.clone(),
         file_features: result.file_features,
@@ -521,6 +551,20 @@ pub struct SkeletonIndex {
     /// `"foo"` and `'foo'` (extremely rare), the file index is pushed once
     /// per matching specifier — same as the legacy loop.
     pub module_binder_index_by_spec: FxHashMap<String, Vec<usize>>,
+    /// Per-name list of `(file_idx, SymbolId)` entries projecting every
+    /// per-file `file_locals` table (Phase 2 step 5).
+    ///
+    /// This is the skeleton-only projection of the checker's legacy
+    /// `global_file_locals_index` (`name -> Vec<(file_idx, SymbolId)>`). Each
+    /// entry records that file `file_idx` has a `file_locals[name] = sym_id`
+    /// binding, mirroring the legacy per-binder loop in
+    /// `ProjectEnv::build_global_indices`.
+    ///
+    /// Entries are recorded in driver file order (the same order the reducer
+    /// observes the input skeletons). Within a single file, `(name, sym_id)`
+    /// pairs are appended in `FileSkeleton::file_locals` order (already sorted
+    /// by `(name, sym_id)` at extract time).
+    pub file_locals_index_by_name: FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>,
     /// All declared ambient modules across all files.
     pub declared_modules: FxHashSet<String>,
     /// All shorthand ambient modules across all files.
@@ -566,6 +610,8 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         Vec<(usize, SkeletonAugmentationTarget)>,
     > = FxHashMap::default();
     let mut module_binder_index_by_spec: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    let mut file_locals_index_by_name: FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>> =
+        FxHashMap::default();
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_export_specifiers = FxHashSet::default();
@@ -655,6 +701,18 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
             }
         }
 
+        // Phase 2 step 5: project per-file `file_locals` entries into the
+        // cross-file `name -> [(file_idx, sym_id)]` index. Mirrors the legacy
+        // per-binder loop in `ProjectEnv::build_global_indices` which iterates
+        // `binder.file_locals.iter()` and pushes `(file_idx, sym_id)` for each
+        // name binding.
+        for (name, sym_id) in &skeleton.file_locals {
+            file_locals_index_by_name
+                .entry(name.clone())
+                .or_default()
+                .push((file_idx, *sym_id));
+        }
+
         declared_modules.extend(skeleton.declared_modules.iter().cloned());
         shorthand_ambient_modules.extend(skeleton.shorthand_ambient_modules.iter().cloned());
         module_export_specifiers.extend(skeleton.module_export_specifiers.iter().cloned());
@@ -711,6 +769,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         module_augmentations_by_spec,
         augmentation_targets_by_spec,
         module_binder_index_by_spec,
+        file_locals_index_by_name,
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
@@ -794,6 +853,20 @@ impl SkeletonIndex {
         for key in &binder_idx_keys {
             key.hash(&mut hasher);
             index.module_binder_index_by_spec[*key].hash(&mut hasher);
+        }
+
+        // 4d) Per-name file-locals entries (Phase 2 step 5), sorted by name
+        //     for determinism. Each entry contributes the `(file_idx, sym_id)`
+        //     vector so any change to the skeleton-projected file-locals
+        //     topology invalidates downstream caches.
+        let mut file_locals_keys: Vec<&String> = index.file_locals_index_by_name.keys().collect();
+        file_locals_keys.sort();
+        for key in &file_locals_keys {
+            key.hash(&mut hasher);
+            for (file_idx, sym_id) in &index.file_locals_index_by_name[*key] {
+                file_idx.hash(&mut hasher);
+                sym_id.0.hash(&mut hasher);
+            }
         }
 
         // 5) Declared modules (sorted for determinism).
@@ -901,6 +974,14 @@ impl SkeletonIndex {
             size += key.capacity();
             size += files.capacity() * std::mem::size_of::<usize>();
             size += std::mem::size_of::<(String, Vec<usize>)>();
+        }
+
+        // File-locals index by name (Phase 2 step 5):
+        // FxHashMap<String, Vec<(usize, SymbolId)>>
+        for (key, entries) in &self.file_locals_index_by_name {
+            size += key.capacity();
+            size += std::mem::size_of::<(String, Vec<(usize, tsz_binder::SymbolId)>)>();
+            size += entries.capacity() * std::mem::size_of::<(usize, tsz_binder::SymbolId)>();
         }
 
         // Declared modules (HashSet<String>)
@@ -1410,6 +1491,102 @@ impl SkeletonIndex {
             "skeleton module_binder_index_by_spec differs from legacy per-binder module_exports"
         );
     }
+
+    /// Lookup file-locals entries for a given name.
+    ///
+    /// Returns the per-file `(file_idx, SymbolId)` entries recorded for
+    /// `name` — i.e. the list of files whose `binder.file_locals[name] = sym_id`.
+    /// Empty slice if no file declares this name in its `file_locals`.
+    ///
+    /// This is the Phase 2 step 5 skeleton-only path for
+    /// `global_file_locals_index`: the consumer can rebuild the merged
+    /// checker-side index from this accessor alone, without iterating
+    /// per-file binders. Once arenas become evictable in Phase 5 the
+    /// per-binder `file_locals` map is no longer needed for this lookup.
+    ///
+    /// Entries are recorded in driver file order — the same order the legacy
+    /// `binder.file_locals.iter()` loop's enumeration would produce when
+    /// walking files in driver order.
+    #[must_use]
+    pub fn file_locals_for(&self, name: &str) -> &[(usize, tsz_binder::SymbolId)] {
+        self.file_locals_index_by_name
+            .get(name)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Build the legacy `name -> Vec<(file_idx, SymbolId)>` map from
+    /// skeleton-recorded `file_locals` entries.
+    ///
+    /// Phase 2 step 5 helper: projects the skeleton-recorded
+    /// `file_locals_index_by_name` into the legacy shape understood by
+    /// `ProjectEnv::global_file_locals_index` consumers (e.g. cross-file
+    /// symbol resolution, name-binding lookups). This lets the build path
+    /// skip the per-binder `file_locals.iter()` loop entirely for the
+    /// file-locals slot.
+    ///
+    /// Name keys are visited in sorted order; per-name entries preserve the
+    /// driver file order recorded by [`reduce_skeletons`].
+    #[must_use]
+    pub fn build_file_locals_index(&self) -> FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>> {
+        let mut map: FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>> = FxHashMap::default();
+
+        let mut keys: Vec<&String> = self.file_locals_index_by_name.keys().collect();
+        keys.sort();
+
+        for name in keys {
+            map.insert(name.clone(), self.file_locals_index_by_name[name].clone());
+        }
+
+        map
+    }
+
+    /// Validate that the skeleton-derived `file_locals_index_by_name` matches
+    /// the legacy per-binder `file_locals` topology.
+    ///
+    /// `legacy_per_file` is the legacy projection of every file's
+    /// `binder.file_locals`: a `Vec<Vec<(String, SymbolId)>>` in driver file
+    /// order where the inner vector is the list of `(name, sym_id)` pairs.
+    /// The skeleton is expected to record, for every `(file_idx, name)`, the
+    /// same multiset of `(file_idx, sym_id)` entries.
+    ///
+    /// In debug builds, asserts the per-name, sorted `(file_idx, sym_id)`
+    /// vectors are equal. In release builds this is a no-op.
+    pub fn validate_file_locals_against_legacy(
+        &self,
+        legacy_per_file: &[Vec<(String, tsz_binder::SymbolId)>],
+    ) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        let mut legacy: FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>> =
+            FxHashMap::default();
+        for (file_idx, per_file) in legacy_per_file.iter().enumerate() {
+            for (name, sym_id) in per_file {
+                legacy
+                    .entry(name.clone())
+                    .or_default()
+                    .push((file_idx, *sym_id));
+            }
+        }
+        for entries in legacy.values_mut() {
+            entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.0.cmp(&b.1.0)));
+        }
+
+        let mut skeleton: FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>> =
+            FxHashMap::default();
+        for (name, entries) in &self.file_locals_index_by_name {
+            let mut sorted = entries.clone();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.0.cmp(&b.1.0)));
+            skeleton.insert(name.clone(), sorted);
+        }
+
+        assert_eq!(
+            skeleton, legacy,
+            "skeleton file_locals_index_by_name differs from legacy per-binder file_locals"
+        );
+    }
 }
 
 /// Estimate the in-memory size of a `FileSkeleton` in bytes.
@@ -1471,6 +1648,10 @@ impl FileSkeleton {
         }
         for ms in &self.module_export_specifiers {
             size += ms.capacity();
+        }
+        for (name, _sym_id) in &self.file_locals {
+            size += name.capacity();
+            size += std::mem::size_of::<(String, tsz_binder::SymbolId)>();
         }
         for (obj_key, props) in &self.expando_properties {
             size += obj_key.capacity();
@@ -1595,6 +1776,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint,
@@ -1698,6 +1880,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1717,6 +1900,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1796,6 +1980,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1815,6 +2000,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1856,6 +2042,7 @@ mod tests {
             declared_modules: declared.iter().map(|s| (*s).to_string()).collect(),
             shorthand_ambient_modules: shorthand.iter().map(|s| (*s).to_string()).collect(),
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1955,6 +2142,7 @@ mod tests {
             declared_modules: vec!["from-a".to_string()],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1972,6 +2160,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec!["from-b".to_string()],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2033,6 +2222,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2070,6 +2260,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2366,6 +2557,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: sorted,
+            file_locals: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2482,5 +2674,161 @@ mod tests {
         ];
         want.sort();
         assert_eq!(got, want);
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 2 step 5: file-locals index served from SkeletonIndex.
+    //
+    // The checker's `global_file_locals_index` was previously built by
+    // iterating every binder's `file_locals` SymbolTable. Phase 2 step 5 moves
+    // the build to `SkeletonIndex::file_locals_for(...)` /
+    // `build_file_locals_index(...)`, letting the checker rebuild the merged
+    // index from skeleton data alone — required for Phase 5 (arena eviction).
+    // -------------------------------------------------------------------------
+
+    /// Helper: build a skeleton with the given file-local `(name, sym_id)` pairs.
+    fn skeleton_with_file_locals(file_name: &str, locals: Vec<(String, u32)>) -> FileSkeleton {
+        let mut sorted: Vec<(String, tsz_binder::SymbolId)> = locals
+            .into_iter()
+            .map(|(name, sym_id)| (name, tsz_binder::SymbolId(sym_id)))
+            .collect();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.0.cmp(&b.1.0)));
+        let mut skel = FileSkeleton {
+            file_name: file_name.to_string(),
+            is_external_module: true,
+            symbols: vec![],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            augmentation_targets: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers: vec![],
+            file_locals: sorted,
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        skel.fingerprint = skel.compute_fingerprint();
+        skel
+    }
+
+    #[test]
+    fn file_locals_for_returns_per_file_entries() {
+        let skel_a = skeleton_with_file_locals("a.ts", vec![("Foo".to_string(), 1)]);
+        let skel_b = skeleton_with_file_locals("b.ts", vec![("Foo".to_string(), 2)]);
+        let skel_c = skeleton_with_file_locals("c.ts", vec![("Bar".to_string(), 3)]);
+        let idx = reduce_skeletons(&[skel_a, skel_b, skel_c]);
+
+        let mut foo = idx.file_locals_for("Foo").to_vec();
+        foo.sort_by_key(|a| a.0);
+        assert_eq!(
+            foo,
+            vec![(0, tsz_binder::SymbolId(1)), (1, tsz_binder::SymbolId(2))]
+        );
+
+        let bar = idx.file_locals_for("Bar").to_vec();
+        assert_eq!(bar, vec![(2, tsz_binder::SymbolId(3))]);
+    }
+
+    #[test]
+    fn file_locals_for_returns_empty_for_unknown_name() {
+        let idx = reduce_skeletons(&[]);
+        assert!(idx.file_locals_for("Nope").is_empty());
+    }
+
+    #[test]
+    fn file_locals_consumer_works_after_legacy_program_emptied() {
+        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // from `SkeletonIndex` alone, even if the legacy `MergedProgram`'s
+        // per-binder `file_locals` field has been emptied.
+        //
+        // We model the post-eviction state by building the index using only
+        // the skeleton — no MergedProgram and no per-binder loop. The expected
+        // (name, file_idx, sym_id) set recovered from the skeleton must match
+        // what the legacy loop would have produced for the same inputs.
+        let skel_a = skeleton_with_file_locals(
+            "a.ts",
+            vec![("Alpha".to_string(), 1), ("Beta".to_string(), 2)],
+        );
+        let skel_b = skeleton_with_file_locals(
+            "b.ts",
+            vec![("Alpha".to_string(), 3), ("Gamma".to_string(), 4)],
+        );
+        let skeletons = vec![skel_a, skel_b];
+        let idx = reduce_skeletons(&skeletons);
+
+        // Recover the legacy `(name, file_idx, sym_id)` triples directly from
+        // the skeleton accessor — no MergedProgram involvement.
+        let mut recovered: Vec<(String, usize, u32)> = Vec::new();
+        for (name, entries) in &idx.file_locals_index_by_name {
+            for (file_idx, sym_id) in entries {
+                recovered.push((name.clone(), *file_idx, sym_id.0));
+            }
+        }
+        recovered.sort();
+
+        let mut expected: Vec<(String, usize, u32)> = vec![
+            ("Alpha".to_string(), 0, 1),
+            ("Alpha".to_string(), 1, 3),
+            ("Beta".to_string(), 0, 2),
+            ("Gamma".to_string(), 1, 4),
+        ];
+        expected.sort();
+
+        assert_eq!(
+            recovered, expected,
+            "Skeleton-only recovery must reproduce legacy per-binder topology"
+        );
+    }
+
+    #[test]
+    fn build_file_locals_index_matches_legacy_topology() {
+        // Cross-check `build_file_locals_index` against the skeleton's per-name
+        // data: every (name, file_idx, sym_id) triple recorded in the skeleton
+        // must surface in the rebuilt map.
+        let skel_a = skeleton_with_file_locals(
+            "a.ts",
+            vec![("First".to_string(), 10), ("Second".to_string(), 20)],
+        );
+        let skel_b = skeleton_with_file_locals("b.ts", vec![("First".to_string(), 30)]);
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+
+        let map = idx.build_file_locals_index();
+
+        let mut got: Vec<(String, usize, u32)> = Vec::new();
+        for (name, entries) in &map {
+            for (file_idx, sym_id) in entries {
+                got.push((name.clone(), *file_idx, sym_id.0));
+            }
+        }
+        got.sort();
+        let mut want: Vec<(String, usize, u32)> = vec![
+            ("First".to_string(), 0, 10),
+            ("First".to_string(), 1, 30),
+            ("Second".to_string(), 0, 20),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn validate_file_locals_against_legacy_matches_when_equal() {
+        let skel_a =
+            skeleton_with_file_locals("a.ts", vec![("Foo".to_string(), 1), ("Bar".to_string(), 2)]);
+        let skel_b = skeleton_with_file_locals("b.ts", vec![("Foo".to_string(), 3)]);
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+
+        let legacy_per_file: Vec<Vec<(String, tsz_binder::SymbolId)>> = vec![
+            vec![
+                ("Foo".to_string(), tsz_binder::SymbolId(1)),
+                ("Bar".to_string(), tsz_binder::SymbolId(2)),
+            ],
+            vec![("Foo".to_string(), tsz_binder::SymbolId(3))],
+        ];
+        // Should not panic in debug builds.
+        idx.validate_file_locals_against_legacy(&legacy_per_file);
     }
 }

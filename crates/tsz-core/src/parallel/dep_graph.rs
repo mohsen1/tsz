@@ -373,6 +373,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            file_locals: vec![],
             import_sources: imports.iter().map(|s| s.to_string()).collect(),
             file_features: FileFeatures::default(),
             fingerprint: 0,
