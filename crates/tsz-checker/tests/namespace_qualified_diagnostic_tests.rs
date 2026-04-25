@@ -179,3 +179,76 @@ type Bad = Box<N.A>;
         "TS2559 generic constraint should not collapse both sides to the same short name, got: {msg:?}"
     );
 }
+
+fn get_diagnostics_strict(source: &str) -> Vec<(u32, String)> {
+    let mut parser =
+        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let options = tsz_checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = tsz_checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+/// Primitive value (e.g. `false`) assigned to an optional property whose
+/// declared type is a single weak object must produce TS2559 (not TS2322),
+/// with the literal source type (`'false'` not widened to `'boolean'`) and
+/// the declared target shape (`'OverridesInput'` not `'OverridesInput |
+/// undefined'`). Mirrors the failing nested-elaboration shape from
+/// `nestedExcessPropertyChecking.ts` under `// @strict: true`. Regression
+/// test for the boundary's `weak_union_violation` flag previously bailing
+/// on non-union targets.
+#[test]
+fn ts2559_for_primitive_assigned_to_weak_object_property() {
+    let source = r#"
+type OverridesInput = { someProp?: 'A' | 'B' };
+interface Unrelated { _?: any }
+interface VariablesA { overrides?: OverridesInput }
+interface VariablesB { overrides?: OverridesInput }
+const foo: Unrelated & { variables: VariablesA & VariablesB } = {
+    variables: { overrides: false }
+};
+"#;
+    let diags = get_diagnostics_strict(source);
+
+    let ts2559: Vec<_> = diags.iter().filter(|(c, _)| *c == 2559).collect();
+    let ts2322: Vec<_> = diags.iter().filter(|(c, _)| *c == 2322).collect();
+    assert!(
+        !ts2559.is_empty(),
+        "expected at least one TS2559 for `false` against weak `OverridesInput`; got: {diags:?}"
+    );
+    assert!(
+        ts2322.is_empty(),
+        "weak-target primitive mismatch should NOT emit TS2322; got: {diags:?}"
+    );
+    let msg = &ts2559[0].1;
+    assert!(
+        msg.contains("'false'"),
+        "TS2559 source should preserve the literal `false`, not widen to `boolean`: {msg:?}"
+    );
+    assert!(
+        msg.contains("'OverridesInput'") && !msg.contains("'OverridesInput | undefined'"),
+        "TS2559 target should show declared type without strict-null `| undefined`: {msg:?}"
+    );
+}
