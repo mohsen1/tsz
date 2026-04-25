@@ -574,7 +574,15 @@ impl<'a> CheckerState<'a> {
                             && self.request_has_concrete_contextual_type(&property_request)
                             && property_request.contextual_type != Some(TypeId::NEVER)
                         {
-                            let spans = self.function_like_param_spans_for_node(prop.initializer);
+                            // Only clear within parameter spans where the
+                            // refresh actually produced a non-`any` symbol
+                            // type. This keeps the genuine contextual-typing
+                            // wins (annotated targets, mapped/generic targets)
+                            // while preserving TS7006 for IIFE-arg shapes
+                            // where the "contextual type" is the function's
+                            // own value type and doesn't constrain the param.
+                            let spans =
+                                self.contextually_typed_param_spans_for_node(prop.initializer);
                             self.clear_stale_function_like_implicit_any_diagnostics(
                                 &spans,
                                 &pre_refresh_snap,
