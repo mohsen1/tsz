@@ -1395,3 +1395,53 @@ fn import_meta_property_assignment_is_valid() {
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// `({ } = { x: 0, y: 0 })` is a destructuring assignment with an empty
+/// pattern. tsc treats every property on the RHS as excess and emits TS2353
+/// for each, even though the empty `{}` target is normally treated as wide
+/// for assignability. The variable-declaration form `var { } = { x: 0, y: 0 };`
+/// stays silent — only the assignment-expression shape gets the strict check.
+#[test]
+fn destructuring_assignment_empty_pattern_emits_ts2353_for_each_excess_property() {
+    let diags = diagnostics_for(
+        r#"
+function f() {
+    ({ } = { x: 0, y: 0 });
+}
+"#,
+    );
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "expected exactly two TS2353 (one per RHS property) for empty destructuring pattern; got: {ts2353:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| d.message_text.contains("'x'")),
+        "expected TS2353 for property 'x', got: {ts2353:?}"
+    );
+    assert!(
+        ts2353.iter().any(|d| d.message_text.contains("'y'")),
+        "expected TS2353 for property 'y', got: {ts2353:?}"
+    );
+}
+
+/// `var { } = { x: 0, y: 0 };` (declaration form) must NOT emit TS2353 for
+/// excess properties. tsc only applies the strict empty-pattern check to
+/// destructuring assignments, not declarations — verifying the new check is
+/// scoped correctly to the assignment path.
+#[test]
+fn destructuring_declaration_empty_pattern_does_not_emit_ts2353() {
+    let diags = diagnostics_for(
+        r#"
+function f() {
+    var { } = { x: 0, y: 0 };
+}
+"#,
+    );
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "destructuring declaration with empty pattern must not emit TS2353; got: {ts2353:?}"
+    );
+}

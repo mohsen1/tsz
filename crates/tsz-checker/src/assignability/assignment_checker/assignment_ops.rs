@@ -928,6 +928,17 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
                 if is_direct_literal {
                     self.check_object_literal_excess_properties(right_type, left_type, right_idx);
+                    // tsc treats `({ } = { x: 0, y: 0 })` (destructuring assignment
+                    // with an empty pattern) as a strict excess-property check,
+                    // unlike `var { } = …` which silently accepts. The shared
+                    // excess-property helper bails on empty targets because `{}` is
+                    // wide for normal assignability; the destructuring-assignment
+                    // semantic is narrower and every source property is excess.
+                    if is_destructuring && !is_array_destructuring {
+                        self.check_destructuring_assignment_empty_pattern_excess(
+                            left_idx, right_type, right_idx,
+                        );
+                    }
                 } else if crate::query_boundaries::common::is_fresh_object_type(
                     self.ctx.types,
                     right_type,
@@ -946,6 +957,53 @@ impl<'a> CheckerState<'a> {
         }
 
         right_type
+    }
+
+    /// Emit TS2353 for every property on the RHS object literal when the
+    /// destructuring assignment LHS pattern is empty (`({} = …)`). The shared
+    /// excess-property helper bails on empty targets because `{}` is wide for
+    /// normal assignability, but tsc applies a strict check for the empty
+    /// destructuring pattern: every source property is excess. Patterns with
+    /// at least one named binding (or a rest element) flow through the regular
+    /// excess path and this helper is a no-op for them.
+    pub(crate) fn check_destructuring_assignment_empty_pattern_excess(
+        &mut self,
+        left_idx: NodeIndex,
+        right_type: TypeId,
+        right_idx: NodeIndex,
+    ) {
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+        if left_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(pattern) = self.ctx.arena.get_literal_expr(left_node) else {
+            return;
+        };
+        // Only the empty-pattern case — non-empty patterns are handled by the
+        // standard excess-property loop against the inferred pattern type.
+        if !pattern.elements.nodes.is_empty() {
+            return;
+        }
+        let Some(source_shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, right_type)
+        else {
+            return;
+        };
+        // Build the empty target type once for diagnostic reuse.
+        let empty_target = self.ctx.types.factory().object(Vec::new());
+        let source_props: Vec<_> = source_shape.properties.to_vec();
+        for source_prop in source_props {
+            let report_idx = self
+                .find_object_literal_property_element(right_idx, source_prop.name)
+                .unwrap_or(right_idx);
+            let prop_name = self.object_literal_property_display_name(
+                report_idx,
+                self.ctx.types.resolve_atom(source_prop.name).as_ref(),
+            );
+            self.error_excess_property_at(&prop_name, empty_target, report_idx);
+        }
     }
 
     /// Walk through the RHS of an assignment to find the underlying object literal.
