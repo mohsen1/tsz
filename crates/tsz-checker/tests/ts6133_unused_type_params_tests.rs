@@ -9,28 +9,6 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 
-fn check_with_no_unused_params(source: &str) -> Vec<Diagnostic> {
-    tsz_checker::test_utils::check_source(
-        source,
-        "test.ts",
-        CheckerOptions {
-            no_unused_parameters: true,
-            ..Default::default()
-        },
-    )
-}
-
-fn check_with_no_unused_locals(source: &str) -> Vec<Diagnostic> {
-    tsz_checker::test_utils::check_source(
-        source,
-        "test.ts",
-        CheckerOptions {
-            no_unused_locals: true,
-            ..Default::default()
-        },
-    )
-}
-
 fn ts6133_count(diags: &[Diagnostic]) -> usize {
     diags.iter().filter(|d| d.code == 6133).count()
 }
@@ -51,7 +29,8 @@ fn ts6133_names(diags: &[Diagnostic]) -> Vec<String> {
 
 #[test]
 fn test_interface_unused_type_param() {
-    let diags = check_with_no_unused_params("interface I<T> { x: number; }");
+    let diags =
+        tsz_checker::test_utils::check_source_no_unused_params("interface I<T> { x: number; }");
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
@@ -61,7 +40,7 @@ fn test_interface_unused_type_param() {
 
 #[test]
 fn test_interface_used_type_param() {
-    let diags = check_with_no_unused_params("interface I<T> { x: T; }");
+    let diags = tsz_checker::test_utils::check_source_no_unused_params("interface I<T> { x: T; }");
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
@@ -71,7 +50,7 @@ fn test_interface_used_type_param() {
 
 #[test]
 fn test_function_unused_type_param() {
-    let diags = check_with_no_unused_params("function f<T>(): void {}");
+    let diags = tsz_checker::test_utils::check_source_no_unused_params("function f<T>(): void {}");
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
@@ -81,7 +60,9 @@ fn test_function_unused_type_param() {
 
 #[test]
 fn test_function_used_type_param() {
-    let diags = check_with_no_unused_params("function f<T>(x: T): T { return x; }");
+    let diags = tsz_checker::test_utils::check_source_no_unused_params(
+        "function f<T>(x: T): T { return x; }",
+    );
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
@@ -91,7 +72,9 @@ fn test_function_used_type_param() {
 
 #[test]
 fn test_all_imports_unused_emits_ts6192() {
-    let diags = check_with_no_unused_locals("import d, { Member as M } from './b';\nvoid 0;\n");
+    let diags = tsz_checker::test_utils::check_source_no_unused_locals(
+        "import d, { Member as M } from './b';\nvoid 0;\n",
+    );
     let ts6192_count = diags.iter().filter(|d| d.code == 6192).count();
     assert!(
         ts6192_count >= 1,
@@ -105,7 +88,7 @@ fn test_all_imports_unused_emits_ts6192() {
 
 #[test]
 fn test_type_alias_unused_type_param() {
-    let diags = check_with_no_unused_params("type A<T> = string;");
+    let diags = tsz_checker::test_utils::check_source_no_unused_params("type A<T> = string;");
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
@@ -115,7 +98,7 @@ fn test_type_alias_unused_type_param() {
 
 #[test]
 fn test_type_alias_used_type_param() {
-    let diags = check_with_no_unused_params("type A<T> = T[];");
+    let diags = tsz_checker::test_utils::check_source_no_unused_params("type A<T> = T[];");
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
@@ -125,7 +108,8 @@ fn test_type_alias_used_type_param() {
 
 #[test]
 fn test_class_unused_type_param() {
-    let diags = check_with_no_unused_params("class C<T> { x: number = 0; }");
+    let diags =
+        tsz_checker::test_utils::check_source_no_unused_params("class C<T> { x: number = 0; }");
     let names = ts6133_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
@@ -135,7 +119,9 @@ fn test_class_unused_type_param() {
 
 #[test]
 fn test_class_used_type_param() {
-    let diags = check_with_no_unused_params("class C<T> { x: T | undefined = undefined; }");
+    let diags = tsz_checker::test_utils::check_source_no_unused_params(
+        "class C<T> { x: T | undefined = undefined; }",
+    );
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
@@ -145,7 +131,8 @@ fn test_class_used_type_param() {
 
 #[test]
 fn test_underscore_prefixed_type_param_not_reported() {
-    let diags = check_with_no_unused_params("interface I<_T> { x: number; }");
+    let diags =
+        tsz_checker::test_utils::check_source_no_unused_params("interface I<_T> { x: number; }");
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"_T".to_string()),
@@ -155,7 +142,8 @@ fn test_underscore_prefixed_type_param_not_reported() {
 
 #[test]
 fn test_multiple_type_params_partial_usage() {
-    let diags = check_with_no_unused_params("interface I<T, U> { x: T; }");
+    let diags =
+        tsz_checker::test_utils::check_source_no_unused_params("interface I<T, U> { x: T; }");
     let names = ts6133_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
