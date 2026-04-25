@@ -1,6 +1,15 @@
 use crate::output::printer::{PrintOptions, Printer};
 use tsz_parser::ParserState;
 
+fn parse_and_print(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    printer.finish().code
+}
+
 /// Case clause with a single non-block statement on the same source line
 /// should be emitted on one line: `case true: return "true";`
 #[test]
@@ -12,13 +21,7 @@ fn case_clause_same_line_non_block_statement() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains(r#"case true: return "true";"#),
@@ -42,13 +45,7 @@ fn case_clause_multiline_stays_indented() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // Should NOT be on same line
     assert!(
@@ -71,13 +68,7 @@ fn default_clause_same_line_statement() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains(r#"default: return "other";"#),
@@ -95,13 +86,7 @@ fn case_clause_same_line_block_statement() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("case 0: {"),
@@ -112,13 +97,7 @@ fn case_clause_same_line_block_statement() {
 #[test]
 fn ts_check_comment_preserved_in_output() {
     let source = "// @ts-check\nvar x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// @ts-check"),
@@ -129,13 +108,7 @@ fn ts_check_comment_preserved_in_output() {
 #[test]
 fn ts_nocheck_comment_preserved_in_output() {
     let source = "// @ts-nocheck\nvar x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// @ts-nocheck"),
@@ -150,13 +123,7 @@ fn test_at_directive_comments_preserved() {
     // source before the emitter sees them, so any `// @` comment
     // in the source is a legitimate comment to preserve.
     let source = "// @target: esnext\nvar x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// @target"),
@@ -168,13 +135,7 @@ fn test_at_directive_comments_preserved() {
 fn test_ts_ignore_directive_preserved() {
     // // @ts-ignore is a runtime directive that tsc preserves.
     let source = "// @ts-ignore\nvar x: number = 'hello';\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// @ts-ignore"),
@@ -186,13 +147,7 @@ fn test_ts_ignore_directive_preserved() {
 fn test_ts_expect_error_directive_preserved() {
     // // @ts-expect-error is a runtime directive that tsc preserves.
     let source = "// @ts-expect-error\nvar x: number = 'hello';\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// @ts-expect-error"),
@@ -220,13 +175,7 @@ fn case_clause_leading_comment_before_label() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // Comment must appear BEFORE the case keyword, not after.
     // The case clause is indented 2 levels (8 spaces) inside function + switch.
@@ -253,13 +202,7 @@ fn default_clause_leading_comment_before_label() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// Fallback\n        default:"),
@@ -277,13 +220,7 @@ fn trailing_comment_on_opening_brace_if_statement() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("{ // comparison is OK"),
@@ -300,13 +237,7 @@ fn trailing_comment_on_opening_brace_for_in() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("{ // iterate"),
@@ -322,13 +253,7 @@ fn function_body_brace_comment_suppressed() {
     return x;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("// param comment"),
@@ -352,13 +277,7 @@ fn method_body_brace_comment_suppressed_but_inner_block_preserved() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("{ // error"),
@@ -377,13 +296,7 @@ fn arrow_function_body_brace_comment_suppressed() {
     return x;
 };"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("// arrow comment"),
@@ -397,13 +310,7 @@ fn arrow_function_body_brace_comment_suppressed() {
 fn empty_function_body_brace_comment_suppressed() {
     let source = "function f4(_i: any, ...rest) { // error\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("// error"),
@@ -416,13 +323,7 @@ fn empty_function_body_brace_comment_suppressed() {
 fn empty_method_body_brace_comment_suppressed() {
     let source = "class C {\n    foo() { // comment\n    }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("// comment"),
@@ -435,13 +336,7 @@ fn empty_method_body_brace_comment_suppressed() {
 fn empty_if_block_comment_preserved() {
     let source = "function f() {\n    if (true) { // keep this\n    }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// keep this"),
@@ -456,13 +351,7 @@ fn empty_if_block_comment_preserved() {
 fn empty_method_body_inner_comment_on_next_line_preserved() {
     let source = "class Foo {\n    foo(): number {\n        //return 4;\n    }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("//return 4;"),
@@ -478,13 +367,7 @@ fn empty_constructor_body_inner_comment_preserved() {
     let source =
         "class Foo {\n    constructor(x: any) {\n        // WScript.Echo(\"test\");\n    }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// WScript.Echo"),
@@ -498,13 +381,7 @@ fn empty_constructor_body_inner_comment_preserved() {
 fn empty_method_body_single_line_comment_still_suppressed() {
     let source = "class A {\n    bar1() { /*WScript.Echo(\"bar1\");*/ }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("WScript"),
@@ -517,13 +394,7 @@ fn empty_method_body_single_line_comment_still_suppressed() {
 fn accessor_object_literal_empty_body() {
     let source = "export const t1 = {\n    p: 'value',\n    get getter() {\n        return 'value';\n    }\n}\nexport const t2 = {\n    set setter(v) {}\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("set setter(v) { }"),
@@ -568,13 +439,7 @@ fn accessor_object_literal_in_js_file_gets_trailing_semicolon() {
 fn trailing_comment_on_return_statement() {
     let source = "function f() {\n    return 42; // the answer\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("return 42; // the answer"),
@@ -586,13 +451,7 @@ fn trailing_comment_on_return_statement() {
 fn trailing_comment_on_bare_return() {
     let source = "function f() {\n    return; // early exit\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("return; // early exit"),
@@ -604,13 +463,7 @@ fn trailing_comment_on_bare_return() {
 fn trailing_comment_on_throw_statement() {
     let source = "function f() {\n    throw new Error(); // kaboom\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("throw new Error(); // kaboom"),
@@ -627,13 +480,7 @@ fn trailing_comment_on_break_statement() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("break; // done"),
@@ -649,13 +496,7 @@ fn trailing_comment_on_continue_statement() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("continue; // skip"),
@@ -672,13 +513,7 @@ fn trailing_comment_on_do_while_statement() {
     } while (i < 10); // loop end
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("while (i < 10); // loop end"),
@@ -690,13 +525,7 @@ fn trailing_comment_on_do_while_statement() {
 fn trailing_comment_on_debugger_statement() {
     let source = "function f() {\n    debugger; // breakpoint\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("debugger; // breakpoint"),
@@ -711,13 +540,7 @@ fn trailing_comment_on_debugger_statement() {
 fn jsdoc_comment_reindented_in_class_body() {
     let source =
         "class C {\n  /**\n   * @type {number}\n   */\n  get bar(): number { return 1; }\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The JSDoc continuation lines should be at 4-space indent + 1 relative space
     assert!(
@@ -731,13 +554,7 @@ fn jsdoc_comment_reindented_in_class_body() {
 #[test]
 fn jsdoc_comment_reindented_for_lowered_static_field() {
     let source = "class test {\n    /**\n     * p1 comment\n     */\n    static p1 = \"\";\n}\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The static field is lowered to a static block inside the class,
     // so JSDoc should keep class-level indent (4 spaces)
@@ -756,13 +573,7 @@ fn jsdoc_comment_reindented_for_lowered_static_field() {
 #[test]
 fn multiline_comment_top_level_preserved() {
     let source = "/*\n * top level comment\n */\nvar x = 1;\n";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("/*\n * top level comment\n */"),
@@ -781,13 +592,7 @@ fn else_non_block_body_on_new_line() {
         return;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("else\n        return;"),
@@ -811,13 +616,7 @@ fn else_block_body_on_same_line() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("else {"),
@@ -837,13 +636,7 @@ fn else_if_on_same_line() {
         return;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("else if (x < 0)"),
@@ -861,13 +654,7 @@ fn else_if_on_same_line() {
 fn declare_modifier_on_import_suppressed() {
     let source = "declare import a = b;";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("declare;"),
@@ -887,13 +674,7 @@ fn declare_declare_var_in_namespace_erased() {
     declare declare var x;
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("declare;"),
@@ -909,13 +690,7 @@ fn declare_as_identifier_preserved() {
     // statement using `declare` as a variable name (ASI terminates the statement).
     let source = "var declare = 5;\ndeclare;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("declare;"),
@@ -929,13 +704,7 @@ fn declare_as_identifier_preserved() {
 fn comment_before_closing_brace_stays_inside_function() {
     let source = "function foo(x: number): void {\n    return;\n    // trailing comment\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("    // trailing comment\n}"),
@@ -949,13 +718,7 @@ fn comment_before_closing_brace_stays_inside_function() {
 fn comment_before_closing_brace_after_return_expression() {
     let source = "function foo(p: number | null): number | null {\n    return p !== undefined ? p : null;\n    // Still typed as number | null\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("    // Still typed as number | null\n}"),
@@ -969,13 +732,7 @@ fn comment_before_closing_brace_after_return_expression() {
 fn multiple_comments_before_closing_brace() {
     let source = "function foo(): void {\n    const x = 1;\n    // first comment\n    // second comment\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("    // first comment\n    // second comment\n}"),
@@ -989,13 +746,7 @@ fn multiple_comments_before_closing_brace() {
 fn for_loop_single_line_block_expands_to_multiline() {
     let source = r#"for (var i = 0;;) { throw i; }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("{\n    throw i;\n}"),
@@ -1007,13 +758,7 @@ fn for_loop_single_line_block_expands_to_multiline() {
 fn if_single_line_block_expands_to_multiline() {
     let source = r#"if (x < 0) { throw new Error(); }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("{\n    throw new Error();\n}"),
@@ -1025,13 +770,7 @@ fn if_single_line_block_expands_to_multiline() {
 fn while_single_line_block_expands_to_multiline() {
     let source = r#"while (true) { break; }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("{\n    break;\n}"),
@@ -1044,13 +783,7 @@ fn while_single_line_block_expands_to_multiline() {
 fn function_body_single_line_stays_single_line() {
     let source = r#"function f() { return 1; }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("{ return 1; }"),
@@ -1064,13 +797,7 @@ fn function_body_single_line_stays_single_line() {
 fn trailing_comment_capped_at_block_close_brace() {
     let source = "function f() {\n    return 1; // return comment\n} // end of function\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The statement's trailing comment should stay with the statement
     assert!(
@@ -1092,14 +819,8 @@ fn trailing_comment_capped_at_block_close_brace() {
 fn using_declaration_has_semicolon_at_esnext() {
     let source = "using x = getResource();\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
     // Default target is ESNext, which supports ES2025 `using` natively
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("using x = getResource();"),
@@ -1115,13 +836,7 @@ fn using_declaration_has_semicolon_at_esnext() {
 fn variable_declaration_object_literal_gets_semicolon() {
     let source = "const x = {\n  grey: {}\n};\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("};"),
@@ -1135,13 +850,7 @@ fn variable_declaration_object_literal_gets_semicolon() {
 fn variable_declaration_object_literal_asi_still_gets_semicolon() {
     let source = "const x = {\n  grey: {}\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("};"),
@@ -1154,13 +863,7 @@ fn variable_declaration_object_literal_asi_still_gets_semicolon() {
 fn await_using_declaration_has_semicolon_at_esnext() {
     let source = "await using x = getResource();\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("await using x = getResource();"),
@@ -1174,13 +877,7 @@ fn await_using_declaration_has_semicolon_at_esnext() {
 fn as_expression_comment_in_type_skipped() {
     let source = "var x = (1 as /* type comment */ number);\nvar y = 2;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("type comment"),
@@ -1197,13 +894,7 @@ fn as_expression_comment_in_type_skipped() {
 fn satisfies_expression_comment_in_type_skipped() {
     let source = "var x = (42 satisfies /* check */ number);\nvar y = 2;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("check"),
@@ -1221,13 +912,7 @@ fn satisfies_expression_comment_in_type_skipped() {
 fn type_assertion_prefix_comment_emitted() {
     let source = "var x = </* cast */ any>42;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("/* cast */"),
@@ -1242,13 +927,7 @@ fn type_assertion_prefix_comment_emitted() {
 fn namespace_export_declaration_erased_in_js() {
     let source = "export function foo() {}\n// ns export comment\nexport as namespace myLib;\nexport function bar() {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("namespace"),
@@ -1274,13 +953,7 @@ fn namespace_export_declaration_erased_in_js() {
 fn namespace_export_declaration_inline_comment_erased() {
     let source = "export function foo() {}\nexport as namespace myLib; /* global */\nexport function bar() {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("namespace"),
