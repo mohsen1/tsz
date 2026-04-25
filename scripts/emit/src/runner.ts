@@ -9,6 +9,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'url';
 import pc from 'picocolors';
 import pLimit from 'p-limit';
@@ -128,14 +129,21 @@ type DtsDiscoveryCache = Record<string, DtsDiscoveryEntry>;
 // Cache Management
 // ============================================================================
 
+// SHA-256 hex digest. Collision-free in practice; use for cache identity where
+// the prior 32-bit polynomial hash had a non-trivial pairwise collision rate
+// over the full emit test set.
 function hashString(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return hash.toString(36);
+  return createHash('sha256').update(str).digest('hex');
+}
+
+// Stable JSON serialization: object keys sorted alphabetically so adding a new
+// option in the future doesn't silently re-key every cache entry. Only used
+// for cache key construction, never for I/O.
+function stableStringify(value: Record<string, unknown>): string {
+  const keys = Object.keys(value).sort();
+  const obj: Record<string, unknown> = {};
+  for (const k of keys) obj[k] = value[k];
+  return JSON.stringify(obj);
 }
 
 function getCacheKey(
@@ -189,7 +197,42 @@ function getCacheKey(
   } catch {
     runnerSalt = 'runner-unknown';
   }
-  return hashString(`${sourceKey}:${target}:${module}:${lib}:${alwaysStrict}:${declaration}:${sourceMap}:${inlineSourceMap}:${downlevelIteration}:${noEmitHelpers}:${noEmitOnError}:${importHelpers}:${esModuleInterop}:${useDefineForClassFields}:${experimentalDecorators}:${emitDecoratorMetadata}:${strictNullChecks}:${jsx}:${jsxFactory}:${jsxFragmentFactory}:${jsxImportSource}:${moduleDetection}:${preserveConstEnums}:${verbatimModuleSyntax}:${rewriteRelativeImportExtensions}:${isolatedModules}:${importsNotUsedAsValues}:${preserveValueImports}:${removeComments}:${stripInternal}:${outFile}:${declarationMap}:${engineSalt}:${runnerSalt}`);
+  return hashString(stableStringify({
+    sourceKey,
+    target,
+    module,
+    lib,
+    alwaysStrict,
+    declaration,
+    sourceMap,
+    inlineSourceMap,
+    downlevelIteration,
+    noEmitHelpers,
+    noEmitOnError,
+    importHelpers,
+    esModuleInterop,
+    useDefineForClassFields,
+    experimentalDecorators,
+    emitDecoratorMetadata,
+    strictNullChecks,
+    jsx,
+    jsxFactory,
+    jsxFragmentFactory,
+    jsxImportSource,
+    moduleDetection,
+    preserveConstEnums,
+    verbatimModuleSyntax,
+    rewriteRelativeImportExtensions,
+    isolatedModules,
+    importsNotUsedAsValues,
+    preserveValueImports,
+    removeComments,
+    stripInternal,
+    outFile,
+    declarationMap,
+    engineSalt,
+    runnerSalt,
+  }));
 }
 
 let cache: Map<string, CacheEntry> = new Map();
