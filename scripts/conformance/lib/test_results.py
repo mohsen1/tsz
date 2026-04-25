@@ -211,5 +211,69 @@ class TestParseRunnerOutput(unittest.TestCase):
         self.assertEqual(tests["TypeScript/tests/cases/y.ts"]["status"], "PASS")
 
 
+class TestAnalyzeConformancePattern(unittest.TestCase):
+    """Lock the pattern used by analyze-conformance.py to filter FAIL/XFAIL records."""
+
+    def _parse_fail_xfail(self, content):
+        tmp = _write_tmp(content)
+        try:
+            raw = parse_runner_output(tmp)
+        finally:
+            os.unlink(tmp)
+        return [
+            {**rec, "path": path}
+            for path, rec in raw.items()
+            if rec["status"] in ("FAIL", "XFAIL")
+        ]
+
+    def test_filters_out_pass_and_skip(self):
+        content = (
+            "PASS TypeScript/tests/cases/a.ts\n"
+            "SKIP TypeScript/tests/cases/b.ts\n"
+            "FAIL TypeScript/tests/cases/c.ts\n"
+            "  expected: [TS2322]\n"
+            "  actual: []\n"
+        )
+        tests = self._parse_fail_xfail(content)
+        self.assertEqual(len(tests), 1)
+        self.assertEqual(tests[0]["path"], "TypeScript/tests/cases/c.ts")
+
+    def test_includes_xfail(self):
+        content = (
+            "XFAIL TypeScript/tests/cases/known.ts\n"
+            "  expected: [TS2322]\n"
+            "  actual: []\n"
+        )
+        tests = self._parse_fail_xfail(content)
+        self.assertEqual(len(tests), 1)
+        self.assertEqual(tests[0]["status"], "XFAIL")
+
+    def test_path_key_added_to_record(self):
+        content = (
+            "FAIL TypeScript/tests/cases/foo.ts\n"
+            "  expected: [TS2345]\n"
+            "  actual: [TS2339]\n"
+        )
+        tests = self._parse_fail_xfail(content)
+        self.assertEqual(tests[0]["path"], "TypeScript/tests/cases/foo.ts")
+        self.assertEqual(tests[0]["expected"], ["TS2345"])
+        self.assertEqual(tests[0]["actual"], ["TS2339"])
+
+    def test_wrong_code_diff_via_compute_diff(self):
+        missing, extra = compute_diff(["TS2322", "TS2345"], ["TS2322", "TS2339"])
+        self.assertEqual(missing, ["TS2345"])
+        self.assertEqual(extra, ["TS2339"])
+
+    def test_false_positive_diff_via_compute_diff(self):
+        missing, extra = compute_diff([], ["TS7053", "TS7053"])
+        self.assertEqual(missing, [])
+        self.assertEqual(extra, ["TS7053", "TS7053"])
+
+    def test_all_missing_diff_via_compute_diff(self):
+        missing, extra = compute_diff(["TS2322", "TS2345"], [])
+        self.assertEqual(missing, ["TS2322", "TS2345"])
+        self.assertEqual(extra, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,11 +2,14 @@
 """Analyze conformance test failures and categorize them for quick wins."""
 
 import sys
-import re
+import os
 import json
 import argparse
-from collections import defaultdict, Counter
+from collections import defaultdict
 from itertools import combinations
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from lib.results import parse_runner_output, compute_diff
 
 
 def main():
@@ -20,51 +23,12 @@ def main():
     category_filter = args.category
     top_n = args.top
 
-    tests = []
-    current = None
-
-    with open(tmpfile) as f:
-        for line in f:
-            line = line.rstrip()
-            m = re.match(r"^(FAIL|XFAIL) (.+?)(?:\s+\(.+\))?$", line)
-            if m:
-                if current:
-                    tests.append(current)
-                current = {
-                    "path": m.group(2),
-                    "expected": [],
-                    "actual": [],
-                    "options": "",
-                }
-                continue
-            if current:
-                m = re.match(r"^\s+expected:\s+\[(.*?)?\]", line)
-                if m:
-                    codes = m.group(1).strip()
-                    current["expected"] = (
-                        [c.strip() for c in codes.split(",")] if codes else []
-                    )
-                    continue
-                m = re.match(r"^\s+actual:\s+\[(.*?)?\]", line)
-                if m:
-                    codes = m.group(1).strip()
-                    current["actual"] = (
-                        [c.strip() for c in codes.split(",")] if codes else []
-                    )
-                    continue
-                m = re.match(r"^\s+options:\s+(.*)", line)
-                if m:
-                    current["options"] = m.group(1)
-                    continue
-                if not line.startswith(" "):
-                    tests.append(current)
-                    current = None
-
-    if current:
-        tests.append(current)
-
-    # Skip tests without data
-    tests = [t for t in tests if t["expected"] is not None]
+    raw = parse_runner_output(tmpfile)
+    tests = [
+        {**rec, "path": path}
+        for path, rec in raw.items()
+        if rec["status"] in ("FAIL", "XFAIL")
+    ]
 
     # Categorize
     false_positives = []
@@ -85,18 +49,9 @@ def main():
             t["missing_codes"] = sorted(set(exp_list))
             all_missing.append(t)
         elif exp_list and act_list:
-            exp_counter = Counter(exp_list)
-            act_counter = Counter(act_list)
-            missing = []
-            extra = []
-            for code in set(list(exp_counter.keys()) + list(act_counter.keys())):
-                diff = act_counter.get(code, 0) - exp_counter.get(code, 0)
-                if diff > 0:
-                    extra.extend([code] * diff)
-                elif diff < 0:
-                    missing.extend([code] * (-diff))
-            t["missing_codes"] = sorted(missing)
-            t["extra_codes"] = sorted(extra)
+            missing, extra = compute_diff(exp_list, act_list)
+            t["missing_codes"] = missing
+            t["extra_codes"] = extra
             t["diff_size"] = len(missing) + len(extra)
             t["category"] = "wrong-code"
             wrong_code.append(t)
