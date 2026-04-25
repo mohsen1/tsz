@@ -7,7 +7,7 @@ use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
 };
 use crate::context::TypingRequest;
-use crate::context::speculation::DiagnosticSpeculationGuard;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::format_message;
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_checking_utilities as type_query;
@@ -2139,7 +2139,7 @@ impl<'a> CheckerState<'a> {
                             .get(body)
                             .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
                             .is_some_and(|cond| {
-                                let guard = DiagnosticSpeculationGuard::new(&self.ctx);
+                                let guard = DiagnosticSpeculationSnapshot::new(&self.ctx);
                                 let return_req =
                                     TypingRequest::with_contextual_type(expected_return_type);
                                 let mut when_true =
@@ -2307,7 +2307,7 @@ impl<'a> CheckerState<'a> {
                             })
                     });
                 let diag_guard = suppress_expression_body_diagnostics
-                    .then(|| DiagnosticSpeculationGuard::new(&self.ctx));
+                    .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
                 // During type environment building (before is_checking_statements),
                 // skip full body checking for class methods/constructors. The class
                 // context (enclosing_class, this_type_stack) is not yet established,

@@ -346,26 +346,39 @@ impl CheckerContext<'_> {
 }
 
 // ---------------------------------------------------------------------------
-// RAII guard for simple rollback-on-drop speculation
+// Snapshot holder for diagnostic speculation
 // ---------------------------------------------------------------------------
 
-/// RAII guard that rolls back diagnostic state on drop unless explicitly
-/// committed.
+/// Diagnostic snapshot holder for speculative checking.
+///
+/// Drop semantics: dropping is an **implicit commit** — speculative
+/// diagnostics produced after the snapshot survive. This intentionally is
+/// **not** RAII rollback-on-drop, because `CheckerContext` is not accessible
+/// from `Drop` and several call sites legitimately want to keep speculative
+/// output. The name carries `Snapshot` (matching `DiagnosticSnapshot`,
+/// `FullSnapshot`, `CacheSnapshot`) to signal to readers that they must
+/// call `rollback()` / `rollback_filtered()` explicitly when rollback is
+/// the intent. See `docs/plan/ROADMAP.md` Operating Principle 6 + Workstream
+/// 4 Speculation Policy 3 for the naming rule.
 ///
 /// # Usage
 /// ```ignore
-/// let guard = ctx.begin_diagnostic_speculation();
+/// let snap = DiagnosticSpeculationSnapshot::new(&ctx);
 /// // ... speculative work ...
-/// guard.commit(ctx); // or just drop to roll back
+/// snap.commit(ctx);   // explicit commit (same as drop)
+/// // OR
+/// snap.rollback(ctx); // rollback to the checkpoint
+/// // OR
+/// drop(snap);         // implicit commit — speculative diagnostics survive
 /// ```
 #[allow(dead_code)]
-pub(crate) struct DiagnosticSpeculationGuard {
+pub(crate) struct DiagnosticSpeculationSnapshot {
     snapshot: DiagnosticSnapshot,
     committed: bool,
 }
 
 #[allow(dead_code)]
-impl DiagnosticSpeculationGuard {
+impl DiagnosticSpeculationSnapshot {
     pub(crate) fn new(ctx: &CheckerContext) -> Self {
         Self {
             snapshot: ctx.snapshot_diagnostics(),
@@ -378,15 +391,16 @@ impl DiagnosticSpeculationGuard {
         self.snapshot.diagnostics_len
     }
 
-    /// Commit speculative diagnostics: they survive the guard's drop.
+    /// Commit speculative diagnostics: they survive the snapshot's drop.
+    /// Equivalent to dropping the snapshot without calling `rollback`.
     pub(crate) fn commit(mut self, ctx: &mut CheckerContext) {
         ctx.commit_diagnostics(&self.snapshot);
         self.committed = true;
     }
 
-    /// Roll back manually (same effect as letting the guard go unused,
-    /// but explicit for clarity). Since Drop cannot access `CheckerContext`,
-    /// this is the only way to perform a rollback via the guard.
+    /// Roll back to the snapshot — discards every diagnostic produced after
+    /// the snapshot was taken. Since `Drop` cannot access `CheckerContext`,
+    /// this is the only way to discard speculative diagnostics.
     pub(crate) fn rollback(mut self, ctx: &mut CheckerContext) {
         ctx.rollback_diagnostics(&self.snapshot);
         self.committed = true; // prevent any future misuse; Drop is a no-op anyway
@@ -407,8 +421,9 @@ impl DiagnosticSpeculationGuard {
         &self.snapshot
     }
 
-    /// Consume the guard and return the snapshot without any rollback.
-    /// The caller takes responsibility for state management.
+    /// Consume the snapshot holder and return the inner `DiagnosticSnapshot`
+    /// without any rollback. The caller takes responsibility for state
+    /// management from this point on.
     pub(crate) fn into_snapshot(mut self) -> DiagnosticSnapshot {
         self.committed = true;
         self.snapshot
@@ -416,15 +431,16 @@ impl DiagnosticSpeculationGuard {
 }
 
 // We intentionally do NOT implement Drop with automatic rollback because
-// `CheckerContext` is not accessible from Drop. The guard is a structured
-// holder for the snapshot — callers must explicitly call `rollback()`,
-// `commit()`, `rollback_filtered()`, or `into_snapshot()`. Dropping without
-// an explicit call means "keep the speculative diagnostics" (implicit commit).
+// `CheckerContext` is not accessible from Drop. The snapshot holder is a
+// structured holder for the snapshot — callers must explicitly call
+// `rollback()`, `commit()`, `rollback_filtered()`, or `into_snapshot()`.
+// Dropping without an explicit call means "keep the speculative diagnostics"
+// (implicit commit).
 //
-// Some call sites use the guard purely as a snapshot holder (accessing
-// `.snapshot()` for manual operations) and intentionally drop the guard
-// to commit the speculative diagnostics. A debug_assert in Drop would
-// break these legitimate patterns.
+// Some call sites use the snapshot purely as a holder (accessing
+// `.snapshot()` for manual operations) and intentionally drop it to commit
+// the speculative diagnostics. A debug_assert in Drop would break these
+// legitimate patterns.
 
 // Unit tests for speculation API are in tests/speculation_rollback_tests.rs
 // (integration tests that use the full parse→bind→check pipeline).

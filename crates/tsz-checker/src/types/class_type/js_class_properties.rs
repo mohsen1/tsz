@@ -1,7 +1,7 @@
 //! JS/checkJs-specific scanning of constructor bodies for `this.prop = value`
 //! assignments that serve as implicit property declarations.
 
-use crate::context::speculation::DiagnosticSpeculationGuard;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -210,7 +210,7 @@ impl CheckerState<'_> {
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION || k == syntax_kind_ext::ARROW_FUNCTION
         );
         let diag_guard = suppress_provisional_body_diagnostics
-            .then(|| DiagnosticSpeculationGuard::new(&self.ctx));
+            .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
         let rhs_type = self.get_type_of_node(rhs_idx);
         if let Some(guard) = diag_guard {
             guard.rollback(&mut self.ctx);
