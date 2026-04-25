@@ -489,6 +489,31 @@ STRUCT_FIELD_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the count of files that construct full independent parse→bind→check
+# pipelines (architecture health metric 4 in `docs/plan/ROADMAP.md`).  A
+# "full pipeline" is any non-test source file that calls all three of
+# `ParserState::new`, `BinderState::new`, `CheckerState::new` — that is, a
+# frontend reaching past the compiler service into the raw crate APIs.
+#
+# Workstream 3 ("Compiler Service Front Door") exit criterion is "There is
+# one blessed parse-bind-check path."  Pinning the count makes new
+# independent pipelines fail pre-commit and consolidation work show up as
+# a cap reduction in the same diff.
+#
+# Each entry: (description, search_roots, max_pipelines).
+INDEPENDENT_PIPELINE_CHECKS = [
+    (
+        "Frontend boundary: independent parse-bind-check pipelines (architecture health metric 4)",
+        [
+            ROOT / "crates" / "tsz-cli" / "src",
+            ROOT / "crates" / "tsz-core" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-wasm" / "src",
+        ],
+        4,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -566,6 +591,60 @@ def scan_line_limits(base: pathlib.Path, limit: int, exclude_files=None):
         if line_count > limit:
             hits.append(f"{rel}:{line_count} lines (limit {limit})")
     return hits
+
+
+def scan_independent_pipelines(
+    search_roots: list[pathlib.Path], max_pipelines: int
+) -> list[str]:
+    """Count files that construct a full ParserState + BinderState + CheckerState pipeline.
+
+    Workstream 3 exit criterion is "one blessed parse-bind-check path".  Any
+    non-test source file under the given roots that calls all three of
+    `ParserState::new`, `BinderState::new`, `CheckerState::new` is an
+    independent pipeline.  Returns one hit per pipeline file when the total
+    exceeds `max_pipelines`, plus a summary line.
+
+    Walks each root directly (does not rely on ROOT-relative paths) so that
+    test fixtures under temp dirs can use the same scanner.
+    """
+    pipeline_files: list[str] = []
+    constructors = ("ParserState::new", "BinderState::new", "CheckerState::new")
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                # Test fixture under a temp dir — fall back to a path
+                # relative to the search root for the report and test_file
+                # heuristic.
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if is_test_file(rel_to_root) or "tests" in parts:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            if all(needle in text for needle in constructors):
+                pipeline_files.append(rel_to_root)
+
+    pipeline_files.sort()
+    if len(pipeline_files) > max_pipelines:
+        hits = [
+            f"independent pipeline #{i + 1}: {rel}"
+            for i, rel in enumerate(pipeline_files)
+        ]
+        hits.append(
+            f"total independent parse-bind-check pipelines: {len(pipeline_files)} "
+            f"(cap {max_pipelines}; bump cap intentionally and update ROADMAP.md, "
+            f"or consolidate through the compiler service shell — workstream 3)"
+        )
+        return hits
+    return []
 
 
 def scan_struct_field_count(
@@ -874,6 +953,12 @@ def main() -> int:
 
     for name, path, struct_name, max_fields in STRUCT_FIELD_COUNT_CHECKS:
         hits = scan_struct_field_count(path, struct_name, max_fields)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, search_roots, max_pipelines in INDEPENDENT_PIPELINE_CHECKS:
+        hits = scan_independent_pipelines(search_roots, max_pipelines)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
