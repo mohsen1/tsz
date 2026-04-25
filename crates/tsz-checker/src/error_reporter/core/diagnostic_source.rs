@@ -507,6 +507,9 @@ impl<'a> CheckerState<'a> {
         // surface for source identifiers, especially when the computed display has
         // widened return literals or otherwise normalized the signature.
         if annotation.contains("=>") {
+            if annotation.contains("?:") && formatted.contains("| undefined") {
+                return false;
+            }
             return formatted != annotation;
         }
         let resolved = self.resolve_type_for_property_access(display_type);
@@ -1061,6 +1064,21 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        let has_optional_callable_param =
+            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
+                .is_some_and(|shape| shape.params.iter().any(|param| param.optional))
+                || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, source)
+                    .is_some_and(|shape| {
+                        shape
+                            .call_signatures
+                            .iter()
+                            .chain(shape.construct_signatures.iter())
+                            .any(|sig| sig.params.iter().any(|param| param.optional))
+                    });
+        if has_optional_callable_param {
+            return self.format_assignability_type_for_message(source, target);
+        }
+
         if source == TypeId::UNDEFINED
             && self.ctx.arena.get(anchor_idx).is_some_and(|node| {
                 node.kind == tsz_parser::parser::syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
