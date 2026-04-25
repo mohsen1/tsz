@@ -798,6 +798,28 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::new(skel.build_module_binder_index()));
 
+    // Phase 2 step 6: pre-compute the merged module-exports index from
+    // skeleton data + the post-merge `program.module_exports` map. The
+    // skeleton recorded each file's `(spec, [export_name])` entries at
+    // extract time; this projection rebuilds the legacy
+    // `spec -> export_name -> Vec<(file_idx, SymbolId)>` map by resolving
+    // SymbolIds against `program.module_exports` (which holds globally-
+    // remapped post-merge IDs) so checker consumers (`type_only.rs`,
+    // `state/type_resolution/module.rs`, `state/type_resolution/import_type.rs`)
+    // see no behavior change. The legacy inner
+    // `for (export_name, sym_id) in exports.iter()` push loop in
+    // `ProjectEnv::build_global_indices` is skipped when this is `Some`.
+    //
+    // SymbolId-coupling note: unlike PR #1145 (file-locals index, closed for
+    // a regression), this projection does NOT extract pre-merge local
+    // SymbolIds from the skeleton — it looks them up in the post-merge
+    // `program.module_exports`. The skeleton only records name strings.
+    let skeleton_module_exports_index: Option<tsz::checker::context::GlobalModuleExportsIndex> =
+        program
+            .skeleton_index
+            .as_ref()
+            .map(|skel| Arc::new(skel.build_module_exports_index(&program.module_exports)));
+
     // Build the project-wide shared environment once for all checkers (prime, parallel, sequential).
     // build_global_indices computes the 4 binder-derived indices once here so that
     // per-file checker creation via apply_to skips the O(N) binder scans.
@@ -833,6 +855,7 @@ pub(super) fn collect_diagnostics(
         skeleton_module_augmentations_index,
         skeleton_augmentation_targets_index,
         skeleton_module_binder_index,
+        skeleton_module_exports_index,
         symbol_file_targets: Arc::clone(&symbol_file_targets),
         resolved_module_paths: Arc::clone(&resolved_module_paths),
         resolved_module_request_paths: Arc::clone(&resolved_module_request_paths),

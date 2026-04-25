@@ -10,7 +10,36 @@
 use super::BindResult;
 use super::core::can_merge_symbols_cross_file;
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_binder::StableLocation;
+use tsz_binder::{StableLocation, SymbolId, SymbolTable};
+
+/// Per-module-specifier projection of `module_exports`: maps `export_name` to
+/// a list of `(file_idx, SymbolId)` entries identifying every file that
+/// declared the export and the post-merge global `SymbolId` to use.
+///
+/// This mirrors the value type of `tsz_checker::context::ModuleExportsByName`
+/// but is defined here so [`SkeletonIndex::build_module_exports_index`] can
+/// avoid dragging in the checker dependency for a structural alias.
+pub type ProjectedModuleExportsByName = FxHashMap<String, Vec<(usize, SymbolId)>>;
+
+/// Cross-file projection of the `module_exports` topology: maps
+/// `module_specifier` to its [`ProjectedModuleExportsByName`] inner map.
+///
+/// This is the legacy shape understood by
+/// `ProjectEnv::global_module_exports_index` consumers — produced by
+/// [`SkeletonIndex::build_module_exports_index`] from skeleton data plus the
+/// post-merge `program.module_exports` map.
+pub type ProjectedModuleExportsIndex = FxHashMap<String, ProjectedModuleExportsByName>;
+
+/// Skeleton-internal `(spec, export_name) -> [file_idx]` index — the
+/// `SymbolId`-free shape that the reducer fills from per-file
+/// `(spec, [export_name])` entries.
+///
+/// Used as the value type of [`SkeletonIndex::module_exports_index_by_spec`]
+/// and as the value/intermediate types in the legacy-validation helper.
+pub type SkeletonModuleExportsByName = FxHashMap<String, Vec<usize>>;
+
+/// Spec-keyed view of [`SkeletonModuleExportsByName`].
+pub type SkeletonModuleExportsIndex = FxHashMap<String, SkeletonModuleExportsByName>;
 
 /// A top-level symbol as seen from the skeleton layer.
 ///
@@ -162,6 +191,21 @@ pub struct FileSkeleton {
     /// These represent module specifiers that have explicit export declarations
     /// (e.g., from `declare module "xxx" { export ... }`).
     pub module_export_specifiers: Vec<String>,
+    /// Per-spec list of export names recorded in this file's `module_exports`
+    /// map (Phase 2 step 6).
+    ///
+    /// Each `(spec, export_names)` entry mirrors the `binder.module_exports`
+    /// shape: the inner `Vec<String>` is the sorted list of names from the
+    /// `SymbolTable` keyed by `spec`. `SymbolId`s are intentionally NOT
+    /// recorded here — pre-merge local `SymbolId`s are not stable across the
+    /// merge (see PR #1145 for the regression that motivated this design).
+    /// The projection helper resolves `SymbolId`s at build time from the
+    /// post-merge `program.module_exports` map (which holds globally-remapped
+    /// IDs).
+    ///
+    /// Sorted by `spec`, then by `export_name`, so the per-file fingerprint is
+    /// deterministic across `HashMap` iteration order.
+    pub module_exports_entries: Vec<(String, Vec<String>)>,
     /// Expando property assignments: maps identifier name -> set of property names
     /// assigned via `X.prop = value` patterns. Used to suppress false TS2339 errors.
     pub expando_properties: Vec<(String, Vec<String>)>,
@@ -199,6 +243,7 @@ impl FileSkeleton {
         self.declared_modules.hash(&mut hasher);
         self.shorthand_ambient_modules.hash(&mut hasher);
         self.module_export_specifiers.hash(&mut hasher);
+        self.module_exports_entries.hash(&mut hasher);
         self.expando_properties.hash(&mut hasher);
         self.import_sources.hash(&mut hasher);
         self.file_features.hash(&mut hasher);
@@ -415,6 +460,22 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
     let mut module_export_specifiers: Vec<String> = result.module_exports.keys().cloned().collect();
     module_export_specifiers.sort();
 
+    // Phase 2 step 6: per-spec export names — captures the export-name set of
+    // each `binder.module_exports[spec]` SymbolTable. SymbolIds are not stored
+    // (pre-merge local IDs are not stable across the merge — see PR #1145).
+    // The projection helper resolves SymbolIds at build time from the
+    // post-merge `program.module_exports` map.
+    let mut module_exports_entries: Vec<(String, Vec<String>)> = result
+        .module_exports
+        .iter()
+        .map(|(spec, table)| {
+            let mut names: Vec<String> = table.iter().map(|(name, _)| name.clone()).collect();
+            names.sort();
+            (spec.clone(), names)
+        })
+        .collect();
+    module_exports_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
     // Expando properties: convert FxHashMap<String, FxHashSet<String>> to sorted Vec
     let mut expando_properties: Vec<(String, Vec<String>)> = result
         .expando_properties
@@ -439,6 +500,7 @@ pub fn extract_skeleton(result: &BindResult) -> FileSkeleton {
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
+        module_exports_entries,
         expando_properties,
         import_sources: result.file_import_sources.clone(),
         file_features: result.file_features,
@@ -521,6 +583,23 @@ pub struct SkeletonIndex {
     /// `"foo"` and `'foo'` (extremely rare), the file index is pushed once
     /// per matching specifier — same as the legacy loop.
     pub module_binder_index_by_spec: FxHashMap<String, Vec<usize>>,
+    /// Per-module-specifier list of `(file_idx, export_name)` entries
+    /// (Phase 2 step 6).
+    ///
+    /// This is the skeleton-only projection of the checker's legacy
+    /// `global_module_exports_index` (`spec -> export_name -> Vec<(file_idx,
+    /// SymbolId)>`). Each entry records that file `file_idx` declared the
+    /// export `export_name` under module specifier `spec`. `SymbolId`s are
+    /// NOT stored here — they are resolved at projection time from the
+    /// post-merge `program.module_exports` map (which holds globally-remapped
+    /// IDs). Storing pre-merge local `SymbolId`s in the skeleton was the trap
+    /// that regressed PR #1145 for the file-locals index.
+    ///
+    /// Entries are recorded in driver file order, then by export-name within a
+    /// single `(spec, file)` slot. Both the raw spec and its de-quoted
+    /// ("normalized") variant are recorded when they differ — same as the
+    /// legacy per-binder loop in `ProjectEnv::build_global_indices`.
+    pub module_exports_index_by_spec: SkeletonModuleExportsIndex,
     /// All declared ambient modules across all files.
     pub declared_modules: FxHashSet<String>,
     /// All shorthand ambient modules across all files.
@@ -566,6 +645,8 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         Vec<(usize, SkeletonAugmentationTarget)>,
     > = FxHashMap::default();
     let mut module_binder_index_by_spec: FxHashMap<String, Vec<usize>> = FxHashMap::default();
+    // Phase 2 step 6: per-spec, per-export-name list of file indices.
+    let mut module_exports_index_by_spec: SkeletonModuleExportsIndex = FxHashMap::default();
     let mut declared_modules = FxHashSet::default();
     let mut shorthand_ambient_modules = FxHashSet::default();
     let mut module_export_specifiers = FxHashSet::default();
@@ -655,6 +736,31 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
             }
         }
 
+        // Phase 2 step 6: project per-file module-export entries into the
+        // cross-file `spec -> export_name -> [file_idx]` index. Mirrors the
+        // legacy per-binder loop in `ProjectEnv::build_global_indices` which
+        // iterates `binder.module_exports[spec].iter()` and pushes
+        // `(file_idx, sym_id)` per export name. SymbolIds are looked up at
+        // projection time from `program.module_exports` (post-merge global
+        // IDs) — see `SkeletonIndex::build_module_exports_index`.
+        for (spec, export_names) in &skeleton.module_exports_entries {
+            let entry = module_exports_index_by_spec
+                .entry(spec.clone())
+                .or_default();
+            for name in export_names {
+                entry.entry(name.clone()).or_default().push(file_idx);
+            }
+            let normalized = spec.trim_matches('"').trim_matches('\'');
+            if normalized != spec {
+                let entry = module_exports_index_by_spec
+                    .entry(normalized.to_string())
+                    .or_default();
+                for name in export_names {
+                    entry.entry(name.clone()).or_default().push(file_idx);
+                }
+            }
+        }
+
         declared_modules.extend(skeleton.declared_modules.iter().cloned());
         shorthand_ambient_modules.extend(skeleton.shorthand_ambient_modules.iter().cloned());
         module_export_specifiers.extend(skeleton.module_export_specifiers.iter().cloned());
@@ -711,6 +817,7 @@ pub fn reduce_skeletons(skeletons: &[FileSkeleton]) -> SkeletonIndex {
         module_augmentations_by_spec,
         augmentation_targets_by_spec,
         module_binder_index_by_spec,
+        module_exports_index_by_spec,
         declared_modules,
         shorthand_ambient_modules,
         module_export_specifiers,
@@ -794,6 +901,29 @@ impl SkeletonIndex {
         for key in &binder_idx_keys {
             key.hash(&mut hasher);
             index.module_binder_index_by_spec[*key].hash(&mut hasher);
+        }
+
+        // 4d) Per-spec module-exports index (Phase 2 step 6), sorted by spec
+        //     and by export-name for determinism. Each entry contributes the
+        //     (spec, export_name, [file_idx]) tuple so any change to the
+        //     skeleton-projected module-exports topology invalidates
+        //     downstream caches. SymbolIds are not hashed here — they are
+        //     resolved from the post-merge `program.module_exports` at
+        //     projection time, and the merged map already moves the
+        //     `pre_merge_bind_total_bytes` / per-file fingerprints when its
+        //     contents change.
+        let mut exports_idx_keys: Vec<&String> =
+            index.module_exports_index_by_spec.keys().collect();
+        exports_idx_keys.sort();
+        for spec in &exports_idx_keys {
+            spec.hash(&mut hasher);
+            let by_name = &index.module_exports_index_by_spec[*spec];
+            let mut name_keys: Vec<&String> = by_name.keys().collect();
+            name_keys.sort();
+            for name in &name_keys {
+                name.hash(&mut hasher);
+                by_name[*name].hash(&mut hasher);
+            }
         }
 
         // 5) Declared modules (sorted for determinism).
@@ -901,6 +1031,18 @@ impl SkeletonIndex {
             size += key.capacity();
             size += files.capacity() * std::mem::size_of::<usize>();
             size += std::mem::size_of::<(String, Vec<usize>)>();
+        }
+
+        // Module exports index by spec (Phase 2 step 6):
+        // FxHashMap<String, FxHashMap<String, Vec<usize>>>
+        for (spec, by_name) in &self.module_exports_index_by_spec {
+            size += spec.capacity();
+            size += std::mem::size_of::<(String, FxHashMap<String, Vec<usize>>)>();
+            for (name, files) in by_name {
+                size += name.capacity();
+                size += files.capacity() * std::mem::size_of::<usize>();
+                size += std::mem::size_of::<(String, Vec<usize>)>();
+            }
         }
 
         // Declared modules (HashSet<String>)
@@ -1410,6 +1552,170 @@ impl SkeletonIndex {
             "skeleton module_binder_index_by_spec differs from legacy per-binder module_exports"
         );
     }
+
+    // -------------------------------------------------------------------------
+    // Phase 2 step 6: module-exports index served from SkeletonIndex.
+    // -------------------------------------------------------------------------
+
+    /// Lookup module-exports entries for a given module specifier.
+    ///
+    /// Returns the `export_name -> [file_idx]` map recorded for `module_spec`.
+    /// Returns `None` if no file declared exports under this spec.
+    ///
+    /// `SymbolId`s are NOT returned here — they are resolved at projection
+    /// time from the post-merge `program.module_exports` map. Use
+    /// [`Self::build_module_exports_index`] for the legacy
+    /// `(file_idx, SymbolId)` shape that checker consumers expect.
+    #[must_use]
+    pub fn module_exports_for(&self, module_spec: &str) -> Option<&SkeletonModuleExportsByName> {
+        self.module_exports_index_by_spec.get(module_spec)
+    }
+
+    /// Build the legacy `spec -> export_name -> Vec<(file_idx, SymbolId)>`
+    /// map from skeleton-recorded module-export entries plus the post-merge
+    /// `program.module_exports` map.
+    ///
+    /// Phase 2 step 6 helper: projects the skeleton-recorded
+    /// `module_exports_index_by_spec` (which carries `[file_idx]` per
+    /// `(spec, export_name)`) into the legacy shape understood by
+    /// `ProjectEnv::global_module_exports_index` consumers (e.g.
+    /// `type_only.rs`, `state/type_resolution/module.rs`,
+    /// `state/type_resolution/import_type.rs`).
+    ///
+    /// The `SymbolId` for each `(spec, export_name)` pair is looked up in
+    /// `merged_module_exports` (the `MergedProgram::module_exports` map),
+    /// which holds globally-remapped post-merge `SymbolId`s. Entries whose
+    /// `(spec, export_name)` does not appear in `merged_module_exports` are
+    /// dropped — mirroring the legacy `remap_symbol_table` filter that drops
+    /// entries whose pre-merge `SymbolId` did not survive merging.
+    ///
+    /// Spec keys are visited in sorted order; per-spec/per-export entries
+    /// preserve the driver file order recorded by [`reduce_skeletons`]. Both
+    /// the raw and normalized (de-quoted) spec keys are present when they
+    /// differ — same as the legacy per-binder loop in
+    /// `ProjectEnv::build_global_indices`.
+    #[must_use]
+    pub fn build_module_exports_index(
+        &self,
+        merged_module_exports: &FxHashMap<String, SymbolTable>,
+    ) -> ProjectedModuleExportsIndex {
+        let mut out: ProjectedModuleExportsIndex = FxHashMap::default();
+
+        let mut spec_keys: Vec<&String> = self.module_exports_index_by_spec.keys().collect();
+        spec_keys.sort();
+
+        for spec in spec_keys {
+            // Resolve SymbolIds via the merged map. The merged
+            // `module_exports` may key by the raw spec (e.g. `"\"foo\""`) or
+            // by the de-quoted normalized form (e.g. `"foo"`) depending on
+            // how the binder recorded it. The skeleton index records both
+            // variants, so when looking up the merged map we also try the
+            // alternate form. Tries in order: exact match, de-quoted
+            // alternate, single-quoted variant, double-quoted variant.
+            let trimmed = spec.trim_matches('"').trim_matches('\'');
+            let dq = format!("\"{trimmed}\"");
+            let sq = format!("'{trimmed}'");
+            let merged_table = merged_module_exports
+                .get(spec)
+                .or_else(|| {
+                    if trimmed != spec.as_str() {
+                        merged_module_exports.get(trimmed)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| merged_module_exports.get(&dq))
+                .or_else(|| merged_module_exports.get(&sq));
+
+            let Some(table) = merged_table else {
+                continue;
+            };
+
+            let by_name = &self.module_exports_index_by_spec[spec];
+            let mut name_keys: Vec<&String> = by_name.keys().collect();
+            name_keys.sort();
+
+            let mut projected_inner: ProjectedModuleExportsByName = FxHashMap::default();
+            for name in name_keys {
+                let Some(sym_id) = table.get(name) else {
+                    continue;
+                };
+                let entries: Vec<(usize, SymbolId)> = by_name[name]
+                    .iter()
+                    .map(|&file_idx| (file_idx, sym_id))
+                    .collect();
+                projected_inner.insert(name.clone(), entries);
+            }
+
+            if !projected_inner.is_empty() {
+                out.insert(spec.clone(), projected_inner);
+            }
+        }
+
+        out
+    }
+
+    /// Validate that the skeleton-derived `module_exports_index_by_spec`
+    /// matches the legacy per-binder `module_exports` topology.
+    ///
+    /// `legacy_per_file` is the legacy projection of every file's
+    /// `binder.module_exports`: a `Vec<Vec<(String, Vec<String>)>>` in driver
+    /// file order where each `(spec, export_names)` entry is the list of names
+    /// from `binder.module_exports[spec]`. The skeleton is expected to record,
+    /// for every `(file_idx, spec, export_name)`, the same multiset of file
+    /// indices (with matching counts), including the de-quoted normalized
+    /// variant when it differs.
+    ///
+    /// In debug builds, asserts the per-spec, per-export, sorted `file_idx`
+    /// vectors are equal. In release builds this is a no-op.
+    pub fn validate_module_exports_against_legacy(
+        &self,
+        legacy_per_file: &[Vec<(String, Vec<String>)>],
+    ) {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+
+        // Build the legacy map: spec -> export_name -> sorted Vec<file_idx>,
+        // mirroring the legacy per-binder loop's raw + normalized push behavior.
+        let mut legacy: SkeletonModuleExportsIndex = FxHashMap::default();
+        for (file_idx, per_file) in legacy_per_file.iter().enumerate() {
+            for (spec, names) in per_file {
+                let entry = legacy.entry(spec.clone()).or_default();
+                for name in names {
+                    entry.entry(name.clone()).or_default().push(file_idx);
+                }
+                let normalized = spec.trim_matches('"').trim_matches('\'');
+                if normalized != spec {
+                    let entry = legacy.entry(normalized.to_string()).or_default();
+                    for name in names {
+                        entry.entry(name.clone()).or_default().push(file_idx);
+                    }
+                }
+            }
+        }
+        for inner in legacy.values_mut() {
+            for entries in inner.values_mut() {
+                entries.sort();
+            }
+        }
+
+        let mut skeleton: SkeletonModuleExportsIndex = FxHashMap::default();
+        for (spec, by_name) in &self.module_exports_index_by_spec {
+            let mut inner: SkeletonModuleExportsByName = FxHashMap::default();
+            for (name, entries) in by_name {
+                let mut sorted = entries.clone();
+                sorted.sort();
+                inner.insert(name.clone(), sorted);
+            }
+            skeleton.insert(spec.clone(), inner);
+        }
+
+        assert_eq!(
+            skeleton, legacy,
+            "skeleton module_exports_index_by_spec differs from legacy per-binder module_exports"
+        );
+    }
 }
 
 /// Estimate the in-memory size of a `FileSkeleton` in bytes.
@@ -1471,6 +1777,14 @@ impl FileSkeleton {
         }
         for ms in &self.module_export_specifiers {
             size += ms.capacity();
+        }
+        for (spec, names) in &self.module_exports_entries {
+            size += std::mem::size_of::<(String, Vec<String>)>();
+            size += spec.capacity();
+            size += names.capacity() * std::mem::size_of::<String>();
+            for name in names {
+                size += name.capacity();
+            }
         }
         for (obj_key, props) in &self.expando_properties {
             size += obj_key.capacity();
@@ -1595,6 +1909,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint,
@@ -1698,6 +2013,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1717,6 +2033,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1796,6 +2113,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1815,6 +2133,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1856,6 +2175,7 @@ mod tests {
             declared_modules: declared.iter().map(|s| (*s).to_string()).collect(),
             shorthand_ambient_modules: shorthand.iter().map(|s| (*s).to_string()).collect(),
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1955,6 +2275,7 @@ mod tests {
             declared_modules: vec!["from-a".to_string()],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -1972,6 +2293,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec!["from-b".to_string()],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2033,6 +2355,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2070,6 +2393,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: vec![],
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2366,6 +2690,7 @@ mod tests {
             declared_modules: vec![],
             shorthand_ambient_modules: vec![],
             module_export_specifiers: sorted,
+            module_exports_entries: vec![],
             import_sources: vec![],
             file_features: Default::default(),
             fingerprint: 0,
@@ -2482,5 +2807,267 @@ mod tests {
         ];
         want.sort();
         assert_eq!(got, want);
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 2 step 6: module-exports index served from SkeletonIndex.
+    //
+    // The checker's `global_module_exports_index` was previously built by
+    // iterating every binder's `module_exports[spec].iter()` map. Phase 2 step
+    // 6 moves the build to `SkeletonIndex::module_exports_for(...)` /
+    // `build_module_exports_index(merged_module_exports)`, letting the checker
+    // rebuild the merged index from skeleton data plus the post-merge
+    // `program.module_exports` map alone — required for Phase 5 (arena
+    // eviction). SymbolIds are resolved at projection time from the post-merge
+    // map (which holds globally-remapped IDs), avoiding the pre-merge local-
+    // SymbolId trap that regressed PR #1145.
+    // -------------------------------------------------------------------------
+
+    /// Helper: build a skeleton with the given `(spec, [export_name])` entries.
+    fn skeleton_with_module_exports_entries(
+        file_name: &str,
+        entries: Vec<(String, Vec<String>)>,
+    ) -> FileSkeleton {
+        let mut sorted_entries = entries;
+        sorted_entries.sort_by(|a, b| a.0.cmp(&b.0));
+        for (_, names) in &mut sorted_entries {
+            names.sort();
+        }
+        let module_export_specifiers: Vec<String> = sorted_entries
+            .iter()
+            .map(|(spec, _)| spec.clone())
+            .collect();
+        let mut skel = FileSkeleton {
+            file_name: file_name.to_string(),
+            is_external_module: true,
+            symbols: vec![],
+            global_augmentations: vec![],
+            module_augmentations: vec![],
+            augmentation_targets: vec![],
+            reexports: vec![],
+            wildcard_reexports: vec![],
+            expando_properties: vec![],
+            declared_modules: vec![],
+            shorthand_ambient_modules: vec![],
+            module_export_specifiers,
+            module_exports_entries: sorted_entries,
+            import_sources: vec![],
+            file_features: Default::default(),
+            fingerprint: 0,
+        };
+        skel.fingerprint = skel.compute_fingerprint();
+        skel
+    }
+
+    #[test]
+    fn module_exports_for_returns_per_file_indices_per_export() {
+        let skel_a = skeleton_with_module_exports_entries(
+            "a.ts",
+            vec![(
+                "my-lib".to_string(),
+                vec!["foo".to_string(), "bar".to_string()],
+            )],
+        );
+        let skel_b = skeleton_with_module_exports_entries(
+            "b.ts",
+            vec![("my-lib".to_string(), vec!["foo".to_string()])],
+        );
+        let skel_c = skeleton_with_module_exports_entries(
+            "c.ts",
+            vec![("other".to_string(), vec!["baz".to_string()])],
+        );
+        let idx = reduce_skeletons(&[skel_a, skel_b, skel_c]);
+
+        let by_name = idx.module_exports_for("my-lib").unwrap();
+        let mut foo = by_name["foo"].clone();
+        foo.sort();
+        assert_eq!(foo, vec![0, 1]);
+        let bar = by_name["bar"].clone();
+        assert_eq!(bar, vec![0]);
+
+        let other = idx.module_exports_for("other").unwrap();
+        assert_eq!(other["baz"], vec![2]);
+
+        assert!(idx.module_exports_for("nope").is_none());
+    }
+
+    #[test]
+    fn module_exports_records_normalized_variant_when_quoted() {
+        let skel = skeleton_with_module_exports_entries(
+            "a.ts",
+            vec![("\"my-lib\"".to_string(), vec!["foo".to_string()])],
+        );
+        let idx = reduce_skeletons(&[skel]);
+
+        let raw = idx.module_exports_for("\"my-lib\"").unwrap();
+        assert_eq!(raw["foo"], vec![0]);
+
+        let normalized = idx.module_exports_for("my-lib").unwrap();
+        assert_eq!(normalized["foo"], vec![0]);
+    }
+
+    #[test]
+    fn build_module_exports_index_resolves_sym_ids_from_merged_map() {
+        // Two files declare overlapping exports under the same spec.
+        let skel_a = skeleton_with_module_exports_entries(
+            "a.ts",
+            vec![("\"my-lib\"".to_string(), vec!["foo".to_string()])],
+        );
+        let skel_b = skeleton_with_module_exports_entries(
+            "b.ts",
+            vec![(
+                "\"my-lib\"".to_string(),
+                vec!["foo".to_string(), "bar".to_string()],
+            )],
+        );
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+
+        // Build a fake merged map: post-merge SymbolIds for the (spec,
+        // export_name) pairs. The merge typically picks one SymbolId per
+        // (spec, export_name) — the projection pairs every recorded
+        // file_idx with that single id.
+        let mut merged: FxHashMap<String, SymbolTable> = FxHashMap::default();
+        let mut shared = SymbolTable::new();
+        shared.set("foo".to_string(), SymbolId(101));
+        shared.set("bar".to_string(), SymbolId(102));
+        merged.insert("\"my-lib\"".to_string(), shared);
+
+        let projected = idx.build_module_exports_index(&merged);
+
+        // Raw spec key resolves to (file_idx, sym_id) entries for each export.
+        let raw = &projected["\"my-lib\""];
+        let mut foo_entries = raw["foo"].clone();
+        foo_entries.sort_by_key(|(f, _)| *f);
+        assert_eq!(
+            foo_entries,
+            vec![(0, SymbolId(101)), (1, SymbolId(101))],
+            "foo should appear under both files with the merged sym_id"
+        );
+        let bar_entries = raw["bar"].clone();
+        assert_eq!(
+            bar_entries,
+            vec![(1, SymbolId(102))],
+            "bar should appear only under file 1 with the merged sym_id"
+        );
+
+        // The de-quoted normalized variant also resolves (the projection
+        // falls back to the raw merged-map key when the normalized one is
+        // missing, mirroring the legacy lookup).
+        let normalized = &projected["my-lib"];
+        let mut foo_norm = normalized["foo"].clone();
+        foo_norm.sort_by_key(|(f, _)| *f);
+        assert_eq!(foo_norm, vec![(0, SymbolId(101)), (1, SymbolId(101))]);
+    }
+
+    #[test]
+    fn build_module_exports_index_drops_entries_missing_from_merged_map() {
+        // The skeleton recorded an export name that did not survive the
+        // merge (e.g., its pre-merge SymbolId was not in `id_remap`). The
+        // projection must drop it — same as the legacy `remap_symbol_table`
+        // filter.
+        let skel = skeleton_with_module_exports_entries(
+            "a.ts",
+            vec![(
+                "my-lib".to_string(),
+                vec!["foo".to_string(), "ghost".to_string()],
+            )],
+        );
+        let idx = reduce_skeletons(&[skel]);
+
+        let mut merged: FxHashMap<String, SymbolTable> = FxHashMap::default();
+        let mut tbl = SymbolTable::new();
+        tbl.set("foo".to_string(), SymbolId(7));
+        // "ghost" intentionally absent from the merged map.
+        merged.insert("my-lib".to_string(), tbl);
+
+        let projected = idx.build_module_exports_index(&merged);
+
+        let by_name = &projected["my-lib"];
+        assert_eq!(by_name["foo"], vec![(0, SymbolId(7))]);
+        assert!(
+            !by_name.contains_key("ghost"),
+            "exports missing from the merged map must be dropped"
+        );
+    }
+
+    #[test]
+    fn build_module_exports_index_drops_specs_missing_from_merged_map() {
+        // The skeleton recorded a spec key that was entirely dropped during
+        // the merge. The projection must skip it.
+        let skel = skeleton_with_module_exports_entries(
+            "a.ts",
+            vec![("dead-spec".to_string(), vec!["foo".to_string()])],
+        );
+        let idx = reduce_skeletons(&[skel]);
+
+        let merged: FxHashMap<String, SymbolTable> = FxHashMap::default();
+        let projected = idx.build_module_exports_index(&merged);
+        assert!(projected.is_empty());
+    }
+
+    #[test]
+    fn module_exports_consumer_works_after_legacy_program_emptied() {
+        // Phase 5 invariant: the checker-side merged map must be reproducible
+        // from `SkeletonIndex` + `program.module_exports` alone, even if every
+        // per-binder `module_exports` field has been emptied (which is the
+        // post-eviction state).
+        //
+        // We model this by:
+        //   1) Building `SkeletonIndex` from skeleton-only inputs (no
+        //      MergedProgram, no per-binder loop).
+        //   2) Supplying a `merged_module_exports` map that mirrors what
+        //      `MergedProgram.module_exports` would carry after merging the
+        //      same files.
+        //   3) Asserting the projection produces the same `(spec, export_name,
+        //      file_idx, sym_id)` set the legacy per-binder loop would have
+        //      computed.
+        let skel_a = skeleton_with_module_exports_entries(
+            "a.ts",
+            vec![(
+                "\"shared\"".to_string(),
+                vec!["foo".to_string(), "bar".to_string()],
+            )],
+        );
+        let skel_b = skeleton_with_module_exports_entries(
+            "b.ts",
+            vec![("\"shared\"".to_string(), vec!["foo".to_string()])],
+        );
+        let idx = reduce_skeletons(&[skel_a, skel_b]);
+
+        let mut merged: FxHashMap<String, SymbolTable> = FxHashMap::default();
+        let mut shared = SymbolTable::new();
+        shared.set("foo".to_string(), SymbolId(50));
+        shared.set("bar".to_string(), SymbolId(51));
+        merged.insert("\"shared\"".to_string(), shared);
+
+        let projected = idx.build_module_exports_index(&merged);
+
+        // Recover the legacy `(spec, export_name, file_idx, sym_id)` tuples.
+        let mut recovered: Vec<(String, String, usize, SymbolId)> = Vec::new();
+        for (spec, by_name) in &projected {
+            for (name, entries) in by_name {
+                for &(file_idx, sym_id) in entries {
+                    recovered.push((spec.clone(), name.clone(), file_idx, sym_id));
+                }
+            }
+        }
+        recovered.sort();
+
+        let mut expected: Vec<(String, String, usize, SymbolId)> = vec![
+            // Raw spec key entries:
+            ("\"shared\"".to_string(), "foo".to_string(), 0, SymbolId(50)),
+            ("\"shared\"".to_string(), "foo".to_string(), 1, SymbolId(50)),
+            ("\"shared\"".to_string(), "bar".to_string(), 0, SymbolId(51)),
+            // Normalized (de-quoted) entries:
+            ("shared".to_string(), "foo".to_string(), 0, SymbolId(50)),
+            ("shared".to_string(), "foo".to_string(), 1, SymbolId(50)),
+            ("shared".to_string(), "bar".to_string(), 0, SymbolId(51)),
+        ];
+        expected.sort();
+
+        assert_eq!(
+            recovered, expected,
+            "Skeleton + merged-map recovery must reproduce legacy per-binder topology"
+        );
     }
 }
