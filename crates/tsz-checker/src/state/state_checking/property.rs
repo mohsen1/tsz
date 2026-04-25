@@ -1587,7 +1587,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Find the property element node in an object literal by interned property name.
-    fn find_object_literal_property_element(
+    pub(crate) fn find_object_literal_property_element(
         &self,
         obj_literal_idx: NodeIndex,
         prop_name: tsz_common::interner::Atom,
@@ -1618,7 +1618,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn object_literal_property_display_name(
+    pub(crate) fn object_literal_property_display_name(
         &self,
         elem_idx: NodeIndex,
         fallback_name: &str,
