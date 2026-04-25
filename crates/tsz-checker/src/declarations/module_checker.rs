@@ -1132,6 +1132,32 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Walk up from `node_idx` looking for a `MODULE_DECLARATION` whose name is
+    /// a string literal (i.e., `declare module "<specifier>"`). Returns the
+    /// specifier text. Used by TS2303 cycle suppression to compare a
+    /// `require()` target against the enclosing ambient module's name.
+    fn enclosing_ambient_module_specifier(&self, node_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = node_idx;
+        for _ in 0..64 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent == NodeIndex::NONE || parent == current {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(parent_node)
+                && let Some(name_node) = self.ctx.arena.get(module.name)
+                && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            {
+                return Some(lit.text.to_string());
+            }
+            current = parent;
+        }
+        None
+    }
+
     /// Eagerly checks all alias symbols in the current file for circular definitions.
     /// Emits TS2303 for any alias that circularly references itself.
     pub(crate) fn check_circular_import_aliases(&mut self) {
@@ -1232,7 +1258,43 @@ impl<'a> CheckerState<'a> {
                                     false
                                 }
                             });
-                            if !has_reexport_from {
+                            // `import X = require("m")` inside a different
+                            // ambient module declaration (e.g.
+                            //   declare module "m"      { export = T; }
+                            //   declare module "node:m" { import m = require("m"); export = m; }
+                            // ) names an external module — the alias resolves
+                            // through `m`'s `export = ...`, not back to itself.
+                            // Our binder can spuriously map the alias to itself
+                            // because `m` is both a sibling declared-module
+                            // specifier and an alias name in the same file.
+                            // Suppress only for the cross-module-name case;
+                            // genuine self-imports
+                            //   declare module "moduleC" { import self = require("moduleC"); }
+                            // remain TS2303.
+                            let require_target_differs_from_enclosing_module =
+                                sym.declarations.iter().any(|&decl_idx| {
+                                    let Some(n) = self.ctx.arena.get(decl_idx) else {
+                                        return false;
+                                    };
+                                    if n.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                                        return false;
+                                    }
+                                    let Some(imp) = self.ctx.arena.get_import_decl(n) else {
+                                        return false;
+                                    };
+                                    let Some(target) =
+                                        self.get_require_module_specifier(imp.module_specifier)
+                                    else {
+                                        return false;
+                                    };
+                                    let Some(enclosing) =
+                                        self.enclosing_ambient_module_specifier(decl_idx)
+                                    else {
+                                        return false;
+                                    };
+                                    target != enclosing
+                                });
+                            if !has_reexport_from && !require_target_differs_from_enclosing_module {
                                 cycle_detected = true;
                             }
                         } else {
