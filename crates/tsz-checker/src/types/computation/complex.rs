@@ -1408,6 +1408,7 @@ impl<'a> CheckerState<'a> {
             CallResult::ThisTypeMismatch {
                 expected_this,
                 actual_this,
+                ..
             } => {
                 self.error_this_type_mismatch_at(expected_this, actual_this, idx);
                 TypeId::ERROR

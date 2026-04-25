@@ -1975,10 +1975,10 @@ declare var x1: A & C & {
     f3: F3 | F4;
 };
 x1.f3();
-"#;
+    "#;
     assert!(
-        has_error(source, 2349),
-        "Union of multi-overload interfaces with no compatible this-pairs should emit TS2349"
+        has_error(source, 2684),
+        "Union of multi-overload interfaces with no compatible this-pairs should emit TS2684"
     );
 }
 

@@ -524,6 +524,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         failures: &mut Vec<CallResult>,
         return_types: Vec<TypeId>,
         combined_return_override: Option<TypeId>,
+        force_not_callable_with_this_mismatch: bool,
     ) -> CallResult {
         if return_types.is_empty() {
             if failures.is_empty() {
@@ -593,6 +594,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 };
             }
 
+            if force_not_callable_with_this_mismatch
+                && failures
+                    .iter()
+                    .all(|f| matches!(f, CallResult::ThisTypeMismatch { .. }))
+            {
+                return match failures.first() {
+                    Some(CallResult::ThisTypeMismatch {
+                        expected_this,
+                        actual_this,
+                        ..
+                    }) => CallResult::ThisTypeMismatch {
+                        expected_this: *expected_this,
+                        actual_this: *actual_this,
+                        emit_not_callable: true,
+                    },
+                    _ => CallResult::NotCallable {
+                        type_id: union_type,
+                    },
+                };
+            }
+
             // Not all argument type mismatches, return the first failure
             return failures
                 .drain(..)
@@ -624,13 +646,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // doesn't satisfy ALL members' `this` requirements.
         // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
         // argument errors (TS2345) before `this` context errors (TS2684).
-        let deferred_this_error =
+        let mut deferred_this_error =
             if let Some(combined_this) = self.compute_union_this_type(&members) {
                 let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
                 if !self.checker.is_assignable_to(actual_this, combined_this) {
                     Some(CallResult::ThisTypeMismatch {
                         expected_this: combined_this,
                         actual_this,
+                        emit_not_callable: false,
                     })
                 } else {
                     None
@@ -649,6 +672,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let sig_lists = self.collect_union_call_signature_lists(&members);
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
+        let mut force_not_callable_with_this_mismatch = false;
+        let mut force_union_this_type = None;
 
         if has_multi_overload_members >= 2 {
             if let Some(unified_sigs) = self.find_union_compatible_signatures(&sig_lists) {
@@ -666,6 +691,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return CallResult::ThisTypeMismatch {
                             expected_this: combined_this,
                             actual_this,
+                            emit_not_callable: false,
                         };
                     }
                 }
@@ -682,9 +708,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .filter(|(_, sigs)| sigs.len() > 1)
                     .all(|(_, sigs)| sigs.iter().all(|s| s.type_params.is_empty()));
                 if all_non_generic {
-                    return CallResult::NotCallable {
-                        type_id: union_type,
-                    };
+                    let mut this_types = Vec::new();
+                    for (_, sigs) in &sig_lists {
+                        for sig in sigs {
+                            if let Some(this_type) = sig.this_type {
+                                this_types.push(this_type);
+                            }
+                        }
+                    }
+                    if !this_types.is_empty() {
+                        let mut combined_this = this_types[0];
+                        for &this_type in &this_types[1..] {
+                            combined_this = self.interner.intersection2(combined_this, this_type);
+                        }
+                        force_union_this_type = Some(combined_this);
+                    }
+
+                    force_not_callable_with_this_mismatch = true;
                 }
             }
         } else if has_multi_overload_members == 1 {
@@ -751,6 +791,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         };
                     }
                 }
+            }
+        }
+
+        if deferred_this_error.is_none()
+            && force_not_callable_with_this_mismatch
+            && let Some(expected_this) = force_union_this_type
+        {
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            if !self.checker.is_assignable_to(actual_this, expected_this) {
+                deferred_this_error = Some(CallResult::ThisTypeMismatch {
+                    expected_this,
+                    actual_this,
+                    emit_not_callable: false,
+                });
             }
         }
 
@@ -1001,6 +1055,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             &mut failures,
                             return_types,
                             combined.as_ref().map(|c| c.return_type),
+                            false,
                         );
                     }
                 }
@@ -1024,6 +1079,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 &mut failures,
                 return_types,
                 combined.as_ref().map(|c| c.return_type),
+                force_not_callable_with_this_mismatch,
             )
         } else if let Some(this_error) = deferred_this_error {
             this_error
@@ -1098,6 +1154,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     Some(CallResult::ThisTypeMismatch {
                         expected_this,
                         actual_this,
+                        emit_not_callable: false,
                     })
                 } else {
                     None
@@ -1106,6 +1163,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(CallResult::ThisTypeMismatch {
                     expected_this,
                     actual_this: TypeId::VOID,
+                    emit_not_callable: false,
                 })
             } else {
                 None
@@ -1325,6 +1383,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 CallResult::ThisTypeMismatch {
                     expected_this,
                     actual_this,
+                    ..
                 } => {
                     all_arg_count_mismatches = false;
                     this_mismatch_count += 1;

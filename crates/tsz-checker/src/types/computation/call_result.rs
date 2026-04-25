@@ -745,7 +745,11 @@ impl<'a> CheckerState<'a> {
             CallResult::ThisTypeMismatch {
                 expected_this,
                 actual_this,
+                emit_not_callable,
             } => {
+                if emit_not_callable {
+                    self.error_not_callable_at(callee_type, callee_expr);
+                }
                 self.error_this_type_mismatch_at(expected_this, actual_this, callee_expr);
                 TypeId::ERROR
             }

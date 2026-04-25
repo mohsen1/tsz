@@ -113,6 +113,7 @@ pub enum CallResult {
     ThisTypeMismatch {
         expected_this: TypeId,
         actual_this: TypeId,
+        emit_not_callable: bool,
     },
 
     /// Argument count mismatch
