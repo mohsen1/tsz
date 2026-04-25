@@ -306,19 +306,7 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return None;
         }
-        let member_decl = if symbol.value_declaration.is_some() {
-            symbol.value_declaration
-        } else {
-            symbol
-                .declarations
-                .iter()
-                .copied()
-                .find(|idx| idx.is_some())
-                .unwrap_or(NodeIndex::NONE)
-        };
-        if member_decl.is_none() {
-            return None;
-        }
+        let member_decl = symbol.primary_declaration()?;
 
         let parent_symbol = self.get_cross_file_symbol(symbol.parent)?;
         for &decl_idx in &parent_symbol.declarations {
