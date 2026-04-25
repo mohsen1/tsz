@@ -72,7 +72,7 @@ bar;
                 || parent_node.kind == tsz_parser::syntax_kind_ext::EXPORT_SPECIFIER,
             "expected quoted namespace literal to be under import/export specifier"
         );
-        binder.node_symbols.insert(parent_idx.0, symbol_id);
+        std::sync::Arc::make_mut(&mut binder.node_symbols).insert(parent_idx.0, symbol_id);
     }
 
     let mut ref_walker = ScopeWalker::new(arena, &binder);

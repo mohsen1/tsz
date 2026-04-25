@@ -66,7 +66,7 @@ impl BinderState {
                     sym.import_name = Some("default".to_string());
                 }
             }
-            self.node_symbols.insert(clause.name.0, sym_id);
+            Arc::make_mut(&mut self.node_symbols).insert(clause.name.0, sym_id);
         }
 
         // Named imports
@@ -89,7 +89,7 @@ impl BinderState {
                             sym.import_module = Some(specifier.clone());
                         }
                     }
-                    self.node_symbols.insert(clause.named_bindings.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(clause.named_bindings.0, sym_id);
                 }
             } else if let Some(named) = arena.get_named_imports(bindings_node) {
                 // Handle namespace import: import * as ns from 'module'
@@ -114,8 +114,8 @@ impl BinderState {
                             sym.import_name = Some("*".to_string());
                         }
                     }
-                    self.node_symbols.insert(named.name.0, sym_id);
-                    self.node_symbols.insert(clause.named_bindings.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(named.name.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(clause.named_bindings.0, sym_id);
                 }
                 // Handle named imports: import { foo, bar } from 'module'
                 for &spec_idx in &named.elements.nodes {
@@ -161,8 +161,8 @@ impl BinderState {
                             }
                         }
                     }
-                    self.node_symbols.insert(spec_idx.0, sym_id);
-                    self.node_symbols.insert(local_ident.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(spec_idx.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(local_ident.0, sym_id);
                 }
             }
         }
@@ -372,7 +372,7 @@ impl BinderState {
                     self.file_locals.set("default".to_string(), default_sym_id);
                 }
 
-                self.node_symbols
+                Arc::make_mut(&mut self.node_symbols)
                     .insert(export.export_clause.0, default_sym_id);
 
                 // Also mark the underlying local symbol as exported if it exists.
@@ -508,7 +508,8 @@ impl BinderState {
                                                 }
                                             }
                                         }
-                                        self.node_symbols.insert(spec_idx.0, export_sym_id);
+                                        Arc::make_mut(&mut self.node_symbols)
+                                            .insert(spec_idx.0, export_sym_id);
 
                                         // Add alias to file_locals so it appears in
                                         // module_exports for cross-file import resolution.
@@ -618,7 +619,7 @@ impl BinderState {
                                             .unwrap_or_else(|| exported.clone()),
                                     );
                                 }
-                                self.node_symbols.insert(spec_idx.0, sym_id);
+                                Arc::make_mut(&mut self.node_symbols).insert(spec_idx.0, sym_id);
                             }
 
                             // Now apply the mutable borrow to insert the mappings
@@ -696,7 +697,7 @@ impl BinderState {
                     } else if is_umd {
                         self.current_scope.set(name.to_string(), sym_id);
                     }
-                    self.node_symbols.insert(export.export_clause.0, sym_id);
+                    Arc::make_mut(&mut self.node_symbols).insert(export.export_clause.0, sym_id);
 
                     if is_umd {
                         // UMD namespace exports register a global name.

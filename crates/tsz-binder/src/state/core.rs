@@ -182,7 +182,7 @@ impl BinderState {
             unreachable_flow,
             scope_chain: Vec::with_capacity(32),
             current_scope_idx: 0,
-            node_symbols: FxHashMap::with_capacity_and_hasher(256, Default::default()),
+            node_symbols: Arc::new(FxHashMap::with_capacity_and_hasher(256, Default::default())),
             module_declaration_exports_publicly: FxHashMap::default(),
             symbol_arenas: Arc::new(FxHashMap::default()),
             declaration_arenas: Arc::new(FxHashMap::default()),
@@ -252,7 +252,7 @@ impl BinderState {
         self.current_flow = FlowNodeId::NONE;
         self.scope_chain.clear();
         self.current_scope_idx = 0;
-        self.node_symbols.clear();
+        Arc::make_mut(&mut self.node_symbols).clear();
         self.module_declaration_exports_publicly.clear();
         Arc::make_mut(&mut self.symbol_arenas).clear();
         Arc::make_mut(&mut self.declaration_arenas).clear();
@@ -377,7 +377,7 @@ impl BinderState {
     /// symbols and `file_locals` (no `node_symbols` or other binding state).
     #[must_use]
     pub fn from_preparsed(symbols: SymbolArena, file_locals: SymbolTable) -> Self {
-        Self::from_bound_state(symbols, file_locals, FxHashMap::default())
+        Self::from_bound_state(symbols, file_locals, Arc::new(FxHashMap::default()))
     }
 
     /// Create a `BinderState` from existing bound state.
@@ -388,7 +388,7 @@ impl BinderState {
     pub fn from_bound_state(
         symbols: SymbolArena,
         file_locals: SymbolTable,
-        node_symbols: FxHashMap<u32, SymbolId>,
+        node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     ) -> Self {
         Self::from_bound_state_with_options(
             BinderOptions::default(),
@@ -404,7 +404,7 @@ impl BinderState {
         options: BinderOptions,
         symbols: SymbolArena,
         file_locals: SymbolTable,
-        node_symbols: FxHashMap<u32, SymbolId>,
+        node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     ) -> Self {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
@@ -476,7 +476,7 @@ impl BinderState {
     pub fn from_bound_state_with_scopes(
         symbols: SymbolArena,
         file_locals: SymbolTable,
-        node_symbols: FxHashMap<u32, SymbolId>,
+        node_symbols: Arc<FxHashMap<u32, SymbolId>>,
         scopes: Vec<Scope>,
         node_scope_ids: FxHashMap<u32, ScopeId>,
     ) -> Self {
@@ -501,7 +501,7 @@ impl BinderState {
         options: BinderOptions,
         symbols: SymbolArena,
         file_locals: SymbolTable,
-        node_symbols: FxHashMap<u32, SymbolId>,
+        node_symbols: Arc<FxHashMap<u32, SymbolId>>,
         inputs: BinderStateScopeInputs,
     ) -> Self {
         let BinderStateScopeInputs {
@@ -988,8 +988,11 @@ impl BinderState {
         // A rough estimate: ~3-5 nodes per top-level statement.
         if estimated_decl_count > 16 {
             let estimated_nodes = estimated_decl_count * 4;
-            self.node_symbols.clear();
-            self.node_symbols.reserve(estimated_nodes);
+            {
+                let node_symbols = Arc::make_mut(&mut self.node_symbols);
+                node_symbols.clear();
+                node_symbols.reserve(estimated_nodes);
+            }
             self.node_flow.clear();
             self.node_flow.reserve(estimated_nodes);
         }
@@ -1705,7 +1708,7 @@ impl BinderState {
         let mut symbol_nodes = Vec::new();
         self.collect_statement_symbol_nodes(arena, old_suffix_statements, &mut symbol_nodes);
         for node in symbol_nodes {
-            if let Some(sym_id) = self.node_symbols.remove(&node.0)
+            if let Some(sym_id) = Arc::make_mut(&mut self.node_symbols).remove(&node.0)
                 && let Some(sym) = self.symbols.get_mut(sym_id)
             {
                 // Keep `declarations` and `stable_declarations` in lockstep —

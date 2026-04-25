@@ -481,8 +481,14 @@ pub struct BindResult {
     pub declared_modules: FxHashSet<String>,
     /// Module exports keyed by specifier or file name
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
-    /// Node-to-symbol mapping
-    pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Node-to-symbol mapping.
+    ///
+    /// Shared via `Arc` because the binder owns it as `Arc<FxHashMap<...>>`
+    /// to avoid deep clones when reconstructing per-file binders for the
+    /// cross-file lookup pipeline. The Arc is moved out of the binder when
+    /// finalizing the bind result. See PR #1202 for the equivalent fix to
+    /// `semantic_defs`; this is the same template applied to `node_symbols`.
+    pub node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
@@ -1401,8 +1407,15 @@ pub struct BoundFile {
     pub source_file: NodeIndex,
     /// The arena containing all nodes (owned by this file)
     pub arena: Arc<NodeArena>,
-    /// Node-to-symbol mapping (symbol IDs are global after merge)
-    pub node_symbols: FxHashMap<u32, SymbolId>,
+    /// Node-to-symbol mapping (symbol IDs are global after merge).
+    ///
+    /// Shared via `Arc` so cross-file lookup binders (one per file in the
+    /// parallel CLI pipeline) can take an O(1) reference to this file's
+    /// per-file map instead of deep-cloning the underlying `FxHashMap`. On
+    /// large repos (6086 files), the deep clone of `node_symbols` was one
+    /// of the largest per-binder allocations. PR #1202 applied the same
+    /// template to `semantic_defs`; this extends it to `node_symbols`.
+    pub node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     /// Per-file symbol-to-arena mapping captured during binding.
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Per-file declaration-to-arena mapping captured during binding.
@@ -3131,7 +3144,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // Note: node_symbols primarily maps user file nodes to user symbols,
         // but lib symbols referenced in user code need remapping too
         let mut remapped_node_symbols = FxHashMap::default();
-        for (node_idx, old_sym_id) in &result.node_symbols {
+        for (node_idx, old_sym_id) in result.node_symbols.iter() {
             if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                 remapped_node_symbols.insert(*node_idx, new_sym_id);
             }
@@ -3291,7 +3304,11 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             file_name: result.file_name.clone(),
             source_file: result.source_file,
             arena: Arc::clone(&result.arena),
-            node_symbols: remapped_node_symbols,
+            // Wrap once here. `cross_file_node_symbols` (built later) takes
+            // an Arc::clone of `file.node_symbols`, so the underlying
+            // `FxHashMap<u32, SymbolId>` is shared via refcount instead of
+            // deep-cloned per consumer.
+            node_symbols: Arc::new(remapped_node_symbols),
             symbol_arenas: remapped_symbol_arenas,
             declaration_arenas: remapped_declaration_arenas,
             module_declaration_exports_publicly: result.module_declaration_exports_publicly.clone(),
@@ -3330,9 +3347,12 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
 
     // Build cross_file_node_symbols: map each arena pointer to its remapped node_symbols.
     // This enables the checker to resolve type references in cross-file interface declarations.
+    // `file.node_symbols` is now `Arc<FxHashMap<...>>`, so cloning the Arc is an
+    // O(1) refcount bump that shares the underlying map with the per-file
+    // `BoundFile` instead of deep-cloning it.
     for file in &files {
         let arena_ptr = Arc::as_ptr(&file.arena) as usize;
-        cross_file_node_symbols.insert(arena_ptr, Arc::new(file.node_symbols.clone()));
+        cross_file_node_symbols.insert(arena_ptr, Arc::clone(&file.node_symbols));
     }
 
     // Validate skeleton data against legacy merge state before construction.
@@ -4057,7 +4077,7 @@ fn build_lib_bound_file_for_interface_checks(
         file_name: lib_file.file_name.clone(),
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
-        node_symbols,
+        node_symbols: Arc::new(node_symbols),
         symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: FxHashMap::default(),
@@ -4870,7 +4890,9 @@ pub fn create_binder_from_bound_file(
         BinderOptions::default(),
         program.symbols.clone(),
         file_locals,
-        file.node_symbols.clone(),
+        // Arc::clone is O(1); cross-file lookup binders share the per-file
+        // map by reference instead of deep-cloning it.
+        Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
@@ -4973,7 +4995,9 @@ pub fn create_binder_from_bound_file_with_shared(
         BinderOptions::default(),
         program.symbols.clone(),
         file_locals,
-        file.node_symbols.clone(),
+        // Arc::clone is O(1); cross-file lookup binders share the per-file
+        // map by reference instead of deep-cloning it.
+        Arc::clone(&file.node_symbols),
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),

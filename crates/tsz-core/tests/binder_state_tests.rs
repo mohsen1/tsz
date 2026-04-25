@@ -2446,7 +2446,7 @@ fn test_symbol_table_validation_broken_links() {
     binder.bind_source_file(arena, root);
 
     let fake_sym_id = crate::binder::SymbolId(99999);
-    binder.node_symbols.insert(100, fake_sym_id);
+    std::sync::Arc::make_mut(&mut binder.node_symbols).insert(100, fake_sym_id);
 
     let errors = binder.validate_symbol_table();
     assert!(!errors.is_empty());

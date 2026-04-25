@@ -19,7 +19,7 @@ impl BinderState {
     pub fn validate_symbol_table(&self) -> Vec<ValidationError> {
         let mut errors = Vec::new();
 
-        for (&node_idx, &sym_id) in &self.node_symbols {
+        for (&node_idx, &sym_id) in self.node_symbols.iter() {
             if self.symbols.get(sym_id).is_none() {
                 errors.push(ValidationError::BrokenSymbolLink {
                     node_index: node_idx,
