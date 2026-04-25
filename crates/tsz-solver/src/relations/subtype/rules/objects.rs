@@ -551,7 +551,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(receiver) = receiver.map(|receiver| self.normalize_receiver_type(receiver))
             && crate::contains_this_type(self.interner, type_id)
         {
-            crate::substitute_this_type(self.interner, type_id, receiver)
+            crate::substitute_this_type_cached(self.interner, self.query_db, type_id, receiver)
         } else {
             type_id
         }

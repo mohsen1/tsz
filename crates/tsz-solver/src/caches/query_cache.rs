@@ -1284,6 +1284,30 @@ impl QueryDatabase for QueryCache<'_> {
         );
     }
 
+    /// Look up a cross-call `instantiate_type` result.
+    ///
+    /// PR 3/4 of `docs/plan/perf-instantiate-type-cache-design.md`. Hit/miss
+    /// counters mirror the subtype counters and feed `QueryCacheStatistics`.
+    fn lookup_instantiation_cache(&self, key: &InstantiationCacheKey) -> Option<TypeId> {
+        match self.instantiation_cache.lookup(key) {
+            Some(result) => {
+                self.instantiation_cache_hits
+                    .set(self.instantiation_cache_hits.get() + 1);
+                Some(result)
+            }
+            None => {
+                self.instantiation_cache_misses
+                    .set(self.instantiation_cache_misses.get() + 1);
+                None
+            }
+        }
+    }
+
+    /// Store an `instantiate_type` result in the cross-call cache.
+    fn insert_instantiation_cache(&self, key: InstantiationCacheKey, result: TypeId) {
+        self.instantiation_cache.insert(key, result);
+    }
+
     fn is_subtype_of_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
         // Fast identity/top/bottom paths — avoid cache key construction, RefCell
         // borrow, and SubtypeChecker allocation entirely.
