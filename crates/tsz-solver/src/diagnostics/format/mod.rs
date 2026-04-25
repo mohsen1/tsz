@@ -374,6 +374,13 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Preserve optional parameter surface syntax when formatting type output.
+    /// When false, optional params append `| undefined` unless already present.
+    pub const fn with_preserve_optional_parameter_surface_syntax(mut self, preserve: bool) -> Self {
+        self.preserve_optional_parameter_surface_syntax = preserve;
+        self
+    }
+
     /// Preserve enough generic alias context for very long TS2339 receiver types
     /// while still eliding nested structural object branches.
     pub const fn with_long_property_receiver_display(mut self) -> Self {
@@ -432,13 +439,6 @@ impl<'a> TypeFormatter<'a> {
             self.preserve_optional_property_surface_syntax = true;
             self.preserve_optional_parameter_surface_syntax = true;
         }
-        self
-    }
-
-    /// Preserve optional parameter surface syntax when rendering type output.
-    /// When false, optional params append `| undefined` unless already present.
-    pub const fn with_preserve_optional_parameter_surface_syntax(mut self, preserve: bool) -> Self {
-        self.preserve_optional_parameter_surface_syntax = preserve;
         self
     }
 
