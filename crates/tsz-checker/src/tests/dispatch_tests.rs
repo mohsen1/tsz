@@ -1493,6 +1493,36 @@ fn ts2352_tuple_different_length_assertion() {
     );
 }
 
+#[test]
+fn ts2352_generic_assertion_uses_type_parameter_constraint() {
+    // Repro for `genericWithNoConstraintComparableWithCurlyCurly` behavior: an assertion to a
+    // constrained type parameter should be checked against the constraint for TS2352 overlap. The
+    // `no` case should report TS2352 (null doesn't satisfy `object | null | undefined`), while
+    // `yes` should not because `object | null | undefined` is the constrained target.
+    let diags = check_source_diagnostics(
+        r#"
+function no<T extends {}>(x: null): T {
+    return x as T;
+}
+
+function yes<T extends object | null | undefined>(x: null): T {
+    return x as T;
+}
+"#,
+    );
+
+    let ts2352: Vec<_> = diags.iter().filter(|d| d.code == 2352).collect();
+    assert_eq!(
+        ts2352.len(),
+        1,
+        "Expected exactly one TS2352 diagnostic (from `no`), got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // Property access narrowing (this.X after equality checks)
 // =============================================================================
