@@ -170,19 +170,23 @@ impl Server {
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_modules_arc = Arc::new(resolved_modules);
 
-        // Build skeleton indices if available
-        let (skeleton_declared_modules, skeleton_expando_index) = if let Some(ref skel) =
-            program.skeleton_index
-        {
+        // Build skeleton indices if available (Phase 2 step 2 added the
+        // module-augmentations index here too).
+        let (
+            skeleton_declared_modules,
+            skeleton_expando_index,
+            skeleton_module_augmentations_index,
+        ) = if let Some(ref skel) = program.skeleton_index {
             let (exact, patterns) = skel.build_declared_module_sets();
             (
                 Some(Arc::new(
                     tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
                 )),
                 Some(Arc::new(skel.expando_properties.clone())),
+                Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
             )
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         let mut project_env = ProjectEnv {
@@ -191,6 +195,7 @@ impl Server {
             all_binders,
             skeleton_declared_modules,
             skeleton_expando_index,
+            skeleton_module_augmentations_index,
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
@@ -416,19 +421,23 @@ impl Server {
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_modules_arc = Arc::new(resolved_modules);
 
-        // Build skeleton indices if available
-        let (skeleton_declared_modules, skeleton_expando_index) = if let Some(ref skel) =
-            program.skeleton_index
-        {
+        // Build skeleton indices if available (Phase 2 step 2 added the
+        // module-augmentations index here too).
+        let (
+            skeleton_declared_modules,
+            skeleton_expando_index,
+            skeleton_module_augmentations_index,
+        ) = if let Some(ref skel) = program.skeleton_index {
             let (exact, patterns) = skel.build_declared_module_sets();
             (
                 Some(Arc::new(
                     tsz::checker::context::GlobalDeclaredModules::from_skeleton(exact, patterns),
                 )),
                 Some(Arc::new(skel.expando_properties.clone())),
+                Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
             )
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         let mut project_env = ProjectEnv {
@@ -437,6 +446,7 @@ impl Server {
             all_binders,
             skeleton_declared_modules,
             skeleton_expando_index,
+            skeleton_module_augmentations_index,
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };

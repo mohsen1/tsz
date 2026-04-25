@@ -756,6 +756,20 @@ pub(super) fn collect_diagnostics(
         .as_ref()
         .map(|skel| Arc::new(skel.expando_properties.clone()));
 
+    // Phase 2 step 2: pre-compute the merged module-augmentations index from
+    // skeleton data. The skeleton recorded each augmenting declaration's name
+    // + StableLocation at extract time; this projection rehydrates them into
+    // the legacy `Vec<(file_idx, ModuleAugmentation)>` shape so checker
+    // consumers (`module_augmentation.rs`, `property_access_augmentation.rs`)
+    // see no behavior change. The legacy per-binder loop in
+    // `ProjectEnv::build_global_indices` is skipped when this is `Some`.
+    let skeleton_module_augmentations_index: Option<
+        tsz::checker::context::GlobalModuleAugmentationsIndex,
+    > = program
+        .skeleton_index
+        .as_ref()
+        .map(|skel| Arc::new(skel.build_module_augmentations_index(&all_arenas)));
+
     // Build the project-wide shared environment once for all checkers (prime, parallel, sequential).
     // build_global_indices computes the 4 binder-derived indices once here so that
     // per-file checker creation via apply_to skips the O(N) binder scans.
@@ -788,6 +802,7 @@ pub(super) fn collect_diagnostics(
         all_binders: Arc::clone(&all_binders),
         skeleton_declared_modules,
         skeleton_expando_index,
+        skeleton_module_augmentations_index,
         symbol_file_targets: Arc::clone(&symbol_file_targets),
         resolved_module_paths: Arc::clone(&resolved_module_paths),
         resolved_module_request_paths: Arc::clone(&resolved_module_request_paths),

@@ -26,4 +26,4 @@ pub use state::{
     FileReexports, FileReexportsMap, GlobalAugmentation, LibContext, ModuleAugmentation,
     ReexportTarget, SemanticDefEntry, SemanticDefKind, SymToDeclIndicesMap, ValidationError,
 };
-pub use symbols::{Symbol, SymbolArena, SymbolId, SymbolTable, symbol_flags};
+pub use symbols::{StableLocation, Symbol, SymbolArena, SymbolId, SymbolTable, symbol_flags};
