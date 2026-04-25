@@ -108,6 +108,10 @@ name = "type_alias_typeof_circular_tests"
 path = "tests/type_alias_typeof_circular_tests.rs"
 
 [[test]]
+name = "ts2303_tests"
+path = "tests/ts2303_tests.rs"
+
+[[test]]
 name = "namespace_qualified_diagnostic_tests"
 path = "tests/namespace_qualified_diagnostic_tests.rs"
 

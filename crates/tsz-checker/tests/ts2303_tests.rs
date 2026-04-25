@@ -84,6 +84,24 @@ declare module "node:events" {
 }
 
 #[test]
+fn ambient_require_alias_self_import_still_reports_ts2303() {
+    // `declare module "moduleC" { import self = require("moduleC"); ... }` —
+    // the require target equals the enclosing ambient module's specifier, so
+    // the alias really is self-referential. tsc emits TS2303; we must too.
+    let source = r#"
+declare module "moduleC" {
+    import self = require("moduleC");
+    export = self;
+}
+"#;
+    let diagnostics = get_diagnostics(source, "self.d.ts");
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2303),
+        "Expected TS2303 for `import self = require(\"moduleC\")` inside `declare module \"moduleC\"`. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn export_equals_global_augmentation_namespace_cycle_reports_ts2303_not_ts2686() {
     let source = r#"
 declare global { namespace N {} }
