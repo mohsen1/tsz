@@ -19,6 +19,7 @@ use crate::lib_loader::LibFile;
 use crate::lowering::LoweringPass;
 use crate::lsp::diagnostics::convert_diagnostic;
 use crate::lsp::position::{LineMap, Position, Range};
+use crate::lsp::provider_macro::FullProviderOptions;
 use crate::lsp::resolver::ScopeCache;
 use crate::lsp::{
     CodeActionProvider, Completions, DocumentSymbolProvider, FindReferences, GoToDefinition,
@@ -738,6 +739,16 @@ impl Parser {
         }
     }
 
+    fn lib_contexts(&self) -> Vec<LibContext> {
+        self.lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect()
+    }
+
     /// Ensure source file is parsed and bound.
     fn ensure_bound(&mut self) -> Result<(), JsValue> {
         if self.source_file_idx.is_none() {
@@ -849,16 +860,20 @@ impl Parser {
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
         let checker_options = self.compiler_options.to_checker_options();
+        let lib_contexts = self.lib_contexts();
 
-        let provider = Completions::with_options(
+        let provider = Completions::with_options_and_lib_contexts(
             self.parser.get_arena(),
             binder,
             line_map,
             &self.type_interner,
             source_text,
             file_name,
-            checker_options.strict,
-            checker_options.sound_mode,
+            FullProviderOptions {
+                strict: checker_options.strict,
+                sound_mode: checker_options.sound_mode,
+                lib_contexts: &lib_contexts,
+            },
         );
         let pos = Position::new(line, character);
 
@@ -892,16 +907,20 @@ impl Parser {
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
         let checker_options = self.compiler_options.to_checker_options();
+        let lib_contexts = self.lib_contexts();
 
-        let provider = HoverProvider::with_options(
+        let provider = HoverProvider::with_options_and_lib_contexts(
             self.parser.get_arena(),
             binder,
             line_map,
             &self.type_interner,
             source_text,
             file_name,
-            checker_options.strict,
-            checker_options.sound_mode,
+            FullProviderOptions {
+                strict: checker_options.strict,
+                sound_mode: checker_options.sound_mode,
+                lib_contexts: &lib_contexts,
+            },
         );
         let pos = Position::new(line, character);
 
@@ -939,16 +958,20 @@ impl Parser {
         let source_text = self.parser.get_source_text();
         let file_name = self.parser.get_file_name().to_string();
         let checker_options = self.compiler_options.to_checker_options();
+        let lib_contexts = self.lib_contexts();
 
-        let provider = SignatureHelpProvider::with_options(
+        let provider = SignatureHelpProvider::with_options_and_lib_contexts(
             self.parser.get_arena(),
             binder,
             line_map,
             &self.type_interner,
             source_text,
             file_name,
-            checker_options.strict,
-            checker_options.sound_mode,
+            FullProviderOptions {
+                strict: checker_options.strict,
+                sound_mode: checker_options.sound_mode,
+                lib_contexts: &lib_contexts,
+            },
         );
         let pos = Position::new(line, character);
 
