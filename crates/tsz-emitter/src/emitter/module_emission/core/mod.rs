@@ -130,14 +130,29 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
         let base = crate::transforms::emit_utils::sanitize_module_name(module_spec);
-        let next = self
-            .ctx
-            .module_state
-            .module_temp_counters
-            .entry(base.clone())
-            .and_modify(|n| *n += 1)
-            .or_insert(1);
-        format!("{base}_{next}")
+        // Advance the per-base counter until we find a candidate that does
+        // not collide with a user-declared identifier or a previously
+        // generated temp name. Without this, an import temp like `foo_1`
+        // can shadow or be redeclared by a user-authored `foo_1`, producing
+        // emit output that is invalid JS (e.g. `var foo_1` followed by
+        // `const foo_1 = require(...)` is a redeclaration error).
+        loop {
+            let counter = self
+                .ctx
+                .module_state
+                .module_temp_counters
+                .entry(base.clone())
+                .and_modify(|n| *n += 1)
+                .or_insert(1);
+            let candidate = format!("{base}_{counter}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+            // Counter already advanced; loop tries the next suffix.
+        }
     }
 
     /// Emit a CommonJS export with optional hoisting of the export assignment.

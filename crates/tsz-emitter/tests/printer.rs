@@ -264,6 +264,51 @@ fn test_commonjs_module_temp_vars_do_not_collide() {
 }
 
 #[test]
+fn test_commonjs_module_temp_var_avoids_collision_with_local_identifier() {
+    // Regression: `next_commonjs_module_var` increments a per-base counter
+    // but does not consult `file_identifiers`, so a user-declared `foo_1`
+    // collides with the synthetic `foo_1` chosen for `import … from "./foo"`.
+    // The synthetic name should pick the next free suffix.
+    let source = r#"var foo_1 = "user";
+import { x } from "./foo";
+console.log(x, foo_1);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    // The user's `foo_1` is alive at the import site; the import temp must
+    // pick a different suffix (foo_2 or higher) to avoid redeclaring the
+    // identifier in the emitted JS.
+    let user_decl_count = output
+        .lines()
+        .filter(|line| line.contains("foo_1") && line.contains("\"user\""))
+        .count();
+    let import_decl_count = output
+        .lines()
+        .filter(|line| line.contains("foo_1") && line.contains("require(\"./foo\")"))
+        .count();
+    assert_eq!(
+        user_decl_count, 1,
+        "expected the user's `var foo_1 = \"user\"` to survive emission; output:\n{output}"
+    );
+    assert_eq!(
+        import_decl_count, 0,
+        "import temp must not collide with user-declared `foo_1`; output:\n{output}"
+    );
+}
+
+#[test]
 fn test_es5_class_expression_uses_variable_declaration_name() {
     let source = "const C = class { method() { return 1; } };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
