@@ -2,7 +2,7 @@
 //! - TS2493: Tuple out-of-bounds on single tuple types
 //! - TS2339: Property does not exist on union-of-tuple types
 
-use crate::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::check_source_diagnostics;
 
 #[test]
 fn test_type_level_tuple_out_of_bounds_ts2493() {
@@ -78,5 +78,37 @@ type T21 = T2[1];
         diagnostics.iter().all(|d| d.code != 2339 && d.code != 2493),
         "Expected no TS2339/TS2493 for valid union tuple index, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Regression: errorForUsingPropertyOfTypeAsType03.ts
+/// `type C1 = Color` is a type alias for an enum.  Accessing a non-existent
+/// property on `C1` (e.g. `C1["Red"]`) should report the error against the
+/// underlying enum's nominal name (`'Color'`), not the alias (`'C1'`).
+/// tsc treats type aliases for enums transparently in TS2339 messages.
+#[test]
+fn test_ts2339_type_alias_for_enum_displays_underlying_enum_name() {
+    let diagnostics = check_source_diagnostics(
+        r"
+namespace Test1 {
+    enum Color { Red, Green, Blue }
+    type C1 = Color;
+    let c3: C1['Red']['toString'];
+}
+",
+    );
+    let ts2339 = diagnostics
+        .iter()
+        .find(|d| d.code == 2339)
+        .expect("expected TS2339 for non-existent property on alias-of-enum");
+    assert!(
+        ts2339.message_text.contains("on type 'Color'"),
+        "TS2339 should display underlying enum name `Color`, got: {}",
+        ts2339.message_text
+    );
+    assert!(
+        !ts2339.message_text.contains("on type 'C1'"),
+        "TS2339 must not display alias name `C1`, got: {}",
+        ts2339.message_text
     );
 }
