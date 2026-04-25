@@ -88,6 +88,12 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        // For class components with `static defaultProps`, treat the keys of
+        // defaultProps as already-provided so required-prop checks don't reject
+        // overloads where the value would be supplied by the class default.
+        // This mirrors tsc's `LibraryManagedAttributes` relaxation.
+        let default_props_keys = self.collect_jsx_default_props_keys(component_type);
+
         // Try each overload
         let has_any_attrs = !attrs_info.attrs.is_empty() || attrs_info.has_spread;
         let mut shared_explicit_anchor_name: Option<String> = None;
@@ -156,7 +162,7 @@ impl<'a> CheckerState<'a> {
                 resolved
             };
 
-            if self.jsx_attrs_match_overload(&attrs_info, props_resolved) {
+            if self.jsx_attrs_match_overload(&attrs_info, props_resolved, &default_props_keys) {
                 // Found a matching overload — done.
                 // Roll back speculative diagnostics from attribute collection.
                 guard.rollback(&mut self.ctx);
@@ -361,7 +367,12 @@ impl<'a> CheckerState<'a> {
     /// 1. All required props in the overload must be provided
     /// 2. No excess properties from EXPLICIT attributes (spread props are exempt)
     /// 3. Provided attribute types must be assignable to expected prop types
-    fn jsx_attrs_match_overload(&mut self, info: &JsxAttrsInfo, props_type: TypeId) -> bool {
+    fn jsx_attrs_match_overload(
+        &mut self,
+        info: &JsxAttrsInfo,
+        props_type: TypeId,
+        default_props_keys: &rustc_hash::FxHashSet<String>,
+    ) -> bool {
         if props_type == TypeId::ANY || props_type == TypeId::ERROR {
             return true;
         }
@@ -390,12 +401,17 @@ impl<'a> CheckerState<'a> {
 
         // Check 1: All required props must be provided.
         // Children are now included in provided_names via synthesis above.
+        // Props supplied by `static defaultProps` are treated as provided too,
+        // matching tsc's `LibraryManagedAttributes` relaxation.
         if !info.has_any_spread {
             for prop in &shape.properties {
                 if prop.optional {
                     continue;
                 }
                 let prop_name = self.ctx.types.resolve_atom(prop.name);
+                if default_props_keys.contains(prop_name.as_str()) {
+                    continue;
+                }
                 if !provided_names.contains(prop_name.as_str()) {
                     return false;
                 }
@@ -407,10 +423,16 @@ impl<'a> CheckerState<'a> {
         // when all attrs come from spreads, no excess check occurs.
         // Hyphenated attribute names (e.g., `extra-prop`) are also exempt — in JSX,
         // they are only checked against string index signatures, not named properties.
+        // Synthesized attrs (no source name token, e.g. `children` from JSX body) are
+        // also exempt: they aren't user-written attributes, and class components'
+        // constructor props type doesn't include the children injected by JSX.
         if !has_string_index {
             for attr in &info.attrs {
                 if attr.from_spread {
                     continue; // Spreads are exempt from excess checking
+                }
+                if attr.name_node_idx.is_none() {
+                    continue; // Synthesized attrs (e.g. JSX children) exempt
                 }
                 if attr.name.contains('-') {
                     continue; // Hyphenated attrs exempt from excess checking
@@ -441,6 +463,37 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    /// Collect the set of property names declared in the component's
+    /// `static defaultProps` (if any). Used to relax required-prop checks
+    /// during overload resolution: a prop with a default value should not
+    /// fail an overload just because the JSX call doesn't provide it.
+    fn collect_jsx_default_props_keys(
+        &mut self,
+        component_type: TypeId,
+    ) -> rustc_hash::FxHashSet<String> {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let mut keys: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        let dp_type = match self.resolve_property_access_with_env(component_type, "defaultProps") {
+            PropertyAccessResult::Success { type_id, .. }
+            | PropertyAccessResult::PossiblyNullOrUndefined {
+                property_type: Some(type_id),
+                ..
+            } => type_id,
+            _ => return keys,
+        };
+        let evaluated = self.evaluate_application_type(dp_type);
+        let evaluated = self.evaluate_type_with_env(evaluated);
+        if let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
+        {
+            for prop in &shape.properties {
+                let name = self.ctx.types.resolve_atom(prop.name);
+                keys.insert(name.to_string());
+            }
+        }
+        keys
     }
 
     /// Returns the explicit attribute name that best explains an overload mismatch.
