@@ -180,6 +180,7 @@ impl Server {
             skeleton_module_augmentations_index,
             skeleton_augmentation_targets_index,
             skeleton_module_binder_index,
+            skeleton_module_exports_index,
         ) = if let Some(ref skel) = program.skeleton_index {
             let (exact, patterns) = skel.build_declared_module_sets();
             (
@@ -190,9 +191,12 @@ impl Server {
                 Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
                 Some(Arc::new(skel.build_augmentation_targets_index())),
                 Some(Arc::new(skel.build_module_binder_index())),
+                Some(Arc::new(
+                    skel.build_module_exports_index(&program.module_exports),
+                )),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         let mut project_env = ProjectEnv {
@@ -204,6 +208,7 @@ impl Server {
             skeleton_module_augmentations_index,
             skeleton_augmentation_targets_index,
             skeleton_module_binder_index,
+            skeleton_module_exports_index,
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
@@ -439,6 +444,7 @@ impl Server {
             skeleton_module_augmentations_index,
             skeleton_augmentation_targets_index,
             skeleton_module_binder_index,
+            skeleton_module_exports_index,
         ) = if let Some(ref skel) = program.skeleton_index {
             let (exact, patterns) = skel.build_declared_module_sets();
             (
@@ -449,9 +455,12 @@ impl Server {
                 Some(Arc::new(skel.build_module_augmentations_index(&all_arenas))),
                 Some(Arc::new(skel.build_augmentation_targets_index())),
                 Some(Arc::new(skel.build_module_binder_index())),
+                Some(Arc::new(
+                    skel.build_module_exports_index(&program.module_exports),
+                )),
             )
         } else {
-            (None, None, None, None, None)
+            (None, None, None, None, None, None)
         };
 
         let mut project_env = ProjectEnv {
@@ -463,6 +472,7 @@ impl Server {
             skeleton_module_augmentations_index,
             skeleton_augmentation_targets_index,
             skeleton_module_binder_index,
+            skeleton_module_exports_index,
             resolved_module_paths: Arc::new(resolved_module_paths),
             ..Default::default()
         };
