@@ -716,13 +716,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             }
                         }
                     }
-                    if !this_types.is_empty() {
-                        let mut combined_this = this_types[0];
-                        for &this_type in &this_types[1..] {
-                            combined_this = self.interner.intersection2(combined_this, this_type);
-                        }
-                        force_union_this_type = Some(combined_this);
+                    if this_types.is_empty() {
+                        return CallResult::NotCallable {
+                            type_id: union_type,
+                        };
                     }
+
+                    let mut combined_this = this_types[0];
+                    for &this_type in &this_types[1..] {
+                        combined_this = self.interner.intersection2(combined_this, this_type);
+                    }
+                    force_union_this_type = Some(combined_this);
 
                     force_not_callable_with_this_mismatch = true;
                 }

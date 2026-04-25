@@ -1983,6 +1983,26 @@ x1.f3();
 }
 
 #[test]
+fn union_multi_overload_incompatible_without_this_emits_ts2349() {
+    let source = r#"
+interface F1 {
+    (x: string): void;
+    (x: number): void;
+}
+interface F2 {
+    (x: boolean): void;
+    (x: undefined): void;
+}
+declare let f: F1 | F2;
+f("hello");
+"#;
+    assert!(
+        has_error(source, 2349),
+        "Union of incompatible non-this multi-overload interfaces should remain not callable"
+    );
+}
+
+#[test]
 fn union_multi_overload_compatible_this_no_ts2349() {
     // When multi-overload union members DO have a compatible signature pair,
     // the union IS callable (no TS2349). The this-type is intersected.
