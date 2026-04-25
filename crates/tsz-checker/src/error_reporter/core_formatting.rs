@@ -154,6 +154,7 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::TypeFormatter::with_symbols(state.ctx.types, &state.ctx.binder.symbols)
                     .with_def_store(&state.ctx.definition_store)
                     .with_diagnostic_mode()
+                    .with_preserve_optional_parameter_surface_syntax(false)
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks);
             formatter.format(type_id).into_owned()
         };
