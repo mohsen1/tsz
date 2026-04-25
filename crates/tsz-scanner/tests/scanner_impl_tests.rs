@@ -1,10 +1,12 @@
 use tsz_scanner::SyntaxKind;
-use tsz_scanner::scanner_impl::{RegexFlagErrorKind, ScannerState};
+use tsz_scanner::scanner_impl::RegexFlagErrorKind;
+
+mod common;
+use common::make_scanner;
 
 #[test]
 fn slash_token_is_lexed_and_re_scanned_as_regex_in_context() {
-    let source = "/foo/gim".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("/foo/gim");
 
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::SlashToken);
@@ -17,8 +19,7 @@ fn slash_token_is_lexed_and_re_scanned_as_regex_in_context() {
 
 #[test]
 fn slash_equals_is_not_promoted_to_regex_by_default_scan() {
-    let source = "a /= 2".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("a /= 2");
 
     let _ = scanner.scan(); // identifier
     let token = scanner.scan(); // SlashEqualsToken
@@ -27,8 +28,7 @@ fn slash_equals_is_not_promoted_to_regex_by_default_scan() {
 
 #[test]
 fn re_scan_slash_token_reports_duplicate_regex_flags() {
-    let source = "/foo/ggi".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("/foo/ggi");
 
     let _ = scanner.scan();
     let token = scanner.re_scan_slash_token();
@@ -46,8 +46,7 @@ fn re_scan_slash_token_reports_duplicate_regex_flags() {
 
 #[test]
 fn re_scan_slash_token_reports_invalid_and_incompatible_regex_flags() {
-    let source = "/foo/gxu".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("/foo/gxu");
 
     let _ = scanner.scan();
     let token = scanner.re_scan_slash_token();
@@ -71,8 +70,7 @@ fn re_scan_slash_token_reports_invalid_and_incompatible_regex_flags() {
 
 #[test]
 fn re_scan_slash_token_detects_incompatible_u_and_v_flags() {
-    let source = "/foo/ugv".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("/foo/ugv");
 
     let _ = scanner.scan();
     let token = scanner.re_scan_slash_token();
@@ -90,8 +88,7 @@ fn re_scan_slash_token_detects_incompatible_u_and_v_flags() {
 
 #[test]
 fn re_scan_greater_token_handles_three_token_variants() {
-    let source = "x >>>= y".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("x >>>= y");
 
     let _ = scanner.scan(); // identifier
     let token = scanner.scan(); // initial >
@@ -106,8 +103,7 @@ fn re_scan_greater_token_handles_three_token_variants() {
 
 #[test]
 fn re_scan_greater_token_handles_bitshift_assignment_chain() {
-    let source = "a >> b >>> c".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("a >> b >>> c");
 
     let _ = scanner.scan(); // identifier
     let token = scanner.scan(); // first >
@@ -121,8 +117,7 @@ fn re_scan_greater_token_handles_bitshift_assignment_chain() {
 
 #[test]
 fn template_re_scan_tail_recovers_unterminated_tail() {
-    let source = "`a${1 + 2`".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("`a${1 + 2`");
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::TemplateHead);
 
@@ -137,8 +132,7 @@ fn template_re_scan_tail_recovers_unterminated_tail() {
 
 #[test]
 fn scanner_state_snapshot_restore_is_reversible_after_contextual_rescan() {
-    let source = "x >>>= y".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("x >>>= y");
 
     let _ = scanner.scan(); // identifier
     let snapshot = scanner.save_state();
@@ -157,8 +151,7 @@ fn scanner_state_snapshot_restore_is_reversible_after_contextual_rescan() {
 
 #[test]
 fn template_rescan_handles_unicode_micro_sign() {
-    let source = "const value = `${500}µs`;".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("const value = `${500}µs`;");
 
     loop {
         let token = scanner.scan();
@@ -185,14 +178,12 @@ fn template_rescan_handles_unicode_micro_sign() {
 
 #[test]
 fn template_scan_preserves_escape_sequences() {
-    let source = "`hello\\nworld`".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("`hello\\nworld`");
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
     assert_eq!(scanner.get_token_value(), "hello\nworld");
 
-    let source = "`hello\\${string}`".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("`hello\\${string}`");
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
     assert_eq!(scanner.get_token_value(), "hello${string}");
@@ -200,8 +191,7 @@ fn template_scan_preserves_escape_sequences() {
 
 #[test]
 fn template_no_substitution_handles_unicode_micro_sign() {
-    let source = "`500µs`".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("`500µs`");
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::NoSubstitutionTemplateLiteral);
     assert_eq!(scanner.get_token_value(), "500µs");
@@ -209,8 +199,7 @@ fn template_no_substitution_handles_unicode_micro_sign() {
 
 #[test]
 fn re_scan_less_than_token_recognizes_closing_tag() {
-    let source = "</tag>".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("</tag>");
 
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::LessThanToken);
@@ -222,8 +211,7 @@ fn re_scan_less_than_token_recognizes_closing_tag() {
 
 #[test]
 fn scan_hash_token_promotes_to_private_identifier_directly() {
-    let source = "#myField".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("#myField");
 
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::PrivateIdentifier);
@@ -232,7 +220,7 @@ fn scan_hash_token_promotes_to_private_identifier_directly() {
 
 #[test]
 fn scan_recognizes_regex_at_file_start_via_rescan() {
-    let mut scanner = ScannerState::new("/foo/gim".to_string(), true);
+    let mut scanner = make_scanner("/foo/gim");
     let token = scanner.scan();
 
     assert_eq!(token, SyntaxKind::SlashToken);
@@ -244,8 +232,7 @@ fn scan_recognizes_regex_at_file_start_via_rescan() {
 
 #[test]
 fn re_scan_hash_token_keeps_plain_hash_when_no_identifier_follows() {
-    let source = "#".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner("#");
 
     let token = scanner.scan();
     assert_eq!(token, SyntaxKind::HashToken);
@@ -256,7 +243,7 @@ fn re_scan_hash_token_keeps_plain_hash_when_no_identifier_follows() {
 
 #[test]
 fn scan_distinguishes_division_and_regular_expression_tokenization() {
-    let mut scanner = ScannerState::new("value = 42 / 2;".to_string(), true);
+    let mut scanner = make_scanner("value = 42 / 2;");
 
     let _ = scanner.scan(); // value
     let _ = scanner.scan(); // =
@@ -267,7 +254,7 @@ fn scan_distinguishes_division_and_regular_expression_tokenization() {
 
 #[test]
 fn scanner_set_text_slice_scan_window() {
-    let mut scanner = ScannerState::new("const ignored = 1;".to_string(), true);
+    let mut scanner = make_scanner("const ignored = 1;");
     scanner.set_text("x = 99 + 1".to_string(), Some(4), Some(2));
     scanner.reset_token_state(4);
 
@@ -283,8 +270,7 @@ fn re_scan_jsx_token_includes_leading_whitespace() {
     // (newline + spaces) and scans the first identifier. re_scan_jsx_token must
     // reset to full_start_pos (before trivia) so the JSX text node includes
     // leading whitespace and newlines, matching tsc behavior.
-    let source = ">\n        hi hi hi!\n    <".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner(">\n        hi hi hi!\n    <");
 
     // Regular scan: skips trivia, scans "hi" as identifier
     let token = scanner.scan();
@@ -308,8 +294,7 @@ fn re_scan_jsx_token_clears_stale_identifier_atom() {
     // After scanning an identifier, token_atom is set. re_scan_jsx_token must
     // clear token_atom so get_token_value_ref() returns the JSX text, not
     // the stale identifier string.
-    let source = ">\n    text\n<".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner(">\n    text\n<");
 
     scanner.scan(); // >
     scanner.scan(); // "text" as identifier
@@ -331,8 +316,7 @@ fn re_scan_jsx_token_clears_stale_identifier_atom() {
 #[test]
 fn re_scan_jsx_token_single_line_text() {
     // JSX text without leading trivia should also work correctly
-    let source = ">hello world<".to_string();
-    let mut scanner = ScannerState::new(source, true);
+    let mut scanner = make_scanner(">hello world<");
 
     scanner.scan(); // >
     scanner.scan(); // "hello" as identifier
@@ -345,11 +329,10 @@ fn re_scan_jsx_token_single_line_text() {
 #[test]
 fn test_template_rescan_invalid_hex_escape() {
     use tsz_scanner::SyntaxKind;
-    use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
+    use tsz_scanner::scanner_impl::TokenFlags;
 
     // Template tail with invalid hex escape
-    let source = r#"}\xtraordinary`"#;
-    let mut scanner = ScannerState::new(source.to_string(), true);
+    let mut scanner = make_scanner(r#"}\xtraordinary`"#);
 
     // First scan the }
     scanner.scan();
