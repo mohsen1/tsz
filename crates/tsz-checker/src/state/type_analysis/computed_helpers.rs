@@ -536,6 +536,32 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Type query (typeof X): per the TS spec, "a type query directly depends
+        // on the type of the referenced entity". When the alias body is a
+        // TYPE_QUERY at the top level (`type T = typeof X`) pointing at a
+        // non-self variable, look at that variable's annotation AST and check
+        // whether it references any alias on the resolution chain. We inspect
+        // the AST rather than evaluate x's type to avoid re-entering type alias
+        // resolution for x → typeof x → alias.
+        if let Some(node) = self.ctx.arena.get(type_node)
+            && node.kind == syntax_kind_ext::TYPE_QUERY
+            && let Some(type_query) = self.ctx.arena.get_type_query(node)
+        {
+            let entity_idx = type_query.expr_name;
+            // The entity in `typeof X` is a value identifier — use the
+            // value-position resolver, not the type-position one.
+            if entity_idx != NodeIndex::NONE
+                && let Some(query_raw) = self.resolve_value_symbol_for_lowering(entity_idx)
+            {
+                let query_sym_id = SymbolId(query_raw);
+                if query_sym_id != sym_id
+                    && self.typeof_target_annotation_refs_resolution_chain(query_sym_id)
+                {
+                    return true;
+                }
+            }
+        }
+
         // Skip evaluation when the type contains a TypeQuery (typeof) referencing
         // the symbol being checked. TypeQuery accesses the VALUE namespace, not the
         // TYPE namespace, so `type X = Static<typeof X>` (where `const X` also exists)
@@ -678,6 +704,114 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Walk the AST node tree under `root_idx` and return the SymbolId of any
+    /// type-reference/identifier that resolves to a member of
+    /// `ctx.symbol_resolution_set` and represents a type alias. Descends through
+    /// arrays, tuples, type literals, etc. so that `T5[]` is detected as
+    /// referencing `T5`.
+    fn ast_finds_resolution_chain_alias(&self, root_idx: NodeIndex) -> Option<SymbolId> {
+        let mut stack = vec![root_idx];
+        while let Some(node_idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            // Look at TYPE_REFERENCE or bare Identifier — both can name a type alias.
+            let lookup_target_idx = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                self.ctx.arena.get_type_ref(node).map(|tr| tr.type_name)
+            } else if node.kind == SyntaxKind::Identifier as u16 {
+                Some(node_idx)
+            } else {
+                None
+            };
+            if let Some(target_idx) = lookup_target_idx
+                && let Some(sym_raw) = self.resolve_type_symbol_for_lowering(target_idx)
+            {
+                let sym_id = SymbolId(sym_raw);
+                if self.ctx.symbol_resolution_set.contains(&sym_id) {
+                    let is_type_alias = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
+                    if is_type_alias {
+                        return Some(sym_id);
+                    }
+                }
+            }
+            // A TYPE_REFERENCE with type arguments creates a generic
+            // instantiation boundary — descend into its children only if the
+            // ref itself isn't the chain target.
+            for child_idx in self.ctx.arena.get_children(node_idx) {
+                stack.push(child_idx);
+            }
+        }
+        None
+    }
+
+    /// True when the `typeof X` target's variable annotation references any type
+    /// alias in the current resolution chain. Marks the chain as circular when
+    /// found. AST-only — never resolves x's type, to avoid re-entering alias
+    /// resolution.
+    fn typeof_target_annotation_refs_resolution_chain(&mut self, var_sym_id: SymbolId) -> bool {
+        let decls: Vec<NodeIndex> = match self.ctx.binder.get_symbol(var_sym_id) {
+            Some(symbol) => symbol.declarations.clone(),
+            None => return false,
+        };
+        let mut hit: Option<SymbolId> = None;
+        for decl_idx in decls {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                continue;
+            }
+            let annotation_idx = self
+                .ctx
+                .arena
+                .get_variable_declaration(decl_node)
+                .map(|vd| vd.type_annotation);
+            let Some(annotation_idx) = annotation_idx else {
+                continue;
+            };
+            if annotation_idx == NodeIndex::NONE {
+                continue;
+            }
+            if let Some(found) = self.ast_finds_resolution_chain_alias(annotation_idx) {
+                hit = Some(found);
+                break;
+            }
+        }
+        let Some(found_sym_id) = hit else {
+            return false;
+        };
+        // Mark all aliases on the resolution stack between target and current as circular.
+        let stack_snapshot: Vec<SymbolId> = self.ctx.symbol_resolution_stack.to_vec();
+        let mut found_target = false;
+        for stack_sym in stack_snapshot {
+            if stack_sym == found_sym_id {
+                found_target = true;
+            }
+            if found_target {
+                let is_alias = self
+                    .ctx
+                    .binder
+                    .get_symbol(stack_sym)
+                    .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
+                if is_alias {
+                    self.ctx.circular_type_aliases.insert(stack_sym);
+                    if let Some(did) = self.ctx.get_existing_def_id(stack_sym) {
+                        self.ctx.definition_store.mark_circular_def(did);
+                    }
+                }
+            }
+        }
+        self.ctx.circular_type_aliases.insert(found_sym_id);
+        if let Some(did) = self.ctx.get_existing_def_id(found_sym_id) {
+            self.ctx.definition_store.mark_circular_def(did);
+        }
+        true
     }
 
     /// Check if a non-generic type alias with a mapped type body is circular.
