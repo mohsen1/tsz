@@ -1181,18 +1181,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
             Some(ref name) if name.is_empty() => {
-                // Empty/invalid ElementAttributesProperty -> fall back to first construct param
-                // This matches tsc behavior: when ElementAttributesProperty is invalid,
-                // use the first parameter of the construct signature as the props type.
-                if let Some(first_param) = first_param_type {
-                    let param_type = self.evaluate_type_with_env(first_param);
-                    if param_type != TypeId::ANY && param_type != TypeId::ERROR {
-                        return Some(param_type);
-                    }
-                }
-                // Fall back to instance type if no valid first param
-                let evaluated_instance = self.evaluate_type_with_env(instance_type);
-                Some(evaluated_instance)
+                // Empty ElementAttributesProperty -> use the construct signature's
+                // return (instance) type as the attributes type. This matches tsc:
+                // `forcedLookupLocation === ""` returns `getReturnTypeOfSignature(sig)`.
+                Some(self.evaluate_type_with_env(instance_type))
             }
             Some(ref name) => {
                 // ElementAttributesProperty has a member -> access that property on instance
@@ -1414,7 +1406,12 @@ impl<'a> CheckerState<'a> {
                         &["ElementAttributesProperty"],
                     );
                 }
-                return Some(String::new());
+                // tsc's getJsxElementPropertiesName returns undefined when the
+                // EAP interface declares more than one property. That routes the
+                // attributes type back through the no-EAP branch (first
+                // construct-signature parameter), not the empty-EAP branch
+                // (instance type), so propagate `None` here.
+                return None;
             }
             // Return the name of the first (and typically only) property
             if let Some(first_prop) = shape.properties.first() {
