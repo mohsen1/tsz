@@ -141,7 +141,10 @@ pub mod computation {
     pub use crate::instantiation::instantiate::{
         MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
         instantiate_function_with_type_args, instantiate_generic, instantiate_type,
-        instantiate_type_preserving_meta, instantiate_type_with_depth_status, substitute_this_type,
+        instantiate_type_cached, instantiate_type_preserving, instantiate_type_preserving_cached,
+        instantiate_type_preserving_meta, instantiate_type_preserving_meta_cached,
+        instantiate_type_with_depth_status, instantiate_type_with_infer,
+        instantiate_type_with_infer_cached, substitute_this_type, substitute_this_type_cached,
     };
 
     // Contextual typing
@@ -221,7 +224,10 @@ pub use instantiation::application::*;
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
-    instantiate_type_preserving_meta, instantiate_type_with_depth_status, substitute_this_type,
+    instantiate_type_cached, instantiate_type_preserving, instantiate_type_preserving_cached,
+    instantiate_type_preserving_meta, instantiate_type_preserving_meta_cached,
+    instantiate_type_with_depth_status, instantiate_type_with_infer,
+    instantiate_type_with_infer_cached, substitute_this_type, substitute_this_type_cached,
 };
 pub use intern::type_factory::*;
 pub use narrowing::*;
@@ -360,6 +366,9 @@ mod function_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/index_access_comprehensive_tests.rs"]
 mod index_access_comprehensive_tests;
+#[cfg(test)]
+#[path = "caches/instantiation_cache_test.rs"]
+mod instantiation_cache_wiring_tests;
 #[cfg(test)]
 #[path = "../tests/interface_comprehensive_tests.rs"]
 mod interface_comprehensive_tests;
