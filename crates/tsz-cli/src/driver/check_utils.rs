@@ -1624,7 +1624,13 @@ pub(super) fn create_binder_from_bound_file_with_augmentations(
             // repos it was paid ~2× per file (cross-file lookup +
             // per-file checking binder).
             flow_nodes: Arc::clone(&file.flow_nodes),
-            node_flow: file.node_flow.clone(),
+            // Arc::clone is O(1); per-file binders share the same `node_flow`
+            // map as the `BoundFile` instead of deep-cloning the underlying
+            // `FxHashMap<u32, FlowNodeId>`. Per-file binders consume this map
+            // read-only after construction (binder mutations during checking
+            // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+            // mutation ever does fire); sharing is safe.
+            node_flow: Arc::clone(&file.node_flow),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
             // Per-binder alias_partners left empty: every checker consumer
@@ -1762,7 +1768,13 @@ pub(super) fn create_cross_file_lookup_binder_with_augmentations(
             // `create_binder_from_bound_file_with_augmentations` for
             // the rationale.
             flow_nodes: Arc::clone(&file.flow_nodes),
-            node_flow: file.node_flow.clone(),
+            // Arc::clone is O(1); cross-file lookup binders share the per-file
+            // `node_flow` map instead of deep-cloning the underlying
+            // `FxHashMap<u32, FlowNodeId>`. Per-file binders consume this map
+            // read-only after construction (binder mutations during checking
+            // are gated by `Arc::make_mut`, which copy-on-writes safely if a
+            // mutation ever does fire); sharing is safe.
+            node_flow: Arc::clone(&file.node_flow),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
             expando_properties: file.expando_properties.clone(),
             // See `create_binder_from_bound_file_with_augmentations`:
