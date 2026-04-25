@@ -11,6 +11,26 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn format_type_diagnostic_for_assignability_display(&mut self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_preserve_optional_parameter_surface_syntax(false);
+        formatter.format(type_id).into_owned()
+    }
+
+    fn format_type_diagnostic_widened_for_assignability_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_preserve_optional_parameter_surface_syntax(false);
+        formatter.format(type_id).into_owned()
+    }
+
     pub(crate) fn truncate_property_receiver_display(display: String) -> String {
         const MAX_PROPERTY_RECEIVER_DISPLAY_CHARS: usize = 320;
         let should_truncate = display.starts_with("Omit<") || display.starts_with("merge<");
@@ -208,7 +228,7 @@ impl<'a> CheckerState<'a> {
                 // `type bar = <U>(source: ...) => void`, tsc shows the alias name.
                 if self.ctx.definition_store.is_computed_body(body) {
                     let evaluated = self.evaluate_type_with_env(ty);
-                    return self.format_type_diagnostic(evaluated);
+                    return self.format_type_diagnostic_for_assignability_display(evaluated);
                 }
             }
             // Evaluate and check if the result wraps a generic application.
@@ -359,9 +379,9 @@ impl<'a> CheckerState<'a> {
         let is_fresh_object_literal =
             self.ctx.types.get_display_properties(display_ty).is_some() && is_anonymous_object_type;
         let mut formatted = if is_fresh_object_literal {
-            self.format_type_diagnostic_widened(display_ty)
+            self.format_type_diagnostic_widened_for_assignability_display(display_ty)
         } else {
-            self.format_type_diagnostic(display_ty)
+            self.format_type_diagnostic_for_assignability_display(display_ty)
         };
         // Preserve generic instantiations for nominal class instance names when possible.
         // First check if the solver has a display_alias (Application type) for the
@@ -383,7 +403,7 @@ impl<'a> CheckerState<'a> {
                     .get_display_alias(display_ty)
                     .or_else(|| self.ctx.types.get_display_alias(ty));
                 if let Some(alias) = alias_type {
-                    let alias_fmt = self.format_type_diagnostic(alias);
+                    let alias_fmt = self.format_type_diagnostic_for_assignability_display(alias);
                     if alias_fmt.starts_with(symbol_name) && alias_fmt.contains('<') {
                         formatted = alias_fmt;
                     }
@@ -519,7 +539,9 @@ impl<'a> CheckerState<'a> {
                         let args: Vec<String> = candidates
                             .iter()
                             .take(type_param_count)
-                            .map(|(_, type_id)| self.format_type_diagnostic(*type_id))
+                            .map(|(_, type_id)| {
+                                self.format_type_diagnostic_for_assignability_display(*type_id)
+                            })
                             .collect();
                         if args.len() == type_param_count {
                             formatted = format!("{}<{}>", symbol_name, args.join(", "));
@@ -835,7 +857,7 @@ impl<'a> CheckerState<'a> {
         strip_top_level_nullish: bool,
     ) -> String {
         if self.target_preserves_literal_surface(other) {
-            return self.format_type_diagnostic(ty);
+            return self.format_type_diagnostic_for_assignability_display(ty);
         }
         if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some()
             && crate::query_boundaries::common::string_intrinsic_components(self.ctx.types, other)
@@ -876,7 +898,7 @@ impl<'a> CheckerState<'a> {
         ) && !self.is_literal_sensitive_assignment_target(other)
             && self.intersection_has_fresh_anonymous_object(ty)
         {
-            return self.format_type_diagnostic_widened(ty);
+            return self.format_type_diagnostic_widened_for_assignability_display(ty);
         }
 
         self.format_type_for_assignability_message(ty)
