@@ -182,6 +182,19 @@ pub fn look_ahead_is_import_equals(
         }
         // `import type/defer <identifier> ...` where identifier is not `from`
         if is_identifier_fn(next2) {
+            // `import defer type ...` is a modifier conflict that tsc parses as
+            // an import-declaration (with `defer` as modifier, `type` as the
+            // default-import name, then expects `from` at the next significant
+            // token). Without this guard, `defer type *` erroneously routes to
+            // the import-equals path and emits `'=' expected` at the `type`
+            // keyword instead of `'from' expected` at the `*`. The reverse
+            // ordering `import type defer *` is intentionally NOT short-
+            // circuited — tsc treats `type` as a modifier and `defer` as the
+            // import name, then routes through the import-equals lookahead.
+            if next1 == SyntaxKind::DeferKeyword && next2 == SyntaxKind::TypeKeyword {
+                scanner.restore_state(snapshot);
+                return false;
+            }
             let next3 = scanner.scan();
             scanner.restore_state(snapshot);
             if next3 == SyntaxKind::EqualsToken {

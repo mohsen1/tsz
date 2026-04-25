@@ -2864,6 +2864,41 @@ fn test_import_defer_from_as_name_not_deferred() {
 }
 
 #[test]
+fn test_import_defer_type_modifier_conflict_anchors_from_at_namespace_token() {
+    // `import defer type * as ns from "./a"` is illegal (defer + type modifier
+    // conflict) but tsc still parses it as: `defer` modifier, `type` as the
+    // default-import name (contextual keyword), then expects `from`. The
+    // resulting `'from' expected` diagnostic anchors at the `*` (column 19),
+    // not at the `type` keyword (column 14) or with an incorrect `'='
+    // expected` from the import-equals lookahead path.
+    let source = r#"import defer type * as ns from "./a";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1005: Vec<_> = diagnostics.iter().filter(|d| d.code == 1005).collect();
+    assert!(
+        !ts1005.is_empty(),
+        "Expected at least one TS1005 for `import defer type *`, got {diagnostics:?}"
+    );
+    // No `'=' expected.` (would be the import-equals lookahead misroute).
+    assert!(
+        !ts1005.iter().any(|d| d.message.contains("'=' expected")),
+        "Should not emit `'=' expected.` for `import defer type *`: {ts1005:?}"
+    );
+    // The `'from' expected.` should anchor at column 19 (the `*`), 0-indexed
+    // start = 18.
+    let from_expected: Vec<_> = ts1005
+        .iter()
+        .filter(|d| d.message.contains("'from' expected"))
+        .collect();
+    assert!(
+        from_expected.iter().any(|d| d.start == 18),
+        "Expected `'from' expected.` anchored at column 19 (start=18), got {from_expected:?}"
+    );
+}
+
+#[test]
 fn test_regex_named_capturing_groups_do_not_emit_unexpected_paren() {
     let source = r#"const re = /(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})/u;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
