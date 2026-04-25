@@ -13,12 +13,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+CHECK_LOG="$(mktemp "${TMPDIR:-/tmp}/tsz-healthcheck-cargo.XXXXXX")"
+cleanup() {
+    rm -f "$CHECK_LOG"
+}
+trap cleanup EXIT
 
 echo "Running health check..."
 
 # 1. Cargo check (compilation)
 echo "  [1/3] cargo check..."
-if ! cargo check --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1 | tail -3; then
+if cargo check --manifest-path "$REPO_ROOT/Cargo.toml" >"$CHECK_LOG" 2>&1; then
+    tail -3 "$CHECK_LOG"
+else
+    tail -3 "$CHECK_LOG"
     echo ""
     echo "HEALTH CHECK FAILED: main does not compile."
     echo "Do NOT start campaign work. Help fix the build first."

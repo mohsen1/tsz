@@ -22,7 +22,9 @@ gap between `tsz` and `tsc` without introducing new gaps.
 
 ## Pick your target (random)
 
-There is one picker. Use it.
+There is one human-facing picker. Use it. `quick-pick.sh` delegates to the
+shared implementation in `scripts/session/pick.py`, so advanced selection
+modes still share the same rules without adding more wrapper scripts.
 
 ```bash
 # Pick ONE random failure (prints path + codes + diff + a verbose-run command)
