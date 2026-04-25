@@ -1,17 +1,12 @@
 //! Tests for expression parsing in the parser.
-use crate::parser::{NodeIndex, ParserState};
+use crate::parser::ParserState;
+use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
 
 fn parse_diagnostics(source: &str) -> usize {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
     parser.get_diagnostics().len()
-}
-
-fn parse_source(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
 }
 
 #[test]

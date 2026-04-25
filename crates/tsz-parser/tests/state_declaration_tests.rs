@@ -1,13 +1,8 @@
 //! Tests for declaration parsing in the parser.
-use crate::parser::{NodeIndex, ParserState, syntax_kind_ext};
+use crate::parser::test_fixture::parse_source;
+use crate::parser::{NodeIndex, syntax_kind_ext};
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_scanner::SyntaxKind;
-
-fn parse_source(source: &str) -> (ParserState, NodeIndex) {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    (parser, root)
-}
 
 #[test]
 fn parse_declaration_modules_with_generic_and_type_aliases() {
