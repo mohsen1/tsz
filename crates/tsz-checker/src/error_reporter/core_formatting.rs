@@ -739,7 +739,7 @@ impl<'a> CheckerState<'a> {
         self.format_assignability_type_for_message_internal(ty, other, false)
     }
 
-    pub(in crate::error_reporter) fn finalize_pair_display_for_diagnostic(
+    pub(crate) fn finalize_pair_display_for_diagnostic(
         &mut self,
         source: TypeId,
         target: TypeId,

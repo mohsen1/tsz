@@ -1726,8 +1726,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.source_lacks_union_common_property(source, members.as_ref())
     }
 
+    /// Returns true when assignability fails because the source has no
+    /// properties in common with a weak target — covering both union targets
+    /// composed of weak members (`violates_weak_union`) and single weak
+    /// object targets, including primitives assigned to weak objects
+    /// (`violates_weak_type`). Drives the boundary's `weak_union_violation`
+    /// flag that routes the checker between TS2559 and TS2322. The
+    /// historical name is kept for boundary-contract stability.
     pub fn is_weak_union_violation(&self, source: TypeId, target: TypeId) -> bool {
-        self.violates_weak_union(source, target)
+        self.violates_weak_union(source, target) || self.violates_weak_type(source, target)
     }
 
     fn violates_weak_type_with_target_props(
@@ -1783,11 +1790,19 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// We approximate this by checking target properties against a set of
     /// well-known primitive prototype properties.
     fn primitive_violates_weak_type(&self, source: TypeId, target_props: &[PropertyInfo]) -> bool {
-        // Determine if source is a primitive type
+        // Determine if source is a primitive type. Boolean literal intrinsics
+        // (`BOOLEAN_TRUE`/`BOOLEAN_FALSE`) are reserved TypeIds — distinct
+        // from `BOOLEAN` — but they're still primitives for weak-type checks.
         let is_primitive = if source.is_intrinsic() {
             matches!(
                 source,
-                TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+                TypeId::STRING
+                    | TypeId::NUMBER
+                    | TypeId::BOOLEAN
+                    | TypeId::BIGINT
+                    | TypeId::SYMBOL
+                    | TypeId::BOOLEAN_TRUE
+                    | TypeId::BOOLEAN_FALSE
             )
         } else {
             matches!(

@@ -1479,6 +1479,16 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 } else {
+                    if self.try_emit_property_weak_type_violation(
+                        source_prop_type,
+                        target_prop_type,
+                        target_prop_type_for_diagnostic,
+                        prop_value_idx,
+                        prop_name_idx,
+                    ) {
+                        elaborated = true;
+                        continue;
+                    }
                     let source_prop_type_for_diagnostic =
                         if self.is_fresh_literal_expression(prop_value_idx) {
                             self.widen_literal_type(source_prop_type)
