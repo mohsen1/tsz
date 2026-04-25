@@ -261,22 +261,35 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(binder) = self.binder else {
             return false;
         };
-        if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
-            return used.contains_key(&sym_id);
+        let direct_sym = binder.node_symbols.get(&name_idx.0).copied();
+        if let Some(sym_id) = direct_sym
+            && used.contains_key(&sym_id)
+        {
+            return true;
         }
+        // The declaration's name may resolve to a different SymbolId than the
+        // reference site that marked the symbol used (e.g., heritage clauses
+        // inside a namespace can resolve through scope tables that don't share
+        // the binder's `node_symbols` mapping). Fall back to name-based lookup
+        // across all scopes so a same-named symbol marked-used elsewhere keeps
+        // the declaration alive. Matches privacyClassExtendsClauseDeclFile.
         let Some(name_node) = self.arena.get(name_idx) else {
             return false;
         };
         let Some(name_ident) = self.arena.get_identifier(name_node) else {
             return false;
         };
-        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text) {
-            return used.contains_key(&sym_id);
-        }
-        if let Some(root_scope) = binder.scopes.first()
-            && let Some(scope_sym_id) = root_scope.table.get(&name_ident.escaped_text)
+        if let Some(sym_id) = binder.file_locals.get(&name_ident.escaped_text)
+            && used.contains_key(&sym_id)
         {
-            return used.contains_key(&scope_sym_id);
+            return true;
+        }
+        for scope in &binder.scopes {
+            if let Some(sym_id) = scope.table.get(&name_ident.escaped_text)
+                && used.contains_key(&sym_id)
+            {
+                return true;
+            }
         }
         false
     }
