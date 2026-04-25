@@ -3,31 +3,21 @@
 use tsz_checker::context::CheckerOptions;
 
 fn check_with_experimental_decorators(source: &str) -> Vec<u32> {
-    let options = CheckerOptions {
-        experimental_decorators: true,
-        ..CheckerOptions::default()
-    };
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            experimental_decorators: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .iter()
+    .map(|d| d.code)
+    .collect()
+}
 
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+fn check_es_decorators(source: &str) -> Vec<u32> {
+    tsz_checker::test_utils::check_source_codes(source)
 }
 
 #[test]
@@ -168,30 +158,8 @@ class C {
 #[test]
 fn ts1238_not_emitted_without_experimental_decorators() {
     // Without experimentalDecorators, TS1238 should not be emitted.
-    let options = CheckerOptions::default(); // experimental_decorators: false
-
-    let mut parser = tsz_parser::parser::ParserState::new(
-        "test.ts".to_string(),
-        "class Decorate { }\n@Decorate\nclass C { }".to_string(),
-    );
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-
-    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    let codes =
+        tsz_checker::test_utils::check_source_codes("class Decorate { }\n@Decorate\nclass C { }");
     assert!(
         !codes.contains(&1238),
         "Should not emit TS1238 without experimentalDecorators, got: {codes:?}"
@@ -228,25 +196,6 @@ class C {
 // it as TS1238 even though a structural call would succeed by ignoring
 // the extra args. A factory requiring more than two parameters also
 // cannot be satisfied. 1 or 2 required parameters are fine.
-
-fn check_es_decorators(source: &str) -> Vec<u32> {
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
-}
 
 #[test]
 fn ts1238_es_decorator_zero_arity_factory_emits_error() {
