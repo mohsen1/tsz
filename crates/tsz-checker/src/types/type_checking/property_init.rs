@@ -594,16 +594,31 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
-            k if k == syntax_kind_ext::JSX_OPENING_ELEMENT
-                || k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT =>
-            {
-                // Check JSX element attributes
+            k if k == syntax_kind_ext::JSX_OPENING_ELEMENT => {
+                // Visited only when JSX_OPENING_ELEMENT is the entry node.
+                // When descending from JSX_ELEMENT below, that branch handles
+                // the opening tag's `tag_name` and attributes directly — do
+                // NOT also handle them here or they fire twice.
                 if let Some(jsx_elem) = self.ctx.arena.get_jsx_opening(node)
                     && let Some(attrs_node) = self.ctx.arena.get(jsx_elem.attributes)
                     && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
                 {
                     for &attr_idx in &attrs.properties.nodes {
                         self.collect_static_accesses_recursive(attr_idx, class_name, accesses);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => {
+                // A self-closing element (`<C.z/>`) has no JSX_ELEMENT wrapper,
+                // so this branch must walk both the tag name AND attributes.
+                if let Some(jsx_elem) = self.ctx.arena.get_jsx_opening(node) {
+                    self.collect_static_accesses_recursive(jsx_elem.tag_name, class_name, accesses);
+                    if let Some(attrs_node) = self.ctx.arena.get(jsx_elem.attributes)
+                        && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
+                    {
+                        for &attr_idx in &attrs.properties.nodes {
+                            self.collect_static_accesses_recursive(attr_idx, class_name, accesses);
+                        }
                     }
                 }
             }
@@ -634,18 +649,21 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::JSX_ELEMENT => {
-                // Check JSX element tag name for C.prop references
+                // Walk the opening tag (tag name + attributes) and the element
+                // children. We deliberately do NOT walk the closing element's
+                // tag name: tsc emits TS2729 once per JSX element use, anchored
+                // at the opening tag. The closing tag is markup that must
+                // syntactically match the opening; checking it again would
+                // emit a duplicate diagnostic.
                 if let Some(jsx_elem) = self.ctx.arena.get_jsx_element(node) {
                     if let Some(opening_node) = self.ctx.arena.get(jsx_elem.opening_element)
                         && let Some(opening) = self.ctx.arena.get_jsx_opening(opening_node)
                     {
-                        // Recursively check tag name (might be C.x)
                         self.collect_static_accesses_recursive(
                             opening.tag_name,
                             class_name,
                             accesses,
                         );
-                        // Also check attributes
                         if let Some(attrs_node) = self.ctx.arena.get(opening.attributes)
                             && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
                         {
@@ -656,15 +674,10 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-                    if let Some(closing_node) = self.ctx.arena.get(jsx_elem.closing_element)
-                        && let Some(closing) = self.ctx.arena.get_jsx_closing(closing_node)
-                    {
-                        // Also check closing tag name
-                        self.collect_static_accesses_recursive(
-                            closing.tag_name,
-                            class_name,
-                            accesses,
-                        );
+                    // Walk JSX element children — `{C.y}` expressions and nested
+                    // elements both reference static members through here.
+                    for &child_idx in &jsx_elem.children.nodes {
+                        self.collect_static_accesses_recursive(child_idx, class_name, accesses);
                     }
                 }
             }

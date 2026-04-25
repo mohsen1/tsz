@@ -176,6 +176,72 @@ fn test_ts2564_constructor_assignment_summary_handles_parameter_property_flow() 
     );
 }
 
+/// Helper: parse a `.tsx` source so the parser enables JSX productions, then
+/// run the checker with the supplied options.
+fn diagnostics_for_tsx(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.tsx".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+/// Regression for `useBeforeDeclaration_jsx`: the static-property forward-
+/// reference walker must visit JSX self-closing tag names, JSX element
+/// children (`{C.y}`), and the opening tag exactly once (no duplicate from
+/// the closing tag). This locks in the visitor invariants that produce
+/// tsc's TS2729 fingerprint set for the conformance fixture.
+#[test]
+fn test_ts2729_jsx_static_forward_reference_visits_self_closing_and_children_once() {
+    let source = r"
+namespace JSX {
+    export interface Element {}
+}
+
+class C {
+    static a = <C.z></C.z>;
+    static b = <C.z/>;
+    static c = <span {...C.x}></span>;
+    static d = <span id={C.y}></span>;
+    static e = <span>{C.y}</span>;
+    static x = {};
+    static y = '';
+    static z = () => <b></b>;
+}
+";
+
+    let diags = diagnostics_for_tsx(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let count = count_code(
+        &diags,
+        diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
+    );
+    assert_eq!(
+        count, 5,
+        "expected exactly 5 TS2729 (one per JSX use of forward-declared static), got {count}: {diags:?}"
+    );
+}
+
 #[test]
 fn test_ts2729_parameter_property_before_define_field_initialization() {
     let source = r"
