@@ -29,22 +29,20 @@ Usage:
   python3 scripts/fourslash/query-fourslash.py --failures --paths-only
 """
 
+import os
 import sys
-import json
 import argparse
 from collections import Counter
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from lib.query_snapshot import load_snapshot, print_top_counter
 
 DETAIL_FILE = Path(__file__).parent / "fourslash-detail.json"
 
 
 def load_detail():
-    if not DETAIL_FILE.exists():
-        print(f"Error: {DETAIL_FILE} not found.")
-        print("Run fourslash tests with --json-out to generate it.")
-        sys.exit(1)
-    with open(DETAIL_FILE) as f:
-        return json.load(f)
+    return load_snapshot(DETAIL_FILE, "Run fourslash tests with --json-out to generate it.")
 
 
 def show_overview(data):
@@ -86,8 +84,7 @@ def show_overview(data):
     for r in fails:
         msg = r.get("firstFailure", "unknown")
         error_counter[msg[:80]] += 1
-    for msg, count in error_counter.most_common(10):
-        print(f"  {count:>4d}  {msg}")
+    print_top_counter(error_counter, 10)
 
 
 def show_buckets(data):
@@ -125,8 +122,7 @@ def show_top_errors(data, top=20):
     for r in fails:
         msg = r.get("firstFailure", "unknown")
         error_counter[msg[:100]] += 1
-    for msg, count in error_counter.most_common(top):
-        print(f"  {count:>4d}  {msg}")
+    print_top_counter(error_counter, top)
 
 
 def show_failures(data, top=40, paths_only=False):

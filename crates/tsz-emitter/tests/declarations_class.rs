@@ -2,6 +2,28 @@ use crate::emitter::ScriptTarget;
 use crate::output::printer::{PrintOptions, Printer};
 use tsz_parser::ParserState;
 
+fn parse_and_print(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    printer.finish().code
+}
+
+fn parse_and_print_for_target(source: &str, target: ScriptTarget) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let opts = PrintOptions {
+        target,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, opts);
+    printer.set_source_text(source);
+    printer.print(root);
+    printer.finish().code
+}
+
 /// Regression test: trailing comments on static class fields must be
 /// preserved when the field is lowered to `ClassName.field = value;`
 /// for targets < ES2022.
@@ -9,17 +31,7 @@ use tsz_parser::ParserState;
 fn static_field_lowering_preserves_trailing_comment() {
     let source = "class C3 {\n    static intance = new C3(); // ok\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2017,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
 
     // The lowered static field should preserve the trailing comment
     assert!(
@@ -33,17 +45,7 @@ fn static_field_lowering_preserves_trailing_comment() {
 fn static_field_lowering_preserves_multiple_trailing_comments() {
     let source = "class Foo {\n    static a = 1; // first\n    static b = 2; // second\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2017,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
 
     assert!(
         output.contains("Foo.a = 1; // first"),
@@ -60,17 +62,7 @@ fn static_field_lowering_preserves_multiple_trailing_comments() {
 fn static_field_lowering_without_trailing_comment() {
     let source = "class Bar {\n    static x = 42;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2017,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
 
     assert!(
         output.contains("Bar.x = 42;"),
@@ -88,17 +80,7 @@ fn auto_accessor_instance_fields_emit_getter_setter_with_weakmap() {
     let source =
         "class RegularClass {\n    accessor shouldError: string; // Should still error\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         output.contains("var _RegularClass_shouldError_accessor_storage;"),
@@ -138,17 +120,7 @@ fn auto_accessor_instance_fields_emit_getter_setter_with_weakmap() {
 fn auto_accessor_mixed_static_and_instance_fields_emit_expected_helpers_and_storage() {
     let source = "class C1 {\n    accessor a: any;\n    accessor b = 1;\n    static accessor c: any;\n    static accessor d = 2;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         output.contains("var _a, _C1_a_accessor_storage, _C1_b_accessor_storage, _C1_c_accessor_storage, _C1_d_accessor_storage;"),
@@ -212,17 +184,7 @@ fn auto_accessor_mixed_static_and_instance_fields_emit_expected_helpers_and_stor
 fn auto_accessor_fields_emit_private_storage_at_es2022() {
     let source = "class C1 {\n    accessor a: any;\n    accessor b = 1;\n    accessor #c: any;\n    accessor #d = 2;\n    static accessor e: any;\n    static accessor f = 3;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2022,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2022);
 
     // ES2022 uses native private storage + getter/setter pairs.
     assert!(
@@ -279,17 +241,7 @@ fn auto_accessor_fields_emit_private_storage_at_es2022() {
 fn auto_accessor_private_storage_avoids_private_name_collisions_at_es2022() {
     let source = "class C2 {\n        #a1_accessor_storage = 1;\n        accessor a1 = 2;\n    }\n    \n    class C3 {\n        static #a2_accessor_storage = 1;\n        static {\n            class C3_Inner {\n                accessor a2 = 2;\n                static {\n                    #a2_accessor_storage in C3;\n                }\n            }\n        }\n    }\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2022,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2022);
 
     assert!(
         output.contains("class C2"),
@@ -321,17 +273,7 @@ fn auto_accessor_private_storage_avoids_private_name_collisions_at_es2022() {
 fn no_extra_blank_line_after_static_field_lowering() {
     let source = "class Foo {\n    static x = 1;\n}\nconst y = 2;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2017,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
 
     // Should have `Foo.x = 1;\n` immediately followed by `const y = 2;`
     // with NO blank line in between.
@@ -348,17 +290,7 @@ fn no_extra_blank_line_after_static_field_lowering() {
 fn no_extra_blank_line_after_static_field_in_block() {
     let source = "for (const x of [1]) {\n    class Row {\n        static factory = 1;\n    }\n    use(Row);\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2017,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2017);
 
     // Should have `Row.factory = 1;\n    use(Row);` with no blank line.
     assert!(
@@ -414,21 +346,11 @@ fn private_field_with_initializer_emitted_at_es2022() {
     let source =
         "class A {\n    static #field = 10;\n    static #uninitialized;\n    #instance = 1;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
     // PrintOptions defaults to use_define_for_class_fields: false via
     // PrinterOptions::default(), which triggers the class field lowering
     // path.  At ES2022+ the lowering should still preserve private fields
     // verbatim.
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2022,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2022);
 
     assert!(
         output.contains("static #field = 10;"),
@@ -450,17 +372,7 @@ fn private_field_with_initializer_emitted_at_es2022() {
 fn private_field_lowered_at_es2015() {
     let source = "class A {\n    static #field = 10;\n    #instance = 1;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     // At ES2015, private fields should NOT appear in the class body
     // (they should be lowered to WeakMap-based patterns, though the
@@ -492,17 +404,7 @@ fn overload_method_comments_erased() {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ESNext,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ESNext);
 
     // Overload JSDoc comments should NOT appear in the output
     assert!(
@@ -535,17 +437,7 @@ fn overload_constructor_comments_erased() {
     constructor(x: any) {}
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ESNext,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ESNext);
 
     // Overload JSDoc comments should NOT appear
     assert!(
@@ -574,17 +466,7 @@ fn erased_member_does_not_consume_trailing_comment_after_closing_brace() {
     // Single-line class with an erased property and a trailing comment
     let source = "class C extends E { foo: string; } // error\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         output.contains("// error"),
@@ -600,17 +482,7 @@ fn erased_member_does_not_consume_trailing_comment_after_closing_brace() {
 fn erased_interface_trailing_comment_is_suppressed() {
     let source = "interface Foo {} // type-only\nconst x = 1;\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ESNext,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ESNext);
 
     assert!(
         !output.contains("// type-only"),
@@ -624,17 +496,7 @@ fn erased_interface_trailing_comment_is_suppressed() {
 fn abstract_method_with_body_is_emitted() {
     let source = "abstract class H {\n    abstract baz(): number { return 1; }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ESNext,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ESNext);
 
     assert!(
         output.contains("baz()"),
@@ -647,17 +509,7 @@ fn abstract_method_with_body_is_emitted() {
 fn abstract_method_without_body_is_erased() {
     let source = "abstract class G {\n    abstract qux(): number;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ESNext,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ESNext);
 
     assert!(
         !output.contains("qux"),
@@ -670,17 +522,7 @@ fn abstract_method_without_body_is_erased() {
 fn bodyless_non_abstract_accessor_is_not_erased() {
     let source = "class C {\n    get foo(): string;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ESNext,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ESNext);
 
     assert!(
         output.contains("foo"),
@@ -699,17 +541,7 @@ fn bodyless_non_abstract_accessor_is_not_erased() {
 fn computed_property_side_effect_property_access() {
     let source = "class C {\n    [Symbol.iterator]: any;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         output.contains("}\nSymbol.iterator;"),
@@ -723,17 +555,7 @@ fn computed_property_side_effect_property_access() {
 fn computed_property_no_side_effect_for_identifier() {
     let source = "class C {\n    [x]: string;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         !output.contains("x;"),
@@ -747,17 +569,7 @@ fn computed_property_no_side_effect_for_identifier() {
 fn computed_property_no_side_effect_for_string_literal() {
     let source = "class C {\n    [\"a\"]: string;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         !output.contains("\"a\";"),
@@ -772,13 +584,7 @@ fn class_body_brace_trailing_comment_suppressed() {
     let source =
         "class E extends A { // error -- doesn't implement bar\n    foo() { return 1; }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("// error"),
@@ -791,13 +597,7 @@ fn class_body_brace_trailing_comment_suppressed() {
 fn class_body_inner_comment_preserved() {
     let source = "class C {\n    // this is a method\n    foo() { return 1; }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("// this is a method"),
@@ -816,13 +616,7 @@ fn empty_class_trailing_comment_preserved() {
     let source =
         "class Gen extends base() {}  // Error, T not in scope\nclass Spec extends Gen {}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         output.contains("} // Error, T not in scope"),
@@ -835,13 +629,7 @@ fn empty_class_trailing_comment_preserved() {
 fn multiline_class_opening_brace_comment_still_suppressed() {
     let source = "class C { // opening comment\n    foo() { }\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     assert!(
         !output.contains("// opening comment"),
@@ -860,17 +648,7 @@ class C extends Base {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         output.contains("this.p1 = p1;"),
@@ -888,17 +666,7 @@ class C extends Base {
     }
 }"#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         output.contains("this.p1 = p1;"),
@@ -912,17 +680,7 @@ class C extends Base {
 fn declare_class_field_not_emitted_in_constructor() {
     let source = "class C {\n    declare foo = 1;\n    bar = 2;\n}\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let opts = PrintOptions {
-        target: ScriptTarget::ES2015,
-        ..Default::default()
-    };
-    let mut printer = Printer::new(&parser.arena, opts);
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
 
     assert!(
         !output.contains("this.foo"),
@@ -944,13 +702,7 @@ fn declare_class_field_not_emitted_in_constructor() {
 fn trailing_comment_capped_at_class_close_brace() {
     let source = "class C {\n    m() {} // method comment\n} // end of class\n";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
-    let output = printer.finish().code;
+    let output = parse_and_print(source);
 
     // The method's trailing comment should stay with the method
     assert!(
@@ -981,12 +733,6 @@ fn malformed_source_class_brace_scan_no_panic() {
 }
 "#;
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
-    printer.set_source_text(source);
-    printer.print(root);
     // Should not panic — just produce some output
-    let _output = printer.finish().code;
+    let _output = parse_and_print(source);
 }
