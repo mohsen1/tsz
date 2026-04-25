@@ -394,6 +394,19 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(binder) = self.binder else {
             return true;
         };
+
+        // For destructuring patterns (`const { foo } = ...`), recurse into
+        // the binding identifiers and return true if any one is referenced
+        // by the public API. Without this, `export type T = typeof foo`
+        // referencing a destructured const elides the const declaration.
+        // Matches declarationEmitNonExportedBindingPattern.
+        if let Some(name_node) = self.arena.get(name_idx)
+            && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        {
+            return self.binding_pattern_has_used_identifier(name_idx);
+        }
+
         let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) else {
             // Some declaration name nodes are not mapped directly; fall back
             // to root-scope lookup by identifier text.
@@ -418,6 +431,40 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         used.contains_key(&sym_id)
+    }
+
+    /// Walk a binding pattern's leaf identifiers and return true if any one
+    /// is in `used_symbols`.
+    fn binding_pattern_has_used_identifier(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        match name_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.should_emit_public_api_dependency(name_idx),
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
+                    return false;
+                };
+                pattern.elements.nodes.iter().copied().any(|elem_idx| {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        return false;
+                    };
+                    if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                        return false;
+                    }
+                    if elem_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                        return false;
+                    }
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        return false;
+                    };
+                    self.binding_pattern_has_used_identifier(elem.name)
+                })
+            }
+            _ => false,
+        }
     }
 
     /// Check if the target of a namespace-path import-equals resolves to a type-level entity.
