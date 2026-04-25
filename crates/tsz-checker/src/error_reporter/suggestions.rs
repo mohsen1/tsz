@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
     /// longer comes from the symbol's arena-dependent `NodeIndex`.
     ///
     /// [nasl]: crate::context::CheckerContext::node_at_stable_location
-    /// [plan]: ../../../../docs/plan/global-query-graph-architecture.md
+    /// [plan]: ../../../../docs/plan/ROADMAP.md
     pub(super) fn class_extends_any_base(&mut self, type_id: TypeId) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;

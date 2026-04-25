@@ -131,7 +131,7 @@ pub mod symbol_flags {
 ///   [`StableLocation::is_known`] to distinguish.
 /// - `pos <= end` is expected for any known location.
 ///
-/// [plan]: ../../../docs/plan/global-query-graph-architecture.md
+/// [plan]: ../../../docs/plan/ROADMAP.md
 /// [stamp]: crate::state::BinderState::stamp_file_idx
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -256,7 +256,7 @@ pub struct Symbol {
     /// `declarations` at every binding site, so `stable_declarations.len()
     /// == declarations.len()` is a hard invariant.
     ///
-    /// [plan]: ../../../docs/plan/global-query-graph-architecture.md
+    /// [plan]: ../../../docs/plan/ROADMAP.md
     pub stable_declarations: Vec<StableLocation>,
     /// Stable source span of the first declaration, if known.
     pub first_declaration_span: Option<(u32, u32)>,
@@ -345,7 +345,7 @@ impl Symbol {
     /// unassigned (`u32::MAX`); the driver later stamps it via
     /// [`crate::state::BinderState::stamp_file_idx`].
     ///
-    /// [plan]: ../../../docs/plan/global-query-graph-architecture.md
+    /// [plan]: ../../../docs/plan/ROADMAP.md
     pub fn add_declaration(&mut self, declaration: NodeIndex, span: Option<(u32, u32)>) {
         if !self.declarations.contains(&declaration) {
             self.declarations.push(declaration);

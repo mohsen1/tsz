@@ -2230,7 +2230,7 @@ fn test_instantiate_homomorphic_mapped_with_any_union_array_constrained() {
 // key seed for `QueryCache::instantiation_cache`. Substitution *interning*
 // intentionally does NOT live on `TypeInterner`; the eventual cache is
 // owned by `QueryCache` so it participates in `clear()` and size accounting
-// (see `docs/plan/perf-instantiate-type-cache-design.md`).
+// (see `docs/plan/ROADMAP.md`).
 
 #[test]
 fn test_canonical_equal_subst_same_pairs() {

@@ -3,6 +3,24 @@
 ## 0) Mission
 - Absolute target: match `tsc` behavior exactly.
 - Must match diagnostics, inference, compatibility, narrowing, and edge cases.
+- `docs/plan/ROADMAP.md` is the single living roadmap. Before starting
+  conformance, emit, performance, architecture, LSP/WASM, Sound Mode, or DRY
+  cleanup work, read it and keep your work aligned with it.
+- Update `docs/plan/ROADMAP.md` in the same PR when your work changes roadmap
+  status, metrics, sequencing, risks, active priorities, or invalidates a plan
+  assumption. Do not create new roadmap files under `docs/plan/`; update the
+  living roadmap instead.
+- To avoid duplicate work, roadmap-adjacent implementation MUST be claimed
+  before coding starts: create a branch, make a minimal claim under
+  `docs/plan/ROADMAP.md` -> `Active Implementation Claims`, then open a draft
+  PR with the GitHub label `WIP`. Use a title like `[WIP] <scope>: <intent>`.
+- Never merge WIP branches. A branch is WIP if its PR is draft, has the `WIP`
+  label, has a `[WIP]` title prefix, or the PR/branch description says it is
+  WIP. Remove the label/prefix and mark the PR ready only after implementation,
+  verification, and roadmap status updates are complete.
+- DRY cleanup claims also live in `docs/plan/ROADMAP.md`. Keep DRY slices small,
+  behavior-preserving unless explicitly fixing a bug, and verify them with
+  `scripts/session/verify-all.sh` before removing WIP status.
 
 ## 1) North Star
 - Solver-first.

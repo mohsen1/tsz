@@ -904,7 +904,7 @@ impl<'a> CheckerContext<'a> {
     /// "Did you mean?" diagnostic path, which is cold. A span-index can be
     /// added later if hot paths migrate to this helper.
     ///
-    /// [plan]: ../../../../../docs/plan/global-query-graph-architecture.md
+    /// [plan]: ../../../../../docs/plan/ROADMAP.md
     pub fn node_at_stable_location(&self, loc: StableLocation) -> Option<(NodeIndex, &NodeArena)> {
         if !loc.is_known() {
             return None;

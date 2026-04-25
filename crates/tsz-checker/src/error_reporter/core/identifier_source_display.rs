@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
     /// the symbol's arena-dependent field.
     ///
     /// [nasl]: crate::context::CheckerContext::node_at_stable_location
-    /// [plan]: ../../../../../docs/plan/global-query-graph-architecture.md
+    /// [plan]: ../../../../../docs/plan/ROADMAP.md
     pub(in crate::error_reporter) fn identifier_array_object_literal_source_display(
         &mut self,
         expr_idx: NodeIndex,
