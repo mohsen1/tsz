@@ -1285,7 +1285,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             other_idx
                         };
-                        if self.is_namespace_declaration_instantiated(namespace_idx) {
+                        // Use the value-resolving variant: a namespace whose only
+                        // body is `export { TypeAlias }` resolves to a type-only
+                        // re-export and must not conflict with a value of the
+                        // same name (`declare const X` + `declare namespace X`).
+                        if self.is_namespace_declaration_value_instantiated(namespace_idx) {
                             if decl_is_local {
                                 conflicts.insert(decl_idx);
                             }
