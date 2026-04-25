@@ -80,6 +80,7 @@ impl<'a> HoverProvider<'a> {
                 compiler_options,
             )
         };
+        self.apply_lib_contexts(&mut checker);
 
         let contextual_type_idx =
             self.contextual_type_for_object_literal(object_literal_idx, prop_assign_idx);
@@ -929,6 +930,7 @@ impl<'a> HoverProvider<'a> {
             self.file_name.clone(),
             compiler_options,
         );
+        self.apply_lib_contexts(&mut checker);
 
         let expr_type_id = checker.get_type_of_node(access.expression);
         let member_type_id = self
@@ -1006,6 +1008,7 @@ impl<'a> HoverProvider<'a> {
                 self.file_name.clone(),
                 compiler_options,
             );
+            self.apply_lib_contexts(&mut checker);
             let callee_type_id = checker.get_type_of_node(call.expression);
             if let Some(function_shape_id) =
                 tsz_solver::visitor::function_shape_id(self.interner, callee_type_id)

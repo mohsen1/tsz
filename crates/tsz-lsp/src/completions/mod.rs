@@ -6,6 +6,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::jsdoc::jsdoc_for_node;
+use crate::provider_macro::FullProviderOptions;
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
 use crate::utils::find_node_at_offset;
 use tsz_binder::BinderState;
@@ -367,6 +368,7 @@ pub struct Completions<'a> {
     pub(super) file_name: Option<String>,
     pub(super) strict: bool,
     pub(super) sound_mode: bool,
+    pub(super) lib_contexts: &'a [tsz_checker::context::LibContext],
 }
 
 mod context;

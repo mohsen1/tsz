@@ -20,7 +20,7 @@ impl<'a> Completions<'a> {
         let interner = self.interner?;
         let file_name = self.file_name.as_ref()?;
         let compiler_options = self.checker_options();
-        let checker = if let Some(cache) = cache_ref {
+        let mut checker = if let Some(cache) = cache_ref {
             if let Some(cache_value) = cache.take() {
                 CheckerState::with_cache(
                     self.arena,
@@ -48,6 +48,9 @@ impl<'a> Completions<'a> {
                 compiler_options,
             )
         };
+        if !self.lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(self.lib_contexts.to_vec());
+        }
         Some(checker)
     }
 

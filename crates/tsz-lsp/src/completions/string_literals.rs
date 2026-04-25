@@ -61,6 +61,9 @@ impl<'a> Completions<'a> {
                 compiler_options,
             )
         };
+        if !self.lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(self.lib_contexts.to_vec());
+        }
         let mut expected = self.get_contextual_type(node_idx, &mut checker);
         if expected.is_none() {
             let mut current = node_idx;
@@ -539,6 +542,9 @@ impl<'a> Completions<'a> {
                 compiler_options,
             )
         };
+        if !self.lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(self.lib_contexts.to_vec());
+        }
 
         let expected = self.get_contextual_type(string_literal_idx, &mut checker)?;
         let mut visited = FxHashSet::default();

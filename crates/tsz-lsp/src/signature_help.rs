@@ -297,6 +297,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 compiler_options,
             )
         };
+        self.apply_lib_contexts(&mut checker);
 
         let access_docs = if call_kind == CallKind::Call {
             self.signature_documentation_for_property_access(root, callee_expr)
@@ -893,6 +894,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 compiler_options,
             )
         };
+        self.apply_lib_contexts(&mut checker);
 
         let contextual_type = checker.get_type_of_node(decl.type_annotation);
         let contextual_type = checker.resolve_lazy_type(contextual_type);
@@ -2097,6 +2099,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 compiler_options,
             )
         };
+        self.apply_lib_contexts(&mut checker);
 
         let docs = self.signature_documentation_for_symbol(root, symbol_id, trigger.call_kind);
         let callee_type = checker.get_type_of_symbol(symbol_id);
@@ -2237,6 +2240,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 compiler_options,
             )
         };
+        self.apply_lib_contexts(&mut checker);
 
         let docs = self.signature_documentation_for_symbol(root, symbol_id, trigger.call_kind);
         let callee_type = checker.get_type_of_symbol(symbol_id);

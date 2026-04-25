@@ -3,7 +3,15 @@
 //! LSP providers fall into three tiers based on what they need:
 //! - `minimal`: arena, `line_map`, `source_text`
 //! - `binder`: arena, binder, `line_map`, `file_name`, `source_text`
-//! - `full`: arena, binder, `line_map`, interner, `source_text`, `file_name`, strict, `sound_mode`
+//! - `full`: arena, binder, `line_map`, interner, `source_text`, `file_name`, strict, `sound_mode`, lib contexts
+
+/// Shared configuration for type-aware LSP providers.
+#[derive(Clone, Copy, Default)]
+pub struct FullProviderOptions<'a> {
+    pub strict: bool,
+    pub sound_mode: bool,
+    pub lib_contexts: &'a [tsz_checker::context::LibContext],
+}
 
 /// Define an LSP provider struct with standard fields and constructors.
 ///
@@ -25,7 +33,7 @@
 /// ```ignore
 /// define_lsp_provider!(full HoverProvider, "Hover provider.");
 /// ```
-/// Fields: `arena`, `binder`, `line_map`, `interner`, `source_text`, `file_name`, `strict`, `sound_mode`
+/// Fields: `arena`, `binder`, `line_map`, `interner`, `source_text`, `file_name`, `strict`, `sound_mode`, `lib_contexts`
 /// Generates `new()` (strict=false, `sound_mode=false`), `with_strict()`, and `with_options()`.
 macro_rules! define_lsp_provider {
     // ── Tier 3: minimal ──────────────────────────────────────────────
@@ -94,6 +102,7 @@ macro_rules! define_lsp_provider {
             file_name: String,
             strict: bool,
             sound_mode: bool,
+            lib_contexts: &'a [tsz_checker::context::LibContext],
         }
 
         impl<'a> $name<'a> {
@@ -114,6 +123,7 @@ macro_rules! define_lsp_provider {
                     file_name,
                     strict: false,
                     sound_mode: false,
+                    lib_contexts: &[],
                 }
             }
 
@@ -135,6 +145,7 @@ macro_rules! define_lsp_provider {
                     file_name,
                     strict,
                     sound_mode: false,
+                    lib_contexts: &[],
                 }
             }
 
@@ -157,6 +168,35 @@ macro_rules! define_lsp_provider {
                     file_name,
                     strict,
                     sound_mode,
+                    lib_contexts: &[],
+                }
+            }
+
+            pub const fn with_options_and_lib_contexts(
+                arena: &'a tsz_parser::parser::node::NodeArena,
+                binder: &'a tsz_binder::BinderState,
+                line_map: &'a tsz_common::position::LineMap,
+                interner: &'a tsz_solver::TypeInterner,
+                source_text: &'a str,
+                file_name: String,
+                options: crate::provider_macro::FullProviderOptions<'a>,
+            ) -> Self {
+                Self {
+                    arena,
+                    binder,
+                    line_map,
+                    interner,
+                    source_text,
+                    file_name,
+                    strict: options.strict,
+                    sound_mode: options.sound_mode,
+                    lib_contexts: options.lib_contexts,
+                }
+            }
+
+            fn apply_lib_contexts(&self, checker: &mut tsz_checker::CheckerState<'_>) {
+                if !self.lib_contexts.is_empty() {
+                    checker.ctx.set_lib_contexts(self.lib_contexts.to_vec());
                 }
             }
         }
