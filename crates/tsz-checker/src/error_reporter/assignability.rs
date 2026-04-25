@@ -1717,6 +1717,33 @@ impl<'a> CheckerState<'a> {
                 .zip(authoritative_tgt.as_ref())
                 .is_some_and(|(src, tgt)| src != tgt);
 
+            // The authoritative-name fallback below replaces a structural display
+            // (like `{ ... }`) with the type's nominal name (e.g. `Foo`).  When the
+            // display is already a concrete literal value — `4`, `"hello"`,
+            // `true` — that lookup wrongly repaints the source as an unrelated
+            // boxed/wrapper interface (TypeId-keyed `find_def_for_type` can hand
+            // back `Boolean`/`Number` for primitive sources).  Keep the literal.
+            let display_is_literal_value = |s: &str| {
+                if s == "true" || s == "false" || s == "null" || s == "undefined" {
+                    return true;
+                }
+                if s.starts_with('"') || s.starts_with('\'') || s.starts_with('`') {
+                    return true;
+                }
+                let bare = s.strip_prefix('-').unwrap_or(s);
+                let mut chars = bare.chars();
+                chars.next().is_some_and(|c| c.is_ascii_digit())
+                    && chars.all(|c| {
+                        c.is_ascii_digit()
+                            || c == '.'
+                            || c == 'e'
+                            || c == 'E'
+                            || c == '+'
+                            || c == '-'
+                            || c == 'n'
+                    })
+            };
+
             let (message, code) = if src_str == tgt_str && !authoritative_names_differ {
                 (
                     format_message(
@@ -1736,6 +1763,7 @@ impl<'a> CheckerState<'a> {
                 let source_name = if src_str.starts_with("typeof ")
                     || src_str.starts_with("import(")
                     || preserve_generic_nominal_pair
+                    || display_is_literal_value(&src_str)
                 {
                     src_str.as_str()
                 } else {
@@ -1744,6 +1772,7 @@ impl<'a> CheckerState<'a> {
                 let target_name = if tgt_str.starts_with("typeof ")
                     || tgt_str.starts_with("import(")
                     || preserve_generic_nominal_pair
+                    || display_is_literal_value(&tgt_str)
                 {
                     tgt_str.as_str()
                 } else {
