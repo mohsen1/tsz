@@ -106,6 +106,18 @@ pub struct SymbolIndex {
     /// For example, if "class B extends A, implements I",
     /// then `sub_to_bases`["B"] = {"A", "I"}
     sub_to_bases: FxHashMap<String, FxHashSet<String>>,
+
+    /// Per-file edge log for `sub_to_bases`: file path -> set of
+    /// `(class_name, base_name)` edges that file contributed.
+    ///
+    /// Enables correct removal of stale heritage entries when a file is
+    /// removed or re-indexed. Without this, `remove_file` cannot undo a
+    /// file's contribution to `sub_to_bases` because the public map only
+    /// stores `class -> {bases}` — there is no way to know which file
+    /// originally added each base. Edges are reference-counted across
+    /// files via this map, so a class declared in two files keeps its
+    /// edges until both files are removed.
+    sub_to_bases_by_file: FxHashMap<String, FxHashSet<(String, String)>>,
 }
 
 impl SymbolIndex {
@@ -298,11 +310,31 @@ impl SymbolIndex {
         }
         self.heritage_clauses.retain(|_, files| !files.is_empty());
 
-        // Remove sub_to_bases entries for this file
-        for bases in self.sub_to_bases.values_mut() {
-            bases.remove(file_name);
+        // Remove this file's contributions to sub_to_bases.
+        //
+        // The public `sub_to_bases` map only stores `class -> {bases}`, so it
+        // alone cannot distinguish which file added which base. We use the
+        // per-file edge log (`sub_to_bases_by_file`) for refcount-style
+        // cleanup: each (class, base) edge is dropped from `sub_to_bases`
+        // only when no other indexed file still contributes it. Classes
+        // declared exclusively in this file lose their entries entirely.
+        if let Some(edges) = self.sub_to_bases_by_file.remove(file_name) {
+            for (class, base) in edges {
+                let still_contributed = self
+                    .sub_to_bases_by_file
+                    .values()
+                    .any(|other| other.contains(&(class.clone(), base.clone())));
+                if still_contributed {
+                    continue;
+                }
+                if let Some(bases) = self.sub_to_bases.get_mut(&class) {
+                    bases.remove(&base);
+                    if bases.is_empty() {
+                        self.sub_to_bases.remove(&class);
+                    }
+                }
+            }
         }
-        self.sub_to_bases.retain(|_, bases| !bases.is_empty());
     }
 
     /// Index a file during binding.
@@ -604,7 +636,11 @@ impl SymbolIndex {
                         self.sub_to_bases
                             .entry(class_name.clone())
                             .or_default()
-                            .insert(base_name);
+                            .insert(base_name.clone());
+                        self.sub_to_bases_by_file
+                            .entry(file_name_owned.clone())
+                            .or_default()
+                            .insert((class_name.clone(), base_name));
                     }
                 }
             }
@@ -777,6 +813,7 @@ impl SymbolIndex {
         // root change).
         self.heritage_clauses.clear();
         self.sub_to_bases.clear();
+        self.sub_to_bases_by_file.clear();
     }
 
     /// Get all symbols that start with the given prefix.

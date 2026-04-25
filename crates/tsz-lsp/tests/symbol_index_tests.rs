@@ -1738,6 +1738,72 @@ fn test_index_file_sub_to_bases_survives_large_class_body() {
 }
 
 #[test]
+fn test_remove_file_clears_sub_to_bases_for_classes_in_that_file() {
+    // Regression: remove_file() iterated `sub_to_bases.values_mut()` and
+    // tried to remove `file_name` from each value set — but the values are
+    // base symbol names (not file paths), so the loop did nothing in
+    // practice. After the fix, removing a file drops `sub_to_bases` entries
+    // for classes that were declared in that file, so go-to-implementation
+    // and upward-rename do not return ghost edges to deleted classes.
+    let source = r"class Base {} class Sub extends Base {}";
+    let (binder, parser) = parse_and_bind("file.ts", source);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("file.ts", &binder, parser.get_arena(), source);
+
+    assert!(
+        !index.get_bases_for_class("Sub").is_empty(),
+        "precondition: sub_to_bases should be populated after indexing"
+    );
+
+    index.remove_file("file.ts");
+
+    assert!(
+        index.get_bases_for_class("Sub").is_empty(),
+        "remove_file should drop sub_to_bases entries for classes declared \
+         in the removed file; got stale entry {:?}",
+        index.get_bases_for_class("Sub")
+    );
+}
+
+#[test]
+fn test_remove_file_keeps_sub_to_bases_for_classes_in_other_files() {
+    // Cleanup must not over-purge: classes declared in OTHER files keep
+    // their heritage edges. Removing `a.ts` (which declares `Sub extends
+    // Base`) must not affect `Other` declared in `b.ts`.
+    let source_a = r"class Base {} class Sub extends Base {}";
+    let source_b = r"interface Mixin {} class Other extends Sub implements Mixin {}";
+    let (binder_a, parser_a) = parse_and_bind("a.ts", source_a);
+    let (binder_b, parser_b) = parse_and_bind("b.ts", source_b);
+
+    let mut index = SymbolIndex::new();
+    index.index_file("a.ts", &binder_a, parser_a.get_arena(), source_a);
+    index.index_file("b.ts", &binder_b, parser_b.get_arena(), source_b);
+
+    let other_bases_before = index.get_bases_for_class("Other");
+    assert!(
+        other_bases_before.contains(&"Sub".to_string())
+            && other_bases_before.contains(&"Mixin".to_string()),
+        "precondition: Other should extend Sub and implement Mixin; got {other_bases_before:?}",
+    );
+
+    index.remove_file("a.ts");
+
+    assert!(
+        index.get_bases_for_class("Sub").is_empty(),
+        "Sub was declared only in a.ts; its sub_to_bases entry should be gone"
+    );
+
+    let other_bases_after = index.get_bases_for_class("Other");
+    assert!(
+        other_bases_after.contains(&"Sub".to_string())
+            && other_bases_after.contains(&"Mixin".to_string()),
+        "Other was declared in b.ts; its sub_to_bases entry must survive \
+         removal of unrelated file a.ts; got {other_bases_after:?}",
+    );
+}
+
+#[test]
 fn test_clear_resets_heritage_and_sub_to_bases() {
     // Regression: clear() used to leave heritage_clauses and sub_to_bases
     // populated, so a fully-rebuilt index would see stale class edges.
