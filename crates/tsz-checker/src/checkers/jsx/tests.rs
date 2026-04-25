@@ -485,6 +485,95 @@ fn jsx_invalid_element_attributes_property_props_assignability_anchors_at_tag_na
     );
 }
 
+/// Empty `JSX.ElementAttributesProperty` -> the construct signature's return
+/// (instance) type is the attributes type. tsc:
+/// `forcedLookupLocation === "" ? getReturnTypeOfSignature(sig) : ...`.
+///
+/// `<Obj2 x={10} />` checks `{ x: number }` against the instance type
+/// `{ q?: number }`, producing TS2322 with the instance type — not the
+/// constructor's first parameter type.
+#[test]
+fn jsx_empty_element_attributes_property_uses_instance_type() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface ElementAttributesProperty { }
+            interface IntrinsicElements { }
+        }
+        interface Obj2type { new(n: string): { q?: number }; }
+        declare var Obj2: Obj2type;
+        <Obj2 x={10} />;
+        "#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.iter().any(|d| d
+            .message_text
+            .contains("is not assignable to type '{ q?: number | undefined; }'")),
+        "expected TS2322 to compare against the instance type, got: {diagnostics:?}"
+    );
+    assert!(
+        !ts2322
+            .iter()
+            .any(|d| d.message_text.contains("type 'string'")),
+        "TS2322 should not use the constructor's first parameter ('string') as the props type, got: {diagnostics:?}"
+    );
+}
+
+/// Empty EAP with a constructor whose return type already has the attribute
+/// shape (`{ x: number }`) should not emit TS2322.
+#[test]
+fn jsx_empty_element_attributes_property_matches_instance_type_no_error() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface ElementAttributesProperty { }
+            interface IntrinsicElements { }
+        }
+        interface Obj3type { new(n: string): { x: number; }; }
+        declare var Obj3: Obj3type;
+        <Obj3 x={10} />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2322),
+        "Instance type with matching attribute should not emit TS2322, got: {diagnostics:?}"
+    );
+}
+
+/// `JSX.ElementAttributesProperty` with multiple members emits TS2608 and
+/// then routes the attributes type back through the no-EAP branch (first
+/// construct-signature parameter), matching tsc's
+/// `getJsxElementPropertiesName` returning `undefined` in that case.
+#[test]
+fn jsx_multi_member_eap_uses_first_constructor_parameter() {
+    let diagnostics = check_jsx(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface ElementAttributesProperty { pr1: any; pr2: any; }
+            interface IntrinsicElements { }
+        }
+        interface CompType { new(n: string): {}; }
+        declare var Comp: CompType;
+        <Comp x={10} />;
+        "#,
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2608),
+        "TS2608 expected for multi-member ElementAttributesProperty, got: {codes:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322
+            && d.message_text
+                .contains("is not assignable to type 'string'")),
+        "TS2322 should compare against the first constructor parameter when EAP has >1 members, got: {diagnostics:?}"
+    );
+}
+
 /// TS2786 should NOT fire for generic class components whose construct
 /// signature return type contains unresolved type parameters.
 /// TSC resolves signatures before checking; we skip the check when
