@@ -14,6 +14,11 @@
   before coding starts: create a branch, make a minimal claim under
   `docs/plan/ROADMAP.md` -> `Active Implementation Claims`, then open a draft
   PR with the GitHub label `WIP`. Use a title like `[WIP] <scope>: <intent>`.
+- Claim entry format: prefix with `**YYYY-MM-DD HH:MM:SS**` (UTC, current
+  wall-clock time). Each claim's unique second-precision timestamp gives a
+  natural sort order and reduces ROADMAP.md merge conflicts when multiple
+  agents claim work concurrently. Older entries without timestamps use
+  `00:00:00` as a placeholder.
 - Never merge WIP branches. A branch is WIP if its PR is draft, has the `WIP`
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
