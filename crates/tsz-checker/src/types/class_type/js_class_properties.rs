@@ -12,6 +12,65 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, TypeParamInfo, Visibility};
 
 impl CheckerState<'_> {
+    /// Push the enclosing JS class's `@template T` JSDoc-derived type
+    /// parameters into `type_parameter_scope` for the lifetime of a
+    /// surrounding check (typically a class-member walk or a method-type
+    /// build). Returns the list of (name, previous_value) entries that
+    /// `pop_enclosing_jsdoc_class_template_types` consumes to restore the
+    /// scope on exit. Returns an empty Vec for non-JS files.
+    pub(crate) fn push_enclosing_jsdoc_class_template_types(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>)> {
+        if !self.is_js_file() {
+            return Vec::new();
+        }
+        let class_template_types = self.enclosing_jsdoc_class_template_types(node_idx);
+        let mut updates = Vec::with_capacity(class_template_types.len());
+        for (name, ty) in class_template_types {
+            if self.ctx.type_parameter_scope.contains_key(&name) {
+                continue;
+            }
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+            updates.push((name, previous));
+        }
+        updates
+    }
+
+    /// Pop class-level `@template T` JSDoc-derived type parameters that were
+    /// pushed by `push_enclosing_jsdoc_class_template_types`, restoring any
+    /// previous value or removing the entry when there was none.
+    pub(crate) fn pop_enclosing_jsdoc_class_template_types(
+        &mut self,
+        updates: Vec<(String, Option<TypeId>)>,
+    ) {
+        for (name, previous) in updates.into_iter().rev() {
+            match previous {
+                Some(prev) => {
+                    self.ctx.type_parameter_scope.insert(name, prev);
+                }
+                None => {
+                    self.ctx.type_parameter_scope.remove(&name);
+                }
+            }
+        }
+    }
+
+    /// Same as `push_enclosing_jsdoc_class_template_types` but emits a
+    /// 3-tuple shape `(name, previous, false)` that fits the
+    /// `jsdoc_type_param_updates` accumulator used by
+    /// `get_type_of_function_impl`. The third bool is the
+    /// "shadowed_class_param" flag, always `false` for class-level pushes.
+    pub(crate) fn push_enclosing_jsdoc_class_template_types_with_flag(
+        &mut self,
+        node_idx: NodeIndex,
+    ) -> Vec<(String, Option<TypeId>, bool)> {
+        self.push_enclosing_jsdoc_class_template_types(node_idx)
+            .into_iter()
+            .map(|(name, prev)| (name, prev, false))
+            .collect()
+    }
+
     pub(crate) fn enclosing_jsdoc_class_template_types(
         &mut self,
         node_idx: NodeIndex,

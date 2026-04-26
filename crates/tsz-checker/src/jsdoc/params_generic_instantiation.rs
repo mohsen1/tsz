@@ -256,6 +256,7 @@ impl<'a> CheckerState<'a> {
             let arg_name = arg.trim();
             if arg_name.is_empty()
                 || template_params.iter().any(|name| name == arg_name)
+                || self.ctx.type_parameter_scope.contains_key(arg_name)
                 || !is_simple_type_name(arg_name)
             {
                 arg_search_offset += arg.len() + 1;

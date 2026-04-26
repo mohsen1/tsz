@@ -1629,7 +1629,9 @@ fn checker_files_stay_under_loc_limit() {
         ("error_reporter/core/diagnostic_source.rs", 2049),
         // Grew past 2000 from recent contextual function type fixes (#688);
         // ceiling tracks current state.
-        ("types/function_type.rs", 2039),
+        // Bumped by 2 (2039→2041) for the class @template push that fixes
+        // jsdocTemplateClass.ts TS2304 false positive.
+        ("types/function_type.rs", 2041),
     ];
 
     let mut violations = Vec::new();
