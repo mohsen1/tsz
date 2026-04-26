@@ -276,6 +276,7 @@ pub(super) fn collect_diagnostics(
     typescript_dom_replacement_globals: (bool, bool, bool),
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     has_deprecation_diagnostics: bool,
+    collect_compile_stats: bool,
 ) -> CollectDiagnosticsResult {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
@@ -1202,11 +1203,18 @@ pub(super) fn collect_diagnostics(
             }
         }
         aggregated_qc_stats = Some(parallel_qc_stats);
-        aggregated_ds_stats = project_env
-            .shared_definition_store
-            .as_ref()
-            .map(|store| store.statistics())
-            .or(Some(parallel_ds_stats));
+        // PERF: `DefinitionStore::statistics()` walks every entry (and
+        // `estimated_size_bytes()` walks again) — only worth paying for
+        // when --diagnostics or --extendedDiagnostics is requested.
+        aggregated_ds_stats = if collect_compile_stats {
+            project_env
+                .shared_definition_store
+                .as_ref()
+                .map(|store| store.statistics())
+                .or(Some(parallel_ds_stats))
+        } else {
+            None
+        };
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
         // Fallback used only when no shared_definition_store exists (e.g.,
@@ -1503,14 +1511,18 @@ pub(super) fn collect_diagnostics(
         }
         // Sequential path: single shared QueryCache — capture stats after all files.
         aggregated_qc_stats = Some(query_cache.statistics());
-        // PERF: matching the parallel path, prefer the shared DefinitionStore
-        // (single .statistics() call) over summing per-file/per-lib stats from
-        // checkers that all Arc::clone the same shared store.
-        aggregated_ds_stats = project_env
-            .shared_definition_store
-            .as_ref()
-            .map(|store| store.statistics())
-            .or(Some(sequential_ds_stats));
+        // PERF: skip the shared DefinitionStore stats walk unless --diagnostics
+        // / --extendedDiagnostics actually consumes them. Matches the parallel
+        // path's gating above.
+        aggregated_ds_stats = if collect_compile_stats {
+            project_env
+                .shared_definition_store
+                .as_ref()
+                .map(|store| store.statistics())
+                .or(Some(sequential_ds_stats))
+        } else {
+            None
+        };
     }
 
     // Collect diagnostics from cache for all files
@@ -2869,6 +2881,7 @@ mod tests {
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics
     }
@@ -2895,6 +2908,7 @@ mod tests {
             &CheckerLibSet::default(),
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics
@@ -2974,6 +2988,7 @@ mod tests {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics
@@ -3195,6 +3210,7 @@ const elem = <div className={class1, class2}/>;
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
         let ts18048_count = diagnostics
@@ -3313,6 +3329,7 @@ const q: PromiseLike<number> = p;
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
 
@@ -3391,6 +3408,7 @@ async function f() {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
@@ -3473,6 +3491,7 @@ type Recurse2 = {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
@@ -3685,6 +3704,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
         let direct_ts2322_count = direct_diagnostics
@@ -3704,6 +3724,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
@@ -3807,6 +3828,7 @@ export const x = foo();
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
 
@@ -3907,6 +3929,7 @@ export type RowToColumns<TColumns> = {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
@@ -4449,6 +4472,7 @@ let x2: string = f;
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
 
@@ -4566,6 +4590,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
 
@@ -4663,6 +4688,7 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
 
@@ -4750,6 +4776,7 @@ m(item => item.id < 5);
             (false, false, false),
             &type_cache_output,
             false,
+            false,
         )
         .diagnostics;
 
@@ -4830,6 +4857,7 @@ interface Buzz { id: number; buzz: string }
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
@@ -4919,6 +4947,7 @@ const obj: {field: Rule} = {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
@@ -5039,6 +5068,7 @@ function foo() {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
@@ -5187,6 +5217,7 @@ interface Node {
             &checker_libs,
             (false, false, false),
             &type_cache_output,
+            false,
             false,
         )
         .diagnostics;
