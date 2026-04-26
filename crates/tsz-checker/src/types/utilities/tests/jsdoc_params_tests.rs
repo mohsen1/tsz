@@ -853,7 +853,7 @@ const obj = {
 /// parameter name, not at the enclosing arrow function's `(` token.
 ///
 /// Before the fix, `assignment_anchor_node` walked up from the Parameter to
-/// the ArrowFunction and returned the function's start position (`(`), which
+/// the `ArrowFunction` and returned the function's start position (`(`), which
 /// shifted the diagnostic column one to the left of tsc's anchor.
 #[test]
 fn jsdoc_type_function_param_default_anchors_at_parameter_name() {
