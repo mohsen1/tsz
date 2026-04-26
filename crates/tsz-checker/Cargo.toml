@@ -443,6 +443,10 @@ path = "tests/intersection_primitive_member_assignability_tests.rs"
 name = "union_origin_display_tests"
 path = "tests/union_origin_display_tests.rs"
 
+[[test]]
+name = "jsdoc_class_property_target_display"
+path = "tests/jsdoc_class_property_target_display.rs"
+
 [lints]
 workspace = true
 
