@@ -148,3 +148,7 @@ fn reduce_inner<R: TypeResolver>(
     visited.remove(&type_id);
     result
 }
+
+#[cfg(test)]
+#[path = "../../tests/deep_reduce_tests.rs"]
+mod tests;
