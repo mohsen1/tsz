@@ -1185,7 +1185,15 @@ impl<'a> CheckerState<'a> {
             return "IArguments".to_string();
         }
 
+        // When the only literal-sensitive member of the parameter type is
+        // `undefined` contributed by an optional parameter (`b?: T`), tsc
+        // strips the synthetic `| undefined` and widens the argument display
+        // for the underlying target. Skip the literal-preserving branch in
+        // that case so the argument widens to its widened display type
+        // (e.g. `string` instead of `'"hello"'`).
         if self.is_literal_sensitive_assignment_target(param_type)
+            && !self
+                .literal_sensitivity_is_only_synthetic_optional_undefined(param_type, arg_idx)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
         {
             return display;
@@ -1265,6 +1273,36 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.evaluate_type_for_assignability(param_type);
         query_common::union_members(self.ctx.types, param_type).is_some()
             || query_common::union_members(self.ctx.types, evaluated).is_some()
+    }
+
+    /// Returns `true` when `param_type` is a union whose literal-sensitive
+    /// members are limited to the synthetic `undefined` introduced by an
+    /// optional parameter (`b?: T`) — i.e. dropping `undefined` from the
+    /// union leaves a non-literal-sensitive target. In that case the call
+    /// argument display should widen to the underlying target rather than
+    /// preserve the literal text, matching tsc's diagnostic surface.
+    fn literal_sensitivity_is_only_synthetic_optional_undefined(
+        &mut self,
+        param_type: TypeId,
+        arg_idx: NodeIndex,
+    ) -> bool {
+        if !self.enclosing_call_parameter_is_optional_non_rest(arg_idx) {
+            return false;
+        }
+        let stripped = match query_common::union_members(self.ctx.types, param_type) {
+            Some(members) => {
+                let kept: Vec<TypeId> = members
+                    .into_iter()
+                    .filter(|m| *m != TypeId::UNDEFINED)
+                    .collect();
+                if kept.is_empty() {
+                    return false;
+                }
+                self.ctx.types.factory().union_preserve_members(kept)
+            }
+            None => return false,
+        };
+        !self.is_literal_sensitive_assignment_target(stripped)
     }
 
     fn contextual_function_argument_display(
@@ -1690,6 +1728,19 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        self.callee_param_is_optional_non_rest_at(callee_type, arg_pos)
+    }
+
+    /// Returns `true` when the callee's parameter at `arg_pos` is optional (and
+    /// non-rest) for at least one callable shape reachable from `callee_type`.
+    /// For union callees we walk the members so that the synthetic `| undefined`
+    /// surface contributed by an optional parameter (e.g. `b?: number`) is
+    /// elided in diagnostics, matching tsc's display rules.
+    fn callee_param_is_optional_non_rest_at(
+        &mut self,
+        callee_type: TypeId,
+        arg_pos: usize,
+    ) -> bool {
         let param_is_optional_non_rest = |params: &[tsz_solver::ParamInfo]| {
             params
                 .get(arg_pos)
@@ -1703,13 +1754,27 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        query_common::call_signatures_for_type(self.ctx.types, callee_type).is_some_and(
+        if query_common::call_signatures_for_type(self.ctx.types, callee_type).is_some_and(
             |signatures| {
                 signatures
                     .iter()
                     .any(|sig| param_is_optional_non_rest(&sig.params))
             },
-        )
+        ) {
+            return true;
+        }
+
+        // Union of callables: tsc's union-call rules synthesise the parameter
+        // type as `T | undefined` when at least one member treats the slot as
+        // optional. Treat the surface as optional in that case so the display
+        // strips the synthetic `| undefined`, matching tsc.
+        if let Some(members) = query_common::union_members(self.ctx.types, callee_type) {
+            return members
+                .into_iter()
+                .any(|member| self.callee_param_is_optional_non_rest_at(member, arg_pos));
+        }
+
+        false
     }
 
     fn enclosing_call_arg_position(&mut self, arg_idx: NodeIndex) -> Option<(TypeId, usize)> {
