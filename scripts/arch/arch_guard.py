@@ -541,6 +541,15 @@ SOLVER_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
+    (
+        "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        ("crates/tsz-checker/src/context/speculation.rs",),
+        15,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -678,6 +687,23 @@ _SOLVER_IMPORT_PATTERN = re.compile(
     r"\buse\s+tsz_solver(?:::|\s*;|\s+as\b)|\bextern\s+crate\s+tsz_solver\b"
 )
 
+# Architecture health metric 5: snapshot-rollback call site count.
+#
+# Matches CheckerContext rollback methods, snapshot restorers, and
+# `*guard.rollback(` SpeculationGuard calls. The `\w*guard\.rollback\(`
+# alternative requires "guard" (with optional prefix) immediately before the
+# method to avoid catching unrelated `.rollback(` methods on other types.
+_SPECULATION_ROLLBACK_PATTERN = re.compile(
+    r"\.rollback_full\b"
+    r"|\.rollback_diagnostics(?:_filtered)?\b"
+    r"|\.rollback_and_replace_diagnostics\b"
+    r"|\.rollback_return_type\b"
+    r"|\.rollback_filtered\b"
+    r"|\.restore_ts2454_state\b"
+    r"|\.restore_implicit_any_closures\b"
+    r"|\b\w*guard\.rollback\("
+)
+
 
 def scan_solver_import_count(
     search_roots: list[pathlib.Path],
@@ -744,6 +770,78 @@ def scan_solver_import_count(
             f"{len(importing_files)} (cap {max_imports}; bump cap intentionally "
             f"and update ROADMAP.md, or route the consumer through the compiler "
             f"service shell or `tsz_checker::query_boundaries` — workstream 3)"
+        )
+        return hits
+    return []
+
+
+def scan_snapshot_rollback_file_count(
+    search_roots: list[pathlib.Path],
+    exclude_path_prefixes: tuple[str, ...],
+    max_files: int,
+) -> list[str]:
+    """Count non-test files that call any speculation-rollback API outside
+    `crates/tsz-checker/src/context/speculation.rs` (architecture health
+    metric 5: snapshot-restore call sites).
+
+    A file "calls a speculation-rollback API" if a non-comment line matches
+    `_SPECULATION_ROLLBACK_PATTERN` (covers `CheckerContext::rollback_*`,
+    the `restore_ts2454_state` / `restore_implicit_any_closures` snapshot
+    restorers, and `*guard.rollback(` SpeculationGuard calls).  Test files
+    (`*_tests.rs`, `test_*.rs`, files inside any `tests/` or `benches/`
+    directory) are excluded; only the first matching line per file is
+    recorded.  Files whose ROOT-relative path starts with any of
+    `exclude_path_prefixes` (e.g. `crates/tsz-checker/src/context/speculation.rs`)
+    are skipped — that is the canonical home of the rollback API surface.
+
+    Returns one hit per offending file when the total exceeds `max_files`,
+    plus a summary line.  Walks each root directly so test fixtures under
+    temp dirs can reuse the same scanner via paths relative to the search
+    root.
+    """
+    rollback_files: list[str] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                # Test fixture under a temp dir — fall back to a path
+                # relative to the search root for the report and exclusion
+                # heuristics.
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            if any(rel_to_root.startswith(prefix) for prefix in exclude_path_prefixes):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if line.lstrip().startswith("//"):
+                    continue
+                if _SPECULATION_ROLLBACK_PATTERN.search(line):
+                    rollback_files.append(rel_to_root)
+                    break
+
+    rollback_files.sort()
+    if len(rollback_files) > max_files:
+        hits = [
+            f"snapshot-rollback caller #{i + 1}: {rel}"
+            for i, rel in enumerate(rollback_files)
+        ]
+        hits.append(
+            f"total snapshot-rollback caller files outside speculation.rs: "
+            f"{len(rollback_files)} (cap {max_files}; bump cap intentionally "
+            f"and update ROADMAP.md, or fold the new call site into an "
+            f"existing speculation guard pattern — workstream 4)"
         )
         return hits
     return []
@@ -1073,6 +1171,19 @@ def main() -> int:
     ) in SOLVER_IMPORT_COUNT_CHECKS:
         hits = scan_solver_import_count(
             search_roots, exclude_path_prefixes, max_imports
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        search_roots,
+        exclude_path_prefixes,
+        max_files,
+    ) in SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS:
+        hits = scan_snapshot_rollback_file_count(
+            search_roots, exclude_path_prefixes, max_files
         )
         total_hits += len(hits)
         if hits:
