@@ -403,5 +403,9 @@ path = "tests/ts2451_cross_file_augmentation_tests.rs"
 name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
+[[test]]
+name = "intersection_primitive_member_assignability_tests"
+path = "tests/intersection_primitive_member_assignability_tests.rs"
+
 [lints]
 workspace = true

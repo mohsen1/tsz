@@ -939,6 +939,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // the weak-type generosity concern.
             let target_is_object_like = object_shape_id(self.interner, target).is_some()
                 || object_with_index_shape_id(self.interner, target).is_some();
+            // Branded-primitive targets carry their brand properties on a
+            // sibling weak object member (e.g., `string & { kind?: K }`).  When
+            // the source is also an intersection that mixes a primitive with a
+            // brand object, the source primitive member must NOT shortcut the
+            // overall check — letting it through would let `{ kind: 'a' } & string`
+            // be assignable to `{ kind: 'b' } & string` because the bare `string`
+            // member silently satisfies the weak `{ kind?: K }` member of the
+            // target via the boxed-`String` heritage (which has no required
+            // properties).  The brand mismatch must instead surface through the
+            // property-merging path in `visit_intersection` — see
+            // `commonTypeIntersection.ts`.  Detect this by asking whether the
+            // target is either a bare weak object OR an intersection that
+            // contains a weak object member.
+            let object_shape_is_weak = |id: TypeId| -> bool {
+                object_shape_id(self.interner, id)
+                    .or_else(|| object_with_index_shape_id(self.interner, id))
+                    .map(|sid| self.interner.object_shape(sid))
+                    .is_some_and(|shape| {
+                        !shape.properties.is_empty()
+                            && shape.string_index.is_none()
+                            && shape.number_index.is_none()
+                            && shape.properties.iter().all(|p| p.optional)
+                    })
+            };
+            let target_has_weak_object_member = if target_is_object_like {
+                object_shape_is_weak(target)
+            } else if let Some(t_members) = intersection_list_id(self.interner, target) {
+                self.interner
+                    .type_list(t_members)
+                    .iter()
+                    .any(|&m| object_shape_is_weak(m))
+            } else {
+                false
+            };
             // Reset `in_intersection_member_check` for source member checks.
             // When we reach here from a target intersection loop, the flag is true
             // which suppresses weak type checks (TS2559). But the source member checks
@@ -951,6 +985,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.in_intersection_member_check = false;
             for &member in member_list.iter() {
                 if target_is_object_like && type_param_info(self.interner, member).is_some() {
+                    continue;
+                }
+                // Skip bare-primitive source members when the target carries a
+                // weak object brand: sibling source members must carry the
+                // brand check via the property-merging path.
+                if target_has_weak_object_member
+                    && intrinsic_kind(self.interner, member).is_some_and(|kind| {
+                        matches!(
+                            kind,
+                            IntrinsicKind::String
+                                | IntrinsicKind::Number
+                                | IntrinsicKind::Boolean
+                                | IntrinsicKind::Bigint
+                                | IntrinsicKind::Symbol,
+                        )
+                    })
+                {
                     continue;
                 }
                 if self.check_subtype(member, target).is_true() {
