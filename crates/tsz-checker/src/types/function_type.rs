@@ -1874,14 +1874,30 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
             {
+                // When a sync function carries its own JSDoc `@type {function(...): T}`
+                // (e.g. a method shorthand whose owning property declares the method's
+                // type), check block-body returns against the contextual return type.
+                // Mirrors the async branch above. Function expressions whose contextual
+                // type comes from outside (callback parameters) are excluded so we
+                // don't double-report at the inner return AND the call site.
+                let has_direct_callable_jsdoc = !is_async_for_context
+                    && !is_generator
+                    && has_contextual_return
+                    && !has_type_annotation
+                    && jsdoc_return_context.is_none()
+                    && self
+                        .jsdoc_callable_type_annotation_for_node_direct(idx)
+                        .is_some();
+                let sync_ctx = has_direct_callable_jsdoc
+                    .then_some(return_context_for_circularity)
+                    .flatten()
+                    .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN);
                 // Use the pre-evaluation annotated return type when available.
                 // evaluate_application_type() (line 1305) expands Application
                 // types (e.g., Promise<U>) into structural object forms, which
                 // destroys the Application wrapper needed for correct type
-                // display in TS2322 messages. The annotated type preserves
-                // the original Application so the formatter can show
-                // "Promise<U>" instead of just "Promise".
-                annotated_return_type.unwrap_or(return_type)
+                // display in TS2322 messages.
+                sync_ctx.unwrap_or_else(|| annotated_return_type.unwrap_or(return_type))
             } else {
                 // When the return type was purely inferred from the body (no
                 // annotation, no contextual type, no JSDoc @returns), push ANY

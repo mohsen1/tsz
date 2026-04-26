@@ -1631,7 +1631,10 @@ fn checker_files_stay_under_loc_limit() {
         // ceiling tracks current state.
         // Bumped by 2 (2039→2041) for the class @template push that fixes
         // jsdocTemplateClass.ts TS2304 false positive.
-        ("types/function_type.rs", 2041),
+        // Bumped by 12 (2041→2053) for the sync-contextual-return branch that
+        // fixes TS2322 on block-body methods carrying `/** @type {function(...)} */`
+        // (checkJsdocTypeTagOnObjectProperty2.ts).
+        ("types/function_type.rs", 2053),
     ];
 
     let mut violations = Vec::new();

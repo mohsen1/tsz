@@ -883,8 +883,6 @@ fn parses_use_define_for_class_fields() {
 
 #[test]
 fn target_to_script_target_covers_every_variant() {
-    use crate::config::ModuleResolutionKind as _; // ensure alias path compiles
-
     let cases = [
         (Target::Es5, ScriptTarget::ES5),
         (Target::Es2015, ScriptTarget::ES2015),
