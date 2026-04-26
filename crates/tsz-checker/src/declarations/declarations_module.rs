@@ -828,8 +828,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                         }
                                     };
 
-                                    if let Some((allowed, span)) = existing_info {
-                                        if !allowed {
+                                    if let Some((allowed, span)) = existing_info
+                                        && !allowed {
                                             // tsc reports TS2567 at BOTH the new enum in
                                             // the augmentation AND at the original
                                             // declaration's name. Emit both for parity.
@@ -851,7 +851,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                 );
                                             }
                                         }
-                                    }
                                     if register_value_name(&ident.escaped_text, enm.name)
                                         && let Some(node) = self.ctx.arena.get(enm.name)
                                     {

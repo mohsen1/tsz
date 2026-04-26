@@ -1055,11 +1055,10 @@ impl<'a> CheckerState<'a> {
                         _ => arena.get_enum(node).and_then(|enum_decl| {
                             self.get_identifier_text_from_idx(enum_decl.name)
                         }),
-                    } {
-                        if name == import_name {
+                    }
+                        && name == import_name {
                             has_named_value = true;
                         }
-                    }
                     if is_default {
                         has_default_value = true;
                     }

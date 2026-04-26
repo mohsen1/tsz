@@ -767,11 +767,9 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(shape) =
                 crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
-            {
-                if shape.is_constructor {
+                && shape.is_constructor {
                     return true;
                 }
-            }
             if let Some(app) =
                 crate::query_boundaries::common::type_application(self.ctx.types, type_id)
             {
@@ -784,11 +782,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
                     self.ctx.types,
                     app.base,
-                ) {
-                    if shape.is_constructor {
+                )
+                    && shape.is_constructor {
                         return true;
                     }
-                }
             }
             false
         };

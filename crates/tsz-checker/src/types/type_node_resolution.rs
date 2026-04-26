@@ -956,8 +956,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // uses ES-style exports (no `export=`). `resolve_import_symbol` returns None in that
             // case so `resolved_sym_id == left_sym_id`. Look up the member directly in the
             // imported module's ES exports.
-            if resolved_sym_id == left_sym_id {
-                if let Some(left_sym) = self
+            if resolved_sym_id == left_sym_id
+                && let Some(left_sym) = self
                     .ctx
                     .binder
                     .get_symbol_with_libs(left_sym_id, &lib_binders)
@@ -989,7 +989,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return Some(self.ensure_def_id_with_alias(member_sym_id));
                     }
                 }
-            }
 
             // Also check lib contexts for the member (e.g., global namespace types)
             for lib_ctx in self.ctx.lib_contexts.iter() {

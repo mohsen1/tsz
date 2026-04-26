@@ -757,8 +757,8 @@ impl<'a> CheckerState<'a> {
                     // binder symbol so noUnusedLocals does not falsely report it as unused.
                     // Skip write context: `Foo["key"] = expr` is not a read.
                     let is_write_target = self.property_access_is_direct_write_target(idx);
-                    if !is_write_target {
-                        if let Some((class_idx, _)) =
+                    if !is_write_target
+                        && let Some((class_idx, _)) =
                             self.resolve_class_for_access(access.expression, object_type_for_access)
                             && let Some(&class_sym_id) =
                                 self.ctx.binder.node_symbols.get(&class_idx.0)
@@ -775,7 +775,6 @@ impl<'a> CheckerState<'a> {
                                 .borrow_mut()
                                 .insert(member_sym_id);
                         }
-                    }
                 }
             }
 
@@ -1038,8 +1037,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.binder.node_symbols.get(&class_idx.0)
                                 && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
                                 && let Some(ref members) = class_symbol.members
-                            {
-                                if let Some(member_sym_id) = members.get(&property_name) {
+                                && let Some(member_sym_id) = members.get(&property_name) {
                                     self.ctx
                                         .referenced_symbols
                                         .borrow_mut()
@@ -1049,7 +1047,6 @@ impl<'a> CheckerState<'a> {
                                         .borrow_mut()
                                         .insert(member_sym_id);
                                 }
-                            }
                         }
                         // In write context (assignment target), prefer the setter type.
                         Some(effective_write_result(type_id, write_type))
