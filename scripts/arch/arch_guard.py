@@ -550,6 +550,31 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the count of LSP feature-dispatch methods in
+# `crates/tsz-lsp/src/project/features.rs` (architecture health metric 7
+# in `docs/plan/ROADMAP.md` — "LSP/WASM semantic features implemented
+# outside the compiler service layer").
+#
+# Every `pub fn` on `Project` whose name starts with one of `get_`,
+# `provide_`, `prepare_`, `handle_`, `on_`, `find_`, or `resolve_` is an
+# LSP feature dispatched directly from `Project` rather than through a
+# service-trait abstraction. Workstream 6 ("LSP And WASM As Service
+# Clients") exit criterion 3 is that "LSP request handling mostly maps
+# protocol inputs to service queries and service outputs to protocol
+# DTOs"; the raw count tracks how far the live code is from that
+# state. Each new feature dispatch must bump the cap with a roadmap
+# entry; consolidation onto a service trait shows up as a cap reduction
+# in the same diff.
+#
+# Each entry: (description, file_path, max_methods).
+LSP_FEATURE_METHOD_COUNT_CHECKS = [
+    (
+        "LSP boundary: feature-dispatch method count in project/features.rs (architecture health metric 7)",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "features.rs",
+        32,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -842,6 +867,72 @@ def scan_snapshot_rollback_file_count(
             f"{len(rollback_files)} (cap {max_files}; bump cap intentionally "
             f"and update ROADMAP.md, or fold the new call site into an "
             f"existing speculation guard pattern — workstream 4)"
+        )
+        return hits
+    return []
+
+
+_LSP_FEATURE_METHOD_PATTERN = re.compile(
+    r"^[ \t]+pub\s+(?:async\s+)?fn\s+"
+    r"(get_|provide_|prepare_|handle_|on_|find_|resolve_)\w+\s*[<(]"
+)
+
+
+def scan_lsp_feature_method_count(
+    path: pathlib.Path, max_methods: int
+) -> list[str]:
+    """Count LSP feature-dispatch methods in `project/features.rs` and
+    report when over `max_methods` (architecture health metric 7).
+
+    A "feature-dispatch method" is any indented `pub fn` (optionally
+    `pub async fn`) whose name begins with one of the LSP request-handler
+    verbs: `get_`, `provide_`, `prepare_`, `handle_`, `on_`, `find_`,
+    `resolve_`. The leading indent excludes the matching prefix from
+    appearing on a top-level free function or in a doc-comment example.
+
+    Comment lines (`//`, `///`, `//!`) are skipped before pattern
+    matching so doc examples that show the method shape don't get
+    double-counted.
+
+    Workstream 6 ("LSP And WASM As Service Clients") exit criterion 3
+    wants LSP request handling to mostly map protocol inputs to service
+    queries; the raw count makes drift visible — each new dispatch
+    method must bump the cap with a ROADMAP entry, consolidation onto
+    a service trait shows up as a cap reduction.
+    """
+    if not path.exists():
+        return []
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    method_lines: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("//"):
+            continue
+        if _LSP_FEATURE_METHOD_PATTERN.match(line):
+            # Capture the function name for the report.
+            m = re.search(r"\bfn\s+(\w+)", line)
+            if m:
+                method_lines.append((line_no, m.group(1)))
+
+    if len(method_lines) > max_methods:
+        try:
+            rel_path = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_path = str(path)
+        hits = [
+            f"LSP feature method #{i + 1}: {rel_path}:{line_no} {name}"
+            for i, (line_no, name) in enumerate(method_lines)
+        ]
+        hits.append(
+            f"total LSP feature-dispatch methods in {rel_path}: "
+            f"{len(method_lines)} (cap {max_methods}; bump cap intentionally "
+            f"and update ROADMAP.md, or consolidate onto a service trait "
+            f"surface — workstream 6)"
         )
         return hits
     return []
@@ -1185,6 +1276,12 @@ def main() -> int:
         hits = scan_snapshot_rollback_file_count(
             search_roots, exclude_path_prefixes, max_files
         )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, file_path, max_methods in LSP_FEATURE_METHOD_COUNT_CHECKS:
+        hits = scan_lsp_feature_method_count(file_path, max_methods)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
