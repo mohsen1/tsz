@@ -229,3 +229,115 @@ const foo: Unrelated & { variables: VariablesA & VariablesB } = {
         "TS2559 target should show declared type without strict-null `| undefined`: {msg:?}"
     );
 }
+
+/// Regression: false-positive TS2416 when an `implements` clause refers to a
+/// class declared inside a namespace whose short name collides with a global
+/// lib symbol (e.g. `Promise`).
+///
+/// Root cause: `lower_qualified_name_type` in `tsz-lowering` always tried the
+/// name-first DefId resolver before the NodeIndex-based scoped resolver, so
+/// `N.Promise` in user source resolved to the lib's global `Promise` instead
+/// of the namespace member. The fix gates name-first resolution behind
+/// `prefer_name_def_id_resolution` (only enabled for cross-arena lib
+/// lowering), matching the behavior already in `lower_identifier_type`.
+///
+/// Coverage:
+/// - lib-name collision (`Promise`, `Boolean`, `Symbol`) — would resolve to
+///   the global lib type and produce a structural mismatch;
+/// - non-lib-name (`Foo`) — would resolve to a `typeof Foo` constructor type
+///   and produce a return-type mismatch;
+/// - generic class case mirroring `arrayTypeInSignatureOfInterfaceAndClass.ts`.
+#[test]
+fn ts2416_no_false_positive_for_namespaced_class_with_lib_name_collision() {
+    let source = r#"
+declare namespace N {
+    class Promise { foo(): number; }
+}
+interface I { m(): N.Promise; }
+class X implements I { m(): N.Promise { return null!; } }
+"#;
+    let diags = get_diagnostics(source);
+    let ts2416: Vec<_> = diags.iter().filter(|(c, _)| *c == 2416).collect();
+    assert!(
+        ts2416.is_empty(),
+        "namespace-qualified `N.Promise` must bind to the namespace member, \
+         not to the global lib `Promise`; got TS2416: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2416_no_false_positive_for_namespaced_class_with_user_name() {
+    let source = r#"
+declare namespace N {
+    class FooBar { foo(): number; }
+}
+interface I { m(): N.FooBar; }
+class X implements I { m(): N.FooBar { return null!; } }
+"#;
+    let diags = get_diagnostics(source);
+    let ts2416: Vec<_> = diags.iter().filter(|(c, _)| *c == 2416).collect();
+    assert!(
+        ts2416.is_empty(),
+        "namespace-qualified `N.FooBar` must lower to the instance type, not \
+         the constructor type; got TS2416: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2416_no_false_positive_for_generic_namespaced_class_in_implements() {
+    // Mirrors the conformance test
+    // TypeScript/tests/cases/compiler/arrayTypeInSignatureOfInterfaceAndClass.ts
+    let source = r#"
+declare namespace WinJS {
+    class Promise<T> {
+        then<U>(success?: (value: T) => Promise<U>): Promise<U>;
+    }
+}
+declare namespace Data {
+    interface IVirtualList<T> {
+        removeIndices(): WinJS.Promise<T>;
+    }
+    class VirtualList<T> implements IVirtualList<T> {
+        public removeIndices(): WinJS.Promise<T>;
+    }
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2416: Vec<_> = diags.iter().filter(|(c, _)| *c == 2416).collect();
+    assert!(
+        ts2416.is_empty(),
+        "generic namespace-qualified `WinJS.Promise<T>` must bind to the \
+         namespace member, not to the global lib `Promise`; got TS2416: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2367_no_false_positive_when_enum_member_name_matches_sibling_interface() {
+    // Mirrors the conformance test
+    // TypeScript/tests/cases/compiler/trackedSymbolsNoCrash.ts.
+    //
+    // `kind: SK.Node0` in an interface body must resolve `Node0` as the
+    // *enum member* `SK.Node0`, not as the sibling type binding `interface
+    // Node0`. Without scope-first qualified-name resolution, the right-hand
+    // identifier gets bound to the interface symbol and `node.kind` ends up
+    // typed as `Node0 | Node1 | Node2` instead of `SK.Node0 | SK.Node1 |
+    // SK.Node2`, so a comparison against an enum-typed parameter falsely
+    // emits TS2367 ("no overlap").
+    let source = r#"
+enum SK { Node0, Node1, Node2 }
+interface Node0 { kind: SK.Node0; }
+interface Node1 { kind: SK.Node1; }
+interface Node2 { kind: SK.Node2; }
+type AnyNode = Node0 | Node1 | Node2;
+declare const node: AnyNode | null | undefined;
+declare const k: SK;
+const eq = node?.kind === k;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2367: Vec<_> = diags.iter().filter(|(c, _)| *c == 2367).collect();
+    assert!(
+        ts2367.is_empty(),
+        "qualified name `SK.Node0` must resolve to the enum member, not to \
+         the sibling `interface Node0`; got TS2367: {diags:?}"
+    );
+}
