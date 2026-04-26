@@ -25,14 +25,28 @@ impl<'a> CheckerState<'a> {
         if prev_type == TypeId::ERROR || current_type == TypeId::ERROR {
             return;
         }
-        // Widen literal types (including inside function return types) for display.
-        // tsc shows `(x: number) => string` not `(x: number) => ""` in TS2403 messages.
-        let prev_display =
-            crate::query_boundaries::common::widen_type_deep(self.ctx.types, prev_type);
-        let current_display =
-            crate::query_boundaries::common::widen_type_deep(self.ctx.types, current_type);
-        let prev_type_str = self.format_type_diagnostic(prev_display);
-        let current_type_str = self.format_type_diagnostic(current_display);
+        // For display, deep-widen inside compound shapes so function return
+        // types and nested object props reflect the widened form
+        // (`{ x: number; y: number; }` not `{ x: 0; y: 0; }`), matching tsc.
+        // But preserve top-level literal/union-of-literal types so explicit
+        // annotations like `var x: 5; var x: 6;` keep their literal form
+        // (`'5'` / `'6'`) instead of collapsing to `number`/`number` (which
+        // would also self-suppress via the equal-display short-circuit below).
+        //
+        // Use the widened formatter (no display-property side-table fallback)
+        // so the widened shape is actually rendered — `format_type_diagnostic`
+        // would fall back to display aliases stored on shared TypeIds and
+        // re-introduce the original literal form inside fn return types.
+        let prev_display = crate::query_boundaries::common::display_widen_for_redeclaration(
+            self.ctx.types,
+            prev_type,
+        );
+        let current_display = crate::query_boundaries::common::display_widen_for_redeclaration(
+            self.ctx.types,
+            current_type,
+        );
+        let prev_type_str = self.format_type_diagnostic_widened(prev_display);
+        let current_type_str = self.format_type_diagnostic_widened(current_display);
         // Suppress when both types format to the same name. This handles cross-binder
         // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
         // to a separate DefId from the main checker's version. Interface declaration

@@ -764,6 +764,98 @@ var fn2 = Point;
             "No TS2403 for compatible function redecl: {ts2403:?}"
         );
     }
+
+    #[test]
+    fn explicit_literal_union_annotation_preserved_in_message() {
+        // Top-level literal-union annotations (`var x: 1 | 2;`) are kept as-is
+        // in TS2403 messages — tsc shows `'1 | 2'`, not `'number'`. The display
+        // widening must skip top-level Union types to avoid collapsing.
+        let source = r#"
+var x: 1 | 2;
+var x: 3 | 4;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for explicit literal-union redecl: {ts2403:?}"
+        );
+        let msg = &ts2403[0].message_text;
+        assert!(
+            !msg.contains("'number'"),
+            "Literal-union annotations must not collapse to 'number': {msg}"
+        );
+    }
+
+    #[test]
+    fn explicit_literal_annotation_preserved_in_message() {
+        // Explicit literal-type annotations must be preserved in TS2403 messages.
+        // tsc shows "must be of type '5'" not "must be of type 'number'" when the
+        // user wrote `var x: 5;`. The widening done for fresh inferred types must
+        // not bleed into explicit annotations.
+        let source = r#"
+var x: 5;
+var x: 6;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected 1 TS2403 for explicit literal redecl: {ts2403:?}"
+        );
+        let msg = &ts2403[0].message_text;
+        assert!(
+            msg.contains("'5'") && msg.contains("'6'"),
+            "TS2403 message must keep explicit literal types '5'/'6', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn fundule_redecl_widens_literal_return_types_in_message() {
+        // The TS2403 message should display widened literal types in the
+        // function return shape — `{ x: number; y: number; }` not `{ x: 0; y: 0; }`
+        // — matching tsc. Regression test for FunctionAndModuleWithSameNameAndCommonRoot.ts.
+        let source = r#"
+namespace B {
+    export function Point() {
+        return { x: 0, y: 0 };
+    }
+    export namespace Point {
+        export var Origin = { x: 0, y: 0 };
+    }
+}
+var fn2: () => { x: number; y: number };
+var fn2 = B.Point;
+"#;
+        let all_diags = check_source_diagnostics(source);
+        let ts2403 = all_diags
+            .iter()
+            .filter(|d| d.code == 2403)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2403.len(),
+            1,
+            "Expected exactly 1 TS2403 for fundule redecl: {ts2403:?}"
+        );
+        let msg = &ts2403[0].message_text;
+        assert!(
+            !msg.contains("{ x: 0; y: 0; }"),
+            "TS2403 message should widen literal return types, got: {msg}"
+        );
+        assert!(
+            msg.contains("{ x: number; y: number; }"),
+            "TS2403 message should display widened return type \
+             '{{ x: number; y: number; }}', got: {msg}"
+        );
+    }
 }
 
 #[cfg(test)]

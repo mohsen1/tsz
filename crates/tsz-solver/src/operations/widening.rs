@@ -109,6 +109,26 @@ pub(crate) fn widen_type_for_inference(db: &dyn crate::TypeDatabase, type_id: Ty
     widen_type_cached(db, type_id, &mut cache, true, false, true)
 }
 
+/// Display-widen a type for TS2403 (subsequent variable declaration) messages.
+///
+/// Deep-widens fresh literal types nested inside compound shapes (function
+/// return types, object property types) so the printer renders widened forms
+/// like `{ x: number; y: number; }` rather than `{ x: 0; y: 0; }`. But
+/// preserves top-level literal and union-of-literal types so explicit
+/// annotations like `var x: 5; var x: 6;` keep their literal form (`'5'` /
+/// `'6'`) instead of collapsing to `'number'` / `'number'` (which would also
+/// self-suppress the diagnostic via the equal-display short-circuit in the
+/// reporter).
+pub fn display_widen_for_redeclaration(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
+    if matches!(
+        db.lookup(type_id),
+        Some(crate::types::TypeData::Literal(_) | crate::types::TypeData::Union(_))
+    ) {
+        return type_id;
+    }
+    widen_type_deep(db, type_id)
+}
+
 /// Deep-widen a type including inside function/callable signatures.
 ///
 /// Unlike `widen_type` which skips Function/Callable types for performance
