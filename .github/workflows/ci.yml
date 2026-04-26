@@ -137,33 +137,74 @@ jobs:
         run: scripts/ci/github-suite.sh conformance-aggregate
 
   emit:
-    name: emit
+    name: emit-${{ matrix.shard }}
     needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 90
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     env:
-      TSZ_CI_SHARDS: 16
-      TSZ_CI_EMIT_CHUNK: 2000
+      _TSZ_CI_EMIT_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_EMIT_SHARD_COUNT: 4
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run emit suite
-        run: scripts/ci/github-suite.sh emit
+      - name: Run emit shard
+        run: scripts/ci/github-suite.sh emit-shard
+
+  emit-aggregate:
+    name: emit-aggregate
+    needs: [gate, emit]
+    if: needs.gate.outputs.should_run == 'true' && !cancelled()
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      _TSZ_CI_EMIT_SHARD_COUNT: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Aggregate emit results
+        run: scripts/ci/github-suite.sh emit-aggregate
 
   fourslash:
-    name: fourslash
+    name: fourslash-${{ matrix.shard }}
     needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 90
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     env:
-      TSZ_CI_SHARDS: 4
+      _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
       TSZ_CI_FOURSLASH_WORKERS: 8
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run fourslash suite
-        run: scripts/ci/github-suite.sh fourslash
+      - name: Run fourslash shard
+        run: scripts/ci/github-suite.sh fourslash-shard
+
+  fourslash-aggregate:
+    name: fourslash-aggregate
+    needs: [gate, fourslash]
+    if: needs.gate.outputs.should_run == 'true' && !cancelled()
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Aggregate fourslash results
+        run: scripts/ci/github-suite.sh fourslash-aggregate

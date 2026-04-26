@@ -191,7 +191,7 @@ suite_needs_group() {
       [[ "$suite" == "wasm" ]]
       ;;
     node)
-      [[ "$suite" == "conformance" || "$suite" == "emit" || "$suite" == "fourslash" ]]
+      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* ]]
       ;;
     rust_compile)
       [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" ]]
@@ -732,6 +732,231 @@ run_conformance_aggregate() {
   echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
 }
 
+run_emit_shard() {
+  ci_section "Emit shard"
+  local bucket run_key shard_index shard_count
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  shard_index="$(num_or_zero "${_TSZ_CI_EMIT_SHARD_INDEX:-0}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_EMIT_SHARD_COUNT:-1}")"
+  local chunk="${EMIT_CHUNK:-2000}"
+  local offset=$(( shard_index * chunk ))
+
+  mkdir -p "$LOG_DIR/emit"
+  export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
+  echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS}"
+
+  local detail_json="$METRICS_DIR/emit-shard-${shard_index}.json"
+  set +e
+  ./scripts/emit/run.sh \
+    --skip-build \
+    --max="$chunk" \
+    --offset="$offset" \
+    --concurrency="$EMIT_WORKERS" \
+    --timeout="${EMIT_TIMEOUT_MS:-30000}" \
+    --json-out="$detail_json" \
+    >"$LOG_DIR/emit/shard-${shard_index}.log" 2>&1
+  local rc="$?"
+  set -e
+
+  local js_p js_t js_s js_to dts_p dts_t dts_s
+  js_p="$(jq -r '.summary.jsPass // 0'    "$detail_json" 2>/dev/null || echo 0)"
+  js_t="$(jq -r '.summary.jsTotal // 0'   "$detail_json" 2>/dev/null || echo 0)"
+  js_s="$(jq -r '.summary.jsSkip // 0'    "$detail_json" 2>/dev/null || echo 0)"
+  js_to="$(jq -r '.summary.jsTimeout // 0' "$detail_json" 2>/dev/null || echo 0)"
+  dts_p="$(jq -r '.summary.dtsPass // 0'  "$detail_json" 2>/dev/null || echo 0)"
+  dts_t="$(jq -r '.summary.dtsTotal // 0' "$detail_json" 2>/dev/null || echo 0)"
+  dts_s="$(jq -r '.summary.dtsSkip // 0'  "$detail_json" 2>/dev/null || echo 0)"
+  js_p="$(num_or_zero "$js_p")"
+  js_t="$(num_or_zero "$js_t")"
+  js_s="$(num_or_zero "$js_s")"
+  js_to="$(num_or_zero "$js_to")"
+  dts_p="$(num_or_zero "$dts_p")"
+  dts_t="$(num_or_zero "$dts_t")"
+  dts_s="$(num_or_zero "$dts_s")"
+
+  local result_json
+  result_json="$(printf '{"shard":%s,"rc":%s,"js_passed":%s,"js_total":%s,"js_skipped":%s,"js_timeouts":%s,"dts_passed":%s,"dts_total":%s,"dts_skipped":%s}' \
+    "$shard_index" "$rc" "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s")"
+  echo "$result_json" > "$METRICS_DIR/emit-shard-${shard_index}.json"
+  echo "EMIT_SHARD shard=${shard_index} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t}"
+
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    local prefix="${bucket%/}/emit-runs/${run_key}"
+    gsutil cp "$METRICS_DIR/emit-shard-${shard_index}.json" "${prefix}/shard-${shard_index}.json" \
+      && echo "Uploaded emit shard result: shard-${shard_index}.json" \
+      || echo "warning: failed to upload emit shard result (non-fatal)" >&2
+  fi
+  return 0
+}
+
+run_emit_aggregate() {
+  ci_section "Emit aggregate"
+  local bucket run_key
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local expected_shards="${_TSZ_CI_EMIT_SHARD_COUNT:-${TSZ_CI_EMIT_SHARDS:-4}}"
+
+  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    echo "error: cannot aggregate — no bucket or run key available" >&2
+    return 1
+  fi
+
+  local prefix="${bucket%/}/emit-runs/${run_key}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  echo "Downloading emit shard results from ${prefix}/shard-*.json ..."
+  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+    echo "error: failed to download emit shard results from GCS" >&2
+    return 1
+  fi
+
+  local js_passed=0 js_total=0 js_skipped=0 js_timeouts=0
+  local dts_passed=0 dts_total=0 dts_skipped=0 files_count=0
+  for f in "$tmp_dir"/shard-*.json; do
+    [[ -f "$f" ]] || continue
+    files_count=$((files_count + 1))
+    local t
+    t="$(jq -r '.js_total // 0' "$f" 2>/dev/null || echo 0)"
+    [[ "$(num_or_zero "$t")" -eq 0 ]] && continue  # skip empty trailing shards (count only for files_count)
+    js_passed=$((js_passed + $(num_or_zero "$(jq -r '.js_passed'  "$f")")))
+    js_total=$((js_total   + $(num_or_zero "$(jq -r '.js_total'   "$f")")))
+    js_skipped=$((js_skipped + $(num_or_zero "$(jq -r '.js_skipped // 0' "$f")")))
+    js_timeouts=$((js_timeouts + $(num_or_zero "$(jq -r '.js_timeouts // 0' "$f")")))
+    dts_passed=$((dts_passed + $(num_or_zero "$(jq -r '.dts_passed' "$f")")))
+    dts_total=$((dts_total   + $(num_or_zero "$(jq -r '.dts_total'  "$f")")))
+    dts_skipped=$((dts_skipped + $(num_or_zero "$(jq -r '.dts_skipped // 0' "$f")")))
+  done
+
+  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${files_count}/${expected_shards} shards"
+
+  if [[ "$files_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${files_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
+    return 1
+  fi
+  if [[ "$js_total" -eq 0 ]]; then
+    echo "error: emit aggregate has zero JS tests — something is wrong" >&2
+    return 1
+  fi
+
+  local base_js base_dts
+  base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
+  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
+  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
+    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
+    return 1
+  fi
+  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
+    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
+    return 1
+  fi
+  echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+}
+
+run_fourslash_shard() {
+  ci_section "Fourslash shard"
+  local bucket run_key shard_index shard_count
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  shard_index="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_INDEX:-0}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_COUNT:-4}")"
+
+  mkdir -p "$LOG_DIR/fourslash"
+  echo "Fourslash shard ${shard_index}/${shard_count}: workers=${FOURSLASH_WORKERS}"
+
+  local detail_json="$METRICS_DIR/fourslash-shard-${shard_index}.json"
+  set +e
+  ./scripts/fourslash/run-fourslash.sh \
+    --skip-cargo-build \
+    --skip-ts-build \
+    --shard="${shard_index}/${shard_count}" \
+    --workers="$FOURSLASH_WORKERS" \
+    --memory-limit=512 \
+    --json-out="$detail_json" \
+    >"$LOG_DIR/fourslash/shard-${shard_index}.log" 2>&1
+  local rc="$?"
+  set -e
+
+  local results passed total
+  results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard_index}.log" | tail -1 || true)"
+  passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
+  total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+  passed="$(num_or_zero "$passed")"
+  total="$(num_or_zero "$total")"
+
+  local result_json
+  result_json="$(printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s}' "$shard_index" "$rc" "$passed" "$total")"
+  echo "$result_json" > "$METRICS_DIR/fourslash-shard-${shard_index}.json"
+  echo "FOURSLASH_SHARD shard=${shard_index} rc=${rc} passed=${passed}/${total}"
+  if [[ "$rc" -ne 0 ]]; then
+    show_log_tail "$LOG_DIR/fourslash/shard-${shard_index}.log"
+  fi
+
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    local prefix="${bucket%/}/fourslash-runs/${run_key}"
+    gsutil cp "$METRICS_DIR/fourslash-shard-${shard_index}.json" "${prefix}/shard-${shard_index}.json" \
+      && echo "Uploaded fourslash shard result: shard-${shard_index}.json" \
+      || echo "warning: failed to upload fourslash shard result (non-fatal)" >&2
+  fi
+  return 0
+}
+
+run_fourslash_aggregate() {
+  ci_section "Fourslash aggregate (GCS)"
+  local bucket run_key
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local expected_shards="${_TSZ_CI_FOURSLASH_SHARD_COUNT:-${TSZ_CI_FOURSLASH_SHARDS:-4}}"
+
+  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    echo "error: cannot aggregate — no bucket or run key available" >&2
+    return 1
+  fi
+
+  local prefix="${bucket%/}/fourslash-runs/${run_key}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  echo "Downloading fourslash shard results from ${prefix}/shard-*.json ..."
+  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+    echo "error: failed to download fourslash shard results from GCS" >&2
+    return 1
+  fi
+
+  local total_passed=0 total_tests=0 shard_count=0
+  for f in "$tmp_dir"/shard-*.json; do
+    [[ -f "$f" ]] || continue
+    total_passed=$((total_passed + $(num_or_zero "$(jq -r '.passed // 0' "$f")")))
+    total_tests=$((total_tests   + $(num_or_zero "$(jq -r '.total // 0'  "$f")")))
+    shard_count=$((shard_count + 1))
+  done
+
+  echo "Fourslash aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards"
+
+  if [[ "$shard_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${shard_count}/${expected_shards} fourslash shards collected; some shards may have crashed" >&2
+    return 1
+  fi
+  if [[ "$total_tests" -eq 0 ]]; then
+    echo "error: fourslash aggregate has zero tests" >&2
+    return 1
+  fi
+
+  local baseline
+  baseline="$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)"
+  if [[ "$baseline" -gt 0 ]]; then
+    local tolerance floor
+    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
+    floor=$((baseline - tolerance))
+    if [[ "$total_passed" -lt "$floor" ]]; then
+      echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
+      return 1
+    fi
+  fi
+  echo "Fourslash OK: ${total_passed}/${total_tests}"
+}
+
 run_emit_shards() {
   ci_section "Emit shards"
   mkdir -p "$LOG_DIR/emit"
@@ -968,9 +1193,25 @@ main() {
       timed run_fourslash_shards run_fourslash_shards
       timed aggregate_fourslash aggregate_fourslash
       ;;
+    emit-shard)
+      timed build_test_binaries build_test_binaries
+      timed prep_node_artifacts prep_node_artifacts
+      timed run_emit_shard run_emit_shard
+      ;;
+    emit-aggregate)
+      timed run_emit_aggregate run_emit_aggregate
+      ;;
+    fourslash-shard)
+      timed build_test_binaries build_test_binaries
+      timed prep_node_artifacts prep_node_artifacts
+      timed run_fourslash_shard run_fourslash_shard
+      ;;
+    fourslash-aggregate)
+      timed run_fourslash_aggregate run_fourslash_aggregate
+      ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, lint, unit, wasm, conformance, conformance-aggregate, emit, fourslash" >&2
+      echo "valid suites: all, build, lint, unit, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac
