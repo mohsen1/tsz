@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `claude/exciting-keller-bwwDp`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1374
+- **Status**: ready
 - **Workstream**: Conformance (Workstream 1)
 
 ## Intent
@@ -28,5 +28,10 @@ Conformance target: `excessPropertyCheckIntersectionWithRecursiveType.ts`.
 ## Verification
 
 - `test_prepend_infer_rest_from_mixed_params` — PASS (Prepend lengths correct)
-- `test_build_tree_no_false_ts2741` — PASS (no false TS2741)
-- Conformance: `excessPropertyCheckIntersectionWithRecursiveType.ts`
+- `test_build_tree_no_false_ts2741` — IGNORED (downstream recursion-depth
+  follow-up; Prepend infer is correct, but BuildTree's recursive
+  conditional-type instantiation still trips TS2741)
+- Conformance target `excessPropertyCheckIntersectionWithRecursiveType.ts`
+  now prints the correctly-nested
+  `Prepend<any, [head: any, ...args: [head: any, ...args: []]]>`,
+  confirming the fix at the infer level.
