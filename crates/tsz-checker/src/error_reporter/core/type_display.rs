@@ -327,9 +327,17 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_property_receiver_application_display_arg(&mut self, ty: TypeId) -> TypeId {
-        let evaluated = self.evaluate_type_with_env(ty);
-        if evaluated != ty {
-            return self.normalize_property_receiver_application_display_arg(evaluated);
+        // Only resolve `Lazy(DefId)` references via the type environment.
+        // Calling `evaluate_type_with_env` on richer shapes (e.g. `keyof T`,
+        // `T[K]`, conditional types) eagerly expands them to their evaluated
+        // structural form and loses the original syntactic identity that tsc
+        // preserves in property-receiver diagnostics. Structural recursion
+        // below already handles applications/unions/intersections/objects.
+        if crate::query_boundaries::common::is_lazy_type(self.ctx.types.as_type_database(), ty) {
+            let evaluated = self.evaluate_type_with_env(ty);
+            if evaluated != ty {
+                return self.normalize_property_receiver_application_display_arg(evaluated);
+            }
         }
 
         if let Some(app) = query::type_application(self.ctx.types, ty) {
