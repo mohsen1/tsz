@@ -393,6 +393,36 @@ impl ExportSurface {
 mod tests {
     use super::*;
 
+    // ── Test helpers ────────────────────────────────────────────────
+
+    /// Build an `ExportedSymbol` with a synthetic `SymbolId` and flags.
+    fn exp(id: u32, flags: u32, is_type_only: bool) -> ExportedSymbol {
+        ExportedSymbol {
+            symbol_id: SymbolId(id),
+            flags,
+            is_type_only,
+        }
+    }
+
+    /// Build a `NamedReexport` quickly.
+    fn nre(export_name: &str, source: &str, original: Option<&str>) -> NamedReexport {
+        NamedReexport {
+            export_name: export_name.to_string(),
+            source_module: source.to_string(),
+            original_name: original.map(str::to_string),
+        }
+    }
+
+    /// Build a `WildcardReexport` quickly.
+    fn wre(source: &str, is_type_only: bool) -> WildcardReexport {
+        WildcardReexport {
+            source_module: source.to_string(),
+            is_type_only,
+        }
+    }
+
+    // ── Empty / default state ───────────────────────────────────────
+
     #[test]
     fn empty_surface() {
         let surface = ExportSurface::default();
@@ -400,5 +430,291 @@ mod tests {
         assert!(!surface.has_export_equals);
         assert_eq!(surface.public_api_size(), 0);
         assert!(surface.exported_names().is_empty());
+    }
+
+    #[test]
+    fn empty_surface_query_methods_are_negative() {
+        let surface = ExportSurface::default();
+        assert!(!surface.is_exported("anything"));
+        assert!(!surface.is_type_only_export("anything"));
+        assert!(!surface.has_overloads("anything"));
+        assert!(surface.symbol_for_export("anything").is_none());
+        assert!(surface.default_export.is_none());
+    }
+
+    // ── is_exported ─────────────────────────────────────────────────
+
+    #[test]
+    fn is_exported_true_for_module_export_only() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("foo".to_string(), exp(1, 0, false));
+        assert!(surface.is_exported("foo"));
+        assert!(!surface.is_exported("bar"));
+    }
+
+    #[test]
+    fn is_exported_true_for_file_local_only() {
+        let mut surface = ExportSurface::default();
+        surface
+            .file_exported_locals
+            .insert("foo".to_string(), exp(1, 0, false));
+        assert!(surface.is_exported("foo"));
+        assert!(!surface.is_exported("bar"));
+    }
+
+    #[test]
+    fn is_exported_true_when_in_both_populations() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("foo".to_string(), exp(1, 0, false));
+        surface
+            .file_exported_locals
+            .insert("foo".to_string(), exp(1, 0, false));
+        assert!(surface.is_exported("foo"));
+    }
+
+    // ── is_type_only_export ─────────────────────────────────────────
+
+    #[test]
+    fn is_type_only_export_reads_module_exports_first() {
+        let mut surface = ExportSurface::default();
+        // module_exports is checked first; its is_type_only wins.
+        surface
+            .module_exports
+            .insert("T".to_string(), exp(1, 0, true));
+        // Even if file_exported_locals disagrees, module_exports value wins.
+        surface
+            .file_exported_locals
+            .insert("T".to_string(), exp(1, 0, false));
+        assert!(surface.is_type_only_export("T"));
+    }
+
+    #[test]
+    fn is_type_only_export_falls_back_to_file_locals() {
+        let mut surface = ExportSurface::default();
+        surface
+            .file_exported_locals
+            .insert("T".to_string(), exp(1, 0, true));
+        assert!(surface.is_type_only_export("T"));
+    }
+
+    #[test]
+    fn is_type_only_export_false_for_value_export() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("v".to_string(), exp(1, 0, false));
+        assert!(!surface.is_type_only_export("v"));
+    }
+
+    #[test]
+    fn is_type_only_export_false_for_unknown_name() {
+        let surface = ExportSurface::default();
+        assert!(!surface.is_type_only_export("missing"));
+    }
+
+    // ── exported_names: sort + dedup ────────────────────────────────
+
+    #[test]
+    fn exported_names_sorts_alphabetically() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("zeta".to_string(), exp(1, 0, false));
+        surface
+            .module_exports
+            .insert("alpha".to_string(), exp(2, 0, false));
+        surface
+            .module_exports
+            .insert("middle".to_string(), exp(3, 0, false));
+        let names = surface.exported_names();
+        assert_eq!(names, vec!["alpha", "middle", "zeta"]);
+    }
+
+    #[test]
+    fn exported_names_dedups_overlap_between_populations() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("foo".to_string(), exp(1, 0, false));
+        surface
+            .file_exported_locals
+            .insert("foo".to_string(), exp(1, 0, false));
+        let names = surface.exported_names();
+        assert_eq!(names, vec!["foo"]);
+    }
+
+    #[test]
+    fn exported_names_unions_distinct_entries_from_both_populations() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("a".to_string(), exp(1, 0, false));
+        surface
+            .file_exported_locals
+            .insert("b".to_string(), exp(2, 0, false));
+        let names = surface.exported_names();
+        assert_eq!(names, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn exported_names_excludes_reexports() {
+        // Re-exports do NOT participate in exported_names() — only direct
+        // exports do. Lock that contract.
+        let mut surface = ExportSurface::default();
+        surface.named_reexports.push(nre("re", "./m", Some("orig")));
+        surface.wildcard_reexports.push(wre("./other", false));
+        assert!(surface.exported_names().is_empty());
+    }
+
+    // ── has_overloads ───────────────────────────────────────────────
+
+    #[test]
+    fn has_overloads_membership() {
+        let mut surface = ExportSurface::default();
+        surface.overloaded_functions.insert("f".to_string());
+        assert!(surface.has_overloads("f"));
+        assert!(!surface.has_overloads("g"));
+    }
+
+    #[test]
+    fn has_overloads_empty_set() {
+        let surface = ExportSurface::default();
+        assert!(!surface.has_overloads(""));
+        assert!(!surface.has_overloads("any"));
+    }
+
+    // ── symbol_for_export ───────────────────────────────────────────
+
+    #[test]
+    fn symbol_for_export_finds_module_export_first() {
+        let mut surface = ExportSurface::default();
+        // module_exports has higher priority — its SymbolId wins on overlap.
+        surface
+            .module_exports
+            .insert("foo".to_string(), exp(7, 0, false));
+        surface
+            .file_exported_locals
+            .insert("foo".to_string(), exp(99, 0, false));
+        assert_eq!(surface.symbol_for_export("foo"), Some(SymbolId(7)));
+    }
+
+    #[test]
+    fn symbol_for_export_falls_back_to_file_locals() {
+        let mut surface = ExportSurface::default();
+        surface
+            .file_exported_locals
+            .insert("foo".to_string(), exp(42, 0, false));
+        assert_eq!(surface.symbol_for_export("foo"), Some(SymbolId(42)));
+    }
+
+    #[test]
+    fn symbol_for_export_returns_none_for_unknown() {
+        let surface = ExportSurface::default();
+        assert!(surface.symbol_for_export("missing").is_none());
+    }
+
+    // ── public_api_size ─────────────────────────────────────────────
+
+    #[test]
+    fn public_api_size_counts_each_population_once() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("a".to_string(), exp(1, 0, false));
+        surface
+            .module_exports
+            .insert("b".to_string(), exp(2, 0, false));
+        surface
+            .file_exported_locals
+            .insert("c".to_string(), exp(3, 0, false));
+        surface.named_reexports.push(nre("d", "./m", None));
+        surface.wildcard_reexports.push(wre("./other", false));
+        // 2 module_exports + 1 unique file_local + 1 named + 1 wildcard.
+        assert_eq!(surface.public_api_size(), 5);
+    }
+
+    #[test]
+    fn public_api_size_does_not_double_count_overlap() {
+        let mut surface = ExportSurface::default();
+        // Same name "foo" appears in both populations — must only be counted once.
+        surface
+            .module_exports
+            .insert("foo".to_string(), exp(1, 0, false));
+        surface
+            .file_exported_locals
+            .insert("foo".to_string(), exp(1, 0, false));
+        assert_eq!(surface.public_api_size(), 1);
+    }
+
+    #[test]
+    fn public_api_size_with_only_reexports() {
+        let mut surface = ExportSurface::default();
+        surface.named_reexports.push(nre("a", "./m", None));
+        surface.named_reexports.push(nre("b", "./m", None));
+        surface.wildcard_reexports.push(wre("./n", false));
+        assert_eq!(surface.public_api_size(), 3);
+    }
+
+    #[test]
+    fn public_api_size_partial_overlap_unique_locals_counted() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("shared".to_string(), exp(1, 0, false));
+        surface
+            .file_exported_locals
+            .insert("shared".to_string(), exp(1, 0, false));
+        surface
+            .file_exported_locals
+            .insert("unique".to_string(), exp(2, 0, false));
+        // 1 module export ("shared") + 1 unique file-local ("unique"). Overlap
+        // does NOT add to module count.
+        assert_eq!(surface.public_api_size(), 2);
+    }
+
+    // ── Field defaults sanity ───────────────────────────────────────
+
+    #[test]
+    fn default_collections_are_empty() {
+        let s = ExportSurface::default();
+        assert!(s.module_exports.is_empty());
+        assert!(s.file_exported_locals.is_empty());
+        assert!(s.named_reexports.is_empty());
+        assert!(s.wildcard_reexports.is_empty());
+        assert!(s.global_augmentations.is_empty());
+        assert!(s.module_augmentations.is_empty());
+        assert!(s.overloaded_functions.is_empty());
+    }
+
+    // ── Clone parity ────────────────────────────────────────────────
+
+    #[test]
+    fn clone_preserves_all_query_results() {
+        let mut surface = ExportSurface::default();
+        surface
+            .module_exports
+            .insert("foo".to_string(), exp(1, 0, true));
+        surface
+            .file_exported_locals
+            .insert("bar".to_string(), exp(2, 0, false));
+        surface.overloaded_functions.insert("over".to_string());
+        surface.named_reexports.push(nre("re", "./m", None));
+        surface.has_export_equals = true;
+        surface.default_export = Some(SymbolId(99));
+
+        let cloned = surface.clone();
+        assert!(cloned.is_exported("foo"));
+        assert!(cloned.is_type_only_export("foo"));
+        assert!(cloned.is_exported("bar"));
+        assert!(!cloned.is_type_only_export("bar"));
+        assert!(cloned.has_overloads("over"));
+        assert_eq!(cloned.symbol_for_export("foo"), Some(SymbolId(1)));
+        assert_eq!(cloned.public_api_size(), 3);
+        assert!(cloned.has_export_equals);
+        assert_eq!(cloned.default_export, Some(SymbolId(99)));
     }
 }
