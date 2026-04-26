@@ -110,7 +110,11 @@ impl ParserState {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token();
-        let is_param = self.is_identifier_or_keyword() || self.is_token(SyntaxKind::ThisKeyword);
+        // Matches tsc's `nextTokenIsIdentifierOrKeywordOnSameLine`: a line break
+        // before the next token means ASI applies — `asserts` is a type reference,
+        // not the start of a predicate.
+        let is_param = (self.is_identifier_or_keyword() || self.is_token(SyntaxKind::ThisKeyword))
+            && !self.scanner.has_preceding_line_break();
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_param
@@ -141,7 +145,12 @@ impl ParserState {
     }
 
     pub(crate) fn parse_type_with_predicates(&mut self, allow_type_predicates: bool) -> NodeIndex {
-        if allow_type_predicates && self.is_asserts_type_predicate_start() {
+        // `asserts` type predicates can appear in any type position (matches tsc's
+        // `parseNonArrayType` which always recognises `AssertsKeyword + ident-on-same-line`).
+        // When the resulting predicate is in an invalid context the checker emits
+        // TS1228 from `get_type_from_type_node`. The lookahead here is what
+        // distinguishes a predicate from a plain `asserts` type reference.
+        if self.is_asserts_type_predicate_start() {
             return self.parse_asserts_type_predicate();
         }
 
