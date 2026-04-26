@@ -1462,22 +1462,58 @@ impl<'a> CheckerState<'a> {
             // is NOT assignable to the target. Without this guard, elaboration can
             // produce false-positive TS2322 errors on nested elements (e.g., array
             // literal elements) even when the overall property type is compatible.
+            //
+            // Peel through parenthesized and comma/assignment expression wrappers
+            // before checking the inner expression kind. tsc's elaborateElementwise
+            // walks past these wrappers so `a: q = ({ ... })` still drills into the
+            // trailing object literal for per-property elaboration.
+            let unwrapped_prop_value_idx = {
+                let mut current = prop_value_idx;
+                for _ in 0..16 {
+                    let Some(node) = self.ctx.arena.get(current) else {
+                        break;
+                    };
+                    if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                        && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+                    {
+                        current = paren.expression;
+                        continue;
+                    }
+                    if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+                        && (bin.operator_token == SyntaxKind::CommaToken as u16
+                            || bin.operator_token == SyntaxKind::EqualsToken as u16)
+                    {
+                        current = bin.right;
+                        continue;
+                    }
+                    break;
+                }
+                current
+            };
             if source_prop_type != TypeId::ERROR
                 && source_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
                 && !self.is_assignable_to(source_prop_type, target_prop_type)
-                && self.ctx.arena.get(prop_value_idx).is_some_and(|node| {
-                    matches!(
-                        node.kind,
-                        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                            | syntax_kind_ext::ARROW_FUNCTION
-                            | syntax_kind_ext::FUNCTION_EXPRESSION
-                            | syntax_kind_ext::CONDITIONAL_EXPRESSION
-                    )
-                })
-                && self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type)
+                && self
+                    .ctx
+                    .arena
+                    .get(unwrapped_prop_value_idx)
+                    .is_some_and(|node| {
+                        matches!(
+                            node.kind,
+                            syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                | syntax_kind_ext::ARROW_FUNCTION
+                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                                | syntax_kind_ext::CONDITIONAL_EXPRESSION
+                        )
+                    })
+                && self.try_elaborate_assignment_source_error(
+                    unwrapped_prop_value_idx,
+                    target_prop_type,
+                )
             {
                 elaborated = true;
                 continue;
@@ -2182,7 +2218,47 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Returns true if `idx` resolves to an `OBJECT_LITERAL_EXPRESSION` after
+    /// peeling parenthesized and comma-expression wrappers. Used to gate the
+    /// var-decl elaboration entry so unrelated initializers (`null as any`,
+    /// identifiers, ...) skip the elaboration path entirely. Calling
+    /// `is_assignable_to` on those has cache side-effects that perturb
+    /// downstream JSX/contextual-typing decisions.
+    pub fn initializer_reaches_object_literal_through_wrappers(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = idx;
+        for _ in 0..16 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+                && bin.operator_token == SyntaxKind::CommaToken as u16
+            {
+                current = bin.right;
+                continue;
+            }
+            return false;
+        }
+        false
+    }
+
     /// Elaborate object literal property mismatches for variable declarations.
+    ///
+    /// Walks through parentheses and comma expressions to find the inner
+    /// object literal: `var x: T = (1, 2, { ... })` and `var x: T = ({...})`
+    /// both still drill into the trailing object literal. tsc anchors the
+    /// per-property TS2322 to the deepest offending leaf inside the
+    /// initializer's object literal regardless of these wrappers.
     pub fn try_elaborate_object_literal_properties_for_var_init(
         &mut self,
         init_idx: NodeIndex,
@@ -2190,15 +2266,30 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
-        let Some(init_node) = self.ctx.arena.get(init_idx) else {
-            return false;
-        };
-
-        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+        let mut current = init_idx;
+        for _ in 0..16 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return self.try_elaborate_object_literal_properties(current, declared_type);
+            }
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+                && bin.operator_token == SyntaxKind::CommaToken as u16
+            {
+                current = bin.right;
+                continue;
+            }
             return false;
         }
-
-        self.try_elaborate_object_literal_properties(init_idx, declared_type)
+        false
     }
 
     /// Elaborate array literal element mismatches for variable declarations.

@@ -447,6 +447,10 @@ path = "tests/union_origin_display_tests.rs"
 name = "jsdoc_class_property_target_display"
 path = "tests/jsdoc_class_property_target_display.rs"
 
+[[test]]
+name = "elaboration_wrapper_init_tests"
+path = "tests/elaboration_wrapper_init_tests.rs"
+
 [lints]
 workspace = true
 
