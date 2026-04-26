@@ -310,7 +310,7 @@ configure_sccache() {
 
   echo "sccache: GCS bucket=${gcs_bucket} prefix=${gcs_prefix} mode=${SCCACHE_GCS_RW_MODE}"
   sccache --stop-server 2>/dev/null || true
-  if sccache --start-server 2>/dev/null; then
+  if sccache --start-server; then
     echo "sccache server started"
   else
     echo "warning: sccache server failed to start; unsetting RUSTC_WRAPPER" >&2
