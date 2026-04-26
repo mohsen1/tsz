@@ -1,33 +1,5 @@
-use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn check_source(
-    source: &str,
-    file_name: &str,
-    options: CheckerOptions,
-) -> Vec<tsz_common::diagnostics::Diagnostic> {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let source_file = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), source_file);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(source_file);
-    checker.ctx.diagnostics.clone()
-}
+use tsz_checker::test_utils::check_source;
 
 #[test]
 fn js_optional_class_elements_report_ts8009_at_question_token() {
