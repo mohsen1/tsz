@@ -2143,14 +2143,14 @@ impl<'a> CheckerState<'a> {
                             .get(body)
                             .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
                             .is_some_and(|cond| {
-                                let guard = DiagnosticSpeculationSnapshot::new(&self.ctx);
+                                let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
                                 let return_req =
                                     TypingRequest::with_contextual_type(expected_return_type);
                                 let mut when_true =
                                     self.get_type_of_node_with_request(cond.when_true, &return_req);
                                 let mut when_false = self
                                     .get_type_of_node_with_request(cond.when_false, &return_req);
-                                guard.rollback(&mut self.ctx);
+                                snap.rollback(&mut self.ctx);
                                 if is_async_for_context {
                                     when_true =
                                         self.unwrap_promise_type(when_true).unwrap_or(when_true);
@@ -2310,7 +2310,7 @@ impl<'a> CheckerState<'a> {
                                 self.type_has_unresolved_inference_holes(return_type)
                             })
                     });
-                let diag_guard = suppress_expression_body_diagnostics
+                let diag_snap = suppress_expression_body_diagnostics
                     .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
                 // During type environment building (before is_checking_statements),
                 // skip full body checking for class methods/constructors. The class
@@ -2328,8 +2328,8 @@ impl<'a> CheckerState<'a> {
                 if !skip_body_check {
                     self.check_statement_with_request(body, &TypingRequest::NONE);
                 }
-                if let Some(guard) = diag_guard {
-                    guard.rollback(&mut self.ctx);
+                if let Some(snap) = diag_snap {
+                    snap.rollback(&mut self.ctx);
                 }
 
                 // For annotated generator expressions, check that Generator<TYield, any, any>
