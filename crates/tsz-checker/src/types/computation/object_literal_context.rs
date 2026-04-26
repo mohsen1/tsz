@@ -1312,8 +1312,14 @@ impl<'a> CheckerState<'a> {
         // Pre-scan: collect discriminant info from the object literal.
         // - `unit_discriminants`: properties with unit-type literal values (e.g. `kind: "a"`)
         // - `present_property_names`: all explicitly named properties (for never-elimination)
+        // - `non_unit_named_properties`: present properties whose initializer is NOT a
+        //   unit literal (e.g. `type: foo1` where `foo1: string`). When such a property
+        //   names a discriminator slot in the union, narrowing must bail entirely so
+        //   the diagnostic reports the full union (`"foo" | "bar"`) rather than a
+        //   single arm — matches tsc's `indirectDiscriminantAndExcessProperty` shape.
         let mut unit_discriminants: Vec<(String, TypeId)> = Vec::new();
         let mut present_property_names: Vec<String> = Vec::new();
+        let mut non_unit_named_properties: Vec<String> = Vec::new();
         for &elem_idx in elements {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -1324,10 +1330,15 @@ impl<'a> CheckerState<'a> {
                 };
                 present_property_names.push(name.clone());
                 // Get the literal type of the initializer without full type computation.
-                if let Some(lit_type) = self.literal_type_from_initializer(prop.initializer)
-                    && crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
-                {
+                let unit_lit =
+                    self.literal_type_from_initializer(prop.initializer)
+                        .filter(|&lit_type| {
+                            crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
+                        });
+                if let Some(lit_type) = unit_lit {
                     unit_discriminants.push((name, lit_type));
+                } else {
+                    non_unit_named_properties.push(name);
                 }
             } else if let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
                 && let Some(name) = self.get_property_name_resolved(shorthand.name)
@@ -1337,12 +1348,16 @@ impl<'a> CheckerState<'a> {
                 // resolve the identifier to its const declaration and extract the literal
                 // type from the initializer. This enables discriminant narrowing for
                 // shorthand properties, matching tsc behavior.
-                if let Some(lit_type) = self
+                let unit_lit = self
                     .shorthand_const_literal_type(shorthand.name)
                     .or_else(|| self.literal_type_from_initializer(shorthand.name))
-                    && crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
-                {
+                    .filter(|&lit_type| {
+                        crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
+                    });
+                if let Some(lit_type) = unit_lit {
                     unit_discriminants.push((name, lit_type));
+                } else {
+                    non_unit_named_properties.push(name);
                 }
             }
         }
@@ -1351,7 +1366,7 @@ impl<'a> CheckerState<'a> {
             return ctx_type;
         }
 
-        unit_discriminants.retain(|(prop_name, _)| {
+        let mut is_discriminator_slot = |prop_name: &str| -> bool {
             let mut unit_member_count = 0;
             for &member in &members {
                 let lazy_member = self.resolve_lazy_type(member);
@@ -1373,7 +1388,21 @@ impl<'a> CheckerState<'a> {
                 unit_member_count += 1;
             }
             unit_member_count >= 2
-        });
+        };
+
+        unit_discriminants.retain(|(prop_name, _)| is_discriminator_slot(prop_name));
+
+        // If the literal supplies a discriminator slot with a non-unit value
+        // (e.g. `type: foo1` where `foo1: string`), the user is attempting a
+        // dynamic discriminator. tsc reports the assignability error against
+        // the FULL union (`"foo" | "bar"`); narrowing here would collapse the
+        // diagnostic to a single arm. Bail entirely in that case.
+        let literal_has_dynamic_discriminator = non_unit_named_properties
+            .iter()
+            .any(|name| is_discriminator_slot(name));
+        if literal_has_dynamic_discriminator {
+            return ctx_type;
+        }
 
         // For each union member, check if all discriminant values are compatible
         // AND no present property maps to `never` in that member.
@@ -1453,9 +1482,12 @@ impl<'a> CheckerState<'a> {
             //   type A = { disc: true; cb: (x: string) => void }
             //   type B = { disc?: false; cb: (x: number) => void }
             //   f({ cb: n => ... })  // disc is required in A but optional in B
-            let absent_required_match = if unit_discriminants.is_empty() {
-                true
-            } else {
+            //
+            // Run this check even when there are no unit-typed discriminant
+            // properties present in the literal — the inference is purely
+            // structural (required-vs-optional) and a missing discriminator
+            // is itself a signal in tsc's discriminantPropertyInference.
+            let absent_required_match = {
                 let mut ok = true;
                 if let Some(shape) = member_candidates.iter().find_map(|&candidate| {
                     crate::query_boundaries::common::object_shape_for_type(
