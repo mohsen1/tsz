@@ -2556,6 +2556,33 @@ fn binder_reset_clears_state() {
     assert!(binder.scopes.is_empty(), "reset should clear scopes");
 }
 
+#[test]
+fn binder_reset_clears_lib_symbol_reverse_remap() {
+    use crate::SymbolId;
+
+    let mut binder = BinderState::new();
+
+    // Insert a fake reverse-remap entry. This map is normally populated by
+    // the lib-merge path (`crates/tsz-binder/src/state/lib_merge.rs`); the
+    // LSP re-bind path calls `reset()` before `bind_source_file()`, so any
+    // stale entry that survives `reset()` would feed into the downstream
+    // `lib_symbol_reverse_remap.contains_key(...)` check in
+    // `crates/tsz-checker/src/state/type_analysis/cross_file.rs`.
+    Arc::make_mut(&mut binder.lib_symbol_reverse_remap).insert(SymbolId(42), (7, SymbolId(13)));
+
+    assert!(
+        !binder.lib_symbol_reverse_remap.is_empty(),
+        "precondition: fake reverse-remap entry should be present"
+    );
+
+    binder.reset();
+
+    assert!(
+        binder.lib_symbol_reverse_remap.is_empty(),
+        "reset should clear lib_symbol_reverse_remap (PR #1399 followup)"
+    );
+}
+
 // =============================================================================
 // 14. SYMBOL ARENA TESTS
 // =============================================================================
