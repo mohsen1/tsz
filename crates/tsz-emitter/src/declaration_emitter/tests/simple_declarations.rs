@@ -2350,3 +2350,85 @@ fn test_export_default_identifier() {
         "Expected export default identifier: {output}"
     );
 }
+
+#[test]
+fn test_js_export_default_identifier_is_hoisted() {
+    // For JS source files, tsc hoists `export default <Identifier>` to the very
+    // top of the .d.ts when the identifier resolves to a top-level local
+    // declaration. Repro for jsDeclarationEmitDoesNotRenameImport.
+    let output = emit_js_dts(
+        r#"
+function validate() {}
+
+export default validate;
+"#,
+    );
+    let trimmed = output.trim();
+    assert!(
+        trimmed.starts_with("export default validate;"),
+        "Expected `export default validate;` to be hoisted to the top: {trimmed}"
+    );
+    let count = trimmed.matches("export default validate;").count();
+    assert_eq!(count, 1, "Expected exactly one export-default emission: {trimmed}");
+    assert!(
+        trimmed.contains("declare function validate(): void;"),
+        "Expected the function declaration to follow: {trimmed}"
+    );
+    let default_pos = trimmed.find("export default validate;").unwrap();
+    let decl_pos = trimmed.find("declare function validate").unwrap();
+    assert!(
+        default_pos < decl_pos,
+        "`export default` should appear before the function declaration: {trimmed}"
+    );
+}
+
+#[test]
+fn test_js_export_default_class_is_hoisted_above_class_body() {
+    // Same hoisting rule as above, but for class declarations. Uses the
+    // usage-analysis variant so the class isn't pruned from the .d.ts.
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @module Test */
+class Test {}
+export default Test;
+"#,
+    );
+    let trimmed = output.trim();
+    assert!(
+        trimmed.starts_with("export default Test;"),
+        "Expected `export default Test;` to be hoisted to the top: {trimmed}"
+    );
+    let count = trimmed.matches("export default Test;").count();
+    assert_eq!(count, 1, "Expected exactly one export-default emission: {trimmed}");
+    let default_pos = trimmed.find("export default Test;").unwrap();
+    let decl_pos = trimmed
+        .find("declare class Test")
+        .unwrap_or_else(|| panic!("expected `declare class Test` in JS dts: {trimmed}"));
+    assert!(
+        default_pos < decl_pos,
+        "`export default` should appear before the class declaration: {trimmed}"
+    );
+}
+
+#[test]
+fn test_ts_export_default_identifier_is_not_hoisted() {
+    // TS files keep `export default <Identifier>` in source order — only JS
+    // declaration emit applies the hoist transformation.
+    let output = emit_dts(
+        r#"
+function validate() {}
+export default validate;
+"#,
+    );
+    let trimmed = output.trim();
+    let default_pos = trimmed.find("export default validate;").expect(
+        "expected export default validate; in TS output",
+    );
+    let decl_pos = trimmed.find("declare function validate").expect(
+        "expected declare function validate in TS output",
+    );
+    assert!(
+        decl_pos < default_pos,
+        "TS files should preserve source order (declaration first): {trimmed}"
+    );
+}

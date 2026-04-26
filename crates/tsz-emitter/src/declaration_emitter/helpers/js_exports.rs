@@ -80,6 +80,91 @@ impl<'a> DeclarationEmitter<'a> {
         names
     }
 
+    /// Collect identifiers used in `export default <Identifier>` statements when the
+    /// source file is JS *and* the identifier resolves to a top-level local
+    /// declaration. tsc hoists these `export default` lines to the very top of the
+    /// emitted .d.ts (mirroring its `transformDeclarations` behaviour for JS files).
+    pub(crate) fn collect_js_export_default_names(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return names;
+        }
+
+        // Build the set of top-level local declaration names so we only hoist
+        // exports of same-file locals. Re-exports of imported identifiers do not
+        // need hoisting (tsc emits them in source order, after the import line).
+        let mut top_level_names: FxHashSet<String> = FxHashSet::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if let Some(name) = self.extract_declaration_name(stmt_idx) {
+                top_level_names.insert(name);
+                continue;
+            }
+            if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        if let Some(name) = self.get_identifier_text(decl.name) {
+                            top_level_names.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // tsz parses `export default <Identifier>;` as `EXPORT_DECLARATION`
+            // with `is_default_export: true` (NOT as `EXPORT_ASSIGNMENT`, which
+            // is reserved for `export = X;`).
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if !export.is_default_export {
+                continue;
+            }
+            if export.export_clause.is_none() {
+                continue;
+            }
+            let Some(expr_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if expr_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.arena.get_identifier(expr_node) else {
+                continue;
+            };
+            if !top_level_names.contains(&ident.escaped_text) {
+                continue;
+            }
+            names.insert(ident.escaped_text.clone());
+        }
+
+        names
+    }
+
     pub(in crate::declaration_emitter) fn js_module_exports_assignment_initializer(
         &self,
         stmt_idx: NodeIndex,
@@ -1506,6 +1591,59 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+    }
+
+    /// Emit hoisted `export default <Identifier>;` statements at the top of a JS
+    /// declaration file, ahead of the actual declarations. The original
+    /// `EXPORT_DECLARATION` statement (with `is_default_export: true`) is
+    /// suppressed because `emit_export_declaration` also consults
+    /// `emitted_js_export_default_names`.
+    pub(crate) fn emit_hoisted_js_export_default_statements(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if !export.is_default_export || export.export_clause.is_none() {
+                continue;
+            }
+            let Some(expr_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if expr_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(ident) = self.arena.get_identifier(expr_node) else {
+                continue;
+            };
+            if !self.js_export_default_names.contains(&ident.escaped_text) {
+                continue;
+            }
+            if !self
+                .emitted_js_export_default_names
+                .insert(ident.escaped_text.clone())
+            {
+                continue;
+            }
+            self.write_indent();
+            self.write("export default ");
+            self.write(&ident.escaped_text);
+            self.write(";");
+            self.write_line();
+            self.emitted_scope_marker = true;
+            self.emitted_module_indicator = true;
+        }
     }
 
     pub(crate) fn emit_pending_js_export_equals_for_name(&mut self, name_idx: NodeIndex) {

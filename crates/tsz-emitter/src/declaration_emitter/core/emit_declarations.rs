@@ -126,6 +126,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
+        self.js_export_default_names = self.collect_js_export_default_names(source_file);
+        self.emitted_js_export_default_names.clear();
         self.js_shadowed_export_equals_local_aliases.clear();
         let (
             js_commonjs_named_export_names,
@@ -249,6 +251,16 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.emit_js_anonymous_export_equals_value_declaration(initializer);
             }
+        }
+
+        // For JS source files, hoist `export default <Identifier>` statements that
+        // reference a top-level local declaration to the very top of the .d.ts.
+        // This mirrors tsc's `transformDeclarations` behaviour for JS inputs.
+        // The original ExportAssignment statement is suppressed when the main loop
+        // reaches it because `emit_export_assignment` checks
+        // `emitted_js_export_default_names`.
+        if self.source_is_js_file && !self.js_export_default_names.is_empty() {
+            self.emit_hoisted_js_export_default_statements(source_file);
         }
 
         for &stmt_idx in &source_file.statements.nodes {
