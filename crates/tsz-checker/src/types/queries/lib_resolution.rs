@@ -764,9 +764,17 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Check shared cross-file lib cache first
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
             return *cached;
+        }
+        if let Some(ref shared) = self.ctx.shared_lib_type_cache
+            && let Some(entry) = shared.get(name)
+        {
+            let cached = *entry;
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(name.to_string(), cached);
+            return cached;
         }
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
@@ -1030,6 +1038,9 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(name.to_string(), Some(ty));
+            if let Some(ref shared) = self.ctx.shared_lib_type_cache {
+                shared.insert(name.to_string(), Some(ty));
+            }
 
             // Register the final merged type in type_to_def so the formatter can
             // display "Date" instead of expanding all members. The initial
@@ -1192,14 +1203,10 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .lib_type_resolution_cache
             .insert(name.to_string(), lib_type_id);
+        if let Some(ref shared) = self.ctx.shared_lib_type_cache {
+            shared.insert(name.to_string(), lib_type_id);
+        }
 
-        // Store in shared cross-file cache for other parallel file checks.
-        let _has_augmentations = self
-            .ctx
-            .binder
-            .global_augmentations
-            .get(name)
-            .is_some_and(|v| !v.is_empty());
         lib_type_id
     }
 
