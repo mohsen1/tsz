@@ -70,7 +70,8 @@ function loadBenchmarks() {
     }
   })();
 
-  for (const location of artifactFiles) {
+  const snapshot = path.join(WEBSITE, "bench-snapshot.json");
+  for (const location of [...artifactFiles, snapshot]) {
     const data = readJsonIfExists(location);
     if (data?.results) return data;
   }
