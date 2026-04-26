@@ -418,7 +418,7 @@ impl<'a> CheckerState<'a> {
                 .map(tsz_binder::SymbolId);
             if resolved == Some(alias_sid) {
                 let pos = node.pos;
-                if best.map_or(true, |(p, _)| pos >= p) {
+                if best.is_none_or(|(p, _)| pos >= p) {
                     *best = Some((pos, node_idx));
                 }
             }
