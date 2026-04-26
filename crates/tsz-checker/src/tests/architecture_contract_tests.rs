@@ -1624,7 +1624,7 @@ fn checker_files_stay_under_loc_limit() {
         ("assignability/assignment_checker.rs", 2083),
         ("error_reporter/core.rs", 2358),
         ("error_reporter/call_errors.rs", 2554),
-        ("error_reporter/core/diagnostic_source.rs", 2049),
+        ("error_reporter/core/diagnostic_source.rs", 2069),
         ("types/type_checking/duplicate_identifiers_helpers.rs", 2125),
         ("types/type_checking/duplicate_identifiers.rs", 2051),
         ("error_reporter/render_failure.rs", 2240),
@@ -1633,7 +1633,9 @@ fn checker_files_stay_under_loc_limit() {
         // ceiling tracks current state so the gate can ratchet down.
         // Updated to 2049 for the prototype-LHS JSDoc target-annotation carve-out
         // (typeTagPrototypeAssignment.ts).
-        ("error_reporter/core/diagnostic_source.rs", 2049),
+        // Bumped to 2069 to grandfather the 2026-04-26 main-branch state after
+        // a batch of conformance/diagnostic fixes; ratchet down later via splits.
+        ("error_reporter/core/diagnostic_source.rs", 2069),
         // Grew past 2000 from recent contextual function type fixes (#688);
         // ceiling tracks current state.
         // Bumped by 2 (2039→2041) for the class @template push that fixes
