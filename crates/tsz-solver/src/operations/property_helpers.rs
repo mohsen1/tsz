@@ -1289,15 +1289,27 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // STEP 2: Hardcoded well-known Function members (no-lib / bootstrap path).
         // Reached when the boxed `Function` interface is unavailable (no lib loaded)
-        // or didn't resolve the property.
-        match prop_name {
-            "apply" | "call" | "bind" => return self.method_result(TypeId::ANY),
-            "toString" => return self.method_result(TypeId::STRING),
-            "name" => return PropertyAccessResult::simple(TypeId::STRING),
-            "length" => return PropertyAccessResult::simple(TypeId::NUMBER),
-            "prototype" | "arguments" => return PropertyAccessResult::simple(TypeId::ANY),
-            "caller" => return PropertyAccessResult::simple(self.any_args_function(TypeId::ANY)),
-            _ => {}
+        // or didn't resolve the property. We emit a structured trace event so
+        // drift (e.g. tests inadvertently bootstrapping with no-lib semantics)
+        // is visible at runtime — see robustness audit item 15 / PR #O.
+        let hardcoded_match = match prop_name {
+            "apply" | "call" | "bind" => Some(self.method_result(TypeId::ANY)),
+            "toString" => Some(self.method_result(TypeId::STRING)),
+            "name" => Some(PropertyAccessResult::simple(TypeId::STRING)),
+            "length" => Some(PropertyAccessResult::simple(TypeId::NUMBER)),
+            "prototype" | "arguments" => Some(PropertyAccessResult::simple(TypeId::ANY)),
+            "caller" => Some(PropertyAccessResult::simple(
+                self.any_args_function(TypeId::ANY),
+            )),
+            _ => None,
+        };
+        if let Some(result) = hardcoded_match {
+            tracing::trace!(
+                target: "tsz_solver::function_hardcoded_fallback",
+                prop_name = prop_name,
+                "Function property resolved via hardcoded no-lib fallback"
+            );
+            return result;
         }
 
         if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
