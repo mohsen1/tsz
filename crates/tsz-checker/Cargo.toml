@@ -224,6 +224,10 @@ name = "co_contra_inference_tests"
 path = "tests/co_contra_inference_tests.rs"
 
 [[test]]
+name = "keyof_naked_priority_tests"
+path = "tests/keyof_naked_priority_tests.rs"
+
+[[test]]
 name = "commonjs_constructor_diagnostics_tests"
 path = "tests/commonjs_constructor_diagnostics_tests.rs"
 

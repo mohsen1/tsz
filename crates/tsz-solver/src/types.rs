@@ -643,9 +643,18 @@ pub enum InferencePriority {
     /// Low priority fallback inference.
     LowPriority = 1 << 6,
 
+    /// Reverse inference from a string/number literal to `keyof T`.
+    /// Example: `f<T>(x: keyof T)` called with `f("a")` synthesises
+    /// `{ a: any }` as a contra-candidate for T at this priority.
+    ///
+    /// Strictly worse than every "real" inference site so that a naked
+    /// `obj: T` argument always wins over a synthetic key-derived shape.
+    /// Mirrors tsc's `InferencePriority.LiteralKeyof` (1 << 8 in tsc).
+    LiteralKeyof = 1 << 7,
+
     /// Detected circular dependency (prevents infinite loops).
     /// Set when a type parameter depends on itself through constraints.
-    Circular = 1 << 7,
+    Circular = 1 << 8,
 }
 
 impl InferencePriority {
@@ -666,7 +675,8 @@ impl InferencePriority {
             Self::MappedType => Some(Self::ContravariantConditional),
             Self::ContravariantConditional => Some(Self::ReturnType),
             Self::ReturnType => Some(Self::LowPriority),
-            Self::LowPriority | Self::Circular => None,
+            Self::LowPriority => Some(Self::LiteralKeyof),
+            Self::LiteralKeyof | Self::Circular => None,
         }
     }
 

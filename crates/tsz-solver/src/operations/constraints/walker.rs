@@ -463,6 +463,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // candidate — contra candidates combine via intersection, matching
                     // tsc's behavior where `bar<T>(x: keyof T, y: keyof T)` called with
                     // `('a', 'b')` infers T = { a: any } & { b: any }.
+                    //
+                    // Use `LiteralKeyof` priority (strictly worse than `NakedTypeVariable`)
+                    // so a co-occurring naked `obj: T` argument always outranks the
+                    // synthesised key shape. Mirrors tsc's `inferToKeyof` (checker.ts
+                    // ~line 26954) which calls
+                    // `inferFromContravariantTypesWithPriority(empty, …, LiteralKeyof)`.
                     let key_atom = crate::type_queries::extended::get_literal_property_name(
                         self.interner,
                         source,
@@ -470,7 +476,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let Some(key_atom) = key_atom {
                         let prop = PropertyInfo::new(key_atom, TypeId::ANY);
                         let obj = self.interner.object(vec![prop]);
-                        ctx.add_contra_candidate(var, obj, priority);
+                        ctx.add_contra_candidate(
+                            var,
+                            obj,
+                            crate::types::InferencePriority::LiteralKeyof,
+                        );
                     } else if let Some(TypeData::Union(source_members)) =
                         self.interner.lookup(source)
                     {
