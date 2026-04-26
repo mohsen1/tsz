@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26 08:37:27
 - **Branch**: `chore/lowering-tests-bigint-helpers`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1332
+- **Status**: ready
 - **Workstream**: Test coverage (DRY/quality)
 
 ## Intent
@@ -23,9 +23,12 @@ inside `advanced.rs`.
 
 ## Files Touched
 
-- `crates/tsz-lowering/src/lower/advanced.rs` (~+150 LOC, additive only)
+- `crates/tsz-lowering/src/lower/advanced.rs` (+415 LOC, additive only — inline `numeric_helper_tests` mod)
 - `docs/plan/claims/chore-lowering-tests-bigint-helpers.md` (claim file)
 
 ## Verification
 
-- `cargo nextest run -p tsz-lowering` (existing 114 tests pass + new tests pass)
+- `cargo nextest run -p tsz-lowering` → 153 passed (114 prior + 34 new helper tests)
+- `cargo clippy -p tsz-lowering --all-targets` → clean
+- 34 new tests cover: separator stripping (8), base-N → decimal (11),
+  bigint literal normalization (15), including u64/u128 edge cases.
