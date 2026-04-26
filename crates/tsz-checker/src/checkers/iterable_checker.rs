@@ -1104,11 +1104,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // TypeScript also allows array destructuring for "array-like" types
-        // (types with numeric index signatures) even without [Symbol.iterator]()
-        if self.has_numeric_index_signature(resolved_type) {
-            return true;
-        }
+        // ES2015+ destructuring requires actual Symbol.iterator support. A
+        // numeric index signature alone (e.g. `interface F { [idx: number]: boolean }`)
+        // is not enough — tsc emits TS2488 for those types in es2015+ mode. Only
+        // ES5 with `downlevelIteration=false` reads the numeric index signature
+        // path, and that case is already handled above when `target.is_es5()`.
 
         // Not iterable - emit TS2488
         self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);

@@ -1393,3 +1393,33 @@ var c: MyNumberArray = [...strs];
         drilled.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_destructuring_index_signature_only_emits_ts2488_in_es2015() {
+    // Pinned by `destructuringArrayBindingPatternAndAssignment2.ts`. tsc emits
+    // TS2488 for `var [c4, c5, c6] = foo(1)` when `foo` returns an interface
+    // whose only iterable-shaped surface is a numeric index signature. Without
+    // an actual `[Symbol.iterator]()` method, ES2015+ destructuring is not
+    // permitted: a numeric index signature is not enough on its own.
+    let source = r"
+interface F {
+    [idx: number]: boolean;
+}
+function foo(idx: number): F {
+    return { 2: true };
+}
+var [c4, c5, c6] = foo(1);
+";
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
+    assert!(
+        ts2488_count >= 1,
+        "Expected at least 1 TS2488 for destructuring an interface with only a \
+         numeric index signature in ES2015+, got {ts2488_count}: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
