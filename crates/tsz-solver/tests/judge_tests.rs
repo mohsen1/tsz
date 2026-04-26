@@ -1659,6 +1659,49 @@ fn test_object_with_string_index_is_subtype() {
     );
 }
 
+#[test]
+fn test_function_is_not_subtype_of_number_index_target() {
+    // Regression: parseTypes.ts conformance fingerprint —
+    // `(s: string) => void` is NOT assignable to `{ [x: number]: number; }`
+    // because a function value provides no number index signature.
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
+
+    let fn_type = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: None,
+            type_id: TypeId::STRING,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let number_indexed = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
+        !judge.is_subtype(fn_type, number_indexed),
+        "function (s: string) => void must NOT be assignable to {{ [x: number]: number }}"
+    );
+}
+
 // =============================================================================
 // Subtype: Literal Narrowing with Unions
 // =============================================================================
