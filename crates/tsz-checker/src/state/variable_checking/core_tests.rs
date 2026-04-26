@@ -1204,3 +1204,66 @@ const b = async () => 0
         assert_eq!(ts2322.len(), 1, "Expected exactly 1 TS2322: {ts2322:?}");
     }
 }
+
+#[cfg(test)]
+mod ts2502_alias_prior_decl_tests {
+    //! TS2502 self-reference detection should not be suppressed when the prior
+    //! declaration of the same name is an alias (import/UMD namespace export).
+    //! Aliases bind a name to another module's surface but do not establish a
+    //! value-typed binding in the redeclaring scope, so `typeof X` inside a
+    //! later `const X` declaration with the same name is genuinely circular.
+    //!
+    //! Mirrors tsc behavior for cases like
+    //!   import * as foo from './foo';
+    //!   declare global { const foo: typeof foo; }
+    //! (conformance/compiler/crashDeclareGlobalTypeofExport.ts)
+    use super::test_utils::check_and_collect;
+
+    #[test]
+    fn umd_namespace_export_does_not_suppress_ts2502() {
+        // `export as namespace foo` is a UMD alias — it should NOT be
+        // treated as a prior value declaration that satisfies `typeof foo`
+        // for a later `const foo` declaration.
+        let source = "export as namespace foo;\n\
+            declare global {\n\
+            \x20\x20\x20\x20const foo: typeof foo;\n\
+            }";
+        let errors = check_and_collect(source, 2502);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2502 (UMD alias should not suppress self-reference): {errors:?}"
+        );
+        assert!(
+            errors[0].1.contains("'foo'"),
+            "Diagnostic should reference 'foo': {errors:?}"
+        );
+    }
+
+    #[test]
+    fn block_scoped_var_still_suppresses_ts2502_unchanged() {
+        // Regression guard: `var p: T1; var p: typeof p;` is the canonical
+        // valid redeclaration where `typeof p` legitimately resolves to the
+        // prior var's annotation, so TS2502 must remain suppressed.
+        let source = "var p: number;\nvar p: typeof p;";
+        let errors = check_and_collect(source, 2502);
+        assert_eq!(
+            errors.len(),
+            0,
+            "Expected no TS2502 for legitimate var/var typeof redecl: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn no_prior_decl_self_reference_still_fires() {
+        // Regression guard: a lone `const foo: typeof foo` (no prior decl)
+        // must continue to emit TS2502.
+        let source = "const foo: typeof foo = 0 as any;";
+        let errors = check_and_collect(source, 2502);
+        assert_eq!(
+            errors.len(),
+            1,
+            "Expected 1 TS2502 for lone const self-reference: {errors:?}"
+        );
+    }
+}
