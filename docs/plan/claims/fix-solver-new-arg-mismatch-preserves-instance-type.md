@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/solver-new-arg-mismatch-preserves-instance-type`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1345
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
