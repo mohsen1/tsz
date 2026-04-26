@@ -8,7 +8,7 @@
 //! hasn't been registered in the type environment yet. Previously this caused
 //! fresh literals like `'currency'` to be widened to `string`, producing false
 //! TS2322 errors. The fix forces a stronger Lazy resolution before retrying the
-//! keyof evaluation, plus an IndexAccess fallback that looks up property types
+//! keyof evaluation, plus an `IndexAccess` fallback that looks up property types
 //! through the contextual property API.
 //!
 //! Repro for the original arrayToLocaleStringES2015 / ES2020 conformance cases.

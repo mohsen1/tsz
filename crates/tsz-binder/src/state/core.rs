@@ -594,9 +594,14 @@ impl BinderState {
         };
         if let Some(root_scope) = binder.scopes.first() {
             binder.current_scope = root_scope.table.clone();
-            let mut root_context =
-                ScopeContext::new(root_scope.kind, root_scope.container_node, None);
-            root_context.locals = root_scope.table.clone();
+            // `ScopeContext::new` already initialises `locals` to an empty
+            // `SymbolTable`. Production scope-chain readers only access
+            // `container_node`, `container_kind`, and `parent_idx` — never
+            // `locals` — so cloning the root scope's table into it was
+            // dead work (a full `FxHashMap<String, SymbolId>` deep copy
+            // per `from_bound_state_with_scopes_and_augmentations` call,
+            // which fires once per file checker spawn).
+            let root_context = ScopeContext::new(root_scope.kind, root_scope.container_node, None);
             binder.scope_chain.push(root_context);
             binder.current_scope_id = ScopeId(0);
             binder.current_scope_idx = 0;
