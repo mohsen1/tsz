@@ -272,6 +272,26 @@ fn format_number_literals() {
 }
 
 #[test]
+fn format_number_literal_uses_scientific_notation_above_1e21() {
+    // Match `Number.prototype.toString()` for very large/small magnitudes
+    // (regression: previously used Rust's default `f64` Display which
+    // expanded `5.462437423415177e+244` to a 245-digit integer string,
+    // causing `octalIntegerLiteralES6.ts` TS7053 message mismatches).
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // Borderline: 1e21 itself is the threshold where tsc switches to
+    // scientific notation.
+    assert_eq!(fmt.format(db.literal_number(1e21)), "1e+21");
+    assert_eq!(
+        fmt.format(db.literal_number(5.462_437_423_415_177e244)),
+        "5.462437423415177e+244"
+    );
+    // Very small finite values use negative exponent form.
+    assert_eq!(fmt.format(db.literal_number(1e-7)), "1e-7");
+}
+
+#[test]
 fn number_literal_union_uses_tsc_allocation_order() {
     let db = TypeInterner::new();
     let one = db.literal_number(1.0);
@@ -2408,6 +2428,27 @@ fn needs_property_name_quotes_edge_cases() {
     assert!(super::needs_property_name_quotes("."));
     assert!(super::needs_property_name_quotes("@"));
     assert!(super::needs_property_name_quotes("#private"));
+}
+
+#[test]
+fn needs_property_name_quotes_canonical_numeric_forms() {
+    // Canonical JS-numeric forms (matching `Number.prototype.toString()`
+    // round-trip) are displayed without quotes by tsc in object literal
+    // type display.
+    assert!(!super::needs_property_name_quotes("3.14"));
+    assert!(!super::needs_property_name_quotes("-1"));
+    assert!(!super::needs_property_name_quotes("1e-7"));
+    assert!(!super::needs_property_name_quotes("5.462437423415177e+244"));
+    // `Infinity` / `-Infinity` are valid numeric literal names per
+    // tsc's `isNumericLiteralName`, so they are also unquoted.
+    assert!(!super::needs_property_name_quotes("Infinity"));
+    assert!(!super::needs_property_name_quotes("-Infinity"));
+    assert!(!super::needs_property_name_quotes("NaN"));
+    // Non-canonical numeric forms still need quotes (they don't
+    // round-trip through `Number.toString`). `01` starts with a digit and
+    // is not a valid identifier; `1.` contains a non-identifier dot.
+    assert!(super::needs_property_name_quotes("1."));
+    assert!(super::needs_property_name_quotes("01"));
 }
 
 #[test]

@@ -143,18 +143,11 @@ impl<'a> TypeFormatter<'a> {
                 format!("\"{escaped}\"")
             }
             LiteralValue::Number(n) => {
-                let v = n.0;
-                if v.is_infinite() {
-                    if v.is_sign_positive() {
-                        "Infinity".to_string()
-                    } else {
-                        "-Infinity".to_string()
-                    }
-                } else if v.is_nan() {
-                    "NaN".to_string()
-                } else {
-                    format!("{v}")
-                }
+                // Match JS `Number.prototype.toString()` so very large/small
+                // values use scientific notation (e.g. `5.46e+244`) rather
+                // than Rust's default integer expansion. Also handles
+                // `Infinity`, `-Infinity`, and `NaN` consistently.
+                crate::utils::js_number_to_string(n.0).into_owned()
             }
             LiteralValue::BigInt(b) => format!("{}n", self.atom(*b)),
             LiteralValue::Boolean(b) => if *b { "true" } else { "false" }.to_string(),

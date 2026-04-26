@@ -409,6 +409,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/symbols/symbol_resolver.rs",
             "crates/tsz-checker/src/state/type_environment/core.rs",
             "crates/tsz-checker/src/types/computation/identifier.rs",
+            "crates/tsz-checker/src/types/queries/core.rs",
             "crates/tsz-checker/src/flow/flow_analysis/usage.rs",
             # Pre-existing: recently grew past 2000 lines
             "crates/tsz-checker/src/types/interface_type.rs",
