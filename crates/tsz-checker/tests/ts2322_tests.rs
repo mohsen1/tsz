@@ -4244,3 +4244,39 @@ u2.email = e;
         "Expected TS2412 for exact-optional property write mismatch, got: {diagnostics:#?}"
     );
 }
+
+/// Regression test for `widen_fresh_object_literal_properties_for_display`:
+/// the helper must only widen literal property types when the outer object
+/// is itself a *fresh* object literal. Annotated types like `{ a: "x" }`
+/// carry the user's intent and must not have their literal property types
+/// widened away in TS2741/TS2345 diagnostics.
+///
+/// Before the fix, `widen_fresh_object_literal_properties_for_display`
+/// always widened all literal properties regardless of freshness, so the
+/// annotated parameter type `{ a: "x" }` was rendered as `{ a: string; }`
+/// in TS2345/TS2741 diagnostics — diverging from `tsc`, which preserves
+/// `{ a: "x" }` because the user wrote it that way.
+#[test]
+fn test_ts2741_annotated_literal_target_preserves_literal_property() {
+    let source = r#"
+const fn1 = (s: { a: "x" }) => {};
+fn1({});
+"#;
+    let diagnostics = get_all_diagnostics(source);
+    let target_messages: Vec<&str> = diagnostics
+        .iter()
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        target_messages
+            .iter()
+            .any(|m| m.contains("'{ a: \"x\"; }'")),
+        "expected annotated literal target `{{ a: \"x\"; }}` to be preserved verbatim, got: {target_messages:#?}"
+    );
+    assert!(
+        !target_messages
+            .iter()
+            .any(|m| m.contains("'{ a: string; }'")),
+        "annotated `{{ a: \"x\" }}` must not be widened to `{{ a: string; }}` in diagnostics, got: {target_messages:#?}"
+    );
+}

@@ -257,6 +257,15 @@ impl<'a> CheckerState<'a> {
         else {
             return ty;
         };
+        // Only widen properties when the outer object type is itself a fresh
+        // object literal (e.g. inferred return type from `() => ({ a: 1 })`).
+        // Annotated types like `{ a: "x" }` carry the user's intent and must
+        // not have their literal property types widened away in diagnostics —
+        // tsc preserves them as-is, so when we receive a non-fresh shape here
+        // we have to leave it untouched.
+        if !crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, ty) {
+            return ty;
+        }
         let mut widened_shape = shape.as_ref().clone();
         let mut changed = false;
         for prop in &mut widened_shape.properties {
