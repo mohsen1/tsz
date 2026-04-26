@@ -22,6 +22,24 @@ use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    /// True when callers must skip `shared_lib_type_cache` for `name`:
+    /// either this checker locally augments `name`, or `name` is multi-lib
+    /// merged where property-listing order in printed diagnostic messages
+    /// is sensitive to who resolves first (e.g. `Array<T>`).
+    pub(crate) fn lib_name_locally_augmented(&self, name: &str) -> bool {
+        // Array is merged across lib.es5/lib.es2015.iterable/etc.; cross-checker
+        // shared TypeIds expose property-order races to the type printer
+        // (e.g. mappedTypeWithAsClauseAndLateBoundProperty).
+        if name == "Array" {
+            return true;
+        }
+        self.ctx
+            .binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|v| !v.is_empty())
+    }
+
     /// Resolve a lib type by name and also return its type parameters.
     /// Used by `register_boxed_types` for generic types like Array<T> to extract
     /// the actual type parameters from the interface definition rather than
@@ -31,6 +49,25 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+
+        // Short-circuit via shared cache; skip when this checker locally
+        // augments `name` (its merged TypeId would differ from peers').
+        let lib_name_locally_augmented = self.lib_name_locally_augmented(name);
+        if !lib_name_locally_augmented
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
+            && let Some(entry) = shared.get(name)
+            && let Some(ty) = *entry
+        {
+            for lib_ctx in self.ctx.lib_contexts.iter() {
+                if let Some(per_lib_sym) = lib_ctx.binder.file_locals.get(name) {
+                    let def_id = self.ctx.get_canonical_lib_def_id(name, per_lib_sym);
+                    if let Some(params) = self.ctx.get_def_type_params(def_id) {
+                        return (Some(ty), params);
+                    }
+                    break;
+                }
+            }
+        }
 
         let factory = self.ctx.types.factory();
         let lib_contexts = &*self.ctx.lib_contexts;
@@ -203,6 +240,11 @@ impl<'a> CheckerState<'a> {
         // Merge global augmentations (declare global { interface X { ... } }).
         if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, lib_contexts) {
             lib_type_id = Some(merged);
+        }
+
+        // Mirror into shared cache when safe (no local augmentations).
+        if !lib_name_locally_augmented && let Some(ref shared) = self.ctx.shared_lib_type_cache {
+            shared.insert(name.to_string(), lib_type_id);
         }
 
         (lib_type_id, first_params.unwrap_or_default())

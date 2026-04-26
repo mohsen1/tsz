@@ -764,9 +764,19 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Check shared cross-file lib cache first
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
             return *cached;
+        }
+        // Skip shared cache when this checker locally augments `name`.
+        if !self.lib_name_locally_augmented(name)
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
+            && let Some(entry) = shared.get(name)
+        {
+            let cached = *entry;
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(name.to_string(), cached);
+            return cached;
         }
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
@@ -1023,9 +1033,11 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(merged);
         }
 
-        // CRITICAL: Update cache AFTER merging global augmentations.
-        // The cache must contain the fully merged type including augmentations,
-        // otherwise subsequent calls will return the un-augmented type.
+        // Local-only cache write so this checker's same-thread calls see the
+        // augmented type. The SHARED cache is written exactly once at function
+        // exit — augmentation-heritage below can still mutate `lib_type_id`,
+        // and a concurrent reader snapshotting an intermediate value would
+        // freeze it in their local cache and never re-resolve.
         if let Some(ty) = lib_type_id {
             self.ctx
                 .lib_type_resolution_cache
@@ -1186,20 +1198,16 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For generic lib interfaces, we already cached the type params in the
-        // interface lowering code above. The type is already correctly lowered
-        // and can be returned directly.
+        // Generic lib interfaces had their type params cached above.
         self.ctx
             .lib_type_resolution_cache
             .insert(name.to_string(), lib_type_id);
+        if !self.lib_name_locally_augmented(name)
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
+        {
+            shared.insert(name.to_string(), lib_type_id);
+        }
 
-        // Store in shared cross-file cache for other parallel file checks.
-        let _has_augmentations = self
-            .ctx
-            .binder
-            .global_augmentations
-            .get(name)
-            .is_some_and(|v| !v.is_empty());
         lib_type_id
     }
 
