@@ -310,3 +310,34 @@ declare namespace Data {
          namespace member, not to the global lib `Promise`; got TS2416: {diags:?}"
     );
 }
+
+#[test]
+fn ts2367_no_false_positive_when_enum_member_name_matches_sibling_interface() {
+    // Mirrors the conformance test
+    // TypeScript/tests/cases/compiler/trackedSymbolsNoCrash.ts.
+    //
+    // `kind: SK.Node0` in an interface body must resolve `Node0` as the
+    // *enum member* `SK.Node0`, not as the sibling type binding `interface
+    // Node0`. Without scope-first qualified-name resolution, the right-hand
+    // identifier gets bound to the interface symbol and `node.kind` ends up
+    // typed as `Node0 | Node1 | Node2` instead of `SK.Node0 | SK.Node1 |
+    // SK.Node2`, so a comparison against an enum-typed parameter falsely
+    // emits TS2367 ("no overlap").
+    let source = r#"
+enum SK { Node0, Node1, Node2 }
+interface Node0 { kind: SK.Node0; }
+interface Node1 { kind: SK.Node1; }
+interface Node2 { kind: SK.Node2; }
+type AnyNode = Node0 | Node1 | Node2;
+declare const node: AnyNode | null | undefined;
+declare const k: SK;
+const eq = node?.kind === k;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2367: Vec<_> = diags.iter().filter(|(c, _)| *c == 2367).collect();
+    assert!(
+        ts2367.is_empty(),
+        "qualified name `SK.Node0` must resolve to the enum member, not to \
+         the sibling `interface Node0`; got TS2367: {diags:?}"
+    );
+}
