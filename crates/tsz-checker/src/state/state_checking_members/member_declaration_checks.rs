@@ -1260,6 +1260,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let class_jsdoc_template_updates =
+            self.push_enclosing_jsdoc_class_template_types(member_idx);
+
         let mut pushed_this = false;
         if let Some(this_type) = self.class_member_this_type(member_idx) {
             self.ctx.this_type_stack.push(this_type);
@@ -1400,6 +1403,8 @@ impl<'a> CheckerState<'a> {
         if let Some(ref mut class_info) = self.ctx.enclosing_class {
             class_info.in_static_member = prev_in_static_member;
         }
+
+        self.pop_enclosing_jsdoc_class_template_types(class_jsdoc_template_updates);
     }
 
     fn check_class_member_decorator_expressions(&mut self, member_idx: NodeIndex) {
