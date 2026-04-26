@@ -4,6 +4,17 @@ Date: 2026-04-25
 
 Status: living plan. This is the single planning document for project direction across conformance, emit, performance, architecture, LSP/WASM, Sound Mode, and DRY cleanup. Do not add new roadmap files under `docs/plan/`; update this file instead.
 
+## Top Priorities (2026-04-26)
+
+**The two metrics that move the needle for users are diagnostic conformance and emit pass rate.** Everything else is supporting work. When picking a slice:
+
+1. **Conformance fixes (Workstream 1)** — first-class priority. Pick a random failure with `scripts/session/quick-pick.sh`, fix the root cause cleanly, ship with one regression test, measure net conformance delta. A typical fix lands +1 to +20 conformance tests in one PR.
+2. **Emit pass rate (Workstream 2)** — second-class priority. JS emit at `91.1%` and declaration emit at `76.5%` are the largest public pass-rate gaps. Bucket failures by transform family; route fixes through lowering/IR.
+3. **Architectural fixes that unblock conformance/emit** — third-class. Solver invariants, query-boundary plumbing, fingerprint-printer fixes when the printer is the actual bug.
+4. **Test coverage and DRY refactors** — *deprioritized*. Pure-additive unit-test PRs and harness consolidations are easy to land but do not move public metrics. Take them only when (a) you've already shipped a conformance/emit slice this session, or (b) the test you're adding locks a behavior that is about to change in a forthcoming conformance/emit fix. Avoid adding tests purely to "increase coverage" of an untested helper — that work is real but lower-leverage than fixing a failing conformance test.
+
+**Ranking heuristic**: when in doubt, run `scripts/session/quick-pick.sh` and fix what it gives you. The session log shows conformance fixes consistently move the public conformance %; test-coverage PRs move it by 0.
+
 This document supersedes the previous scattered plan files in `docs/plan/` and the former standalone DRY audit. All planning claims now live here.
 
 ## Implementation Coordination
@@ -635,8 +646,8 @@ Exit criteria for first stable Sound Mode:
 
 ## Recommended Sequencing
 
-1. Continue focused diagnostic conformance fixes while current fingerprint momentum is active.
-2. Add emit pass-rate triage reports and choose JS/declaration emit fixes by bucket.
+1. **Diagnostic conformance fixes are the first thing to pick every session.** Run `scripts/session/quick-pick.sh`, target what it gives you. This is the highest-leverage work.
+2. **Emit pass-rate fixes are the second thing.** Bucket failures by transform family; pick the bucket with the highest test count and fix one transform end-to-end.
 3. Start the compiler service shell without moving all frontends at once.
 4. Fix speculation transaction semantics before broad checker state work.
 5. Split `CheckerContext` by lifetime in non-behavioral batches.
@@ -644,7 +655,7 @@ Exit criteria for first stable Sound Mode:
 7. Move one WASM path and one LSP path to the compiler service API as proof points.
 8. Fix incremental parser/interner coherence with a targeted regression test.
 9. Keep Sound Mode work limited to the first stable scope until diagnostics, suppressions, and policy cache correctness are real.
-10. Run DRY cleanup as small WIP-claimed PRs that reduce future conformance, emit, or architecture work.
+10. **DRY cleanup and pure-additive test coverage are explicitly deprioritized** unless they lock a behavior about to change, or unless you've already shipped a conformance/emit slice this session. They are real work but do not move public metrics — pick them as fillers between higher-leverage slices, not as the primary task.
 
 ## Definition Of Done
 
