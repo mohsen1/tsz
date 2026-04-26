@@ -67,7 +67,7 @@ NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
 NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
-LARGE_TS_REF="${LARGE_TS_REF:-}"
+LARGE_TS_REF="${LARGE_TS_REF:-a909565d9dddac467cf8e32692a8605d19db1e7f}"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 if [ -n "${LARGE_TS_DIR:-}" ]; then
     LARGE_TS_DIR="$LARGE_TS_DIR"
