@@ -2221,6 +2221,79 @@ fn test_instantiate_homomorphic_mapped_with_any_union_array_constrained() {
     }
 }
 
+/// Regression test for `mappedTypeWithAny.ts`.
+///
+/// `{ -readonly [K in keyof T]: string }` over `T extends readonly any[]` with
+/// T = any must produce `string[]`. Previously we only entered the
+/// any-with-array-constraint preservation path when the template referenced
+/// `T[K]`; templates whose body is a constant (`string`) leaked through and
+/// became `{ [x: string]: string; [x: number]: string }`.
+///
+/// tsc's `instantiateMappedType` applies the array shape regardless of whether
+/// the template references the source — see the `isArrayType(t) || (t.flags &
+/// TypeFlags.Any && constraint && everyType(constraint, isArrayOrTupleType))`
+/// branch in `instantiateMappedType`.
+#[test]
+fn test_instantiate_homomorphic_mapped_any_array_constraint_constant_template() {
+    use crate::evaluation::evaluate::evaluate_type;
+
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+
+    // T extends readonly any[]
+    let any_array = interner.array(TypeId::ANY);
+    let readonly_any_array = interner.readonly_type(any_array);
+    let t_param_info = TypeParamInfo {
+        name: t_name,
+        constraint: Some(readonly_any_array),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param_info));
+
+    // { [K in keyof T]: string } — template is a constant, NOT `T[K]`.
+    let keyof_t = interner.keyof(t_type);
+    let k_param_info = TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+
+    let mapped = interner.mapped(MappedType {
+        type_param: k_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template: TypeId::STRING,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Substitute T = any
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::ANY);
+    let instantiated = instantiate_type(&interner, mapped, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    match interner.lookup(result) {
+        Some(TypeData::Array(element_type)) => {
+            assert_eq!(
+                element_type,
+                TypeId::STRING,
+                "Expected Array<string>, got Array<{:?}>",
+                interner.lookup(element_type)
+            );
+        }
+        other => {
+            panic!(
+                "Expected Array<string> for `{{ [K in keyof T]: string }}` with T=any \
+                 (constraint readonly any[]), got {other:?}"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PR 1 canonical-form substitution tests
 // ---------------------------------------------------------------------------

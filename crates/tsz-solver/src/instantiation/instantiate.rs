@@ -968,6 +968,65 @@ impl<'a> TypeInstantiator<'a> {
                         Some(TypeData::TypeParameter(info)) if info.name == mapped.type_param.name
                     )
                 });
+
+                // tsc's `instantiateMappedType`: when the homomorphic source T
+                // resolves to `any` and T is constrained to array/tuple types,
+                // the result is an array shape — independent of whether the
+                // template references T[K]. Templates that DO reference T[K]
+                // are still handled by the main array-preservation block below
+                // (which mirrors tsc's full instantiateMappedArrayType path).
+                if (mapped.name_type.is_none() || has_identity_name_type)
+                    && let Some(TypeData::KeyOf(keyof_source)) =
+                        self.interner.lookup(mapped.constraint)
+                    && let Some(TypeData::TypeParameter(tp_info)) =
+                        self.interner.lookup(keyof_source)
+                    && !self.is_shadowed(tp_info.name)
+                    && let Some(substituted) = self.substitution.get(tp_info.name)
+                    && !Self::mapped_template_uses_source_index(
+                        self.interner,
+                        mapped.template,
+                        keyof_source,
+                        mapped.type_param.name,
+                    )
+                    && crate::evaluation::evaluate::evaluate_type(self.interner, substituted)
+                        == TypeId::ANY
+                    && tp_info.constraint.is_some_and(|c| {
+                        let ec = crate::evaluation::evaluate::evaluate_type(self.interner, c);
+                        Self::is_array_or_tuple_like(self.interner, ec)
+                    })
+                {
+                    // Substitute T → any in the template, then K → number, then
+                    // wrap in Array (matching tsc's instantiateMappedArrayType).
+                    let new_template = self.instantiate(mapped.template);
+                    self.exit_shadowing_scope(shadowed_len, saved_visiting);
+
+                    let subst =
+                        TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
+                    let mapped_element = crate::evaluation::evaluate::evaluate_type(
+                        self.interner,
+                        instantiate_type(self.interner, new_template, &subst),
+                    );
+
+                    let final_element = if matches!(
+                        mapped.optional_modifier,
+                        Some(crate::types::MappedModifier::Add)
+                    ) {
+                        self.interner.union2(mapped_element, TypeId::UNDEFINED)
+                    } else {
+                        mapped_element
+                    };
+
+                    let array_type = self.interner.array(final_element);
+                    return if matches!(
+                        mapped.readonly_modifier,
+                        Some(crate::types::MappedModifier::Add)
+                    ) {
+                        self.interner.readonly_type(array_type)
+                    } else {
+                        array_type
+                    };
+                }
+
                 if (mapped.name_type.is_none() || has_identity_name_type)
                     && let Some(TypeData::KeyOf(keyof_source)) =
                         self.interner.lookup(mapped.constraint)
