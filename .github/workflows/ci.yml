@@ -104,6 +104,16 @@ jobs:
           fetch-depth: 1
       - name: Run wasm suite
         run: scripts/ci/github-suite.sh wasm
+      - name: Build web WASM for website playground
+        run: |
+          cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
+          wasm-pack build crates/tsz-wasm --target web --out-dir ../../pkg/web --no-opt
+      - name: Upload web WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-web
+          path: pkg/web/
+          retention-days: 30
 
   conformance:
     name: conformance-${{ matrix.shard }}
