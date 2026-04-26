@@ -365,3 +365,259 @@ pub fn is_ascii_letter(ch: u32) -> bool {
 pub fn is_word_character(ch: u32) -> bool {
     is_ascii_letter(ch) || is_digit(ch) || ch == CharacterCodes::UNDERSCORE
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---------- compare_strings_case_sensitive ------------------------------
+
+    #[test]
+    fn compare_strings_case_sensitive_none_handling() {
+        assert_eq!(
+            compare_strings_case_sensitive(None, None),
+            Comparison::EqualTo
+        );
+        assert_eq!(
+            compare_strings_case_sensitive(None, Some(String::from("a"))),
+            Comparison::LessThan
+        );
+        assert_eq!(
+            compare_strings_case_sensitive(Some(String::from("a")), None),
+            Comparison::GreaterThan
+        );
+    }
+
+    #[test]
+    fn compare_strings_case_sensitive_orders_by_unicode_code_point() {
+        // 'B' (66) is less than 'a' (97) under ordinal comparison.
+        assert_eq!(
+            compare_strings_case_sensitive(Some("B".into()), Some("a".into())),
+            Comparison::LessThan,
+        );
+        assert_eq!(
+            compare_strings_case_sensitive(Some("abc".into()), Some("abc".into())),
+            Comparison::EqualTo,
+        );
+    }
+
+    // ---------- compare_strings_case_insensitive ----------------------------
+
+    #[test]
+    fn compare_strings_case_insensitive_treats_case_alike() {
+        assert_eq!(
+            compare_strings_case_insensitive(Some("ABC".into()), Some("abc".into())),
+            Comparison::EqualTo,
+        );
+    }
+
+    #[test]
+    fn compare_strings_case_insensitive_none_handling() {
+        assert_eq!(
+            compare_strings_case_insensitive(None, None),
+            Comparison::EqualTo
+        );
+        assert_eq!(
+            compare_strings_case_insensitive(None, Some(String::from("a"))),
+            Comparison::LessThan
+        );
+        assert_eq!(
+            compare_strings_case_insensitive(Some(String::from("a")), None),
+            Comparison::GreaterThan
+        );
+    }
+
+    // ---------- equate_strings_*--------------------------------------------
+
+    #[test]
+    fn equate_strings_case_sensitive_distinguishes_case() {
+        assert!(equate_strings_case_sensitive("abc", "abc"));
+        assert!(!equate_strings_case_sensitive("abc", "ABC"));
+    }
+
+    #[test]
+    fn equate_strings_case_insensitive_collapses_case() {
+        assert!(equate_strings_case_insensitive("abc", "ABC"));
+        assert!(equate_strings_case_insensitive("Hello", "hELLO"));
+        assert!(!equate_strings_case_insensitive("abc", "abd"));
+    }
+
+    // ---------- is_any_directory_separator ----------------------------------
+
+    #[test]
+    fn is_any_directory_separator_accepts_both_slashes() {
+        assert!(is_any_directory_separator(b'/' as u32));
+        assert!(is_any_directory_separator(b'\\' as u32));
+        assert!(!is_any_directory_separator(b'a' as u32));
+        assert!(!is_any_directory_separator(b'.' as u32));
+    }
+
+    // ---------- normalize_slashes -------------------------------------------
+
+    #[test]
+    fn normalize_slashes_replaces_backslashes_with_forward() {
+        assert_eq!(normalize_slashes("a\\b\\c"), "a/b/c");
+    }
+
+    #[test]
+    fn normalize_slashes_returns_input_when_no_backslashes() {
+        // Optimization branch: returns owned copy of input.
+        assert_eq!(normalize_slashes("a/b/c"), "a/b/c");
+        assert_eq!(normalize_slashes(""), "");
+    }
+
+    // ---------- has_trailing_directory_separator ----------------------------
+
+    #[test]
+    fn has_trailing_directory_separator_branches() {
+        assert!(has_trailing_directory_separator("a/"));
+        assert!(has_trailing_directory_separator("a\\"));
+        assert!(!has_trailing_directory_separator("a"));
+        assert!(!has_trailing_directory_separator(""));
+    }
+
+    // ---------- path_is_relative -------------------------------------------
+
+    #[test]
+    fn path_is_relative_recognizes_dot_and_dot_dot_prefixes() {
+        for p in &["./", ".\\", "../", "..\\", ".", ".."] {
+            assert!(path_is_relative(p), "expected relative: {p:?}");
+        }
+    }
+
+    #[test]
+    fn path_is_relative_rejects_absolute_and_bare_names() {
+        for p in &["/a", "C:\\a", "a/b", "..a", ".a"] {
+            assert!(!path_is_relative(p), "expected NOT relative: {p:?}");
+        }
+    }
+
+    // ---------- remove / ensure trailing directory separator ----------------
+
+    #[test]
+    fn remove_trailing_directory_separator_strips_one_separator() {
+        assert_eq!(remove_trailing_directory_separator("a/"), "a");
+        assert_eq!(remove_trailing_directory_separator("a\\"), "a");
+        assert_eq!(remove_trailing_directory_separator("a"), "a");
+        // length <= 1 is a guard branch — single-char paths are returned as-is.
+        assert_eq!(remove_trailing_directory_separator("/"), "/");
+    }
+
+    #[test]
+    fn ensure_trailing_directory_separator_adds_one_when_missing() {
+        assert_eq!(ensure_trailing_directory_separator("a"), "a/");
+        // Already has one — return unchanged.
+        assert_eq!(ensure_trailing_directory_separator("a/"), "a/");
+        assert_eq!(ensure_trailing_directory_separator("a\\"), "a\\");
+    }
+
+    // ---------- has_extension / file_extension_is / get_base_file_name ------
+
+    #[test]
+    fn has_extension_via_basename() {
+        assert!(has_extension("a.ts"));
+        assert!(!has_extension("a"));
+        // A dot in the directory should NOT count — only the basename matters.
+        assert!(!has_extension("a.dir/file"));
+    }
+
+    #[test]
+    fn get_base_file_name_extracts_last_segment() {
+        assert_eq!(get_base_file_name("a/b/c.ts"), "c.ts");
+        assert_eq!(get_base_file_name("c.ts"), "c.ts");
+        // Trailing-separator handling.
+        assert_eq!(get_base_file_name("a/b/"), "b");
+        // Backslash is normalized.
+        assert_eq!(get_base_file_name("a\\b\\c"), "c");
+    }
+
+    #[test]
+    fn file_extension_is_strict_about_path_length() {
+        // Path strictly LONGER than extension required.
+        assert!(file_extension_is("a.ts", ".ts"));
+        // Equal length → false (means the path IS the extension).
+        assert!(!file_extension_is(".ts", ".ts"));
+        // Mismatch → false.
+        assert!(!file_extension_is("a.tsx", ".ts"));
+    }
+
+    // ---------- to_file_name_lower_case -------------------------------------
+
+    #[test]
+    fn to_file_name_lower_case_basic_ascii() {
+        assert_eq!(to_file_name_lower_case("ABC.TS"), "abc.ts");
+        // Already-lowercase + safe chars short-circuits to clone.
+        assert_eq!(to_file_name_lower_case("abc.ts"), "abc.ts");
+    }
+
+    #[test]
+    fn to_file_name_lower_case_preserves_special_unicode() {
+        // \u{0130} (İ), \u{0131} (ı), \u{00DF} (ß) intentionally NOT lowercased.
+        assert_eq!(to_file_name_lower_case("\u{0130}"), "\u{0130}");
+        assert_eq!(to_file_name_lower_case("\u{0131}"), "\u{0131}");
+        assert_eq!(to_file_name_lower_case("\u{00DF}"), "\u{00DF}");
+    }
+
+    // ---------- is_line_break / whitespace ----------------------------------
+
+    #[test]
+    fn is_line_break_recognizes_lf_cr_ls_ps() {
+        assert!(is_line_break(0x0A)); // \n
+        assert!(is_line_break(0x0D)); // \r
+        assert!(is_line_break(0x2028)); // line separator
+        assert!(is_line_break(0x2029)); // paragraph separator
+        assert!(!is_line_break(b' ' as u32));
+    }
+
+    #[test]
+    fn is_white_space_single_line_includes_horizontal_only() {
+        // Spaces and tabs — yes.
+        assert!(is_white_space_single_line(b' ' as u32));
+        assert!(is_white_space_single_line(b'\t' as u32));
+        // Newlines — NO (those are line breaks, not single-line whitespace).
+        assert!(!is_white_space_single_line(0x0A));
+    }
+
+    #[test]
+    fn is_white_space_like_includes_both_newlines_and_horizontal() {
+        // Horizontal whitespace.
+        assert!(is_white_space_like(b' ' as u32));
+        // Newlines also count.
+        assert!(is_white_space_like(0x0A));
+        // Letters do not.
+        assert!(!is_white_space_like(b'a' as u32));
+    }
+
+    // ---------- digit / hex / octal / letter / word ------------------------
+
+    #[test]
+    fn is_digit_octal_hex_letter_word_classifications() {
+        assert!(is_digit(b'0' as u32));
+        assert!(is_digit(b'9' as u32));
+        assert!(!is_digit(b'a' as u32));
+
+        assert!(is_octal_digit(b'0' as u32));
+        assert!(is_octal_digit(b'7' as u32));
+        assert!(!is_octal_digit(b'8' as u32));
+        assert!(!is_octal_digit(b'9' as u32));
+
+        assert!(is_hex_digit(b'0' as u32));
+        assert!(is_hex_digit(b'9' as u32));
+        assert!(is_hex_digit(b'a' as u32));
+        assert!(is_hex_digit(b'f' as u32));
+        assert!(is_hex_digit(b'F' as u32));
+        assert!(!is_hex_digit(b'g' as u32));
+
+        assert!(is_ascii_letter(b'a' as u32));
+        assert!(is_ascii_letter(b'Z' as u32));
+        assert!(!is_ascii_letter(b'0' as u32));
+        assert!(!is_ascii_letter(b'_' as u32));
+
+        // word = letter | digit | underscore.
+        assert!(is_word_character(b'a' as u32));
+        assert!(is_word_character(b'0' as u32));
+        assert!(is_word_character(b'_' as u32));
+        assert!(!is_word_character(b'-' as u32));
+        assert!(!is_word_character(b' ' as u32));
+    }
+}
