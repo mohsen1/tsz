@@ -709,4 +709,3 @@ fn test_named_source_still_rejected_by_number_only_any_target() {
          target (the short-circuit only applies when target also has a string index)"
     );
 }
-
