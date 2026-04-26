@@ -81,19 +81,31 @@ jobs:
         with:
           submodules: true
 
+      - name: Cache built WASM output
+        id: wasm-cache
+        uses: actions/cache@v4
+        with:
+          path: pkg/web/
+          key: wasm-web-${{ hashFiles('Cargo.lock', 'crates/*/src/**') }}
+
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
 
       - uses: Swatinem/rust-cache@v2
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           cache-on-failure: true
 
       - name: Install wasm-pack
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install wasm-opt (via binaryen)
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: sudo apt-get install -y binaryen
 
       - name: Build WASM (web target)
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         run: |
           cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
           # wasm-opt currently produces a web build that fails during
