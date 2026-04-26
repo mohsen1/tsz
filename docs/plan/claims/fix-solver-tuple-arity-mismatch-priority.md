@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26 20:16:50
 - **Branch**: `fix/solver-tuple-arity-mismatch-priority`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1470
+- **Status**: ready
 - **Workstream**: 1 (Conformance — fingerprint parity, Big3 / TS2322 / TS2345)
 
 ## Intent
