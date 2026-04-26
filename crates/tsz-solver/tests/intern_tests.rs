@@ -372,6 +372,65 @@ fn test_interner_intersection_optional_object_literals_not_reduced() {
     assert_ne!(intersection, TypeId::NEVER);
 }
 
+/// Regression: `T extends "A" | "B"` intersected with `undefined` reduces to `never`.
+///
+/// Previously, `is_clearly_non_nullable_constraint` only recognized single
+/// primitive/structural types, so a union constraint of string literals
+/// (`"A" | "B"`) was conservatively treated as possibly nullable and the
+/// intersection was *not* reduced. This produced a false TS2719 in
+/// `unknownControlFlow.ts` where `T_AB & undefined` was assigned to `never`.
+#[test]
+fn test_interner_intersection_type_param_with_string_literal_union_constraint_and_undefined_is_never()
+ {
+    let interner = TypeInterner::new();
+    let constraint = interner.union(vec![
+        interner.literal_string("A"),
+        interner.literal_string("B"),
+    ]);
+    let t = TypeParamInfo {
+        name: interner.intern_string("T_AB"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let type_param = interner.type_param(t);
+    let intersection = interner.intersection(vec![type_param, TypeId::UNDEFINED]);
+    assert_eq!(intersection, TypeId::NEVER);
+}
+
+/// `T extends string | number` intersected with `null` reduces to `never`.
+#[test]
+fn test_interner_intersection_type_param_with_primitive_union_constraint_and_null_is_never() {
+    let interner = TypeInterner::new();
+    let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let t = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let type_param = interner.type_param(t);
+    let intersection = interner.intersection(vec![type_param, TypeId::NULL]);
+    assert_eq!(intersection, TypeId::NEVER);
+}
+
+/// Negative: `T extends string | undefined` intersected with `undefined` is NOT `never`.
+/// The constraint allows the undefined component, so the intersection must remain unreduced.
+#[test]
+fn test_interner_intersection_type_param_with_nullable_union_constraint_and_undefined_not_never() {
+    let interner = TypeInterner::new();
+    let constraint = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+    let t = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    };
+    let type_param = interner.type_param(t);
+    let intersection = interner.intersection(vec![type_param, TypeId::UNDEFINED]);
+    assert_ne!(intersection, TypeId::NEVER);
+}
+
 #[test]
 fn test_interner_object_sorting() {
     let interner = TypeInterner::new();
