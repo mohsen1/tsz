@@ -320,8 +320,8 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Walk the parent chain from `node_idx` to find the nearest enclosing
-    /// function-like node (FUNCTION_DECLARATION, FUNCTION_EXPRESSION, ARROW_FUNCTION,
-    /// METHOD_DECLARATION, GET_ACCESSOR, SET_ACCESSOR, or CONSTRUCTOR).
+    /// function-like node (`FUNCTION_DECLARATION`, `FUNCTION_EXPRESSION`, `ARROW_FUNCTION`,
+    /// `METHOD_DECLARATION`, `GET_ACCESSOR`, `SET_ACCESSOR`, or CONSTRUCTOR).
     ///
     /// Returns `NodeIndex::NONE` if the node is at module/global scope.
     fn find_enclosing_function_node(&self, node_idx: NodeIndex) -> NodeIndex {

@@ -1903,7 +1903,7 @@ impl<'a> CheckerState<'a> {
 
     /// Return the class's syntactic name, or `"(anonymous)"` if the class
     /// expression has no name. Unlike `get_bound_class_name_from_decl`, this
-    /// does NOT fall back to an enclosing VariableDeclaration name — tsc
+    /// does NOT fall back to an enclosing `VariableDeclaration` name — tsc
     /// uses this stricter form for TS18013 messages.
     fn get_syntactic_class_name_or_anonymous(&self, class_idx: NodeIndex) -> String {
         self.ctx

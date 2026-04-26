@@ -756,7 +756,7 @@ impl<'a> CheckerState<'a> {
     /// `ctx.symbol_resolution_set` and represents a type alias. Descends through
     /// arrays, tuples, unions, intersections, and parenthesized types so that
     /// `T5[]` is detected as referencing `T5`. Stops at structural-deferral
-    /// wrappers (TYPE_LITERAL, MAPPED_TYPE, FUNCTION_TYPE, CONSTRUCTOR_TYPE),
+    /// wrappers (`TYPE_LITERAL`, `MAPPED_TYPE`, `FUNCTION_TYPE`, `CONSTRUCTOR_TYPE`),
     /// because tsc creates those types lazily — property types and signature
     /// types are not eagerly resolved during typeof-target type construction,
     /// so a reference to a resolution-chain alias inside such a wrapper does

@@ -1806,12 +1806,12 @@ class Comp<T extends Foo, S> extends Component<S & State<T>>
     );
 }
 
-/// Regression test: generic overloads with ThisType markers should not produce
+/// Regression test: generic overloads with `ThisType` markers should not produce
 /// false TS2339 on `this` property accesses inside object literal methods.
 ///
 /// The issue was that during overload resolution, the first-pass argument
 /// collection uses union-contextual types with unresolved type parameters.
-/// The ThisType<Data & Readonly<Props> & Instance> marker extracted from the
+/// The `ThisType`<Data & Readonly<Props> & Instance> marker extracted from the
 /// callable had uninstantiated Data/Props, causing `this.bar` to fail. The
 /// fix defers the hard-error rejection for generic overloads until after the
 /// instantiated retry, which re-evaluates with concrete types.

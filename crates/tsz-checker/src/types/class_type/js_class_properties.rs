@@ -15,7 +15,7 @@ impl CheckerState<'_> {
     /// Push the enclosing JS class's `@template T` JSDoc-derived type
     /// parameters into `type_parameter_scope` for the lifetime of a
     /// surrounding check (typically a class-member walk or a method-type
-    /// build). Returns the list of (name, previous_value) entries that
+    /// build). Returns the list of (name, `previous_value`) entries that
     /// `pop_enclosing_jsdoc_class_template_types` consumes to restore the
     /// scope on exit. Returns an empty Vec for non-JS files.
     pub(crate) fn push_enclosing_jsdoc_class_template_types(
@@ -60,7 +60,7 @@ impl CheckerState<'_> {
     /// 3-tuple shape `(name, previous, false)` that fits the
     /// `jsdoc_type_param_updates` accumulator used by
     /// `get_type_of_function_impl`. The third bool is the
-    /// "shadowed_class_param" flag, always `false` for class-level pushes.
+    /// "`shadowed_class_param`" flag, always `false` for class-level pushes.
     pub(crate) fn push_enclosing_jsdoc_class_template_types_with_flag(
         &mut self,
         node_idx: NodeIndex,

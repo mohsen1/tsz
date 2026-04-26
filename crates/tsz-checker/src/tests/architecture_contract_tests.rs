@@ -4253,7 +4253,7 @@ fn test_no_inline_visitor_calls_in_checker_modules() {
 /// outside `query_boundaries/`. All solver function calls must go through boundary wrappers.
 ///
 /// This guard catches top-level solver function calls like `tsz_solver::is_conditional_type(...)`
-/// that bypass the query_boundaries layer. Struct/enum paths like `tsz_solver::TypeId` and
+/// that bypass the `query_boundaries` layer. Struct/enum paths like `tsz_solver::TypeId` and
 /// sub-namespace paths like `tsz_solver::operations::property::` are excluded from this check
 /// since they're either data types (handled by `test_solver_imports_go_through_query_boundaries`)
 /// or internal solver modules with their own boundary guards.
@@ -4332,7 +4332,7 @@ fn test_no_inline_solver_function_calls_in_checker_modules() {
 /// Callers should use `query_boundaries::common::widen_type` (free function) or
 /// `self.widen_literal_type()` (method on `CheckerState`) instead.
 ///
-/// Current ceiling: 0 occurrences — all calls migrated to query_boundaries.
+/// Current ceiling: 0 occurrences — all calls migrated to `query_boundaries`.
 #[test]
 fn test_direct_widening_calls_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -4635,7 +4635,7 @@ fn test_direct_binary_op_evaluator_construction_ceiling() {
 /// These bypass the query boundary layer. Wrappers should be created in
 /// `query_boundaries/` over time. This ceiling must only decrease.
 ///
-/// Current ceiling: 0 occurrences (all migrated to query_boundaries).
+/// Current ceiling: 0 occurrences (all migrated to `query_boundaries`).
 #[test]
 fn test_direct_property_access_evaluator_construction_ceiling() {
     let checker_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

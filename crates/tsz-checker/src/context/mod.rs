@@ -1030,7 +1030,7 @@ pub struct CheckerContext<'a> {
     /// binders. The full merged map lives here once; per-file cross-file
     /// lookup binders leave their `reexports` field empty and the
     /// `ctx.reexports_for_file` accessor consults this first. Avoids the
-    /// O(N · map_size) deep clone that used to materialize a copy of the
+    /// O(N · `map_size`) deep clone that used to materialize a copy of the
     /// program-wide map into every one of N cross-file binders.
     pub program_reexports: Option<Arc<tsz_binder::FileReexportsMap>>,
     /// Program-wide wildcard re-exports map; see `program_reexports`.
@@ -1345,14 +1345,14 @@ pub struct ProjectEnv {
     /// `global_module_exports_index` slot. Drivers populate this from
     /// `SkeletonIndex::build_module_exports_index(&program.module_exports)`
     /// — note the projection consumes the post-merge `program.module_exports`
-    /// (which holds globally-remapped SymbolIds), NOT per-binder data, so
+    /// (which holds globally-remapped `SymbolIds`), NOT per-binder data, so
     /// once arenas become evictable in Phase 5 the merged module-exports
     /// index can still be built without retaining per-file binder state.
     ///
     /// SymbolId-coupling rationale: the projection passes through globally-
-    /// remapped SymbolIds — exactly what consumers (e.g. `type_only.rs`,
+    /// remapped `SymbolIds` — exactly what consumers (e.g. `type_only.rs`,
     /// `state/type_resolution/module.rs`) expect to dereference against
-    /// `all_binders[file_idx]`. Pre-merge local SymbolIds (the trap in
+    /// `all_binders[file_idx]`. Pre-merge local `SymbolIds` (the trap in
     /// PR #1145 for the file-locals index) are intentionally NOT recorded
     /// in the skeleton at extract time.
     pub skeleton_module_exports_index: Option<GlobalModuleExportsIndex>,
