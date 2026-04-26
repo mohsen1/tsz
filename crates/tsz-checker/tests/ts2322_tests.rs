@@ -4280,3 +4280,56 @@ fn1({});
         "annotated `{{ a: \"x\" }}` must not be widened to `{{ a: string; }}` in diagnostics, got: {target_messages:#?}"
     );
 }
+
+/// Regression for `inferenceShouldFailOnEvolvingArrays.ts`:
+///
+/// Calling a generic function whose parameter type is `{ [K in U]: T }[U]`
+/// (e.g. `function f<T extends string[], U extends string>(arg: { [K in U]: T }[U])`)
+/// with an array literal whose element types violate the constraint of `T`
+/// (e.g. `f([42])` against `T extends string[]`) should produce a TS2322
+/// element-level error pointing at the offending element, matching tsc's
+/// behavior. Previously the elaboration was suppressed because the *raw*
+/// parameter type contains type parameters; the elaboration must still run
+/// when the resolved source/target types are concrete.
+#[test]
+fn ts2322_array_element_elaborated_when_generic_param_resolves_to_concrete_constraint() {
+    let source = r#"
+function logFirstLength<T extends string[], U extends string>(arg: { [K in U]: T }[U]): T {
+    return arg;
+}
+logFirstLength([42]);
+"#;
+    let options = CheckerOptions {
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    let ts2322_count = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .count();
+    let ts2345_count = diagnostics
+        .iter()
+        .filter(|(code, _)| {
+            *code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .count();
+
+    assert!(
+        ts2322_count >= 1,
+        "Expected at least one TS2322 element elaboration for array-literal arg in generic call, got 0. Diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2345_count, 0,
+        "Expected no TS2345 on the whole array argument once element-level TS2322 is emitted. Diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, msg)| {
+            *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && msg.contains("'number'")
+                && msg.contains("'string'")
+        }),
+        "Expected TS2322 message mentioning 'number' and 'string' for the array element, got: {diagnostics:#?}"
+    );
+}

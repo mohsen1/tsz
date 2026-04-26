@@ -48,8 +48,25 @@ impl<'a> CheckerState<'a> {
         let Some(arr) = self.ctx.arena.get_literal_expr(arg_node).cloned() else {
             return false;
         };
+        // When the call argument targets a generic parameter, normally we skip
+        // element-wise elaboration because the parameter type still contains
+        // unresolved type parameters and any element comparison would be
+        // meaningless. However, when the source and target types themselves
+        // are fully concrete (e.g., `number[]` vs `string[]` after a type
+        // parameter constraint violation has substituted the constraint as
+        // the target), elaboration is safe and matches tsc's behavior of
+        // pointing at the offending element with TS2322.
         if self.call_argument_targets_generic_parameter(arg_idx) {
-            return false;
+            let db = self.ctx.types.as_type_database();
+            let source_unresolved =
+                crate::query_boundaries::common::contains_type_parameters(db, source_type)
+                    || crate::query_boundaries::common::contains_infer_types(db, source_type);
+            let target_unresolved =
+                crate::query_boundaries::common::contains_type_parameters(db, target_type)
+                    || crate::query_boundaries::common::contains_infer_types(db, target_type);
+            if source_unresolved || target_unresolved {
+                return false;
+            }
         }
 
         let effective_target_type = self.evaluate_type_with_env(target_type);

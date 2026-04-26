@@ -1807,8 +1807,23 @@ impl<'a> CheckerState<'a> {
             Some(arr) => arr.clone(),
             None => return false,
         };
+        // When the call argument targets a generic parameter, normally we skip
+        // element-wise elaboration because the parameter type still contains
+        // unresolved type parameters. However, when the resolved target type
+        // (e.g., a constraint substituted in for a violated type parameter)
+        // is fully concrete, elaboration is safe and matches tsc's behavior
+        // of pointing at the offending element with TS2322.
         if self.call_argument_targets_generic_parameter(arg_idx) {
-            return false;
+            let db = self.ctx.types.as_type_database();
+            let target_unresolved =
+                crate::query_boundaries::common::contains_type_parameters(db, effective_param_type)
+                    || crate::query_boundaries::common::contains_infer_types(
+                        db,
+                        effective_param_type,
+                    );
+            if target_unresolved {
+                return false;
+            }
         }
 
         let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
