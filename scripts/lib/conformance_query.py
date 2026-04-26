@@ -15,6 +15,8 @@ All helpers operate on the compact failure record format produced by
     }
 """
 
+from __future__ import annotations
+
 from collections import Counter
 from pathlib import Path
 
