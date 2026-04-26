@@ -2808,7 +2808,7 @@ fn build_lib_bound_file_for_interface_checks(
         node_flow: std::sync::Arc::new(FxHashMap::default()),
         switch_clause_to_switch: std::sync::Arc::new(FxHashMap::default()),
         is_external_module: lib_file.binder.is_external_module,
-        expando_properties: FxHashMap::default(),
+        expando_properties: std::sync::Arc::new(FxHashMap::default()),
         file_features: tsz::binder::FileFeatures::NONE,
         lib_symbol_reverse_remap: std::sync::Arc::new(FxHashMap::default()),
         semantic_defs: std::sync::Arc::new(FxHashMap::default()),

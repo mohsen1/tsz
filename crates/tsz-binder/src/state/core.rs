@@ -173,7 +173,7 @@ impl BinderState {
             current_scope: SymbolTable::new(),
             scope_stack: Vec::with_capacity(16),
             file_locals: SymbolTable::new(),
-            expando_properties: FxHashMap::default(),
+            expando_properties: Arc::new(FxHashMap::default()),
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
@@ -240,7 +240,7 @@ impl BinderState {
         self.current_scope.clear();
         self.scope_stack.clear();
         self.file_locals.clear();
-        self.expando_properties.clear();
+        Arc::make_mut(&mut self.expando_properties).clear();
         self.declared_modules.clear();
         self.is_external_module = false;
         self.is_strict_scope = false;
@@ -415,7 +415,7 @@ impl BinderState {
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
             file_locals,
-            expando_properties: FxHashMap::default(),
+            expando_properties: Arc::new(FxHashMap::default()),
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,

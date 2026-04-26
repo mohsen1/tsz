@@ -565,8 +565,11 @@ pub struct BindResult {
     pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     /// Whether this file is an external module (has imports/exports)
     pub is_external_module: bool,
-    /// Expando property assignments detected during binding
-    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    /// Expando property assignments detected during binding.
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.expando_properties` so the
+    /// merge can move it into per-file binders without deep-cloning.
+    pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
     /// Per-file alias partners from binder (`TYPE_ALIAS` → `ALIAS` mapping, pre-remap)
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
     pub file_features: crate::binder::FileFeatures,
@@ -745,7 +748,7 @@ impl BindResult {
             * (std::mem::size_of::<u32>() + std::mem::size_of::<NodeIndex>() + 8);
 
         // expando_properties
-        for (k, v) in &self.expando_properties {
+        for (k, v) in self.expando_properties.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for s in v {
                 size += s.capacity() + std::mem::size_of::<u64>();
@@ -1476,8 +1479,13 @@ pub struct BoundFile {
     pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     /// Whether this file is an external module (has imports/exports)
     pub is_external_module: bool,
-    /// Expando property assignments detected during binding
-    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    /// Expando property assignments detected during binding.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// (cross-file lookup + primary checker, ~2N for N files) share via
+    /// `Arc::clone` instead of deep-cloning the nested map. Read-only
+    /// after `bind_source_file` completes.
+    pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
     pub file_features: crate::binder::FileFeatures,
     /// Reverse mapping for merged lib symbols: remapped `SymbolId` ->
     /// (`lib_binder_idx`, original lib-local `SymbolId`).
@@ -1587,7 +1595,7 @@ impl BoundFile {
             * (std::mem::size_of::<u32>() + std::mem::size_of::<NodeIndex>() + 8);
 
         // expando_properties
-        for (k, v) in &self.expando_properties {
+        for (k, v) in self.expando_properties.iter() {
             size += k.capacity() + std::mem::size_of::<u64>();
             for s in v {
                 size += s.capacity() + std::mem::size_of::<u64>();
@@ -1902,25 +1910,27 @@ fn append_unique_declarations(existing: &mut Vec<NodeIndex>, incoming: &[NodeInd
 fn remap_expando_properties(
     expando: &FxHashMap<String, FxHashSet<String>>,
     id_remap: &FxHashMap<SymbolId, SymbolId>,
-) -> FxHashMap<String, FxHashSet<String>> {
-    expando
-        .iter()
-        .map(|(obj_name, props)| {
-            let remapped_props = props
-                .iter()
-                .map(|prop| {
-                    if let Some(old_id_str) = prop.strip_prefix("__unique_")
-                        && let Ok(old_id) = old_id_str.parse::<u32>()
-                        && let Some(&new_id) = id_remap.get(&SymbolId(old_id))
-                    {
-                        return format!("__unique_{}", new_id.0);
-                    }
-                    prop.clone()
-                })
-                .collect();
-            (obj_name.clone(), remapped_props)
-        })
-        .collect()
+) -> Arc<FxHashMap<String, FxHashSet<String>>> {
+    Arc::new(
+        expando
+            .iter()
+            .map(|(obj_name, props)| {
+                let remapped_props = props
+                    .iter()
+                    .map(|prop| {
+                        if let Some(old_id_str) = prop.strip_prefix("__unique_")
+                            && let Ok(old_id) = old_id_str.parse::<u32>()
+                            && let Some(&new_id) = id_remap.get(&SymbolId(old_id))
+                        {
+                            return format!("__unique_{}", new_id.0);
+                        }
+                        prop.clone()
+                    })
+                    .collect();
+                (obj_name.clone(), remapped_props)
+            })
+            .collect(),
+    )
 }
 
 /// Pre-populate a `DefinitionStore` from the merged `semantic_defs` map.
@@ -4127,7 +4137,7 @@ fn build_lib_bound_file_for_interface_checks(
         node_flow: Arc::new(FxHashMap::default()),
         switch_clause_to_switch: Arc::new(FxHashMap::default()),
         is_external_module: lib_file.binder.is_external_module,
-        expando_properties: FxHashMap::default(),
+        expando_properties: Arc::new(FxHashMap::default()),
         file_features: crate::binder::FileFeatures::NONE,
         lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
         semantic_defs: Arc::new(FxHashMap::default()),

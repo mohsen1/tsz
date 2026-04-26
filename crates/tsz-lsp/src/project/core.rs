@@ -430,7 +430,7 @@ impl ProjectFile {
         }
 
         // expando_properties
-        for (k, v) in &b.expando_properties {
+        for (k, v) in b.expando_properties.iter() {
             size += k.capacity() + 8;
             for s in v {
                 size += s.capacity() + 8;
