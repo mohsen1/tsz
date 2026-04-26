@@ -136,13 +136,43 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if let LiteralValue::String(_) = value
             && let Some((kind, type_arg)) =
                 string_intrinsic_components(self.checker.interner, self.target)
-            && type_arg == TypeId::STRING
         {
+            // Rule: a string literal `s` is assignable to `Mapping<T>` iff
+            //   1. Mapping(s) == s (the literal is at the fixed-point of the mapping), AND
+            //   2. s is in the pattern set of T.
+            //
+            // For T == string, condition 2 is trivially true (any literal is in string).
+            // For T == number / bigint / boolean (pattern-literal placeholders), we check
+            // that s matches the stringification template `\`${T}\``. This mirrors tsc,
+            // which represents `Mapping<\`${number}\`>` as a StringMapping over a
+            // TemplateLiteral and accepts e.g. `"1"` for `Uppercase<\`${number}\`>`.
             let transformed = self
                 .checker
                 .evaluate_type(self.checker.interner.string_intrinsic(kind, self.source));
             if transformed == self.source {
-                return SubtypeResult::True;
+                if type_arg == TypeId::STRING {
+                    return SubtypeResult::True;
+                }
+
+                // Construct the underlying pattern target. For non-string primitive
+                // type args, wrap as `\`${type_arg}\`` so the standard template-literal
+                // pattern matcher decides set membership.
+                let pattern_target = match self.checker.interner.lookup(type_arg) {
+                    Some(TypeData::TemplateLiteral(_))
+                    | Some(TypeData::Intrinsic(IntrinsicKind::String)) => type_arg,
+                    _ => self
+                        .checker
+                        .interner
+                        .template_literal(vec![crate::types::TemplateSpan::Type(type_arg)]),
+                };
+                if pattern_target != self.source
+                    && self
+                        .checker
+                        .check_subtype(self.source, pattern_target)
+                        .is_true()
+                {
+                    return SubtypeResult::True;
+                }
             }
         }
         if let Some(t_lit) = literal_value(self.checker.interner, self.target) {
