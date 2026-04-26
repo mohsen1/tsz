@@ -1366,7 +1366,6 @@ impl<'a> CheckerState<'a> {
                     ),
                     diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
                 );
-                return;
             }
             return;
         }
@@ -1409,7 +1408,6 @@ impl<'a> CheckerState<'a> {
                         &format!("Property '{index}' does not exist on type '{type_str}'.",),
                         diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                     );
-                    return;
                 }
             }
         }
