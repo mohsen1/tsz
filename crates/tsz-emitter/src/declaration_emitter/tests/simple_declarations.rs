@@ -1216,11 +1216,7 @@ exports.K = NS.K;
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export var K: {"),
-        "Expected property-access CommonJS export to emit a synthetic declaration: {output}"
-    );
-    assert!(
-        output.contains("new (): any;"),
+        output.contains("export var K: new () => any;"),
         "Expected property-access CommonJS export to reuse the assigned initializer type: {output}"
     );
 }

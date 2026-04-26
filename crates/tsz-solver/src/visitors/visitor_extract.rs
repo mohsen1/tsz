@@ -171,6 +171,20 @@ pub fn type_param_info(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Type
     })
 }
 
+/// True when the type is a top-level `infer T` placeholder (`TypeData::Infer`).
+///
+/// Distinct from `type_param_info`, which collapses `TypeParameter` and `Infer`
+/// into the same `TypeParamInfo`. The declaration emitter needs the distinction
+/// to print `infer T` instead of just `T` for unbound infer placeholders that
+/// survive into emitted conditional types.
+pub fn is_infer_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    extract_type_data(types, type_id, |key| match key {
+        TypeData::Infer(_) => Some(true),
+        _ => None,
+    })
+    .unwrap_or(false)
+}
+
 /// Build default type arguments for a type parameter list, handling circular/forward
 /// references. In tsc, when a default references the same type parameter or a
 /// later-declared one (TS2744), the default is treated as `any`.
