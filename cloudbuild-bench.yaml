@@ -10,7 +10,13 @@ steps:
       #!/usr/bin/env bash
       set -euo pipefail
       LOCK_URI="gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/.lock"
-      if echo "$BUILD_ID" | gsutil -h 'x-goog-if-generation-match:0' cp -q - "$LOCK_URI" 2>/dev/null; then
+
+      # Write lock content to a temp file (avoids stdin-pipe issues in Cloud Build).
+      printf '%s\n' "$BUILD_ID" > /tmp/bench-lock-content.txt
+
+      # Atomic create: x-goog-if-generation-match:0 fails if object already exists.
+      lock_err=$(gsutil -h 'x-goog-if-generation-match:0' cp /tmp/bench-lock-content.txt "$LOCK_URI" 2>&1) && acquired=true || acquired=false
+      if [[ "$acquired" == "true" ]]; then
         echo "Lock acquired for BUILD_ID=$BUILD_ID"
         touch /workspace/bench-enabled
       elif gsutil -q stat "$LOCK_URI" 2>/dev/null; then
@@ -18,9 +24,9 @@ steps:
         holder=$(gsutil cat "$LOCK_URI" 2>/dev/null || echo "unknown")
         echo "Benchmark already in progress (lock holder: $holder). Skipping this run."
       else
-        # cp failed for a transient reason (network, permissions) — treat as
-        # acquired so we don't silently drop benchmark runs on GCS hiccups.
-        echo "Warning: lock cp failed but lock does not exist — treating as acquired."
+        # cp failed for a transient reason — log it and proceed rather than silently dropping.
+        echo "Warning: lock cp failed but lock does not exist. Error: ${lock_err}"
+        echo "Treating as acquired to avoid dropping this benchmark run."
         touch /workspace/bench-enabled
       fi
 
