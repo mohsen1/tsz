@@ -15,4 +15,7 @@ jobs:
   cancel-running-ci:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Cancelling in-progress CI for draft/closed PR #${{ github.event.pull_request.number }} via concurrency group."
+      - name: Log cancellation
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: echo "Cancelling in-progress CI for draft/closed PR #${PR_NUMBER} via concurrency group."
