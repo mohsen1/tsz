@@ -1078,10 +1078,15 @@ impl ParserState {
 
             if self.is_identifier_or_keyword() {
                 self.next_token(); // consume identifier
-                let has_question = self.parse_optional(SyntaxKind::QuestionToken);
+                // Optional `?` may appear before `:` for labeled patterns: `...name?: T`.
+                // Only require a `:` to identify a labeled rest member; a trailing `?`
+                // without a `:` (e.g. `[...name?]`) is the optional rest type pattern,
+                // not a labeled rest, so we fall through to parse it as a regular type.
+                let _has_question = self.parse_optional(SyntaxKind::QuestionToken);
                 let has_colon = self.is_token(SyntaxKind::ColonToken);
-                if has_colon || has_question {
-                    // Labeled rest element: ...name: T - delegate to named tuple member
+                if has_colon {
+                    // Labeled rest element: ...name: T or ...name?: T -
+                    // delegate to named tuple member which re-parses from `...`.
                     self.scanner.restore_state(snapshot);
                     self.current_token = saved_token;
                     return self.parse_named_tuple_member();
@@ -1093,16 +1098,40 @@ impl ParserState {
             self.current_token = saved_token;
 
             self.next_token(); // consume ...
+            // Mirror the regular tuple element path: parse the inner type with
+            // IN_TUPLE_ELEMENT context so a postfix `?` is reserved for the
+            // tuple-level optional marker (e.g. `[...T?]`) instead of being
+            // consumed as a JSDoc nullable.
+            let saved_flags = self.context_flags;
+            self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
             let element_type = self.parse_type();
-            let end_pos = self.token_end();
-            return self.arena.add_wrapped_type(
+            self.context_flags = saved_flags;
+            let rest_end = self.token_end();
+            let rest_node = self.arena.add_wrapped_type(
                 syntax_kind_ext::REST_TYPE,
                 start_pos,
-                end_pos,
+                rest_end,
                 crate::parser::node::WrappedTypeData {
                     type_node: element_type,
                 },
             );
+
+            // Trailing `?` after a rest element (e.g. `[...T?]`) is invalid TS
+            // (TS17019), but tsc still parses it as an optional wrapping the
+            // rest so the type displays as `[...?T]` in declaration emit.
+            if self.parse_optional(SyntaxKind::QuestionToken) {
+                let end_pos = self.token_end();
+                return self.arena.add_wrapped_type(
+                    syntax_kind_ext::OPTIONAL_TYPE,
+                    start_pos,
+                    end_pos,
+                    crate::parser::node::WrappedTypeData {
+                        type_node: rest_node,
+                    },
+                );
+            }
+
+            return rest_node;
         }
 
         // Check if this is a named tuple element: name: T or name?: T

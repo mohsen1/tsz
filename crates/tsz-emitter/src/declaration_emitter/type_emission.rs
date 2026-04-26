@@ -615,6 +615,18 @@ impl<'a> DeclarationEmitter<'a> {
             // Optional type (T? in tuple elements)
             k if k == syntax_kind_ext::OPTIONAL_TYPE => {
                 if let Some(wrapped) = self.arena.get_wrapped_type(type_node) {
+                    // OPTIONAL_TYPE wrapping a REST_TYPE represents the
+                    // (invalid) `[...T?]` tuple form. tsc parses this and
+                    // displays it as `[...?T]` in declaration emit, so emit
+                    // the rest prefix followed by `?` then the inner type.
+                    if let Some(inner_node) = self.arena.get(wrapped.type_node)
+                        && inner_node.kind == syntax_kind_ext::REST_TYPE
+                        && let Some(inner_wrapped) = self.arena.get_wrapped_type(inner_node)
+                    {
+                        self.write("...?");
+                        self.emit_type(inner_wrapped.type_node);
+                        return;
+                    }
                     // Parenthesize complex types before `?` to avoid ambiguity
                     let needs_parens = if let Some(inner) = self.arena.get(wrapped.type_node) {
                         inner.kind == syntax_kind_ext::UNION_TYPE

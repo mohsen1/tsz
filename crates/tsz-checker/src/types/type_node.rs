@@ -328,12 +328,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                     seen_optional = true;
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
-                        let elem_type = self.check(wrapped.type_node);
+                        // OPTIONAL_TYPE wrapping REST_TYPE represents the
+                        // (invalid) `[...T?]` form. tsc still parses and
+                        // displays it as `[...?T]`, so we mark the element as
+                        // both rest and optional and unwrap the inner type.
+                        let (inner_idx, is_rest_optional) = if let Some(inner_node) =
+                            self.ctx.arena.get(wrapped.type_node)
+                            && inner_node.kind == syntax_kind_ext::REST_TYPE
+                            && let Some(inner_wrapped) = self.ctx.arena.get_wrapped_type(inner_node)
+                        {
+                            (inner_wrapped.type_node, true)
+                        } else {
+                            (wrapped.type_node, false)
+                        };
+                        let elem_type = self.check(inner_idx);
                         elements.push(TupleElement {
                             type_id: elem_type,
                             name: None,
                             optional: true,
-                            rest: false,
+                            rest: is_rest_optional,
                         });
                     }
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
