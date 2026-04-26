@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/destructuring-assignment-tuple-bounds-all`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1463
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
