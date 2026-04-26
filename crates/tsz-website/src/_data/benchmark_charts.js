@@ -285,7 +285,7 @@ function generateCharts(data) {
 </div>`;
   }
 
-  const results = data.results.filter((r) => r.tsz_ms != null && r.tsgo_ms != null);
+  const results = data.results.filter((r) => r.tsz_ms != null && r.tsz_ms > 0 && r.tsgo_ms != null && r.tsgo_ms > 0);
   if (!results.length) return `<div class="bench-placeholder">No valid benchmark results found.</div>`;
   const grouped = new Map();
   for (const row of results) {
