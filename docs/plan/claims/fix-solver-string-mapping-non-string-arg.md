@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/solver-string-mapping-non-string-arg`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1366
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
@@ -72,3 +72,4 @@ Two compounding bugs in the solver:
   fix.
 - Regression sample: `--filter String` 325/336, `--filter template`
   197/205 — no regressions vs main.
+- Full conformance: **+34 PASS vs baseline (12144 → 12178)**.
