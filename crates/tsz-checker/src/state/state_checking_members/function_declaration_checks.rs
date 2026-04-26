@@ -8,7 +8,7 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, TypeParamInfo};
 
 impl<'a> CheckerState<'a> {
     fn collect_untyped_this_references_in_function_body(
@@ -480,6 +480,44 @@ impl<'a> CheckerState<'a> {
         jsdoc_return_type: Option<TypeId>,
         func_decl_jsdoc: &Option<String>,
     ) {
+        // For JS files, push the function's `@template T` JSDoc declarations
+        // into `type_parameter_scope` so that `@type {T}` annotations inside
+        // the function body resolve to the same type parameter the signature
+        // builder created. Without this, body checking sees `T` as an
+        // undeclared identifier and emits a false-positive TS2304.
+        // The signature builder (`function_type.rs`) push/pops these around
+        // signature construction, so by body-check time they have been
+        // popped — re-push them locally for the body walk and pop at end.
+        let body_jsdoc_template_updates: Vec<(String, Option<TypeId>, bool)> = if self.is_js_file()
+            && func
+                .type_parameters
+                .as_ref()
+                .is_none_or(|tp| tp.nodes.is_empty())
+            && let Some(jsdoc) = func_decl_jsdoc.as_ref()
+        {
+            let template_names = Self::jsdoc_template_type_params(jsdoc);
+            let mut updates = Vec::with_capacity(template_names.len());
+            let factory = self.ctx.types.factory();
+            for (name, is_const) in template_names {
+                if self.ctx.type_parameter_scope.contains_key(&name) {
+                    continue;
+                }
+                let atom = self.ctx.types.intern_string(&name);
+                let info = TypeParamInfo {
+                    name: atom,
+                    constraint: None,
+                    default: None,
+                    is_const,
+                };
+                let ty = factory.type_param(info);
+                let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
+                updates.push((name, previous, false));
+            }
+            updates
+        } else {
+            Vec::new()
+        };
+
         let mut return_type = if has_type_annotation {
             self.get_type_from_type_node(func.type_annotation)
         } else if let Some(jsdoc_ret) = jsdoc_return_type {
@@ -773,6 +811,9 @@ impl<'a> CheckerState<'a> {
         if let Some(outer_this) = masked_outer_this {
             self.ctx.this_type_stack.push(outer_this);
         }
+
+        // Restore the @template T scope pushed at the top of this function.
+        self.pop_type_parameters(body_jsdoc_template_updates);
     }
 
     /// TS2677: Check that a type predicate's type is assignable to its parameter's type
