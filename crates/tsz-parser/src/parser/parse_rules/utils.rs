@@ -235,3 +235,250 @@ pub fn look_ahead_is_import_call(scanner: &mut ScannerState, current_token: Synt
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Make a scanner positioned at the **first** token of `source`.
+    /// The look-ahead helpers expect to be called when the scanner has
+    /// just consumed `current_token`; they then peek at the next token.
+    /// Returns `(scanner, current_token)`.
+    fn scanner_after_first(source: &str) -> (ScannerState, SyntaxKind) {
+        let mut scanner = ScannerState::new(source.to_string(), true);
+        let first = scanner.scan();
+        (scanner, first)
+    }
+
+    // ---------- is_identifier_or_keyword ----------------------------------
+
+    #[test]
+    fn is_identifier_or_keyword_accepts_identifier() {
+        assert!(is_identifier_or_keyword(SyntaxKind::Identifier));
+    }
+
+    #[test]
+    fn is_identifier_or_keyword_accepts_reserved_keyword() {
+        assert!(is_identifier_or_keyword(SyntaxKind::ClassKeyword));
+        assert!(is_identifier_or_keyword(SyntaxKind::ImportKeyword));
+        assert!(is_identifier_or_keyword(SyntaxKind::ReturnKeyword));
+    }
+
+    #[test]
+    fn is_identifier_or_keyword_accepts_contextual_keyword() {
+        assert!(is_identifier_or_keyword(SyntaxKind::TypeKeyword));
+        assert!(is_identifier_or_keyword(SyntaxKind::AsyncKeyword));
+        assert!(is_identifier_or_keyword(SyntaxKind::OfKeyword));
+    }
+
+    #[test]
+    fn is_identifier_or_keyword_rejects_punctuation_and_literals() {
+        assert!(!is_identifier_or_keyword(SyntaxKind::OpenBraceToken));
+        assert!(!is_identifier_or_keyword(SyntaxKind::EqualsToken));
+        assert!(!is_identifier_or_keyword(SyntaxKind::StringLiteral));
+        assert!(!is_identifier_or_keyword(SyntaxKind::NumericLiteral));
+    }
+
+    // ---------- is_identifier_or_contextual_keyword ------------------------
+
+    #[test]
+    fn contextual_only_accepts_identifier_and_non_reserved_keywords() {
+        assert!(is_identifier_or_contextual_keyword(SyntaxKind::Identifier));
+        assert!(is_identifier_or_contextual_keyword(SyntaxKind::TypeKeyword));
+        assert!(is_identifier_or_contextual_keyword(SyntaxKind::OfKeyword));
+        assert!(is_identifier_or_contextual_keyword(
+            SyntaxKind::AsyncKeyword
+        ));
+    }
+
+    #[test]
+    fn contextual_only_rejects_reserved_words() {
+        assert!(!is_identifier_or_contextual_keyword(
+            SyntaxKind::ClassKeyword
+        ));
+        assert!(!is_identifier_or_contextual_keyword(
+            SyntaxKind::ImportKeyword
+        ));
+        assert!(!is_identifier_or_contextual_keyword(SyntaxKind::ForKeyword));
+    }
+
+    #[test]
+    fn contextual_only_rejects_punctuation_and_literals() {
+        assert!(!is_identifier_or_contextual_keyword(
+            SyntaxKind::OpenBraceToken
+        ));
+        assert!(!is_identifier_or_contextual_keyword(
+            SyntaxKind::StringLiteral
+        ));
+    }
+
+    // ---------- look_ahead_is restores scanner state -----------------------
+
+    #[test]
+    fn look_ahead_is_does_not_advance_scanner() {
+        let (mut scanner, current) = scanner_after_first("foo bar");
+        assert_eq!(current, SyntaxKind::Identifier);
+        let result = look_ahead_is(&mut scanner, current, |t| t == SyntaxKind::Identifier);
+        assert!(result, "expected `bar` to be classified as an identifier");
+        // After the look-ahead, scanning again must see `bar`, proving the
+        // snapshot was restored.
+        let after = scanner.scan();
+        assert_eq!(after, SyntaxKind::Identifier);
+        assert_eq!(scanner.get_token_value(), "bar");
+    }
+
+    #[test]
+    fn look_ahead_is_returns_false_when_check_fails() {
+        let (mut scanner, current) = scanner_after_first("foo;");
+        let result = look_ahead_is(&mut scanner, current, |t| t == SyntaxKind::OpenBraceToken);
+        assert!(!result);
+    }
+
+    // ---------- look_ahead_is_on_same_line ---------------------------------
+
+    #[test]
+    fn look_ahead_is_on_same_line_true_without_line_break() {
+        let (mut scanner, current) = scanner_after_first("foo bar");
+        let result =
+            look_ahead_is_on_same_line(&mut scanner, current, |t| t == SyntaxKind::Identifier);
+        assert!(result);
+    }
+
+    #[test]
+    fn look_ahead_is_on_same_line_false_with_line_break() {
+        let (mut scanner, current) = scanner_after_first("foo\nbar");
+        let result =
+            look_ahead_is_on_same_line(&mut scanner, current, |t| t == SyntaxKind::Identifier);
+        assert!(
+            !result,
+            "ASI: a line break before `bar` must make `look_ahead_is_on_same_line` return false"
+        );
+    }
+
+    // ---------- look_ahead_is_async_declaration ----------------------------
+
+    #[test]
+    fn look_ahead_is_async_declaration_accepts_function_class_interface_etc() {
+        for next in &["function f(){}", "class C{}", "interface I{}", "enum E{}"] {
+            let source = format!("async {next}");
+            let (mut scanner, current) = scanner_after_first(&source);
+            assert_eq!(current, SyntaxKind::AsyncKeyword);
+            assert!(
+                look_ahead_is_async_declaration(&mut scanner, current),
+                "expected `async {next}` to be classified as an async declaration"
+            );
+        }
+    }
+
+    #[test]
+    fn look_ahead_is_async_declaration_rejects_arrow() {
+        let (mut scanner, current) = scanner_after_first("async () => 1");
+        assert!(!look_ahead_is_async_declaration(&mut scanner, current));
+    }
+
+    // ---------- look_ahead_is_abstract_declaration -------------------------
+
+    #[test]
+    fn look_ahead_is_abstract_declaration_accepts_class() {
+        let (mut scanner, current) = scanner_after_first("abstract class C {}");
+        assert_eq!(current, SyntaxKind::AbstractKeyword);
+        assert!(look_ahead_is_abstract_declaration(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_abstract_declaration_rejects_identifier_after() {
+        let (mut scanner, current) = scanner_after_first("abstract foo");
+        assert!(!look_ahead_is_abstract_declaration(&mut scanner, current));
+    }
+
+    // ---------- look_ahead_is_module_declaration ---------------------------
+
+    #[test]
+    fn look_ahead_is_module_declaration_accepts_string_literal_name() {
+        let (mut scanner, current) = scanner_after_first(r#"module "external" {}"#);
+        assert_eq!(current, SyntaxKind::ModuleKeyword);
+        assert!(look_ahead_is_module_declaration(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_module_declaration_accepts_identifier_name() {
+        let (mut scanner, current) = scanner_after_first("namespace Foo {}");
+        assert_eq!(current, SyntaxKind::NamespaceKeyword);
+        assert!(look_ahead_is_module_declaration(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_module_declaration_rejects_in_keyword() {
+        // Binary `in` / `instanceof` are intentionally rejected so that
+        // `module in obj` parses as an expression, not as a namespace decl.
+        let (mut scanner, current) = scanner_after_first("module in obj");
+        assert!(!look_ahead_is_module_declaration(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_module_declaration_false_after_line_break() {
+        // ASI: `namespace\nFoo` must NOT parse as a namespace decl.
+        let (mut scanner, current) = scanner_after_first("namespace\nFoo {}");
+        assert!(!look_ahead_is_module_declaration(&mut scanner, current));
+    }
+
+    // ---------- look_ahead_is_type_alias_declaration -----------------------
+
+    #[test]
+    fn look_ahead_is_type_alias_declaration_accepts_identifier() {
+        let (mut scanner, current) = scanner_after_first("type Foo = number");
+        assert_eq!(current, SyntaxKind::TypeKeyword);
+        assert!(look_ahead_is_type_alias_declaration(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_type_alias_declaration_false_after_line_break() {
+        // ASI: `type\nFoo = ...` must not parse as a type alias decl.
+        let (mut scanner, current) = scanner_after_first("type\nFoo = number");
+        assert!(!look_ahead_is_type_alias_declaration(&mut scanner, current));
+    }
+
+    // ---------- look_ahead_is_const_enum -----------------------------------
+
+    #[test]
+    fn look_ahead_is_const_enum_true_for_const_enum() {
+        let (mut scanner, current) = scanner_after_first("const enum E {}");
+        assert_eq!(current, SyntaxKind::ConstKeyword);
+        assert!(look_ahead_is_const_enum(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_const_enum_false_for_const_var() {
+        let (mut scanner, current) = scanner_after_first("const x = 1");
+        assert!(!look_ahead_is_const_enum(&mut scanner, current));
+    }
+
+    // ---------- look_ahead_is_import_call ----------------------------------
+
+    #[test]
+    fn look_ahead_is_import_call_accepts_open_paren() {
+        let (mut scanner, current) = scanner_after_first(r#"import("./mod")"#);
+        assert_eq!(current, SyntaxKind::ImportKeyword);
+        assert!(look_ahead_is_import_call(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_import_call_accepts_dot_for_meta() {
+        let (mut scanner, current) = scanner_after_first("import.meta");
+        assert!(look_ahead_is_import_call(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_import_call_accepts_less_than_for_generic() {
+        // `import<` is intentionally captured so the expression parser can
+        // emit TS1326 instead of routing into the import-decl path.
+        let (mut scanner, current) = scanner_after_first("import<T>");
+        assert!(look_ahead_is_import_call(&mut scanner, current));
+    }
+
+    #[test]
+    fn look_ahead_is_import_call_rejects_identifier() {
+        let (mut scanner, current) = scanner_after_first(r#"import foo from "m""#);
+        assert!(!look_ahead_is_import_call(&mut scanner, current));
+    }
+}
