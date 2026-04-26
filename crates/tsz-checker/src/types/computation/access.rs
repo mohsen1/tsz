@@ -760,21 +760,20 @@ impl<'a> CheckerState<'a> {
                     if !is_write_target
                         && let Some((class_idx, _)) =
                             self.resolve_class_for_access(access.expression, object_type_for_access)
-                            && let Some(&class_sym_id) =
-                                self.ctx.binder.node_symbols.get(&class_idx.0)
-                            && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
-                            && let Some(ref members) = class_symbol.members
-                            && let Some(member_sym_id) = members.get(name)
-                        {
-                            self.ctx
-                                .referenced_symbols
-                                .borrow_mut()
-                                .insert(member_sym_id);
-                            self.ctx
-                                .referenced_as_property
-                                .borrow_mut()
-                                .insert(member_sym_id);
-                        }
+                        && let Some(&class_sym_id) = self.ctx.binder.node_symbols.get(&class_idx.0)
+                        && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
+                        && let Some(ref members) = class_symbol.members
+                        && let Some(member_sym_id) = members.get(name)
+                    {
+                        self.ctx
+                            .referenced_symbols
+                            .borrow_mut()
+                            .insert(member_sym_id);
+                        self.ctx
+                            .referenced_as_property
+                            .borrow_mut()
+                            .insert(member_sym_id);
+                    }
                 }
             }
 
@@ -1037,16 +1036,17 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.binder.node_symbols.get(&class_idx.0)
                                 && let Some(class_symbol) = self.ctx.binder.get_symbol(class_sym_id)
                                 && let Some(ref members) = class_symbol.members
-                                && let Some(member_sym_id) = members.get(&property_name) {
-                                    self.ctx
-                                        .referenced_symbols
-                                        .borrow_mut()
-                                        .insert(member_sym_id);
-                                    self.ctx
-                                        .referenced_as_property
-                                        .borrow_mut()
-                                        .insert(member_sym_id);
-                                }
+                                && let Some(member_sym_id) = members.get(&property_name)
+                            {
+                                self.ctx
+                                    .referenced_symbols
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                                self.ctx
+                                    .referenced_as_property
+                                    .borrow_mut()
+                                    .insert(member_sym_id);
+                            }
                         }
                         // In write context (assignment target), prefer the setter type.
                         Some(effective_write_result(type_id, write_type))

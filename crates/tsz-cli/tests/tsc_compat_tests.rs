@@ -1782,7 +1782,9 @@ fn tsc_parity_ts2427_void_suppresses_other_predefined_names() {
     );
     assert_tsc_tsz_match(
         &temp.path,
-        &["--target", "es2015", "--noEmit", "--pretty", "false", "test.ts"],
+        &[
+            "--target", "es2015", "--noEmit", "--pretty", "false", "test.ts",
+        ],
         "TS2427 void hard-keyword suppresses other predefined-name TS2427s",
     );
 }
@@ -1805,7 +1807,9 @@ fn tsc_parity_ts2427_null_suppresses_other_predefined_names() {
     // suppressed in the same file.
     let (_code, output) = run_tsz_with_exit_code(
         &temp.path,
-        &["--target", "es2015", "--noEmit", "--pretty", "false", "test.ts"],
+        &[
+            "--target", "es2015", "--noEmit", "--pretty", "false", "test.ts",
+        ],
     )
     .expect("tsz binary not found");
     assert!(
@@ -1835,7 +1839,9 @@ fn tsc_parity_ts2427_any_alone_still_reported() {
     // interface name is present.
     assert_tsc_tsz_match(
         &temp.path,
-        &["--target", "es2015", "--noEmit", "--pretty", "false", "test.ts"],
+        &[
+            "--target", "es2015", "--noEmit", "--pretty", "false", "test.ts",
+        ],
         "TS2427 still reported for predefined names when no hard keyword present",
     );
 }

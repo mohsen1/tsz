@@ -113,33 +113,32 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 raw_callee_type,
                 args.nodes.len(),
-            )
-                && let Some(param_type) = raw_sig
-                    .params
-                    .get(arg_index)
-                    .map(|param| param.type_id)
-                    .or_else(|| {
-                        let last = raw_sig.params.last()?;
-                        last.rest.then_some(last.type_id)
-                    })
+            ) && let Some(param_type) = raw_sig
+                .params
+                .get(arg_index)
+                .map(|param| param.type_id)
+                .or_else(|| {
+                    let last = raw_sig.params.last()?;
+                    last.rest.then_some(last.type_id)
+                })
+            {
+                raw_call_param_property_target =
+                    self.mapped_target_property_display_type(param_type, &prop_name);
+                if self.ctx.strict_null_checks()
+                    && crate::query_boundaries::class_type::type_includes_undefined(
+                        self.ctx.types,
+                        current_target,
+                    )
+                    && let Some(target) = raw_call_param_property_target
+                    && !crate::query_boundaries::class_type::type_includes_undefined(
+                        self.ctx.types,
+                        target,
+                    )
                 {
                     raw_call_param_property_target =
-                        self.mapped_target_property_display_type(param_type, &prop_name);
-                    if self.ctx.strict_null_checks()
-                        && crate::query_boundaries::class_type::type_includes_undefined(
-                            self.ctx.types,
-                            current_target,
-                        )
-                        && let Some(target) = raw_call_param_property_target
-                        && !crate::query_boundaries::class_type::type_includes_undefined(
-                            self.ctx.types,
-                            target,
-                        )
-                    {
-                        raw_call_param_property_target =
-                            Some(self.ctx.types.union2(target, TypeId::UNDEFINED));
-                    }
+                        Some(self.ctx.types.union2(target, TypeId::UNDEFINED));
                 }
+            }
         }
         let contextual_target = raw_call_param_property_target
             .or(object_property_target)

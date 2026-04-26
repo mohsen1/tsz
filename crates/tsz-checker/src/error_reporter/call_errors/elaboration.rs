@@ -1930,14 +1930,13 @@ impl<'a> CheckerState<'a> {
                 elem_node.kind,
                 syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-            )
-                && !skip_deep_elaboration
-                    && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
-                {
-                    elaborated = true;
-                    continue;
-                }
-                // Fall through to the non-object element check below.
+            ) && !skip_deep_elaboration
+                && self.try_elaborate_assignment_source_error(elem_idx, target_element_type)
+            {
+                elaborated = true;
+                continue;
+            }
+            // Fall through to the non-object element check below.
 
             // For function/conditional elements, try to elaborate without a guard.
             if matches!(

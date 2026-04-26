@@ -1062,14 +1062,16 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Try left.constructor === right
         if let Some(base) = self.get_constructor_property_base(bin.left)
-            && let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-                return Some((TypeGuard::Constructor(instance_type), base));
-            }
+            && let Some(instance_type) = self.instance_type_from_constructor(bin.right)
+        {
+            return Some((TypeGuard::Constructor(instance_type), base));
+        }
         // Try left === right.constructor
         if let Some(base) = self.get_constructor_property_base(bin.right)
-            && let Some(instance_type) = self.instance_type_from_constructor(bin.left) {
-                return Some((TypeGuard::Constructor(instance_type), base));
-            }
+            && let Some(instance_type) = self.instance_type_from_constructor(bin.left)
+        {
+            return Some((TypeGuard::Constructor(instance_type), base));
+        }
         None
     }
 }

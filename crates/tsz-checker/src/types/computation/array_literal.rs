@@ -724,8 +724,8 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(elem_node) = self.ctx.arena.get(elem_idx)
                         && elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        && let Some(expected_type) = helper
-                            .get_tuple_element_type_with_count(tuple_index, total_elem_count)
+                        && let Some(expected_type) =
+                            helper.get_tuple_element_type_with_count(tuple_index, total_elem_count)
                     {
                         let elem_type = tuple_elements
                             .get(tuple_index)

@@ -66,6 +66,30 @@ NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
 # pinned canary commit for reproducible benchmarks
 NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
+# Real-world reactive library — Observable / Subject deep generics, ~150 source files.
+# REF empty by default: the fixture clones the default branch tip. Set
+# RXJS_REF=<sha> to pin a specific commit for reproducible benches.
+RXJS_REPO="${RXJS_REPO:-https://github.com/ReactiveX/rxjs.git}"
+# Pinned to 7.8.2 — last release before the v8 monorepo split. The v8 layout
+# uses workspace-relative `@rxjs/observable` imports that require path mapping
+# our flat tsconfig doesn't model. 7.8.2 has the classic `src/internal` layout.
+RXJS_REF="${RXJS_REF:-e5351d02e225e275ac0e497c7b66eaa5f0c88791}"
+RXJS_DIR="$EXTERNAL_BENCH_DIR/rxjs"
+# Pure TypeScript utility types from sindresorhus — bigger surface than ts-toolbelt/ts-essentials.
+TYPE_FEST_REPO="${TYPE_FEST_REPO:-https://github.com/sindresorhus/type-fest.git}"
+# Pinned to v5.6.0 for benchmark reproducibility.
+TYPE_FEST_REF="${TYPE_FEST_REF:-4005f60b65a7bd224154d6da46f45a63b42ce70f}"
+TYPE_FEST_DIR="$EXTERNAL_BENCH_DIR/type-fest"
+# Schema validation library with deep z.infer<typeof> inference.
+ZOD_REPO="${ZOD_REPO:-https://github.com/colinhacks/zod.git}"
+# Pinned to v3.9.8 for benchmark reproducibility (zod v4 has its own monorepo).
+ZOD_REF="${ZOD_REF:-93b0b6892cc0cfee8d0bec4e2e1242c7df771f95}"
+ZOD_DIR="$EXTERNAL_BENCH_DIR/zod"
+# SQL query builder famous for extreme type-level inference (Kysely).
+KYSELY_REPO="${KYSELY_REPO:-https://github.com/kysely-org/kysely.git}"
+# Pinned to v0.28.16 for benchmark reproducibility.
+KYSELY_REF="${KYSELY_REF:-d4911be21cd568d3694dc7f879f72390635226d7}"
+KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
 LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
 LARGE_TS_REF="${LARGE_TS_REF:-}"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
@@ -1053,6 +1077,206 @@ FLATEOF
     fi
 }
 
+# ─── Real-world fixture: rxjs ───────────────────────────────────────────────
+ensure_rxjs_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    if [ ! -d "$RXJS_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning rxjs fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$RXJS_REPO" "$RXJS_DIR"
+    fi
+    if [ -n "$(git -C "$RXJS_DIR" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}rxjs fixture is dirty; recloning for reproducibility...${NC}"
+        rm -rf "$RXJS_DIR"
+        git clone --quiet --no-tags --depth 1 "$RXJS_REPO" "$RXJS_DIR"
+    fi
+    if [ -n "$RXJS_REF" ]; then
+        local current_ref
+        current_ref="$(git -C "$RXJS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+        if [ "$current_ref" != "$RXJS_REF" ]; then
+            echo -e "${CYAN}Pinning rxjs to ${RXJS_REF:0:12}...${NC}"
+            git -C "$RXJS_DIR" fetch --quiet --depth 1 origin "$RXJS_REF"
+            git -C "$RXJS_DIR" checkout --quiet --detach FETCH_HEAD
+        fi
+    fi
+    # rxjs has been a monorepo since the v8 work — `src/internal` moved to
+    # `packages/rxjs/src/internal`. Detect both layouts.
+    local rxjs_src_root="src"
+    if [ -d "$RXJS_DIR/packages/rxjs/src/internal" ]; then
+        rxjs_src_root="packages/rxjs/src"
+    fi
+    local flat_tsconfig="$RXJS_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << FLATEOF
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "commonjs",
+    "strict": true,
+    "lib": ["es2018", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["${rxjs_src_root}/internal/**/*.ts"],
+  "exclude": [
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "node_modules/**/*",
+    "**/internal/observable/dom/**",
+    "**/internal/umd.ts"
+  ]
+}
+FLATEOF
+    fi
+}
+
+# ─── Real-world fixture: type-fest ──────────────────────────────────────────
+ensure_type_fest_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    if [ ! -d "$TYPE_FEST_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning type-fest fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$TYPE_FEST_REPO" "$TYPE_FEST_DIR"
+    fi
+    if [ -n "$(git -C "$TYPE_FEST_DIR" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}type-fest fixture is dirty; recloning for reproducibility...${NC}"
+        rm -rf "$TYPE_FEST_DIR"
+        git clone --quiet --no-tags --depth 1 "$TYPE_FEST_REPO" "$TYPE_FEST_DIR"
+    fi
+    if [ -n "$TYPE_FEST_REF" ]; then
+        local current_ref
+        current_ref="$(git -C "$TYPE_FEST_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+        if [ "$current_ref" != "$TYPE_FEST_REF" ]; then
+            echo -e "${CYAN}Pinning type-fest to ${TYPE_FEST_REF:0:12}...${NC}"
+            git -C "$TYPE_FEST_DIR" fetch --quiet --depth 1 origin "$TYPE_FEST_REF"
+            git -C "$TYPE_FEST_DIR" checkout --quiet --detach FETCH_HEAD
+        fi
+    fi
+    local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << 'FLATEOF'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2022"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["source/**/*.d.ts", "index.d.ts"],
+  "exclude": ["test-d/**/*", "node_modules/**/*"]
+}
+FLATEOF
+    fi
+}
+
+# ─── Real-world fixture: zod ────────────────────────────────────────────────
+ensure_zod_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    if [ ! -d "$ZOD_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning zod fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$ZOD_REPO" "$ZOD_DIR"
+    fi
+    if [ -n "$(git -C "$ZOD_DIR" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}zod fixture is dirty; recloning for reproducibility...${NC}"
+        rm -rf "$ZOD_DIR"
+        git clone --quiet --no-tags --depth 1 "$ZOD_REPO" "$ZOD_DIR"
+    fi
+    if [ -n "$ZOD_REF" ]; then
+        local current_ref
+        current_ref="$(git -C "$ZOD_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+        if [ "$current_ref" != "$ZOD_REF" ]; then
+            echo -e "${CYAN}Pinning zod to ${ZOD_REF:0:12}...${NC}"
+            git -C "$ZOD_DIR" fetch --quiet --depth 1 origin "$ZOD_REF"
+            git -C "$ZOD_DIR" checkout --quiet --detach FETCH_HEAD
+        fi
+    fi
+    local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << 'FLATEOF'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2022", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["src/**/*.ts", "packages/zod/src/**/*.ts"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/__tests__/**",
+    "**/benchmarks/**",
+    "node_modules/**/*"
+  ]
+}
+FLATEOF
+    fi
+}
+
+# ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
+ensure_kysely_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+    if [ ! -d "$KYSELY_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning kysely fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$KYSELY_REPO" "$KYSELY_DIR"
+    fi
+    if [ -n "$(git -C "$KYSELY_DIR" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}kysely fixture is dirty; recloning for reproducibility...${NC}"
+        rm -rf "$KYSELY_DIR"
+        git clone --quiet --no-tags --depth 1 "$KYSELY_REPO" "$KYSELY_DIR"
+    fi
+    if [ -n "$KYSELY_REF" ]; then
+        local current_ref
+        current_ref="$(git -C "$KYSELY_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+        if [ "$current_ref" != "$KYSELY_REF" ]; then
+            echo -e "${CYAN}Pinning kysely to ${KYSELY_REF:0:12}...${NC}"
+            git -C "$KYSELY_DIR" fetch --quiet --depth 1 origin "$KYSELY_REF"
+            git -C "$KYSELY_DIR" checkout --quiet --detach FETCH_HEAD
+        fi
+    fi
+    local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
+    if [ ! -f "$flat_tsconfig" ]; then
+        cat > "$flat_tsconfig" << 'FLATEOF'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2022", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "**/*.test.ts",
+    "test/**/*",
+    "node_modules/**/*",
+    "**/dialect/mssql/**",
+    "**/util/object-utils.ts",
+    "**/util/performance-now.ts"
+  ]
+}
+FLATEOF
+    fi
+}
+
 run_utility_types_benchmarks() {
     local benchmark_names=(
         "utility-types/index.ts"
@@ -1267,6 +1491,102 @@ run_ts_essentials_project_benchmarks() {
     fi
 
     run_project_benchmark "ts-essentials-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_rxjs_project_benchmarks() {
+    if ! is_benchmark_selected "rxjs-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - rxjs (Observable / operator deep generics)"
+    ensure_rxjs_fixture
+    echo -e "${GREEN}✓${NC} rxjs pinned at $(git -C "$RXJS_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$RXJS_DIR/tsconfig.flat.json"
+    local src_dir
+    if [ -d "$RXJS_DIR/packages/rxjs/src/internal" ]; then
+        src_dir="$RXJS_DIR/packages/rxjs/src/internal"
+    else
+        src_dir="$RXJS_DIR/src/internal"
+    fi
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "rxjs-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_type_fest_project_benchmarks() {
+    if ! is_benchmark_selected "type-fest-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - type-fest (broad utility-type surface)"
+    ensure_type_fest_fixture
+    echo -e "${GREEN}✓${NC} type-fest pinned at $(git -C "$TYPE_FEST_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
+    local src_dir="$TYPE_FEST_DIR/source"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "type-fest-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_zod_project_benchmarks() {
+    if ! is_benchmark_selected "zod-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - zod (deep z.infer<typeof> schema inference)"
+    ensure_zod_fixture
+    echo -e "${GREEN}✓${NC} zod pinned at $(git -C "$ZOD_DIR" rev-parse --short HEAD)"
+
+    # zod v3 lives in src/, zod v4 monorepo lives in packages/zod/src/.
+    # Pick whichever exists so the bench works on either layout.
+    local tsconfig="$ZOD_DIR/tsconfig.flat.json"
+    local src_dir
+    if [ -d "$ZOD_DIR/packages/zod/src" ]; then
+        src_dir="$ZOD_DIR/packages/zod/src"
+    else
+        src_dir="$ZOD_DIR/src"
+    fi
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "zod-project" "$tsconfig" "$src_dir"
+    echo
+}
+
+run_kysely_project_benchmarks() {
+    if ! is_benchmark_selected "kysely-project"; then
+        return
+    fi
+
+    print_header "Real-world External Project - kysely (extreme type-level SQL inference)"
+    ensure_kysely_fixture
+    echo -e "${GREEN}✓${NC} kysely pinned at $(git -C "$KYSELY_DIR" rev-parse --short HEAD)"
+
+    local tsconfig="$KYSELY_DIR/tsconfig.flat.json"
+    local src_dir="$KYSELY_DIR/src"
+
+    if [ ! -f "$tsconfig" ]; then
+        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        return
+    fi
+
+    run_project_benchmark "kysely-project" "$tsconfig" "$src_dir"
     echo
 }
 
@@ -2550,6 +2870,10 @@ main() {
     run_utility_types_project_benchmarks
     run_ts_toolbelt_project_benchmarks
     run_ts_essentials_project_benchmarks
+    run_rxjs_project_benchmarks
+    run_type_fest_project_benchmarks
+    run_zod_project_benchmarks
+    run_kysely_project_benchmarks
     run_nextjs_benchmarks
     run_large_ts_repo_benchmarks
 
