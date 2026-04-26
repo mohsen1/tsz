@@ -44,7 +44,16 @@ impl<'a> CheckerState<'a> {
                 return member_types[0];
             }
 
-            return factory.union(member_types);
+            let result = factory.union(member_types.clone());
+
+            // Mirror tsc's `UnionType.origin`: record the as-written input
+            // member list so the diagnostic printer can preserve top-level
+            // alias names that union flattening would otherwise dissolve
+            // (e.g., `T | null` should display as `T | null`, not as T's
+            // expanded body). The interner stores at most one origin per
+            // flattened TypeId; first writer wins.
+            self.ctx.types.store_union_origin(result, member_types);
+            return result;
         }
 
         TypeId::ERROR // Missing composite type data - propagate error

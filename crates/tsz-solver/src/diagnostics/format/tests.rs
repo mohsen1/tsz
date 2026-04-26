@@ -3067,3 +3067,82 @@ fn distributive_conditional_alias_with_non_boolean_singleton_keeps_alias() {
         "Singleton non-distributable args must keep the alias name. Got: {result}"
     );
 }
+
+// =====================================================================
+// Union containing a Lazy alias — TS2859 / general union-display parity
+// =====================================================================
+//
+// When a user writes `T | null` where `T` is a type alias whose body is a
+// union (e.g., `type T = "a" | "b" | undefined`), tsc displays the diagnostic
+// with the alias name preserved at the top level: `T | null`. The flattened
+// member list `"a" | "b" | undefined | null` is the structural form, but the
+// printer is supposed to factor the alias back out for display.
+//
+// These tests lock in two invariants:
+//   1. A union built from `[Lazy(T), null]` *without* prior flattening must
+//      display as `T | null` (the Lazy is preserved).
+//   2. After we add union-origin tracking, a flattened union annotated with
+//      its origin should also display as `T | null`.
+#[test]
+fn union_of_lazy_alias_with_null_preserves_alias_name() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // type Foo = "a" | "b" | undefined
+    let lit_a = db.literal_string("a");
+    let lit_b = db.literal_string("b");
+    let foo_body = db.union_literal_reduce(vec![lit_a, lit_b, TypeId::UNDEFINED]);
+    let foo_name = db.intern_string("Foo");
+    let foo_def = crate::def::DefinitionInfo::type_alias(foo_name, vec![], foo_body);
+    let foo_def_id = def_store.register(foo_def);
+    def_store.register_type_to_def(foo_body, foo_def_id);
+
+    // Build the union from `[Lazy(Foo), null]`. Since Lazy is not a Union,
+    // collect_union_members must NOT flatten it — the resulting union should
+    // retain Lazy(Foo) as a top-level member.
+    let foo_lazy = db.lazy(foo_def_id);
+    let foo_or_null = db.union_literal_reduce(vec![foo_lazy, TypeId::NULL]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let rendered = fmt.format(foo_or_null);
+    assert_eq!(rendered, "Foo | null", "got: {rendered}");
+}
+
+// Simulate the realistic case where the alias body has been substituted in
+// place of Lazy(Foo) — i.e., the union members that reach the printer are
+// the *flattened* union body plus `null`. Today we lose the alias name in
+// this scenario; the new union-origin side table should restore it.
+#[test]
+fn union_with_origin_preserves_alias_name_after_flattening() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let lit_a = db.literal_string("a");
+    let lit_b = db.literal_string("b");
+    let foo_body = db.union_literal_reduce(vec![lit_a, lit_b, TypeId::UNDEFINED]);
+    let foo_name = db.intern_string("Foo");
+    let foo_def = crate::def::DefinitionInfo::type_alias(foo_name, vec![], foo_body);
+    let foo_def_id = def_store.register(foo_def);
+    def_store.register_type_to_def(foo_body, foo_def_id);
+
+    // Pre-flattened union: [lit_a, lit_b, undefined, null]
+    let flattened = db.union_literal_reduce(vec![lit_a, lit_b, TypeId::UNDEFINED, TypeId::NULL]);
+
+    // Sanity: without origin, the printer must NOT know the alias.
+    {
+        let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+        let rendered = fmt.format(flattened);
+        assert!(
+            !rendered.contains("Foo"),
+            "Pre-condition: structural form must not mention `Foo`. Got: {rendered}"
+        );
+    }
+
+    // Record the as-written origin members [Lazy(Foo), null].
+    let foo_lazy = db.lazy(foo_def_id);
+    db.store_union_origin(flattened, vec![foo_lazy, TypeId::NULL]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    let rendered = fmt.format(flattened);
+    assert_eq!(rendered, "Foo | null", "got: {rendered}");
+}

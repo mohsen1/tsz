@@ -1093,6 +1093,15 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.get_display_alias(type_id)
     }
 
+    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        self.interner
+            .store_union_origin(union_type_id, origin_members);
+    }
+
+    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        self.interner.get_union_origin(type_id)
+    }
+
     fn take_union_too_complex(&self) -> bool {
         self.interner.take_union_too_complex()
     }
