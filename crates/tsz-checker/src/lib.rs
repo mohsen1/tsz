@@ -362,6 +362,9 @@ mod jsdoc_callback_rest_tests;
 #[path = "../tests/jsdoc_cross_file_typedef_tests.rs"]
 mod jsdoc_cross_file_typedef_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_function_return_type_anchor_tests.rs"]
+mod jsdoc_function_return_type_anchor_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]

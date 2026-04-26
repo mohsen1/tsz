@@ -793,6 +793,7 @@ impl<'a> CheckerState<'a> {
             return_type,
             has_type_annotation,
             has_declared_return,
+            has_jsdoc_return_type,
         );
 
         self.pop_return_type();
@@ -1102,6 +1103,7 @@ impl<'a> CheckerState<'a> {
         return_type: TypeId,
         has_type_annotation: bool,
         has_declared_return: bool,
+        has_jsdoc_return_type: bool,
     ) {
         let is_async = func.is_async;
         let is_generator = func.asterisk_token;
@@ -1194,33 +1196,55 @@ impl<'a> CheckerState<'a> {
         }
 
         if check_explicit_return_paths && requires_return && falls_through {
-            // For JSDoc @type, the error node is the function name/node
-            // (there's no separate type annotation node in the AST).
+            // For JSDoc-typed functions in JS files, prefer anchoring on the
+            // JSDoc return-type span (e.g. underline `number` inside
+            // `@type {function(): number}`) so the diagnostic matches tsc.
+            // Fall back to function name / node when no JSDoc span resolves.
+            let jsdoc_span = if !has_type_annotation && has_jsdoc_return_type {
+                self.jsdoc_function_return_type_span_for_function(func_idx)
+            } else {
+                None
+            };
             let error_node = if has_type_annotation {
                 func.type_annotation
+            } else if func.name.is_some() {
+                func.name
             } else {
-                // JSDoc: use function name if available, otherwise function itself
-                if func.name.is_some() {
-                    func.name
-                } else {
-                    func_idx
-                }
+                func_idx
             };
             if !has_return {
                 use crate::diagnostics::diagnostic_codes;
-                self.error_at_node(
-                    error_node,
-                    "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                    diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
-                );
+                if let Some((start, length)) = jsdoc_span {
+                    self.error_at_position(
+                        start,
+                        length,
+                        "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                        diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+                    );
+                } else {
+                    self.error_at_node(
+                        error_node,
+                        "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                        diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+                    );
+                }
             } else {
                 // TS2366: always emit when return type doesn't include undefined
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    error_node,
-                    diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
-                    diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
-                );
+                if let Some((start, length)) = jsdoc_span {
+                    self.error_at_position(
+                        start,
+                        length,
+                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                        diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                    );
+                } else {
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                        diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                    );
+                }
             }
         }
         // TS2355 for `undefined | T` return types with no returns at all.
@@ -1235,6 +1259,11 @@ impl<'a> CheckerState<'a> {
             && !is_generator
             && self.type_requires_return_ts2355(check_return_type)
         {
+            let jsdoc_span = if !has_type_annotation && has_jsdoc_return_type {
+                self.jsdoc_function_return_type_span_for_function(func_idx)
+            } else {
+                None
+            };
             let error_node = if has_type_annotation {
                 func.type_annotation
             } else if func.name.is_some() {
@@ -1243,11 +1272,20 @@ impl<'a> CheckerState<'a> {
                 func_idx
             };
             use crate::diagnostics::diagnostic_codes;
-            self.error_at_node(
-                error_node,
-                "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
-                diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
-            );
+            if let Some((start, length)) = jsdoc_span {
+                self.error_at_position(
+                    start,
+                    length,
+                    "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                    diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+                );
+            } else {
+                self.error_at_node(
+                    error_node,
+                    "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                    diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+                );
+            }
         } else if check_explicit_return_paths
             && check_return_type == TypeId::UNKNOWN
             && has_type_annotation

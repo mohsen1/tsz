@@ -402,6 +402,71 @@ impl<'a> CheckerState<'a> {
         Some((comment_pos + expr_offset as u32 + 4, type_expr.len() as u32))
     }
 
+    /// Locate the source span of the return type inside a JSDoc
+    /// `@type {function(...): ReturnType}` annotation attached to `func_idx`.
+    ///
+    /// Used by TS2355/TS2366 emission so the diagnostic underlines the JSDoc
+    /// return type (matching tsc) instead of the function name. Returns
+    /// `None` if the function has no JSDoc `@type` annotation, or the
+    /// annotation is not a `function(...)` form with an explicit return type.
+    pub(crate) fn jsdoc_function_return_type_span_for_function(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<(u32, u32)> {
+        use tsz_common::comments::is_jsdoc_comment;
+
+        if !self.ctx.should_resolve_jsdoc() {
+            return None;
+        }
+        let sf = self.source_file_data_for_node(func_idx)?;
+        if sf.comments.is_empty() {
+            return None;
+        }
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let func_node = self.ctx.arena.get(func_idx)?;
+
+        // Look for a JSDoc comment immediately preceding the function node.
+        for comment in comments.iter().rev() {
+            if comment.end <= func_node.pos
+                && is_jsdoc_comment(comment, source_text)
+                && let Some(span) = Self::jsdoc_type_tag_function_return_type_span_in_source(
+                    source_text,
+                    comment.pos,
+                )
+            {
+                return Some(span);
+            }
+            if comment.end <= func_node.pos {
+                break;
+            }
+        }
+
+        // Walk up the parent chain (e.g. `const f = function () {}`).
+        let mut current = func_idx;
+        for _ in 0..4 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            for comment in comments.iter().rev() {
+                if comment.end <= parent_node.pos
+                    && is_jsdoc_comment(comment, source_text)
+                    && let Some(span) = Self::jsdoc_type_tag_function_return_type_span_in_source(
+                        source_text,
+                        comment.pos,
+                    )
+                {
+                    return Some(span);
+                }
+            }
+            current = parent;
+        }
+        None
+    }
+
     /// Emit TS2694 for JSDoc qualified type names `A.B` whose root `A` is
     /// a plain value (not a namespace/module/type container). tsc's JSDoc
     /// checker treats this as "Namespace 'A' has no exported member 'B'";
