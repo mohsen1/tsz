@@ -129,7 +129,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&type_text);
             } else if has_initializer
                 && (self.function_initializer_has_inline_parameter_comments(initializer)
-                    || self.function_initializer_is_self_returning(initializer)
+                    || self.function_initializer_is_self_returning_for(initializer, decl_name)
                     || self.function_initializer_returns_unique_identifier(initializer)
                     || self.function_initializer_has_typeof_in_param_annotations(initializer))
                 && {
@@ -735,7 +735,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         let is_self_returning = func.type_annotation.is_none()
-            && self.function_initializer_is_self_returning(initializer);
+            && self.function_initializer_is_self_returning_for(initializer, decl_name);
 
         self.write(": ");
         if is_self_returning {
@@ -1048,23 +1048,41 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn function_initializer_is_self_returning(
+    /// Returns `true` when the initializer is a function expression / arrow whose
+    /// body returns either the function's own name or the binding it is being
+    /// assigned to. Both cases produce a recursive type that declaration emit
+    /// cannot spell directly, so tsc represents them as
+    /// `(...args) => (...args) => /*elided*/ any`.
+    pub(in crate::declaration_emitter) fn function_initializer_is_self_returning_for(
         &self,
         initializer: NodeIndex,
+        decl_name: NodeIndex,
     ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
-        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+        if init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            && init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+        {
             return false;
         }
         let Some(func) = self.arena.get_function(init_node) else {
             return false;
         };
-        let Some(name) = self.get_identifier_text(func.name) else {
-            return false;
-        };
-        self.function_body_returns_identifier(func.body, &name)
+
+        if let Some(name) = self.get_identifier_text(func.name)
+            && self.function_body_returns_identifier(func.body, &name)
+        {
+            return true;
+        }
+
+        if let Some(name) = self.get_identifier_text(decl_name)
+            && self.function_body_returns_identifier(func.body, &name)
+        {
+            return true;
+        }
+
+        false
     }
 
     /// True when the initializer is an arrow/function expression whose
