@@ -221,7 +221,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // UnionReduction.Literal behavior. This preserves the union structure
             // (e.g., C | D stays as C | D even when D extends C) which is important
             // for TS2403 redeclaration checks and type display in diagnostics.
-            return tsz_solver::utils::union_or_single_literal_reduce(self.ctx.types, member_types);
+            let result = tsz_solver::utils::union_or_single_literal_reduce(
+                self.ctx.types,
+                member_types.clone(),
+            );
+
+            // Mirror tsc's `UnionType.origin`: record the as-written input
+            // member list so the diagnostic printer can preserve top-level
+            // alias names that union flattening would otherwise dissolve
+            // (see `TypeInterner::store_union_origin`).
+            self.ctx.types.store_union_origin(result, member_types);
+            return result;
         }
 
         TypeId::ERROR

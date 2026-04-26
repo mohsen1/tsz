@@ -938,6 +938,14 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
+                // tsc preserves top-level alias names that would otherwise be
+                // lost during union flattening (e.g., `T | null` should not
+                // expand to T's body). The checker records the unflattened
+                // input member list as a side-table "origin"; consult it here
+                // before structural display.
+                if let Some(origin) = self.interner.get_union_origin(type_id) {
+                    return self.format_union(origin.as_slice()).into();
+                }
                 let members = self.interner.type_list(*members);
                 self.format_union(members.as_ref()).into()
             }

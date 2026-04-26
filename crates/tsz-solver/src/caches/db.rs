@@ -170,6 +170,18 @@ pub trait TypeDatabase {
         None
     }
 
+    /// Record the as-written origin members for a flattened Union TypeId.
+    ///
+    /// The checker calls this from `get_type_from_union_type` so that the
+    /// printer can recover top-level alias names lost during flattening.
+    /// See `TypeInterner::store_union_origin` for the full contract.
+    fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
+
+    /// Look up the as-written origin members for a flattened Union TypeId.
+    fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        None
+    }
+
     /// Atomically read and clear the "union too complex" flag.
     ///
     /// Returns `true` if a union construction was aborted due to complexity
@@ -549,6 +561,14 @@ impl TypeDatabase for TypeInterner {
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         Self::get_display_alias(self, type_id)
+    }
+
+    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        Self::store_union_origin(self, union_type_id, origin_members);
+    }
+
+    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        Self::get_union_origin(self, type_id)
     }
 
     fn take_union_too_complex(&self) -> bool {
