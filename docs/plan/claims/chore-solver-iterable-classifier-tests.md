@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `chore/solver-iterable-classifier-tests`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1309
+- **Status**: ready
 - **Workstream**: 8 (test-fixture coverage; lock untested public solver helpers)
 
 ## Intent
@@ -32,4 +32,7 @@ code changes.
 
 ## Verification
 
-- `cargo nextest run -p tsz-solver --lib` (no regressions; new tests pass).
+- `cargo nextest run -p tsz-solver --lib` — 5387 tests pass, including 45
+  new `type_queries::iterable::tests::*` cases. No regressions.
+- `cargo clippy -p tsz-solver --tests -- -D warnings` — clean.
+- `cargo fmt -p tsz-solver --check` — clean.

@@ -185,3 +185,7 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
         _ => ForOfElementKind::Other,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/iterable_classifier_tests.rs"]
+mod tests;
