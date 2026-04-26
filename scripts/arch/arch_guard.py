@@ -555,6 +555,27 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
     ),
 ]
 
+# Pin architecture health metric 6 ("Speculation APIs with surprising
+# non-RAII behavior") in `docs/plan/ROADMAP.md`.
+#
+# After PR #1213 renamed `DiagnosticSpeculationGuard → DiagnosticSpeculationSnapshot`
+# the speculation surface no longer carries `…Guard` types whose name
+# implies RAII rollback-on-drop while the implementation is implicit-commit.
+# This guard pins the rename: any new `pub(crate) struct …Guard` on the
+# speculation surface re-introduces the same ambiguity and must update
+# the cap (deliberately) or use a `…Snapshot` name (preferred). The
+# scan looks at the speculation file directly so the check is local
+# and cheap.
+#
+# Each entry: (description, file_path, max_guard_struct_count).
+SPECULATION_GUARD_NAME_CHECKS = [
+    (
+        "Checker speculation boundary: number of `…Guard` structs in speculation.rs (architecture health metric 6)",
+        ROOT / "crates" / "tsz-checker" / "src" / "context" / "speculation.rs",
+        0,
+    ),
+]
+
 # Pin the count of LSP feature-dispatch methods in
 # `crates/tsz-lsp/src/project/features.rs` (architecture health metric 7
 # in `docs/plan/ROADMAP.md` — "LSP/WASM semantic features implemented
@@ -943,6 +964,68 @@ def scan_lsp_feature_method_count(
     return []
 
 
+_SPECULATION_GUARD_STRUCT_PATTERN = re.compile(
+    r"^[ \t]*pub(?:\([^)]*\))?\s+struct\s+(\w*Guard\w*)\b"
+)
+
+
+def scan_speculation_guard_struct_count(
+    path: pathlib.Path, max_guard_count: int
+) -> list[str]:
+    """Count `…Guard` struct declarations in the speculation file and
+    report when over `max_guard_count` (architecture health metric 6).
+
+    Architecture health metric 6 ("Speculation APIs with surprising
+    non-RAII behavior", `docs/plan/ROADMAP.md`) was originally violated
+    by `DiagnosticSpeculationGuard`, whose name implied RAII rollback
+    while the implementation did implicit-commit-on-drop. PR #1213
+    renamed it to `DiagnosticSpeculationSnapshot`. This guard pins
+    the rename: any new `pub(crate) struct …Guard` re-introduces the
+    same ambiguity.
+
+    The match runs against the literal speculation file
+    (`crates/tsz-checker/src/context/speculation.rs`); doc-comment
+    references like `SpeculationGuard` in narrative text don't match
+    because the regex requires the `pub … struct …` prefix on a non-
+    comment line.
+    """
+    if not path.exists():
+        return []
+
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    guard_lines: list[tuple[int, str]] = []
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("//"):
+            continue
+        m = _SPECULATION_GUARD_STRUCT_PATTERN.match(line)
+        if m:
+            guard_lines.append((line_no, m.group(1)))
+
+    if len(guard_lines) > max_guard_count:
+        try:
+            rel_path = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_path = str(path)
+        hits = [
+            f"speculation `…Guard` struct: {rel_path}:{line_no} {name}"
+            for line_no, name in guard_lines
+        ]
+        hits.append(
+            f"total `…Guard` structs in {rel_path}: {len(guard_lines)} "
+            f"(cap {max_guard_count}; rename to `…Snapshot` to match "
+            f"the speculation surface's actual implicit-commit-on-drop "
+            f"semantics — workstream-4 Speculation Policy 3 / "
+            f"`docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 5)"
+        )
+        return hits
+    return []
+
+
 def scan_struct_field_count(
     path: pathlib.Path, struct_name: str, max_fields: int
 ) -> list[str]:
@@ -1287,6 +1370,12 @@ def main() -> int:
 
     for name, file_path, max_methods in LSP_FEATURE_METHOD_COUNT_CHECKS:
         hits = scan_lsp_feature_method_count(file_path, max_methods)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, file_path, max_guard_count in SPECULATION_GUARD_NAME_CHECKS:
+        hits = scan_speculation_guard_struct_count(file_path, max_guard_count)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
