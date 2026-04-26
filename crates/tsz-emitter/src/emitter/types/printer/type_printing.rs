@@ -782,6 +782,29 @@ impl<'a> TypePrinter<'a> {
             return self.print_call_signature_arrow(&callable.call_signatures[0]);
         }
 
+        // Simple constructor callable: one construct signature, no other members
+        // → use `new (...) => T` (or `abstract new (...) => T`) syntax. This matches
+        // tsc's declaration-emit form for `new (...args) => T` written explicitly
+        // as a constructor type in source (e.g. `Record<string, new (...) => T>`
+        // or in the extends clause of a conditional). For anonymous and named
+        // class constructor types (which carry `symbol: Some(_)`), tsc keeps
+        // the structural `{ new (): T }` object-literal form, so we leave those
+        // to fall through to the multi-line rendering below.
+        if callable.symbol.is_none()
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && !has_properties
+            && callable.string_index.is_none()
+            && callable.number_index.is_none()
+        {
+            return self.print_construct_signature_arrow(
+                &callable.construct_signatures[0],
+                callable.is_abstract,
+            );
+        }
+        // Abstract constructor callables historically used the arrow form even
+        // when they carried a synthetic class symbol; preserve that to avoid
+        // regressing `abstract new () => { ... }` cases.
         if callable.is_abstract
             && callable.call_signatures.is_empty()
             && callable.construct_signatures.len() == 1
@@ -1721,10 +1744,16 @@ impl<'a> TypePrinter<'a> {
     ) -> String {
         let cond = self.interner.conditional_type(cond_id);
 
+        // The check type, true branch, and false branch are NOT in the extends
+        // clause. Only the extends_type subtree should render `Infer(T)` as
+        // `infer T`. Use scoped clones to avoid leaking the flag.
+        let bare = self.leaving_extends_clause();
+        let extends_scope = self.entering_extends_clause();
+
         // Check type needs parens when it's a conditional, function, constructor,
         // union, or intersection. Constructor/function types need parens because
         // their return type parsing greedily consumes the `extends` keyword.
-        let check_str = self.print_type(cond.check_type);
+        let check_str = bare.print_type(cond.check_type);
         let check_needs_parens = visitor::conditional_type_id(self.interner, cond.check_type)
             .is_some()
             || visitor::function_shape_id(self.interner, cond.check_type).is_some()
@@ -1736,7 +1765,7 @@ impl<'a> TypePrinter<'a> {
         // a function/constructor type whose return contains `extends` (i.e., a
         // conditional return type). Without parens the inner `extends` would be
         // mis-parsed as the outer conditional's extends clause.
-        let extends_str = self.print_type(cond.extends_type);
+        let extends_str = extends_scope.print_type(cond.extends_type);
         let extends_needs_parens = visitor::conditional_type_id(self.interner, cond.extends_type)
             .is_some()
             || self.function_like_has_conditional_return(cond.extends_type);
@@ -1756,8 +1785,8 @@ impl<'a> TypePrinter<'a> {
             "{} extends {} ? {} : {}",
             check,
             extends,
-            self.print_type(cond.true_type),
-            self.print_type(cond.false_type),
+            bare.print_type(cond.true_type),
+            bare.print_type(cond.false_type),
         )
     }
 
