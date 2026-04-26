@@ -665,6 +665,29 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
+        // Mirror tsc's `getDiscriminantPropertyAccess` gate: tsc only applies
+        // discriminant-based narrowing when the relevant type has the Union
+        // flag (`declaredType.flags & TypeFlags.Union ||
+        // computedType.flags & TypeFlags.Union`). For a top-level intersection
+        // we skip narrowing — otherwise the intersection-effective-type
+        // logic in `narrow_by_(excluding_)discriminant` collapses the
+        // intersection to `never` whenever the discriminant is fully
+        // constrained, producing spurious TS2339 on subsequent property
+        // access (e.g. `RuntimeValue & { type: 'number' }` in the else
+        // branch of `if (x.type === 'number')`).
+        //
+        // We deliberately keep narrowing on plain non-union sources
+        // (single objects). When the declared union has been flow-narrowed
+        // to a single member, tsc still applies discriminant narrowing
+        // via `filterType` (returning `never` if the predicate fails),
+        // and conformance-level tests rely on that behavior — e.g. a
+        // duplicate `case shape.kind === "circle":` after the first
+        // such case must narrow `shape` to `never`.
+        let resolved = self.resolve_type(type_id);
+        if intersection_list_id(self.db, resolved).is_some() {
+            return type_id;
+        }
+
         if is_true_branch {
             self.narrow_by_discriminant(type_id, prop_path, literal_type)
         } else {
