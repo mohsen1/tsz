@@ -17,6 +17,14 @@ use super::super::evaluate::TypeEvaluator;
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate string manipulation intrinsic types (Uppercase, Lowercase, Capitalize, Uncapitalize)
     /// These distribute over unions and transform string literal types
+    //
+    // The two arms returning `string_intrinsic(kind, evaluated_arg)` are
+    // intentionally kept separate: the deferred-types arm (TypeParameter,
+    // Infer, KeyOf, IndexAccess) and the non-string-primitive arm
+    // (Number/Bigint/Boolean) document distinct rationales (see in-arm
+    // comments). Merging them collapses two semantically-different cases
+    // into one, hurting readability of a tricky tsc-parity branch.
+    #[allow(clippy::match_same_arms)]
     pub(crate) fn evaluate_string_intrinsic(
         &mut self,
         kind: StringIntrinsicKind,

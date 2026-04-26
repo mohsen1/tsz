@@ -531,8 +531,13 @@ pub struct BindResult {
     /// `Arc`-wrapped so the merge can move it into the per-file
     /// `BinderState.lib_symbol_ids` (also `Arc`) without deep-cloning.
     pub lib_symbol_ids: Arc<FxHashSet<SymbolId>>,
-    /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`)
-    pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
+    /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`).
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.lib_symbol_reverse_remap` so the
+    /// final `MergedProgram`/`BoundFile` can move it into per-file binders
+    /// via `Arc::clone` instead of deep-cloning. Mutated only during
+    /// `merge_lib_contexts_into_binder` (refcount=1 → free).
+    pub lib_symbol_reverse_remap: Arc<FxHashMap<SymbolId, (usize, SymbolId)>>,
     /// Flow nodes for control flow analysis.
     ///
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver
@@ -1472,7 +1477,14 @@ pub struct BoundFile {
     /// (`lib_binder_idx`, original lib-local `SymbolId`).
     /// Reconstructed binders need this to keep lib delegation caches from
     /// polluting file-local symbol state.
-    pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// (one cross-file lookup binder + one primary checker binder per
+    /// file) can share via `Arc::clone` (atomic increment) instead of
+    /// deep-cloning the underlying `FxHashMap`. Read-only after
+    /// `merge_lib_contexts_into_binder` completes; the merge path uses
+    /// `Arc::make_mut`, which is free when refcount=1.
+    pub lib_symbol_reverse_remap: Arc<FxHashMap<SymbolId, (usize, SymbolId)>>,
     /// Per-file semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Contains only entries that originated in this file (post-remap `SymbolIds`).
     /// This enables file-scoped identity without cloning the entire global map.
@@ -3347,16 +3359,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             is_external_module: result.is_external_module,
             expando_properties: remap_expando_properties(&result.expando_properties, &id_remap),
             file_features: result.file_features,
-            lib_symbol_reverse_remap: result
-                .lib_symbol_reverse_remap
-                .iter()
-                .filter_map(|(&old_sym, &(lib_idx, lib_local_sym))| {
-                    id_remap
-                        .get(&old_sym)
-                        .copied()
-                        .map(|new_sym| (new_sym, (lib_idx, lib_local_sym)))
-                })
-                .collect(),
+            lib_symbol_reverse_remap: Arc::new(
+                result
+                    .lib_symbol_reverse_remap
+                    .iter()
+                    .filter_map(|(&old_sym, &(lib_idx, lib_local_sym))| {
+                        id_remap
+                            .get(&old_sym)
+                            .copied()
+                            .map(|new_sym| (new_sym, (lib_idx, lib_local_sym)))
+                    })
+                    .collect(),
+            ),
             semantic_defs: Arc::new(file_semantic_defs),
         });
     }
@@ -4109,7 +4123,7 @@ fn build_lib_bound_file_for_interface_checks(
         is_external_module: lib_file.binder.is_external_module,
         expando_properties: FxHashMap::default(),
         file_features: crate::binder::FileFeatures::NONE,
-        lib_symbol_reverse_remap: FxHashMap::default(),
+        lib_symbol_reverse_remap: Arc::new(FxHashMap::default()),
         semantic_defs: Arc::new(FxHashMap::default()),
     }
 }

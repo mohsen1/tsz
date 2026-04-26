@@ -407,7 +407,16 @@ pub struct BinderState {
     /// Reverse mapping from user-local lib symbol IDs to (`lib_binder_ptr`, `original_local_id`).
     /// This allows Phase 2 of `merge_bind_results` to find the Phase 1 global ID for each
     /// user-local lib symbol. Built during `merge_lib_contexts_into_binder`.
-    pub lib_symbol_reverse_remap: FxHashMap<SymbolId, (usize, SymbolId)>,
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// (one cross-file lookup binder + one primary checker binder per file)
+    /// can share this file's reverse-remap map via `Arc::clone` (atomic
+    /// increment) instead of deep-cloning the underlying `FxHashMap`. The
+    /// map is mutated only during `merge_lib_contexts_into_binder` (at
+    /// `lib_merge.rs`) and is read-only thereafter; the merge path uses
+    /// `Arc::make_mut`, which is free when refcount=1 (the case during a
+    /// single file's binding before the bound state is shared).
+    pub lib_symbol_reverse_remap: Arc<FxHashMap<SymbolId, (usize, SymbolId)>>,
 
     /// Module exports: maps file names to their exported symbols for cross-file module resolution
     /// This enables resolving imports like `import { X } from './file'` where './file' is another file
