@@ -586,6 +586,143 @@ mod number_scanning {
         assert_eq!(token, SyntaxKind::BigIntLiteral);
         assert_eq!(scanner.get_token_value(), "0n");
     }
+
+    // tsc parity: empty hex / binary / octal literals (with or without bigint
+    // suffix) emit `<base> digit expected` (TS1125 / TS1177 / TS1178) at the
+    // position immediately after the base prefix. Mirrors `scanner.ts`'s
+    // `if (!tokenValue) error(...)` ladder in `scanIntegerBaseLiteral`.
+    // Reproduces baselines from `parseBigInt.errors.txt` (lines 8-10).
+
+    #[test]
+    fn empty_hex_bigint_emits_ts1125() {
+        let mut scanner = ScannerState::new("0xn".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::BigIntLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        let hit = diagnostics
+            .iter()
+            .find(|d| d.code == 1125)
+            .unwrap_or_else(|| {
+                panic!("expected TS1125 (Hexadecimal digit expected); got {diagnostics:?}")
+            });
+        // Position should land on the `n` (just past `0x`).
+        assert_eq!(
+            hit.pos, 2,
+            "expected error at pos 2 (after '0x'), got {hit:?}"
+        );
+        assert_eq!(hit.length, 0, "expected zero-width diagnostic, got {hit:?}");
+    }
+
+    #[test]
+    fn empty_binary_bigint_emits_ts1177() {
+        let mut scanner = ScannerState::new("0bn".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::BigIntLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        let hit = diagnostics
+            .iter()
+            .find(|d| d.code == 1177)
+            .unwrap_or_else(|| {
+                panic!("expected TS1177 (Binary digit expected); got {diagnostics:?}")
+            });
+        assert_eq!(
+            hit.pos, 2,
+            "expected error at pos 2 (after '0b'), got {hit:?}"
+        );
+        assert_eq!(hit.length, 0, "expected zero-width diagnostic, got {hit:?}");
+    }
+
+    #[test]
+    fn empty_octal_bigint_emits_ts1178() {
+        let mut scanner = ScannerState::new("0on".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::BigIntLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        let hit = diagnostics
+            .iter()
+            .find(|d| d.code == 1178)
+            .unwrap_or_else(|| {
+                panic!("expected TS1178 (Octal digit expected); got {diagnostics:?}")
+            });
+        assert_eq!(
+            hit.pos, 2,
+            "expected error at pos 2 (after '0o'), got {hit:?}"
+        );
+        assert_eq!(hit.length, 0, "expected zero-width diagnostic, got {hit:?}");
+    }
+
+    #[test]
+    fn empty_hex_numeric_at_eof_emits_ts1125() {
+        // No `n` suffix: still a NumericLiteral, still TS1125.
+        let mut scanner = ScannerState::new("0x".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NumericLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1125),
+            "expected TS1125 for empty `0x`, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn empty_binary_numeric_at_eof_emits_ts1177() {
+        let mut scanner = ScannerState::new("0b".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NumericLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1177),
+            "expected TS1177 for empty `0b`, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn empty_octal_numeric_at_eof_emits_ts1178() {
+        let mut scanner = ScannerState::new("0o".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::NumericLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1178),
+            "expected TS1178 for empty `0o`, got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn populated_hex_bigint_does_not_emit_ts1125() {
+        let mut scanner = ScannerState::new("0xFFn".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::BigIntLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 1125),
+            "valid hex bigint should not emit TS1125; got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn populated_binary_bigint_does_not_emit_ts1177() {
+        let mut scanner = ScannerState::new("0b101n".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::BigIntLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 1177),
+            "valid binary bigint should not emit TS1177; got {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn populated_octal_bigint_does_not_emit_ts1178() {
+        let mut scanner = ScannerState::new("0o77n".to_string(), true);
+        let token = scanner.scan();
+        assert_eq!(token, SyntaxKind::BigIntLiteral);
+        let diagnostics = scanner.get_scanner_diagnostics();
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 1178),
+            "valid octal bigint should not emit TS1178; got {diagnostics:?}"
+        );
+    }
 }
 
 // =============================================================================
