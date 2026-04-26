@@ -277,6 +277,7 @@ impl BinderState {
         self.current_augmented_module = None;
         Arc::make_mut(&mut self.lib_binders).clear();
         Arc::make_mut(&mut self.lib_symbol_ids).clear();
+        Arc::make_mut(&mut self.lib_symbol_reverse_remap).clear();
         Arc::make_mut(&mut self.module_exports).clear();
         Arc::make_mut(&mut self.reexports).clear();
         Arc::make_mut(&mut self.wildcard_reexports).clear();
