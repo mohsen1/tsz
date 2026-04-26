@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-typeof-typeliteral-no-circular`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1349
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
@@ -27,10 +27,13 @@ used for typeof annotation circularity detection.
 
 ## Verification
 
-- `./scripts/conformance/conformance.sh run --filter unionTypeWithRecursiveSubtypeReduction3`
-- `./scripts/conformance/conformance.sh run --filter directDependenceBetweenTypeAliases`
-- `./scripts/conformance/conformance.sh run --filter circularTypeofWithVarOrFunc`
-- `cargo nextest run -p tsz-checker --lib`
+- `cargo nextest run -p tsz-checker --test type_alias_typeof_circular_tests` (7/7 PASS — 3 new)
+- `cargo nextest run -p tsz-checker --lib` (2847 PASS, no regressions)
+- `./scripts/conformance/conformance.sh run --filter unionTypeWithRecursiveSubtypeReduction3` (TS2456 removed)
+- `./scripts/conformance/conformance.sh run --filter directDependenceBetweenTypeAliases` (PASS — array case still circular)
+- `./scripts/conformance/conformance.sh run --filter circularTypeofWithVarOrFunc` (PASS — bare-ref still circular)
+- `./scripts/conformance/conformance.sh run --filter circular` (34/36 PASS, no regressions)
+- `./scripts/conformance/conformance.sh run --filter typeAlias` (42/44 PASS, no regressions)
 
 ## Conformance Impact
 
