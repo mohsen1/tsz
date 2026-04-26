@@ -9,26 +9,41 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      LOCK_URI="gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/.lock"
+      BUCKET="thirdface-ai-oauth_cloudbuild"
+      OBJECT="tsz-ci-cache/bench-runs/.lock"
+      LOCK_URI="gs://${BUCKET}/${OBJECT}"
 
-      # Write lock content to a temp file (avoids stdin-pipe issues in Cloud Build).
-      printf '%s\n' "$BUILD_ID" > /tmp/bench-lock-content.txt
+      # Use the GCS JSON API directly via curl + gcloud token so we get
+      # exact HTTP status codes and avoid gsutil auth quirks in private pools.
+      TOKEN=$(gcloud auth print-access-token)
 
-      # Atomic create: x-goog-if-generation-match:0 fails if object already exists.
-      lock_err=$(gsutil -h 'x-goog-if-generation-match:0' cp /tmp/bench-lock-content.txt "$LOCK_URI" 2>&1) && acquired=true || acquired=false
-      if [[ "$acquired" == "true" ]]; then
-        echo "Lock acquired for BUILD_ID=$BUILD_ID"
-        touch /workspace/bench-enabled
-      elif gsutil -q stat "$LOCK_URI" 2>/dev/null; then
-        # Precondition failed because the lock genuinely exists.
-        holder=$(gsutil cat "$LOCK_URI" 2>/dev/null || echo "unknown")
-        echo "Benchmark already in progress (lock holder: $holder). Skipping this run."
-      else
-        # cp failed for a transient reason — log it and proceed rather than silently dropping.
-        echo "Warning: lock cp failed but lock does not exist. Error: ${lock_err}"
-        echo "Treating as acquired to avoid dropping this benchmark run."
-        touch /workspace/bench-enabled
-      fi
+      # Atomic create: HTTP 412 = precondition failed (lock already exists).
+      HTTP=$(curl -s -o /tmp/lock-resp.txt -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: text/plain" \
+        -H "x-goog-if-generation-match: 0" \
+        "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${OBJECT}" \
+        --data-binary "${BUILD_ID}")
+
+      case "$HTTP" in
+        200|201)
+          echo "Lock acquired for BUILD_ID=$BUILD_ID"
+          touch /workspace/bench-enabled
+          ;;
+        412)
+          holder=$(curl -s \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://storage.googleapis.com/download/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media" \
+            || echo "unknown")
+          echo "Benchmark already in progress (lock holder: ${holder}). Skipping this run."
+          ;;
+        *)
+          echo "Warning: unexpected HTTP ${HTTP} acquiring lock — treating as acquired."
+          cat /tmp/lock-resp.txt || true
+          touch /workspace/bench-enabled
+          ;;
+      esac
 
   # Step 2: Run the full benchmark suite on the beefy c3-88 node.
   # allowFailure: true ensures the publish step always runs even if bench
@@ -79,14 +94,21 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      LOCK_URI="gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/.lock"
-      BENCH_BUCKET=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs
+      BUCKET="thirdface-ai-oauth_cloudbuild"
+      OBJECT="tsz-ci-cache/bench-runs/.lock"
+      BENCH_BUCKET=gs://${BUCKET}/tsz-ci-cache/bench-runs
 
       # Always release the lock when we exit (success or failure).
       release_lock() {
         if [[ -f /workspace/bench-enabled ]]; then
           echo "Releasing benchmark lock..."
-          gsutil rm -f "$LOCK_URI" 2>/dev/null || true
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
+          if [[ -n "$TOKEN" ]]; then
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${TOKEN}" \
+              "https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}" \
+              -o /dev/null || true
+          fi
         fi
       }
       trap release_lock EXIT
