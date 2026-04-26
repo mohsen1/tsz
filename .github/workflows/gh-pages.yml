@@ -86,7 +86,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: pkg/web/
-          key: wasm-web-${{ hashFiles('Cargo.lock', 'crates/*/src/**') }}
+          key: wasm-web-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'crates/*/src/**', 'crates/*/build.rs') }}
 
       - uses: dtolnay/rust-toolchain@stable
         if: steps.wasm-cache.outputs.cache-hit != 'true'
