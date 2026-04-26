@@ -5,27 +5,7 @@
 //! references the same alias, tsc emits TS2456. This test locks in the
 //! AST-based detection path that walks through `var x: T[]` annotations.
 
-fn get_error_codes(source: &str) -> Vec<u32> {
-    let mut parser =
-        tsz_parser::parser::ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = tsz_solver::TypeInterner::new();
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
-}
+use tsz_checker::test_utils::check_source_codes as get_error_codes;
 
 #[test]
 fn test_ts2456_typeof_alias_references_self_through_array() {
