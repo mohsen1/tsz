@@ -56,7 +56,7 @@ default_emit_workers() {
 }
 
 default_fourslash_workers() {
-  local usable per mem_mb mem_per_worker_mb mem_cap
+  local usable per mem_mb mem_per_worker_mb mem_cap shard_count
   usable=$((HOST_CPUS - 16))
   if (( usable < SHARD_COUNT )); then
     usable="$HOST_CPUS"
@@ -65,8 +65,10 @@ default_fourslash_workers() {
 
   mem_mb="$(host_memory_mb)"
   mem_per_worker_mb="${TSZ_CI_FOURSLASH_MB_PER_WORKER:-1024}"
-  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_worker_mb" =~ ^[0-9]+$ && "$mem_per_worker_mb" -gt 0 ]]; then
-    mem_cap=$((mem_mb / mem_per_worker_mb))
+  shard_count="${SHARD_COUNT:-1}"
+  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_worker_mb" =~ ^[0-9]+$ && "$mem_per_worker_mb" -gt 0 && "$shard_count" -gt 0 ]]; then
+    # All shards run concurrently, so divide total budget by shard count for per-shard cap.
+    mem_cap=$(( mem_mb / (mem_per_worker_mb * shard_count) ))
     if (( mem_cap < 2 )); then
       mem_cap=2
     fi
@@ -75,8 +77,8 @@ default_fourslash_workers() {
     fi
   fi
 
-  if (( per < 8 )); then
-    per=8
+  if (( per < 2 )); then
+    per=2
   elif (( per > 16 )); then
     per=16
   fi
