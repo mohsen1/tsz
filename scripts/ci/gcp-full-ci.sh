@@ -57,11 +57,10 @@ default_emit_workers() {
 
 default_fourslash_workers() {
   local usable per mem_mb mem_per_worker_mb mem_cap shard_count
-  usable=$((HOST_CPUS - 16))
-  if (( usable < SHARD_COUNT )); then
-    usable="$HOST_CPUS"
-  fi
+  # Use all CPUs split evenly across concurrent shards; no large OS reservation needed.
+  usable="$HOST_CPUS"
   per=$((usable / SHARD_COUNT))
+  if (( per < 1 )); then per=1; fi
 
   mem_mb="$(host_memory_mb)"
   mem_per_worker_mb="${TSZ_CI_FOURSLASH_MB_PER_WORKER:-1024}"
@@ -79,8 +78,8 @@ default_fourslash_workers() {
 
   if (( per < 2 )); then
     per=2
-  elif (( per > 16 )); then
-    per=16
+  elif (( per > 32 )); then
+    per=32
   fi
   cap_workers "$per"
 }
