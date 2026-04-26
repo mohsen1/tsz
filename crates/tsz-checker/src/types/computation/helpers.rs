@@ -1958,9 +1958,16 @@ const result = f([["", true], ["", 0]]);
 "#;
         let errors = check_source_codes(source);
         let semantic_errors: Vec<_> = errors.into_iter().filter(|&c| c != 2318).collect();
+        // tsc emits TS2322 ("Type 'number' is not assignable to type 'boolean'.")
+        // on the inner element when V is inferred from the first entry
+        // and the second entry's V mismatches. Earlier we incorrectly
+        // surfaced TS2345 on the whole array argument because element-wise
+        // elaboration was suppressed for any call argument targeting a
+        // generic parameter; we now elaborate when the resolved target
+        // element type is concrete.
         assert!(
-            semantic_errors.contains(&2345),
-            "Heterogeneous generic entries should produce TS2345, got: {semantic_errors:?}"
+            semantic_errors.contains(&2322),
+            "Heterogeneous generic entries should produce TS2322 element elaboration, got: {semantic_errors:?}"
         );
     }
 
