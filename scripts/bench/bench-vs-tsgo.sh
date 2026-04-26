@@ -2887,14 +2887,14 @@ main() {
     run_ts_toolbelt_benchmarks
     run_ts_essentials_benchmarks
     run_utility_types_project_benchmarks
-    run_ts_toolbelt_project_benchmarks
-    run_ts_essentials_project_benchmarks
-    run_rxjs_project_benchmarks
-    run_type_fest_project_benchmarks
-    run_zod_project_benchmarks
-    run_kysely_project_benchmarks
-    run_nextjs_benchmarks
-    run_large_ts_repo_benchmarks
+    run_ts_toolbelt_project_benchmarks || true
+    run_ts_essentials_project_benchmarks || true
+    run_rxjs_project_benchmarks || true
+    run_type_fest_project_benchmarks || true
+    run_zod_project_benchmarks || true
+    run_kysely_project_benchmarks || true
+    run_nextjs_benchmarks || true
+    run_large_ts_repo_benchmarks || true
 
     print_header "Synthetic Benchmarks - Scaling Test"
     
