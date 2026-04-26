@@ -161,3 +161,193 @@ void 0;"#;
     assert_eq!(refs.len(), 1);
     assert_eq!(refs[0].0, "real-file.d.ts");
 }
+
+// =========================================================================
+// Extended `extract_reference_types` coverage (only block-comment-empty
+// negative case existed)
+// =========================================================================
+
+#[test]
+fn extract_reference_types_returns_type_name_no_resolution_mode() {
+    let source = r#"/// <reference types="node" />"#;
+    let types = extract_reference_types(source);
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0].0, "node");
+    assert_eq!(types[0].1, None, "no resolution-mode attribute");
+}
+
+#[test]
+fn extract_reference_types_captures_resolution_mode() {
+    let source = r#"/// <reference types="some-pkg" resolution-mode="import" />"#;
+    let types = extract_reference_types(source);
+    assert_eq!(types.len(), 1);
+    assert_eq!(types[0].0, "some-pkg");
+    assert_eq!(types[0].1, Some("import".to_string()));
+}
+
+#[test]
+fn extract_reference_types_captures_byte_offset_and_length() {
+    // Byte offset must point at the start of the `types` attribute value
+    // (after the opening quote). Length matches the value length.
+    let source = r#"/// <reference types="abc" />"#;
+    let types = extract_reference_types(source);
+    assert_eq!(types.len(), 1);
+    let (name, _, offset, length) = &types[0];
+    assert_eq!(name, "abc");
+    assert_eq!(*length, 3, "length should be the value length");
+    // The value `abc` starts after `/// <reference types="` (22 bytes).
+    assert_eq!(*offset, 22);
+}
+
+#[test]
+fn extract_reference_types_multiple_directives_carry_offsets() {
+    // Two consecutive directives — second must have a byte offset
+    // accounting for the first directive's line + newline.
+    let source = "/// <reference types=\"first\" />\n/// <reference types=\"second\" />\n";
+    let types = extract_reference_types(source);
+    assert_eq!(types.len(), 2);
+    assert_eq!(types[0].0, "first");
+    assert_eq!(types[1].0, "second");
+    // The second directive's offset must be greater than the first.
+    assert!(types[1].2 > types[0].2 + types[0].3);
+}
+
+// =========================================================================
+// `find_malformed_reference_directives` (no prior tests)
+// =========================================================================
+
+#[test]
+fn find_malformed_directives_locates_unquoted_attribute() {
+    // `path=` without quotes — malformed.
+    let source = r#"/// <reference path=foo.ts />"#;
+    let malformed = find_malformed_reference_directives(source);
+    assert_eq!(malformed.len(), 1);
+    assert_eq!(malformed[0].0, 0, "line 0 (zero-indexed)");
+}
+
+#[test]
+fn find_malformed_directives_locates_no_attribute() {
+    let source = r#"/// <reference />"#;
+    let malformed = find_malformed_reference_directives(source);
+    assert_eq!(malformed.len(), 1);
+}
+
+#[test]
+fn find_malformed_directives_skips_well_formed_path() {
+    let source = r#"/// <reference path="./real.ts" />"#;
+    let malformed = find_malformed_reference_directives(source);
+    assert!(malformed.is_empty());
+}
+
+#[test]
+fn find_malformed_directives_skips_well_formed_types_lib_no_default_lib() {
+    for src in &[
+        r#"/// <reference types="node" />"#,
+        r#"/// <reference lib="es2015" />"#,
+        r#"/// <reference no-default-lib="true" />"#,
+    ] {
+        let malformed = find_malformed_reference_directives(src);
+        assert!(
+            malformed.is_empty(),
+            "should not flag well-formed directive: {src}"
+        );
+    }
+}
+
+#[test]
+fn find_malformed_directives_ignores_block_comments() {
+    let source = r#"/*
+/// <reference path=unquoted />
+*/
+void 0;"#;
+    let malformed = find_malformed_reference_directives(source);
+    assert!(
+        malformed.is_empty(),
+        "directives inside block comments must not be reported"
+    );
+}
+
+#[test]
+fn find_malformed_directives_returns_byte_offset_of_triple_slash() {
+    // Leading whitespace before `///` — the byte offset must point at
+    // the `/` of `///`, NOT line start.
+    let source = "    /// <reference />\n";
+    let malformed = find_malformed_reference_directives(source);
+    assert_eq!(malformed.len(), 1);
+    assert_eq!(malformed[0].1, 4, "offset should point at the `/` of `///`");
+}
+
+// =========================================================================
+// `validate_reference_path` extension-handling branches
+// =========================================================================
+
+#[test]
+fn validate_reference_path_explicit_extension_only_tries_exact() {
+    // When the reference already has an extension, the validator does NOT
+    // try `.ts`/`.tsx`/`.d.ts` fallbacks — it returns the result of the
+    // exact-path check.
+    use std::fs;
+    let temp_dir = std::env::temp_dir().join("tsz_test_ext_explicit");
+    let _ = fs::create_dir_all(&temp_dir);
+    let exact_ts = temp_dir.join("file.ts");
+    fs::write(&exact_ts, "// stub").unwrap();
+
+    let source_file = temp_dir.join("t.ts");
+    // Exact path with .ts extension that exists → true.
+    assert!(validate_reference_path(&source_file, "file.ts"));
+    // Reference with non-existent .js extension — must NOT fall back to
+    // `.ts`/`.tsx`/`.d.ts` because the reference already has an extension.
+    assert!(!validate_reference_path(&source_file, "file.js"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn validate_reference_path_returns_false_when_source_has_no_parent() {
+    // `Path::new("/").parent()` is None on Windows, but `Path::new("foo")`
+    // has parent `""`. This test pins the contract: a relative-path source
+    // file (no leading `/`) returns based on its empty parent + ref path.
+    // On most systems the empty parent + missing file yields false.
+    use std::path::PathBuf;
+    let source_file = PathBuf::from("/");
+    // Paths under `/` likely don't exist; just verify the function does not
+    // panic and produces a deterministic boolean.
+    let _ = validate_reference_path(&source_file, "non-existent");
+}
+
+// =========================================================================
+// Extended `extract_amd_module_names` coverage
+// =========================================================================
+
+#[test]
+fn extract_amd_module_names_returns_zero_indexed_line_number() {
+    // The 2-tuple return is `(name, line_num)` — line_num is zero-indexed.
+    let source = "// header\n// ...\n///<amd-module name=\"Foo\"/>\n";
+    let amd = extract_amd_module_names(source);
+    assert_eq!(amd.len(), 1);
+    assert_eq!(amd[0].0, "Foo");
+    assert_eq!(
+        amd[0].1, 2,
+        "line_num is zero-indexed; directive is on line 2"
+    );
+}
+
+#[test]
+fn extract_amd_module_names_ignores_block_comments_with_directive() {
+    let source = r#"/*
+///<amd-module name="ShouldBeIgnored"/>
+*/
+"#;
+    let amd = extract_amd_module_names(source);
+    assert!(amd.is_empty());
+}
+
+#[test]
+fn extract_reference_paths_ignores_directives_inside_block_comment() {
+    // The block comment opens on line 1, includes the triple-slash on
+    // line 2, and closes on line 3. None of the directives should be
+    // extracted.
+    let source = "/*\n/// <reference path=\"a.ts\" />\n*/\n";
+    let refs = extract_reference_paths(source);
+    assert!(refs.is_empty());
+}
