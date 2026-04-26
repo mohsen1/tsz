@@ -806,3 +806,89 @@ fn extract_param_names_byte_offsets() {
     assert!(jsdoc[names[0].1..].starts_with("@param"));
     assert!(jsdoc[names[1].1..].starts_with("@param"));
 }
+
+// =========================================================================
+// JSDoc @type {function(...)} on object property — checkJsdocTypeTagOnObjectProperty2
+// =========================================================================
+
+/// Method shorthand inside an object literal whose property carries
+/// `/** @type {function(number): number} */` should have its block-body
+/// returns checked against the contextual return type. tsc reports TS2322
+/// at `return "42";` because the JSDoc-declared return is `number`.
+///
+/// Before the fix, `body_return_type` for a sync contextually-typed function
+/// fell back to the inferred body type (`string`), which made the return
+/// statement check trivially succeed.
+#[test]
+fn jsdoc_type_function_on_method_shorthand_checks_block_body_return_type() {
+    let diags = crate::test_utils::check_js_source_diagnostics(
+        r#"// @ts-check
+const obj = {
+  /** @type {function(number): number} */
+  method1(n1) {
+      return "42";
+  },
+};
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 (string -> number) on the method body return; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    let msg = &ts2322[0].message_text;
+    assert!(
+        msg.contains("string") && msg.contains("number"),
+        "Expected TS2322 message to mention string and number, got: {msg}"
+    );
+}
+
+/// Arrow function with a parameter default whose value type does not match
+/// the JSDoc-declared callable parameter type should anchor TS2322 at the
+/// parameter name, not at the enclosing arrow function's `(` token.
+///
+/// Before the fix, `assignment_anchor_node` walked up from the Parameter to
+/// the ArrowFunction and returned the function's start position (`(`), which
+/// shifted the diagnostic column one to the left of tsc's anchor.
+#[test]
+fn jsdoc_type_function_param_default_anchors_at_parameter_name() {
+    let diags = crate::test_utils::check_js_source_diagnostics(
+        r#"// @ts-check
+/** @type {function(number): number} */
+const f = (num="0") => num + 42;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 for the param default mismatch; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    // The diagnostic must anchor at `num`, not at the preceding `(`.
+    // `f = (num` — the parameter name `num` follows `f = (`. The diagnostic
+    // start should match the byte offset of `n` in `num`, and its length
+    // should be 3 (the identifier).
+    let source = "// @ts-check\n/** @type {function(number): number} */\nconst f = (num=\"0\") => num + 42;\n";
+    let num_pos = source.find("(num=").expect("paren-num present") + 1; // skip '('
+    let diag = ts2322[0];
+    assert_eq!(
+        diag.start as usize, num_pos,
+        "TS2322 must anchor at the parameter name `num` (offset {num_pos}); got diagnostic at offset {}",
+        diag.start
+    );
+    assert_eq!(
+        diag.length, 3,
+        "TS2322 length must equal len(`num`) = 3; got {}",
+        diag.length
+    );
+}

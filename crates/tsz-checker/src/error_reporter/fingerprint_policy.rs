@@ -859,6 +859,21 @@ impl<'a> CheckerState<'a> {
         let mut saw_assignment_binary = false;
         let mut var_decl: Option<NodeIndex> = None;
 
+        // If the starting node is itself a Parameter, that IS the assignment
+        // site (parameter name = default-value initializer). Walking up would
+        // land at the enclosing function expression — which starts at `(` —
+        // and anchor TS2322 on the open paren instead of the parameter name.
+        // Return the parameter so `normalized_anchor_span` can pick up the
+        // `param.name` span and tsc's column reporting matches.
+        if self
+            .ctx
+            .arena
+            .get(current)
+            .is_some_and(|n| n.kind == syntax_kind_ext::PARAMETER)
+        {
+            return current;
+        }
+
         // If the starting node is itself a VariableDeclaration, capture it
         // immediately. This handles the common case where the diagnostic
         // index is the variable declaration node.
