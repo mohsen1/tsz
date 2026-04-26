@@ -126,8 +126,20 @@ steps:
 
       echo "=== Publishing results ==="
       TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-      gsutil cp /workspace/bench-results.json "${BENCH_BUCKET}/${TIMESTAMP}.json"
-      gsutil cp /workspace/bench-results.json "${BENCH_BUCKET}/latest.json"
+      TOKEN=$(gcloud auth print-access-token)
+      gcs_upload() {
+        local dest_obj="$1"
+        curl -s -o /dev/null -w "%{http_code}" \
+          -X POST \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -H "Content-Type: application/json" \
+          "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${dest_obj}" \
+          --data-binary @/workspace/bench-results.json
+      }
+      code=$(gcs_upload "tsz-ci-cache/bench-runs/${TIMESTAMP}.json")
+      echo "Timestamped upload HTTP ${code}"
+      code=$(gcs_upload "tsz-ci-cache/bench-runs/latest.json")
+      echo "latest.json upload HTTP ${code}"
       echo "Saved to ${BENCH_BUCKET}/${TIMESTAMP}.json and latest.json"
 
       echo "=== Triggering website redeploy ==="
