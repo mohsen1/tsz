@@ -75,10 +75,7 @@ function renderHighlightedBenchmark(results) {
   const tsgoMs = toNumber(row.tsgo_ms);
 
   if (!Number.isFinite(tszMs) || !Number.isFinite(tsgoMs)) {
-    return `<section class="benchmark-mean-card">
-  <p class="bench-category-title">large-ts-repo</p>
-  <p class="bench-category-desc">This large real-world benchmark is tracked on the homepage, but a valid timing row is not yet available.</p>
-</section>`;
+    return "";
   }
 
   const maxMs = Math.max(tszMs, tsgoMs);

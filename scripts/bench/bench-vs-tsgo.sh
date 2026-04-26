@@ -631,13 +631,13 @@ run_project_benchmark() {
             project_tsc_timeout=$((BENCH_TIMEOUT * 2))
         fi
         local tsc_check=0
-        run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+    run_with_timeout "$project_tsc_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
         if [ "$tsc_check" -ne 0 ]; then
             if [ "$tsc_check" -eq 124 ]; then
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
             else
                 local tsc_error
-                tsc_error="$("${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+                tsc_error="$(${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
             fi
@@ -655,9 +655,9 @@ run_project_benchmark() {
         project_timeout=$((BENCH_TIMEOUT * 2))
     fi
     local tsz_check=0
-    run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+    run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
     local tsgo_check=0
-    run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+    run_with_timeout "$project_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
 
     if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
         local status=""
@@ -678,7 +678,7 @@ run_project_benchmark() {
             status="tsz error"
             tsz_ms="ERR"
             local tsz_error
-            tsz_error="$(run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            tsz_error="$(run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
@@ -690,7 +690,7 @@ run_project_benchmark() {
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
             local tsgo_error
-            tsgo_error="$("${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
+            tsgo_error="$(${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
             echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
         fi
 
