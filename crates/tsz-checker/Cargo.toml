@@ -388,6 +388,10 @@ name = "jsdoc_template_in_body_scope_tests"
 path = "tests/jsdoc_template_in_body_scope_tests.rs"
 
 [[test]]
+name = "jsdoc_class_template_cross_comment_tests"
+path = "tests/jsdoc_class_template_cross_comment_tests.rs"
+
+[[test]]
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
 
@@ -401,3 +405,4 @@ path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
 [lints]
 workspace = true
+

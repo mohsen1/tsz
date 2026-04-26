@@ -266,6 +266,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if self.resolve_jsdoc_type_str(arg_name).is_none() {
+                // Suppress TS2304 when `arg_name` matches an `@template`
+                // declaration whose AST scope contains the reference site.
+                // tsc accepts class/function/typedef-level `@template T` as
+                // in-scope for any JSDoc reference within the AST subtree
+                // led by the same JSDoc comment, but NOT for an unrelated
+                // standalone typedef elsewhere in the file. See
+                // `emit_jsdoc_cannot_find_name` for the same guard.
+                let arg_pos = type_expr_start + (arg_search_offset + arg_rel) as u32;
+                if self.is_js_file()
+                    && self.source_file_declares_jsdoc_template_at(arg_name, arg_pos)
+                {
+                    arg_search_offset += arg.len() + 1;
+                    continue;
+                }
                 let message = crate::diagnostics::format_message(
                     crate::diagnostics::diagnostic_messages::CANNOT_FIND_NAME,
                     &[arg_name],
