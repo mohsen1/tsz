@@ -223,12 +223,12 @@ pub struct TargetIndex<'a> {
 
 impl<'a> TargetIndex<'a> {
     /// Number of usable (non-skipped) target entries in the index.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.targets.len()
     }
 
     /// True when the index holds no targets.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.targets.is_empty()
     }
 }
