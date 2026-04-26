@@ -860,7 +860,7 @@ run_fourslash_shard() {
   bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
   run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
   shard_index="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_INDEX:-0}")"
-  shard_count="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_COUNT:-4}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_COUNT:-8}")"
 
   mkdir -p "$LOG_DIR/fourslash"
   echo "Fourslash shard ${shard_index}/${shard_count}: workers=${FOURSLASH_WORKERS}"
@@ -907,7 +907,7 @@ run_fourslash_aggregate() {
   local bucket run_key
   bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
   run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-  local expected_shards="${_TSZ_CI_FOURSLASH_SHARD_COUNT:-${TSZ_CI_FOURSLASH_SHARDS:-4}}"
+  local expected_shards="${_TSZ_CI_FOURSLASH_SHARD_COUNT:-${TSZ_CI_FOURSLASH_SHARDS:-8}}"
 
   if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
     echo "error: cannot aggregate — no bucket or run key available" >&2

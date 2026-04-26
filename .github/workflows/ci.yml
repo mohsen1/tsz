@@ -177,14 +177,14 @@ jobs:
     needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
       TSZ_CI_FOURSLASH_WORKERS: 8
     steps:
       - uses: actions/checkout@v4
@@ -201,7 +201,7 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
     steps:
       - uses: actions/checkout@v4
         with:
