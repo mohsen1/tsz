@@ -1733,8 +1733,35 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Skip spread elements
+            // Spread elements: when the target is a plain array element type
+            // (not a tuple), check the spread's iterated element type against
+            // the contextual element type. This matches tsc's behavior of
+            // reporting `Type 'X' is not assignable to type 'Y'` at the
+            // spread expression for cases like
+            //   `var arr: number[] = [0, 1, ...new SymbolIterator]`.
+            //
+            // Custom array subtypes (e.g., `interface Foo extends Array<T>`)
+            // keep tsc's whole-assignment TS2322; we only handle plain
+            // `T[]` / `readonly T[]` here.
             if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                if tuple_target_elements.is_some() {
+                    continue;
+                }
+                if !self.target_is_plain_array_for_spread_elaboration(effective_param_type) {
+                    continue;
+                }
+                if let Some(target_element_type) =
+                    ctx_helper.get_array_element_type().or_else(|| {
+                        crate::query_boundaries::common::array_element_type(
+                            self.ctx.types,
+                            effective_param_type,
+                        )
+                    })
+                    && self
+                        .try_elaborate_spread_element_array_mismatch(elem_idx, target_element_type)
+                {
+                    elaborated = true;
+                }
                 continue;
             }
 
@@ -1865,6 +1892,106 @@ impl<'a> CheckerState<'a> {
         }
 
         elaborated
+    }
+
+    /// Returns true when `target` evaluates to a plain `T[]` or
+    /// `readonly T[]` type, suitable for per-element spread elaboration.
+    /// Custom interfaces/classes that extend `Array<T>` keep tsc's
+    /// whole-assignment TS2322, so we exclude them here.
+    fn target_is_plain_array_for_spread_elaboration(&mut self, target: TypeId) -> bool {
+        let target = self.resolve_lazy_type(target);
+        if crate::query_boundaries::common::is_array_type(self.ctx.types, target) {
+            return true;
+        }
+        // readonly T[] — accept by recursing into the inner type.
+        if let Some(inner) =
+            crate::query_boundaries::common::get_readonly_inner(self.ctx.types, target)
+        {
+            return self.target_is_plain_array_for_spread_elaboration(inner);
+        }
+        false
+    }
+
+    /// Elaborate a spread element inside an array literal whose contextual
+    /// element type doesn't match the spread's iterated element type.
+    ///
+    /// For `var arr: number[] = [0, 1, ...new SymbolIterator]`, tsc reports
+    /// `TS2322 'symbol' is not assignable to 'number'` at the spread
+    /// element span (`...new SymbolIterator`), anchoring the diagnostic on
+    /// the spread argument rather than on the assignment target.
+    ///
+    /// Returns true when an elaborated diagnostic is emitted at the spread
+    /// expression, so the caller can suppress the outer assignment error.
+    fn try_elaborate_spread_element_array_mismatch(
+        &mut self,
+        spread_idx: NodeIndex,
+        target_element_type: TypeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(spread_node) = self.ctx.arena.get(spread_idx) else {
+            return false;
+        };
+        if spread_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+            return false;
+        }
+        let Some(spread_data) = self.ctx.arena.get_spread(spread_node).cloned() else {
+            return false;
+        };
+
+        if target_element_type.is_any_unknown_or_error() {
+            return false;
+        }
+
+        // Compute the spread argument's iterated element type. If the
+        // argument is itself a tuple, use array element semantics so the
+        // resulting type compares like the union of element types.
+        let spread_expr_type = self.get_type_of_node(spread_data.expression);
+        let spread_expr_type = self.resolve_lazy_type(spread_expr_type);
+        if spread_expr_type.is_any_unknown_or_error() {
+            return false;
+        }
+
+        let iterated_element_type = self.for_of_element_type(spread_expr_type, false);
+        if iterated_element_type.is_any_unknown_or_error() {
+            return false;
+        }
+        if iterated_element_type == target_element_type {
+            return false;
+        }
+        // Don't elaborate when the iterated type is the same as the spread
+        // expression type — that means we couldn't actually compute an
+        // iterator element type (e.g., the iterator protocol resolution
+        // failed).  Falling through to the outer assignment error is a
+        // better message than printing the spread type itself.
+        if iterated_element_type == spread_expr_type {
+            return false;
+        }
+        if self.is_assignable_to(iterated_element_type, target_element_type) {
+            return false;
+        }
+
+        // Format types directly (do not route through the assignability
+        // diagnostic pipeline, which would recompute the source display
+        // from the spread expression's own type and end up printing the
+        // spread receiver — e.g. `'SymbolIterator'` — instead of the
+        // iterated element type — `'symbol'`).
+        let source_display = self.format_type(iterated_element_type);
+        let target_display = self.format_type(target_element_type);
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_display, &target_display],
+        );
+        // Anchor at the spread element itself (which spans the `...` prefix
+        // plus the inner expression), matching tsc's column. tsc reports at
+        // the start of the `...` token rather than the inner expression
+        // (e.g. column 30 of `[0, 1, ...new SymbolIterator]`, not column 33).
+        self.error_at_node(
+            spread_idx,
+            &message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+        true
     }
 
     /// Check if all properties of an object literal are assignable to the
