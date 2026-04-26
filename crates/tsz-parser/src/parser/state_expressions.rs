@@ -1546,26 +1546,38 @@ impl ParserState {
                 self.next_token();
                 if is_update_operator {
                     match self.token() {
-                        // TSC recovers `++delete foo.bar`/`--delete foo.bar`
-                        // by dropping the outer update and parsing the delete
-                        // expression directly, which keeps the downstream
-                        // unresolved-name diagnostic but avoids an extra TS2356.
-                        SyntaxKind::DeleteKeyword => {
-                            self.error_expression_expected();
-                            return self.parse_unary_expression();
-                        }
-                        // TSC reports the repeated-update syntax error at the
-                        // inner operator (`++++x` -> second `++`,
-                        // `++\n++x` -> line 2 `++`) while still recovering to
-                        // the inner update expression.
-                        SyntaxKind::PlusPlusToken | SyntaxKind::MinusMinusToken => {
+                        // TSC recovers `++delete foo.bar`, `++++y`, `++\n++y`
+                        // by treating the outer `++`/`--` as a unary with a
+                        // missing operand and leaving the inner unary
+                        // (`delete …`, `++y`, …) for the next statement, so
+                        // the JS emitter prints the bare `++;` followed by
+                        // the inner expression statement. tsc reaches the
+                        // same shape via `parsePrimaryExpression`'s default
+                        // `parseIdentifier(Expression_expected)` branch,
+                        // which emits TS1109 at the offender without
+                        // consuming it.
+                        SyntaxKind::DeleteKeyword
+                        | SyntaxKind::PlusPlusToken
+                        | SyntaxKind::MinusMinusToken => {
                             self.parse_error_at(
                                 self.token_pos(),
                                 self.token_end().saturating_sub(self.token_pos()),
                                 "Expression expected.",
                                 diagnostic_codes::EXPRESSION_EXPECTED,
                             );
-                            return self.parse_unary_expression();
+                            // End the unary expression at the offender's
+                            // start so the next statement begins at the
+                            // unconsumed token.
+                            let end_pos = self.token_pos();
+                            return self.arena.add_unary_expr(
+                                syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
+                                start_pos,
+                                end_pos,
+                                UnaryExprData {
+                                    operator,
+                                    operand: NodeIndex::NONE,
+                                },
+                            );
                         }
                         // TS1109: ++await and --await are invalid because await
                         // expressions are not valid left-hand-side expressions
