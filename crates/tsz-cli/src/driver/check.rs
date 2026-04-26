@@ -2810,7 +2810,7 @@ fn build_lib_bound_file_for_interface_checks(
         is_external_module: lib_file.binder.is_external_module,
         expando_properties: FxHashMap::default(),
         file_features: tsz::binder::FileFeatures::NONE,
-        lib_symbol_reverse_remap: FxHashMap::default(),
+        lib_symbol_reverse_remap: std::sync::Arc::new(FxHashMap::default()),
         semantic_defs: std::sync::Arc::new(FxHashMap::default()),
     }
 }

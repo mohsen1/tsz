@@ -313,8 +313,10 @@ impl BinderState {
                 // Store the remapping
                 lib_symbol_remap.insert((lib_binder_ptr, local_id), new_id);
 
-                // Store reverse mapping for Phase 2 of merge_bind_results
-                self.lib_symbol_reverse_remap
+                // Store reverse mapping for Phase 2 of merge_bind_results.
+                // Arc::make_mut is free when refcount=1 (the case during a
+                // single file's bind, before the bound state is shared).
+                Arc::make_mut(&mut self.lib_symbol_reverse_remap)
                     .insert(new_id, (lib_binder_ptr, local_id));
 
                 // Track which arena contains this symbol's declarations (legacy - stores last arena)
