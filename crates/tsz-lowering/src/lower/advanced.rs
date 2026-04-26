@@ -602,14 +602,32 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a qualified name type (A.B).
     pub(super) fn lower_qualified_name_type(&self, node_idx: NodeIndex) -> TypeId {
-        if let Some(name) = self.type_name_text(node_idx)
-            && let Some(def_id) = self.resolve_def_id_by_name(&name)
-        {
-            return self.interner.lazy(def_id);
-        }
-        // Must resolve to DefId; def_id_resolver must be provided.
-        if let Some(def_id) = self.resolve_def_id(node_idx) {
-            return self.interner.lazy(def_id);
+        // Same-arena lowering (the common case for user source files) must prefer
+        // the NodeIndex-based DefId resolver because `N.X` should bind to the exact
+        // namespace member, not to a globally-named lib symbol that happens to share
+        // the right-hand identifier (e.g., a user-declared `namespace N { class Promise {} }`
+        // must not collide with the lib's global `Promise`).
+        //
+        // Cross-arena lib lowering opts into name-first resolution because raw
+        // NodeIndex values are arena-local and cannot be resolved across arenas.
+        if self.prefer_name_def_id_resolution {
+            if let Some(name) = self.type_name_text(node_idx)
+                && let Some(def_id) = self.resolve_def_id_by_name(&name)
+            {
+                return self.interner.lazy(def_id);
+            }
+            if let Some(def_id) = self.resolve_def_id(node_idx) {
+                return self.interner.lazy(def_id);
+            }
+        } else {
+            if let Some(def_id) = self.resolve_def_id(node_idx) {
+                return self.interner.lazy(def_id);
+            }
+            if let Some(name) = self.type_name_text(node_idx)
+                && let Some(def_id) = self.resolve_def_id_by_name(&name)
+            {
+                return self.interner.lazy(def_id);
+            }
         }
         if let Some(name) = self.type_name_text(node_idx) {
             return self
