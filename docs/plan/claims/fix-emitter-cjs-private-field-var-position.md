@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/emitter-cjs-private-field-var-position`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1348
+- **Status**: ready
 - **Workstream**: 2 (JS Emit pass rate)
 
 ## Intent
@@ -17,6 +17,9 @@ In CommonJS module mode, tsc emits hoisted temp `var` declarations (e.g. `var _F
 
 ## Verification
 
-- `cargo nextest run -p tsz-emitter`
-- `./scripts/emit/run.sh --filter importHelpersNoHelpersForPrivateFields`
-- Targeted no-regression: `./scripts/emit/run.sh --filter privateName` and `./scripts/emit/run.sh --filter exportEmptyArrayBindingPattern`
+- `cargo nextest run -p tsz-emitter` (1645 tests pass)
+- `./scripts/emit/run.sh --filter=importHelpersNoHelpersForPrivateFields` (now passes)
+- Full emit suite: net +1 JS pass (1197 -> 1196 failures); two close-to-passing CJS tests
+  shrunk their diff. No regressions across class / decorator / commonjs / importHelpers /
+  async / generator / destructuring / loop / forof / staticBlock / declarationEmit /
+  usingDeclar filter groups.
