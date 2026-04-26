@@ -669,12 +669,8 @@ impl<'a> CheckerState<'a> {
         let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
 
         while visited.insert(current) {
-            let Some(class_node) = self.ctx.arena.get(current) else {
-                return None;
-            };
-            let Some(class_data) = self.ctx.arena.get_class(class_node) else {
-                return None;
-            };
+            let class_node = self.ctx.arena.get(current)?;
+            let class_data = self.ctx.arena.get_class(class_node)?;
 
             let mut getter_seen = false;
             let mut setter_seen = false;

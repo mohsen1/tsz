@@ -1626,9 +1626,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let package_json_exports = all_arenas.iter().find_map(|arena| {
-            let Some(source_file) = arena.source_files.first() else {
-                return None;
-            };
+            let source_file = arena.source_files.first()?;
             let package_json = source_file.file_name.replace('\\', "/");
             if package_json == format!("{package_dir}/package.json") {
                 Some(Self::package_json_redirects_package_subpaths_to_js(

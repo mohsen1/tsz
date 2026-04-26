@@ -462,16 +462,11 @@ impl<'a> FlowAnalyzer<'a> {
                         // setter parameter type while later reads must still use the
                         // getter surface. If the RHS isn't assignable to the read type of
                         // a property/element access, don't narrow future reads to the RHS.
-                        if self
-                            .assigned_type_respecting_access_read_surface(
-                                assignment_node,
-                                target,
-                                rhs_type,
-                            )
-                            .is_none()
-                        {
-                            return None;
-                        }
+                        self.assigned_type_respecting_access_read_surface(
+                            assignment_node,
+                            target,
+                            rhs_type,
+                        )?;
 
                         let declared_target_type = self
                             .binder
