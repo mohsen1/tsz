@@ -30,7 +30,7 @@
     {{ content | safe }}
   </main>
   <footer class="site-footer">
-    <p>tsz - a TypeScript compiler in Rust. Apache-2.0 License.</p>
+    <p>tsz - a TypeScript compiler in Rust. Apache-2.0 License.{% if build.sha %} Built at <a href="https://github.com/mohsen1/tsz/commit/{{ build.sha }}">{{ build.sha7 }}</a>.{% endif %}</p>
   </footer>
   {{ extra_scripts | safe }}
 </body>
