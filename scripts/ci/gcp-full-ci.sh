@@ -56,12 +56,25 @@ default_emit_workers() {
 }
 
 default_fourslash_workers() {
-  local usable per
+  local usable per mem_mb mem_per_worker_mb mem_cap
   usable=$((HOST_CPUS - 16))
   if (( usable < SHARD_COUNT )); then
     usable="$HOST_CPUS"
   fi
   per=$((usable / SHARD_COUNT))
+
+  mem_mb="$(host_memory_mb)"
+  mem_per_worker_mb="${TSZ_CI_FOURSLASH_MB_PER_WORKER:-1024}"
+  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_worker_mb" =~ ^[0-9]+$ && "$mem_per_worker_mb" -gt 0 ]]; then
+    mem_cap=$((mem_mb / mem_per_worker_mb))
+    if (( mem_cap < 2 )); then
+      mem_cap=2
+    fi
+    if (( per > mem_cap )); then
+      per="$mem_cap"
+    fi
+  fi
+
   if (( per < 8 )); then
     per=8
   elif (( per > 16 )); then
@@ -414,7 +427,7 @@ nextest_allow_no_tests() {
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  cargo nextest run --profile ci --no-tests=pass \
+  cargo nextest run --profile ci --cargo-profile ci-unit --no-tests=pass \
     -p tsz-common \
     -p tsz-scanner \
     -p tsz-parser \
