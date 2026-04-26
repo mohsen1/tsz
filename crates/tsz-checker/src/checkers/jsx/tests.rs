@@ -383,6 +383,30 @@ fn jsx_call_signature_returning_element_or_null_no_ts2786() {
     );
 }
 
+/// TS2786 should NOT fire for SFCs whose inferred return type is `never`
+/// (e.g. `function MyComp(props) { return null!; }`). `never` is the bottom
+/// type and is assignable to `JSX.Element`. Mirrors tsc behavior — see
+/// conformance test `spellingSuggestionJSXAttribute.tsx`.
+#[test]
+fn jsx_sfc_returning_never_no_ts2786() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface IntrinsicElements { }
+        }
+        function MyComp(props: { className?: string }) {
+            return null!;
+        }
+        <MyComp className="" />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2786),
+        "SFC returning never (bottom type) should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
 /// TS2607: When `ElementAttributesProperty` specifies a property name (e.g. `pr`)
 /// and the class component instance type doesn't have that property,
 /// emit "JSX element class does not support attributes".
