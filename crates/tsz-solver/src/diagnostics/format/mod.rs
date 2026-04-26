@@ -106,6 +106,16 @@ pub struct TypeFormatter<'a> {
     /// type and the current type is an Object. Used for TS2741 messages where
     /// tsc shows the merged object form instead of the intersection form.
     skip_intersection_display_alias: bool,
+    /// When true, don't follow `display_alias` when it points to an Application
+    /// type and the current type is an Intersection. Used for TS2739 messages
+    /// where tsc shows the structural `Number & { __brand: T }` form instead of
+    /// the branded alias `Brand<T>`.
+    skip_application_alias_for_intersections: bool,
+    /// When true, format the primitive members of an intersection type using their
+    /// apparent/boxed names: `Number` instead of `number`, `String` instead of
+    /// `string`, `Boolean` instead of `boolean`. tsc always uses the capitalized
+    /// forms for primitive members in intersection type display.
+    capitalize_primitive_intersection_members: bool,
     /// When true, preserve a longer generic alias prefix while eliding nested
     /// structural object branches. Used for long property receiver diagnostics.
     long_property_receiver_display: bool,
@@ -135,6 +145,8 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
+            skip_application_alias_for_intersections: false,
+            capitalize_primitive_intersection_members: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
         }
@@ -319,6 +331,8 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_intersection_display_alias: false,
+            skip_application_alias_for_intersections: false,
+            capitalize_primitive_intersection_members: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
         }
@@ -428,6 +442,22 @@ impl<'a> TypeFormatter<'a> {
     /// in TS2741 messages, not the intersection form.
     pub const fn with_skip_intersection_display_alias(mut self) -> Self {
         self.skip_intersection_display_alias = true;
+        self
+    }
+
+    /// Don't follow `display_alias` when the current type is an Intersection
+    /// and the alias points to an Application. tsc shows the structural
+    /// `Number & { __brand: T }` form instead of the branded alias `Brand<T>`.
+    pub const fn with_skip_application_alias_for_intersections(mut self) -> Self {
+        self.skip_application_alias_for_intersections = true;
+        self
+    }
+
+    /// Show capitalized primitive names (`Number`, `String`, `Boolean`) for
+    /// primitive members of intersection types, matching tsc's apparent-type
+    /// display for branded primitives in error messages.
+    pub const fn with_capitalize_primitive_intersection_members(mut self) -> Self {
+        self.capitalize_primitive_intersection_members = true;
         self
     }
 
@@ -815,12 +845,18 @@ impl<'a> TypeFormatter<'a> {
                     false
                 };
 
-            let skip_intersection_alias = self.skip_intersection_display_alias
+            let skip_intersection_alias = (self.skip_intersection_display_alias
                 && matches!(
                     self.interner.lookup(alias_origin),
                     Some(TypeData::Intersection(_))
                 )
-                && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
+                && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_)))
+                || (self.skip_application_alias_for_intersections
+                    && matches!(
+                        self.interner.lookup(alias_origin),
+                        Some(TypeData::Application(_))
+                    )
+                    && matches!(&key, TypeData::Intersection(_)));
 
             // Skip the alias chase when the alias points to a distributive
             // conditional Application that will distribute (boolean or union

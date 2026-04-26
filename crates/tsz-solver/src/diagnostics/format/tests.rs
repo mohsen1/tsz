@@ -516,6 +516,70 @@ fn format_intersection_preserves_named_types() {
     );
 }
 
+#[test]
+fn capitalize_primitive_intersection_members_number() {
+    // tsc shows `Number` (capitalized) for `number` members in intersections
+    let db = TypeInterner::new();
+    let brand_prop = PropertyInfo::new(db.intern_string("__brand"), TypeId::STRING);
+    let obj = db.factory().object(vec![brand_prop]);
+    let intersection = db.intersection2(TypeId::NUMBER, obj);
+
+    let mut fmt = TypeFormatter::new(&db).with_capitalize_primitive_intersection_members();
+    let result = fmt.format(intersection);
+    assert!(
+        result.starts_with("Number"),
+        "Primitive member `number` should be capitalized to `Number` in intersections, got: {result}"
+    );
+}
+
+#[test]
+fn capitalize_primitive_intersection_members_string() {
+    let db = TypeInterner::new();
+    let brand_prop = PropertyInfo::new(db.intern_string("tag"), TypeId::NUMBER);
+    let obj = db.factory().object(vec![brand_prop]);
+    let intersection = db.intersection2(TypeId::STRING, obj);
+
+    let mut fmt = TypeFormatter::new(&db).with_capitalize_primitive_intersection_members();
+    let result = fmt.format(intersection);
+    assert!(
+        result.starts_with("String"),
+        "Primitive member `string` should be capitalized to `String`, got: {result}"
+    );
+}
+
+#[test]
+fn skip_application_alias_for_intersections_expands_branded_primitive() {
+    // When skip_application_alias_for_intersections is set, an Intersection
+    // whose display_alias points to an Application should show the structural form.
+    let db = TypeInterner::new();
+    let brand_prop = PropertyInfo::new(db.intern_string("__brand"), TypeId::STRING);
+    let obj = db.factory().object(vec![brand_prop]);
+    let intersection = db.intersection2(TypeId::NUMBER, obj);
+
+    // Simulate Brand<string> → number & { __brand: string } with display_alias
+    let app = db.application(db.lazy(crate::def::DefId(1)), vec![TypeId::STRING]);
+    db.store_display_alias(intersection, app);
+
+    // Without flag: follows alias and would format the application
+    // With flag: shows structural intersection instead
+    let mut fmt = TypeFormatter::new(&db)
+        .with_skip_application_alias_for_intersections()
+        .with_capitalize_primitive_intersection_members();
+    let result = fmt.format(intersection);
+    assert!(
+        result.contains(" & "),
+        "Should show structural intersection, not application alias, got: {result}"
+    );
+    assert!(
+        result.starts_with("Number"),
+        "Primitive member should be capitalized, got: {result}"
+    );
+    assert!(
+        result.contains("__brand"),
+        "Object member should be visible, got: {result}"
+    );
+}
+
 // =================================================================
 // Object type formatting
 // =================================================================
