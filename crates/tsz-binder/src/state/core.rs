@@ -190,7 +190,7 @@ impl BinderState {
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: Arc::new(FxHashMap::with_capacity_and_hasher(128, Default::default())),
             top_level_flow: FxHashMap::default(),
-            switch_clause_to_switch: FxHashMap::default(),
+            switch_clause_to_switch: Arc::new(FxHashMap::default()),
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
             scopes: Vec::with_capacity(32),
@@ -260,7 +260,7 @@ impl BinderState {
         self.cross_file_node_symbols.clear();
         Arc::make_mut(&mut self.node_flow).clear();
         self.top_level_flow.clear();
-        self.switch_clause_to_switch.clear();
+        Arc::make_mut(&mut self.switch_clause_to_switch).clear();
         self.hoisted_vars.clear();
         self.hoisted_functions.clear();
         self.scopes.clear();
@@ -432,7 +432,7 @@ impl BinderState {
             cross_file_node_symbols: FxHashMap::default(),
             node_flow: Arc::new(FxHashMap::default()),
             top_level_flow: FxHashMap::default(),
-            switch_clause_to_switch: FxHashMap::default(),
+            switch_clause_to_switch: Arc::new(FxHashMap::default()),
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
             scopes: Vec::new(),
@@ -1819,7 +1819,6 @@ impl BinderState {
 
         Arc::make_mut(&mut self.node_flow).retain(|node_id, _| keep_node(node_id));
         self.node_scope_ids.retain(|node_id, _| keep_node(node_id));
-        self.switch_clause_to_switch
-            .retain(|node_id, _| keep_node(node_id));
+        Arc::make_mut(&mut self.switch_clause_to_switch).retain(|node_id, _| keep_node(node_id));
     }
 }

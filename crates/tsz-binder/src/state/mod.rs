@@ -329,7 +329,11 @@ pub struct BinderState {
     /// Flow node after each top-level statement (for incremental binding).
     pub(crate) top_level_flow: FxHashMap<u32, FlowNodeId>,
     /// Map case/default clause nodes to their containing switch statement.
-    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// share via `Arc::clone` instead of deep-cloning. Mutated only during
+    /// binding (in `binding/declaration.rs`) and read-only post-bind.
+    pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     /// Hoisted var declarations
     pub(crate) hoisted_vars: Vec<(String, NodeIndex)>,
     /// Hoisted function declarations
@@ -914,7 +918,7 @@ pub struct BinderStateScopeInputs {
     pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: Arc<FlowNodeArena>,
     pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
-    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+    pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
