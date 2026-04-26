@@ -299,7 +299,7 @@ fn get_suggested_lib_finalization_family_is_es2021() {
     assert_eq!(get_suggested_lib_for_type("ErrorOptions"), "es2021");
 }
 
-/// Disposable / `AsyncDisposable` suggest `esnext`.
+/// `Disposable` / `AsyncDisposable` suggest `esnext`.
 #[test]
 fn get_suggested_lib_disposable_is_esnext() {
     assert_eq!(get_suggested_lib_for_type("Disposable"), "esnext");
