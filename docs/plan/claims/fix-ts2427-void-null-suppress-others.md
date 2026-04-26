@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26 17:41:38
 - **Branch**: `fix/ts2427-void-null-suppress-others`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1432
+- **Status**: ready
 - **Workstream**: Conformance fingerprint parity
 
 ## Intent
