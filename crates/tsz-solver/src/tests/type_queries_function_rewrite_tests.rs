@@ -98,3 +98,119 @@ fn unpack_tuple_rest_parameter_flattens_nested_tuple_rest_elements() {
     assert_eq!(unpacked[2].type_id, db.array(TypeId::STRING));
     assert!(unpacked[2].rest);
 }
+
+/// `(...args: [] | [X])` is the lib pattern used by `Iterator.next` /
+/// `AsyncIterator.next`. tsc treats it as equivalent to `(value?: X)` for
+/// signature compat. The unpacker must recognize the prefix-aligned union of
+/// fixed tuples and emit one optional parameter.
+#[test]
+fn unpack_tuple_rest_parameter_handles_empty_or_single_tuple_union() {
+    let db = TypeInterner::new();
+    let empty_tuple = db.tuple(vec![]);
+    let single_tuple = db.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let union_ty = db.union(vec![empty_tuple, single_tuple]);
+
+    let rest_param = ParamInfo {
+        name: None,
+        type_id: union_ty,
+        optional: false,
+        rest: true,
+    };
+
+    let unpacked = unpack_tuple_rest_parameter(&db, &rest_param);
+    assert_eq!(
+        unpacked.len(),
+        1,
+        "[] | [X] should flatten to a single optional param, got {unpacked:?}"
+    );
+    assert_eq!(unpacked[0].type_id, TypeId::STRING);
+    assert!(
+        unpacked[0].optional,
+        "shorter member missing position 0 → optional"
+    );
+    assert!(!unpacked[0].rest, "fixed-position param, not rest");
+}
+
+/// `[X] | [X, Y]` where positions agree on prefix should flatten to
+/// `[required X, optional Y]`.
+#[test]
+fn unpack_tuple_rest_parameter_handles_prefix_aligned_two_member_union() {
+    let db = TypeInterner::new();
+    let one = db.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let two = db.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let union_ty = db.union(vec![one, two]);
+
+    let rest_param = ParamInfo {
+        name: None,
+        type_id: union_ty,
+        optional: false,
+        rest: true,
+    };
+
+    let unpacked = unpack_tuple_rest_parameter(&db, &rest_param);
+    assert_eq!(unpacked.len(), 2);
+    assert_eq!(unpacked[0].type_id, TypeId::STRING);
+    assert!(!unpacked[0].optional, "position 0 covered by both members");
+    assert_eq!(unpacked[1].type_id, TypeId::NUMBER);
+    assert!(unpacked[1].optional, "position 1 only in the longer member");
+}
+
+/// Disagreeing first elements must NOT collapse — `[X] | [Y]` stays as a
+/// rest-typed param so callers fall back to the union-of-tuple handling at
+/// the call site (which iterates each tuple variant separately).
+#[test]
+fn unpack_tuple_rest_parameter_keeps_disagreeing_union_as_rest() {
+    let db = TypeInterner::new();
+    let s_tuple = db.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let n_tuple = db.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let union_ty = db.union(vec![s_tuple, n_tuple]);
+
+    let rest_param = ParamInfo {
+        name: None,
+        type_id: union_ty,
+        optional: false,
+        rest: true,
+    };
+
+    let unpacked = unpack_tuple_rest_parameter(&db, &rest_param);
+    assert_eq!(
+        unpacked.len(),
+        1,
+        "non-prefix-aligned union must stay as a rest param"
+    );
+    assert!(unpacked[0].rest);
+    assert_eq!(unpacked[0].type_id, union_ty);
+}
