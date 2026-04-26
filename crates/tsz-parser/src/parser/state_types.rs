@@ -972,8 +972,25 @@ impl ParserState {
                     &msg,
                     tsz_common::diagnostics::diagnostic_codes::AT_THE_END_OF_A_TYPE_IS_NOT_VALID_TYPESCRIPT_SYNTAX_DID_YOU_MEAN_TO_WRITE,
                 );
+                // JSDoc postfix `?` means "nullable" — `T?` ≡ `T | null` for type
+                // semantics. tsc keeps emitting TS17019 (the syntax is invalid in
+                // TS) but resolves the annotation as `T | null`, so an assignment
+                // like `var x: number? = undefined` reports against
+                // `number | null` (not `number`). Synthesize the union here so
+                // downstream type resolution sees the correct shape.
+                let null_token =
+                    self.arena
+                        .add_token(SyntaxKind::NullKeyword as u16, q_end - 1, q_end);
+                let union = self.arena.add_composite_type(
+                    syntax_kind_ext::UNION_TYPE,
+                    start_pos,
+                    q_end,
+                    crate::parser::node::CompositeTypeData {
+                        types: self.make_node_list(vec![base_type, null_token]),
+                    },
+                );
                 // Recurse to handle `T?[]` (postfix ? followed by array suffix)
-                return self.parse_primary_type_array_suffix(start_pos, base_type);
+                return self.parse_primary_type_array_suffix(start_pos, union);
             }
         }
 
@@ -2345,9 +2362,13 @@ impl ParserState {
         } else {
             (self.token_pos(), String::from("T"))
         };
-        let suggestion = match suggested.as_str() {
+        // For `?T?` (both prefix and postfix `?`) the inner_type span now
+        // covers `T?` because postfix-? widens to a `T | null` UNION_TYPE.
+        // The suggestion text should still reference just `T`, matching tsc.
+        let suggested_trimmed = suggested.trim_end_matches('?');
+        let suggestion = match suggested_trimmed {
             "any" => "any".to_string(),
-            _ => format!("{suggested} | null | undefined"),
+            _ => format!("{suggested_trimmed} | null | undefined"),
         };
         let msg = format!(
             "'?' at the start of a type is not valid TypeScript syntax. Did you mean to write '{suggestion}'?"

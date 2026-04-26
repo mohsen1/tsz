@@ -138,6 +138,9 @@ mod generator_union_return_type_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_postfix_nullable_type_tests.rs"]
+mod jsdoc_postfix_nullable_type_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_prototype_assignment_target_display.rs"]
 mod jsdoc_prototype_assignment_target_display;
 #[cfg(test)]
