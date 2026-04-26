@@ -42,7 +42,10 @@ fn is_js_like_file_name(file_name: &str) -> bool {
 }
 
 impl BinderStateScopeInputs {
-    pub(super) fn with_scopes(scopes: Vec<Scope>, node_scope_ids: FxHashMap<u32, ScopeId>) -> Self {
+    pub(super) fn with_scopes(
+        scopes: Vec<Scope>,
+        node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
+    ) -> Self {
         Self {
             scopes,
             node_scope_ids,
@@ -194,7 +197,7 @@ impl BinderState {
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
             scopes: Vec::with_capacity(32),
-            node_scope_ids: FxHashMap::with_capacity_and_hasher(64, Default::default()),
+            node_scope_ids: Arc::new(FxHashMap::with_capacity_and_hasher(64, Default::default())),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations: Arc::new(FxHashMap::default()),
@@ -264,7 +267,7 @@ impl BinderState {
         self.hoisted_vars.clear();
         self.hoisted_functions.clear();
         self.scopes.clear();
-        self.node_scope_ids.clear();
+        Arc::make_mut(&mut self.node_scope_ids).clear();
         self.current_scope_id = ScopeId::NONE;
         self.debugger.clear();
         Arc::make_mut(&mut self.global_augmentations).clear();
@@ -436,7 +439,7 @@ impl BinderState {
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
             scopes: Vec::new(),
-            node_scope_ids: FxHashMap::default(),
+            node_scope_ids: Arc::new(FxHashMap::default()),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
             global_augmentations: Arc::new(FxHashMap::default()),
@@ -478,7 +481,7 @@ impl BinderState {
         file_locals: SymbolTable,
         node_symbols: Arc<FxHashMap<u32, SymbolId>>,
         scopes: Vec<Scope>,
-        node_scope_ids: FxHashMap<u32, ScopeId>,
+        node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     ) -> Self {
         Self::from_bound_state_with_scopes_and_augmentations(
             BinderOptions::default(),
@@ -638,7 +641,7 @@ impl BinderState {
 
         // Map node to this scope
         if node.is_some() {
-            self.node_scope_ids.insert(node.0, new_scope_id);
+            Arc::make_mut(&mut self.node_scope_ids).insert(node.0, new_scope_id);
         }
 
         // Update current scope
@@ -1019,7 +1022,7 @@ impl BinderState {
 
         // Initialize persistent scope system
         self.scopes.clear();
-        self.node_scope_ids.clear();
+        Arc::make_mut(&mut self.node_scope_ids).clear();
         self.current_scope_id = ScopeId::NONE;
         self.top_level_flow.clear();
 
@@ -1818,7 +1821,7 @@ impl BinderState {
         };
 
         Arc::make_mut(&mut self.node_flow).retain(|node_id, _| keep_node(node_id));
-        self.node_scope_ids.retain(|node_id, _| keep_node(node_id));
+        Arc::make_mut(&mut self.node_scope_ids).retain(|node_id, _| keep_node(node_id));
         Arc::make_mut(&mut self.switch_clause_to_switch).retain(|node_id, _| keep_node(node_id));
     }
 }

@@ -108,7 +108,7 @@ impl BinderState {
 
             if is_global_augmentation {
                 if module.body.is_some() {
-                    self.node_scope_ids
+                    Arc::make_mut(&mut self.node_scope_ids)
                         .insert(module.body.0, self.current_scope_id);
                     // Set flag so interface declarations inside are tracked as augmentations
                     let was_in_global_augmentation = self.in_global_augmentation;
@@ -161,7 +161,7 @@ impl BinderState {
                             Arc::make_mut(&mut self.shorthand_ambient_modules)
                                 .insert(module_specifier);
                         } else {
-                            self.node_scope_ids
+                            Arc::make_mut(&mut self.node_scope_ids)
                                 .insert(module.body.0, self.current_scope_id);
                             let was_in_augmentation = self.in_module_augmentation;
                             let prev_module = self.current_augmented_module.take();
@@ -287,7 +287,7 @@ impl BinderState {
                     Arc::make_mut(&mut self.shorthand_ambient_modules).insert(lit.text.clone());
                 }
             } else {
-                self.node_scope_ids
+                Arc::make_mut(&mut self.node_scope_ids)
                     .insert(module.body.0, self.current_scope_id);
             }
 
