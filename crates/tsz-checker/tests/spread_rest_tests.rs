@@ -1316,3 +1316,87 @@ var z = { ...x };
         "Expected TS2698 for spreading undefined in expression context, got {ts2698_count}"
     );
 }
+
+/// When an array literal contains a spread element whose iterated value
+/// type doesn't match the contextual array element type, tsc reports the
+/// element-vs-element TS2322 anchored on the spread expression instead of
+/// the whole-array TS2322 at the assignment.
+///
+/// Regression for TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts:
+///   var array: number[] = [0, 1, ...new SymbolIterator];
+/// Expected message at the spread expression:
+///   `Type 'symbol' is not assignable to type 'number'`.
+///
+/// We use a hand-rolled iterable instead of `new SymbolIterator` so the
+/// test does not depend on the lib-loaded `Symbol.iterator` machinery
+/// (the test harness intentionally skips lib contexts).
+#[test]
+fn test_array_spread_iterator_element_mismatch_elaborates_to_spread() {
+    let source = r#"
+declare let strs: string[];
+var array: number[] = [0, 1, ...strs];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+
+    // Should produce exactly one TS2322 — the elaborated element-level
+    // message anchored at the spread expression, not the whole-array
+    // fallback.
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322; got {}: {:?}",
+        ts2322.len(),
+        ts2322
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+    let message = &ts2322[0].message_text;
+    assert!(
+        message.contains("'string'") && message.contains("'number'"),
+        "expected per-element 'string' vs 'number' elaboration; got {message:?}"
+    );
+    assert!(
+        !message.contains("(number | string)[]")
+            && !message.contains("(string | number)[]"),
+        "expected per-element elaboration, not whole-array message; got {message:?}"
+    );
+}
+
+/// Custom interfaces extending `Array<T>` keep the whole-assignment TS2322
+/// rather than per-element spread elaboration. This pins the negative case
+/// for the spread-element elaboration path in
+/// `try_elaborate_array_literal_elements`.
+#[test]
+fn test_array_spread_does_not_elaborate_for_custom_array_subtype() {
+    let source = r#"
+interface MyNumberArray extends Array<number> {}
+declare let strs: string[];
+var c: MyNumberArray = [...strs];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+
+    // We should not see a per-element `'string' is not assignable to 'number'`
+    // (which would mean we drilled into the spread). Either no diagnostic
+    // (lib not loaded — `MyNumberArray` resolves loosely) or a whole-array
+    // TS2322 against MyNumberArray is acceptable.
+    let drilled: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == 2322
+                && d.message_text.contains("'string'")
+                && d.message_text.contains("'number'")
+                && !d.message_text.contains("string[]")
+        })
+        .collect();
+    assert!(
+        drilled.is_empty(),
+        "expected NOT to drill into per-element spread error for custom \
+         array-subtype target; got {:?}",
+        drilled
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
