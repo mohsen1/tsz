@@ -5,38 +5,18 @@
 //! of instance types (e.g., "I1 & I2") rather than the eagerly merged flat
 //! object type (e.g., "{ m1: () => void; m2: () => void }").
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
+    tsz_checker::test_utils::check_source(
+        source,
+        "test.ts",
         tsz_checker::context::CheckerOptions {
             no_implicit_override: true,
             ..Default::default()
         },
-    );
-
-    checker.check_source_file(root);
-
-    checker
-        .ctx
-        .diagnostics
-        .iter()
-        .map(|d| (d.code, d.message_text.clone()))
-        .collect()
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 /// Intersection of two constructor interfaces: instance type display should
