@@ -39,7 +39,7 @@ COPY start.sh /start.sh
 RUN chmod +x /start.sh \
     && chown runner:runner /start.sh \
     && mkdir -p /home/runner/_work \
-    && chown -R runner:runner /home/runner
+    && chown runner:runner /home/runner/_work
 
 USER runner
 WORKDIR /home/runner
