@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/emit-incomplete-dotted-eof-newline`
-- **PR**: TBD (drafting)
+- **PR**: #1403
 - **Status**: ready
 - **Workstream**: 2 (Emit pass-rate)
 
