@@ -380,6 +380,10 @@ name = "jsdoc_extends_constraint_tests"
 path = "tests/jsdoc_extends_constraint_tests.rs"
 
 [[test]]
+name = "jsdoc_template_in_body_scope_tests"
+path = "tests/jsdoc_template_in_body_scope_tests.rs"
+
+[[test]]
 name = "override_intersection_display_tests"
 path = "tests/override_intersection_display_tests.rs"
 
