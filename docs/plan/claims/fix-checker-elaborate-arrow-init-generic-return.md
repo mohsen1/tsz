@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26 16:48:27
 - **Branch**: `fix/checker-elaborate-arrow-init-generic-return`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1426
+- **Status**: ready
 - **Workstream**: Conformance — TS2322 anchor parity for direct assignment to generic function-type targets
 
 ## Intent
