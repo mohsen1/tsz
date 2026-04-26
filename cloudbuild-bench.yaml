@@ -176,10 +176,25 @@ steps:
             "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${dest_obj}" \
             --data-binary @/workspace/bench-results.json
         }
+        # curl returns exit 0 on HTTP 4xx/5xx (unlike gsutil), so we must inspect
+        # the captured status code and abort the publish step if either upload
+        # fails — otherwise the website redeploy below would publish stale data.
+        check_http_ok() {
+          local label="$1" status="$2"
+          case "$status" in
+            200|201|204) return 0 ;;
+            *)
+              echo "error: ${label} upload failed with HTTP ${status}" >&2
+              exit 1
+              ;;
+          esac
+        }
         code=$(gcs_upload "tsz-ci-cache/bench-runs/${TIMESTAMP}.json")
         echo "Timestamped upload HTTP ${code}"
+        check_http_ok "timestamped" "$code"
         code=$(gcs_upload "tsz-ci-cache/bench-runs/latest.json")
         echo "latest.json upload HTTP ${code}"
+        check_http_ok "latest.json" "$code"
         echo "Saved to gs://${BUCKET}/tsz-ci-cache/bench-runs/{${TIMESTAMP},latest}.json"
 
         echo "=== Triggering website redeploy ==="

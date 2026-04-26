@@ -20,7 +20,8 @@ codegen units per binary.
 
 This PR adds a `default_cargo_build_jobs()` helper that takes
 `min(HOST_CPUS, host_memory_mb / TSZ_CI_CARGO_MB_PER_JOB)` with a default
-6144 MiB per job (so 32 vCPU × 128 GiB → 21 jobs, leaving headroom).
+12288 MiB per job (so 32 vCPU × 128 GiB → 10 jobs, leaving ~8 GiB headroom
+for cargo metadata + the OS; on an 8 vCPU × 32 GiB host → 2 jobs).
 
 ## Files Touched
 
