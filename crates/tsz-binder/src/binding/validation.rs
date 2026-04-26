@@ -327,3 +327,7 @@ impl BinderState {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/binding_validation.rs"]
+mod tests;
