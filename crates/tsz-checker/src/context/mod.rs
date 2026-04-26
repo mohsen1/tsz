@@ -1178,6 +1178,13 @@ pub struct CheckerContext<'a> {
     /// `"a" | "b"` instead of `string`.
     pub preserve_literal_types: bool,
 
+    /// When true, identifier resolution should return the symbol's declared
+    /// type (when one is explicitly annotated) rather than a flow-narrowed
+    /// type. Set during class property initializer evaluation so that
+    /// `class C { D = DEFAULT; }` (where `const DEFAULT: AB = 'A'`) infers
+    /// `D: AB`, not `D: 'A'` (the flow-narrowed value type) — matching tsc.
+    pub use_declared_type_for_identifier: bool,
+
     /// When true, array literals skip the contextual supertype collapse.
     /// Set during `yield*` expression computation so that `[new Bar]` with
     /// contextual type `Foo[]` (where `Bar extends Foo`) produces `Bar[]`
