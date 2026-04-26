@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/typeof-chain-structural-wrapper-stop-walk`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1355
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
