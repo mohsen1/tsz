@@ -450,6 +450,10 @@ impl<'a> CheckerState<'a> {
                 type_params = jsdoc_type_params;
             }
         }
+
+        // Push enclosing class's @template T (pop via jsdoc_type_param_updates).
+        jsdoc_type_param_updates
+            .extend(self.push_enclosing_jsdoc_class_template_types_with_flag(idx));
         let jsdoc_return_context = func_jsdoc
             .as_ref()
             .and_then(|j| Self::jsdoc_returns_type_expression(j))
