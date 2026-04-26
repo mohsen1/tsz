@@ -286,7 +286,11 @@ pub struct BinderState {
     /// when refcount=1, the case during a single binder's construction).
     pub node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
-    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// share via `Arc::clone` instead of deep-cloning. Mutated only
+    /// during binding (in `modules/binding.rs`); read-only post-bind.
+    pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena).
     ///
     /// Wrapped in `Arc` so the merged cross-file map can be shared across N
@@ -902,7 +906,7 @@ pub struct BinderStateScopeInputs {
     pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
-    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
+    pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     pub reexports: Arc<FileReexportsMap>,
     pub wildcard_reexports: Arc<WildcardReexportsMap>,
     pub wildcard_reexports_type_only: Arc<WildcardReexportsTypeOnlyMap>,
