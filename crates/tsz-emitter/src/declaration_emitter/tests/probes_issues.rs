@@ -289,6 +289,23 @@ fn probe_dts_tuple_labeled_optional_rest() {
 }
 
 #[test]
+fn probe_dts_tuple_optional_rest_unlabeled() {
+    // The (invalid) tuple form `[...T?]` is parsed by tsc as a rest element
+    // wrapping an optional inner type, and printed as `[...?T]` in declaration
+    // emit. Regression cover for restTupleElements1 (T09).
+    let output = emit_dts("export type T = [...string?];");
+    println!("PROBE rest+optional tuple:\n{output}");
+    assert!(output.contains("[...?string]"), "rest+optional: {output}");
+    // A trailing `?` on a non-rest tuple element must remain `[T?]`.
+    let output2 = emit_dts("export type U = [string?];");
+    println!("PROBE optional tuple:\n{output2}");
+    assert!(output2.contains("[string?]"), "optional only: {output2}");
+    // A bare rest element keeps its existing `[...T]` form.
+    let output3 = emit_dts("export type V = [...string[]];");
+    assert!(output3.contains("[...string[]]"), "rest only: {output3}");
+}
+
+#[test]
 fn probe_dts_mapped_type_as_clause() {
     let output =
         emit_dts("export type MappedWithAs<T> = { [K in keyof T as `get${string & K}`]: T[K] };");
