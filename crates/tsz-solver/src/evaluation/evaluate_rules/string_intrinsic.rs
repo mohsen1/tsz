@@ -96,6 +96,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             | TypeData::KeyOf(_)
             | TypeData::IndexAccess(_, _) => self.interner().string_intrinsic(kind, evaluated_arg),
 
+            // For non-string primitive intrinsics that are pattern literal placeholders
+            // (number, bigint, boolean), preserve the StringMapping wrapping. tsc represents
+            // this as `Mapping<\`${T}\`>`, but storing `Mapping<T>` directly works as long as
+            // downstream consumers treat the type_arg as a stringification pattern.
+            // See `visit_literal` in the subtype visitor for the matching assignability rule.
+            //
+            // Without this case, evaluation collapses to TypeId::ERROR, and downstream
+            // template-literal matching (e.g., `"1" <: \`${Uppercase<number>}\``) silently
+            // returns false instead of accepting the literal.
+            TypeData::Intrinsic(
+                IntrinsicKind::Number | IntrinsicKind::Bigint | IntrinsicKind::Boolean,
+            ) => self.interner().string_intrinsic(kind, evaluated_arg),
+
             // Handle chained string intrinsics: Uppercase<Lowercase<T>>
             // Same-kind string mappings are idempotent: Uppercase<Uppercase<T>> = Uppercase<T>.
             // Different kinds must remain nested because compositions like
