@@ -1411,15 +1411,14 @@ impl TypeInterner {
         }
         let mut has_anon_object = false;
         for &id in current {
-            match self.lookup(id) {
-                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                    let shape = self.object_shape(shape_id);
-                    if shape.symbol.is_none() {
-                        has_anon_object = true;
-                        break;
-                    }
+            if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+                self.lookup(id)
+            {
+                let shape = self.object_shape(shape_id);
+                if shape.symbol.is_none() {
+                    has_anon_object = true;
+                    break;
                 }
-                _ => {}
             }
         }
         if !has_anon_object {
