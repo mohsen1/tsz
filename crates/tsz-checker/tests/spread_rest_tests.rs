@@ -1347,10 +1347,7 @@ var array: number[] = [0, 1, ...strs];
         1,
         "expected exactly one TS2322; got {}: {:?}",
         ts2322.len(),
-        ts2322
-            .iter()
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
     let message = &ts2322[0].message_text;
     assert!(
@@ -1358,8 +1355,7 @@ var array: number[] = [0, 1, ...strs];
         "expected per-element 'string' vs 'number' elaboration; got {message:?}"
     );
     assert!(
-        !message.contains("(number | string)[]")
-            && !message.contains("(string | number)[]"),
+        !message.contains("(number | string)[]") && !message.contains("(string | number)[]"),
         "expected per-element elaboration, not whole-array message; got {message:?}"
     );
 }
@@ -1394,9 +1390,6 @@ var c: MyNumberArray = [...strs];
         drilled.is_empty(),
         "expected NOT to drill into per-element spread error for custom \
          array-subtype target; got {:?}",
-        drilled
-            .iter()
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        drilled.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }

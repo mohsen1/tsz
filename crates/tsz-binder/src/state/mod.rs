@@ -342,8 +342,13 @@ pub struct BinderState {
     // ===== Persistent Scope System (for stateless checking) =====
     /// Persistent scopes - enables querying scope information without traversal order
     pub scopes: Vec<Scope>,
-    /// Map from AST node (that creates a scope) to its `ScopeId`
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    /// Map from AST node (that creates a scope) to its `ScopeId`.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// share via `Arc::clone` instead of deep-cloning. Mutated only
+    /// during binding (in `state/core.rs::enter_persistent_scope` and
+    /// `modules/binding.rs`); read-only post-bind.
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     /// Current active `ScopeId` during binding
     pub current_scope_id: ScopeId,
 
@@ -910,7 +915,7 @@ pub struct ResolutionStats {
 #[derive(Debug, Default)]
 pub struct BinderStateScopeInputs {
     pub scopes: Vec<Scope>,
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     pub global_augmentations: Arc<FxHashMap<String, Vec<GlobalAugmentation>>>,
     pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,
     pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,

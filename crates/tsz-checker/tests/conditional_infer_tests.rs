@@ -152,12 +152,12 @@ const l1: L1 = 2; // Must not error
     );
 }
 
-/// Downstream check: BuildTree recursive conditional type should terminate
+/// Downstream check: `BuildTree` recursive conditional type should terminate
 /// at depth N now that `Prepend<V, T>` infers correctly for mixed
 /// fixed+rest params.
 ///
 /// Without the `match_rest_infer_tuple` fix, `Prepend<any, I>` collapsed
-/// to `any` and BuildTree never terminated, producing a false TS2741.
+/// to `any` and `BuildTree` never terminated, producing a false TS2741.
 /// With the fix, the unit-level Prepend behaviour above is correct, but
 /// the recursive conditional-type instantiation here still emits TS2741
 /// because of separate recursion/fuel limits in the conditional-type
@@ -199,8 +199,7 @@ const grandUser: GrandUser = {
     let codes = tsz_checker::test_utils::check_source_codes(source);
     assert!(
         !codes.contains(&2741),
-        "Must NOT emit TS2741 — BuildTree must terminate at depth 2 without false property-missing errors, got: {:?}",
-        codes
+        "Must NOT emit TS2741 — BuildTree must terminate at depth 2 without false property-missing errors, got: {codes:?}"
     );
 }
 
