@@ -415,10 +415,7 @@ impl<'a> CheckerState<'a> {
             return Some(type_id);
         }
 
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        else {
-            return None;
-        };
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
 
         let callable_members: Vec<_> = members
             .into_iter()

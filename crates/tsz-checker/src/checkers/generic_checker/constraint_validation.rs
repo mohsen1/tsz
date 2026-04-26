@@ -1411,9 +1411,7 @@ impl<'a> CheckerState<'a> {
         let (Some(base_def), app_args) = query::application_base_def_and_args(db, type_id)? else {
             return None;
         };
-        let Some(def_info) = self.ctx.definition_store.get(base_def) else {
-            return None;
-        };
+        let def_info = self.ctx.definition_store.get(base_def)?;
         if def_info.kind != tsz_solver::def::DefKind::TypeAlias {
             return None;
         }
