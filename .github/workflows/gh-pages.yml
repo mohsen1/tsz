@@ -131,6 +131,7 @@ jobs:
             exit 0
           fi
           printf '%s' "$SCCACHE_GCS_KEY_JSON" > /tmp/gcs-key.json
+          trap 'rm -f /tmp/gcs-key.json' EXIT
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcs-key.json
           LATEST=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/latest.json
           if gsutil -q stat "$LATEST" 2>/dev/null; then
@@ -139,7 +140,6 @@ jobs:
           else
             echo "No latest.json in GCS yet — using checked-in benchmark data"
           fi
-          rm -f /tmp/gcs-key.json
         continue-on-error: true
 
       - name: Download WASM

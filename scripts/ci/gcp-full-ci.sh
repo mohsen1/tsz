@@ -33,7 +33,7 @@ default_cargo_build_jobs() {
   cpu_jobs="$HOST_CPUS"
   mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
   mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-12288}"
-  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_job_mb" -gt 0 ]]; then
+  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_job_mb" =~ ^[0-9]+$ && "$mem_per_job_mb" -gt 0 ]]; then
     mem_jobs=$((mem_mb / mem_per_job_mb))
     if (( mem_jobs < 1 )); then mem_jobs=1; fi
     if (( cpu_jobs > mem_jobs )); then
@@ -1224,7 +1224,11 @@ run_build() {
   # every shard misses the cache and reinstalls npm packages independently.
   ci_section "Seed scripts node_modules for parallel job cache"
   if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
-    (cd scripts && npm install --silent)
+    if command -v npm >/dev/null 2>&1; then
+      (cd scripts && npm install --silent)
+    else
+      echo "warn: npm not found in build image; skipping scripts/node_modules seed (shards will reinstall on cache-miss)" >&2
+    fi
   else
     echo "scripts/node_modules already present (cache hit)"
   fi
