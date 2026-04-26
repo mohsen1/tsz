@@ -1031,16 +1031,15 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(merged);
         }
 
-        // CRITICAL: Update cache AFTER merging global augmentations.
-        // The cache must contain the fully merged type including augmentations,
-        // otherwise subsequent calls will return the un-augmented type.
+        // Local-only cache write so this checker's same-thread calls see the
+        // augmented type. The SHARED cache is written exactly once at function
+        // exit — augmentation-heritage below can still mutate `lib_type_id`,
+        // and a concurrent reader snapshotting an intermediate value would
+        // freeze it in their local cache and never re-resolve.
         if let Some(ty) = lib_type_id {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(name.to_string(), Some(ty));
-            if let Some(ref shared) = self.ctx.shared_lib_type_cache {
-                shared.insert(name.to_string(), Some(ty));
-            }
 
             // Register the final merged type in type_to_def so the formatter can
             // display "Date" instead of expanding all members. The initial
