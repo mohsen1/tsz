@@ -312,6 +312,7 @@ configure_sccache() {
   else
     echo "warning: sccache server failed to start; unsetting RUSTC_WRAPPER" >&2
     unset RUSTC_WRAPPER
+    export CARGO_INCREMENTAL="1"
   fi
 }
 
