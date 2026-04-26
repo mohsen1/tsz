@@ -885,7 +885,13 @@ impl<'a> CheckerState<'a> {
     }
 
     fn empty_array_literal_source_type_display(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        // Only skip parentheses, not type assertions.  When the source is
+        // `[] as Foo`, the diagnostic should display the asserted type `Foo`,
+        // not the inner empty array's intrinsic type.  Returning `None` here
+        // lets the caller fall through to `get_type_of_node` (or further display
+        // policy) which yields the asserted type.  Mirrors the behavior of
+        // `object_literal_source_type_display` for `({} as Foo)`.
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
         let node = self.ctx.arena.get(expr_idx)?;
         if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
             return None;

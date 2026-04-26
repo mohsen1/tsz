@@ -268,7 +268,6 @@ fn post_process_checker_diagnostics(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub(super) fn collect_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,

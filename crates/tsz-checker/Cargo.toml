@@ -148,6 +148,10 @@ name = "ts2322_literal_source_display_tests"
 path = "tests/ts2322_literal_source_display_tests.rs"
 
 [[test]]
+name = "ts2322_empty_array_assertion_source_display_tests"
+path = "tests/ts2322_empty_array_assertion_source_display_tests.rs"
+
+[[test]]
 name = "ts2322_pair_disambiguation_widening_tests"
 path = "tests/ts2322_pair_disambiguation_widening_tests.rs"
 
