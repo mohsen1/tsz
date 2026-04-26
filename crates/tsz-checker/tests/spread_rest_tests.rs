@@ -1,31 +1,6 @@
 //! Tests for spread and rest operator type checking
 
-use tsz_binder::BinderState;
-use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-/// Helper function to check source and return diagnostics
-fn check_source(source: &str) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
-}
+use tsz_checker::test_utils::check_source_diagnostics;
 
 #[test]
 fn test_array_spread_with_tuple() {
@@ -35,7 +10,7 @@ const t: Tuple = ["hello", 42];
 const arr = [...t];  // Should be (string | number)[]
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322 or TS2488
     let errors = diagnostics
@@ -55,7 +30,7 @@ const nums = [1, 2, 3];
 const arr = [...nums];  // Should be number[]
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322 or TS2488
     let errors = diagnostics
@@ -75,7 +50,7 @@ const num = 42;
 const arr = [...num];  // Should emit TS2488
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2488
     let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
@@ -92,7 +67,7 @@ type Tuple = [string, number, boolean];
 const t: Tuple = ["hello", ...[1, 2], true];  // Error: can't spread number[] into tuple position
 "#;
 
-    let _diagnostics = check_source(source);
+    let _diagnostics = check_source_diagnostics(source);
     // This is a complex case - spread in tuple context
     // The behavior depends on implementation
 }
@@ -105,7 +80,7 @@ const obj2 = { c: 3 };
 const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: number }
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -124,7 +99,7 @@ function sum(...nums: number[]) {
 sum(1, 2, 3);
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -143,7 +118,7 @@ function sum(...nums: number[]) {
 sum(1, "two", 3);  // Should emit TS2345
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2345 for string argument (TS2345 is for function arguments, TS2322 is for assignments)
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
@@ -161,7 +136,7 @@ const [first, second, ...rest] = arr;
 // first: number, second: number, rest: number[]
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -180,7 +155,7 @@ const [s, n, ...rest] = t;
 // s: string, n: number, rest: (boolean | string)[]
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -216,7 +191,7 @@ function evaluate(expression: Expression): boolean {
 }
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count,
@@ -245,7 +220,7 @@ let numberB: number;
 [numberB, nameA] = robotA;
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
@@ -271,7 +246,7 @@ const args = [1, 2, 3];
 add(...args);  // Should work
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -291,7 +266,7 @@ const args = [1, "two", 3];
 add(...args);  // Should emit TS2345
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // TypeScript emits TS2556 for this case: "A spread argument must either have a tuple type or be passed to a rest parameter."
     // The spread array has type (string | number)[] which is not a tuple type.
@@ -320,7 +295,7 @@ rest("d", ...ns);
 rest("e", ...mixed);
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert_eq!(
@@ -362,7 +337,7 @@ const args: Tuple = ["Alice", 30, true];
 greet(...args);  // Should work
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -383,7 +358,7 @@ const args: Tuple = ["Alice", true, 30];
 greet(...args);  // Should emit TS2345
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2345 (for function arguments) - boolean is not assignable to number
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
@@ -404,7 +379,7 @@ const partial = { name: "Alice" };
 const person: Person = { ...partial, age: 30 };
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -422,7 +397,7 @@ const arr2 = [3, 4];
 const combined = [...arr1, ...arr2];  // Should be number[]
 ";
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2322
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
@@ -442,7 +417,7 @@ logAll("hello", "world");
 logAll("hello", 42);  // Should emit TS2345
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should emit TS2345 for number argument (TS2345 is for function arguments)
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
@@ -460,7 +435,7 @@ const createTuple = (): Tuple => [42, "hello"];
 const t: Tuple = [1, "test", ...createTuple()];
 "#;
 
-    let _diagnostics = check_source(source);
+    let _diagnostics = check_source_diagnostics(source);
     // This is a complex case - spread in tuple context
     // The behavior depends on implementation
 }
@@ -482,7 +457,7 @@ class Foo {
     }
 }
 ";
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
     assert_eq!(
         ts2683_count, 0,
@@ -504,7 +479,7 @@ var obj = {
     }
 };
 ";
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
     assert_eq!(
         ts2683_count, 0,
@@ -523,7 +498,7 @@ var obj = {
     }
 };
 ";
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
     assert_eq!(
         ts2683_count, 0,
@@ -538,7 +513,7 @@ const str = "hello";
 const chars = [...str];  // Should be string[]
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     // Should NOT emit TS2488 (string is iterable)
     let ts2488_count = diagnostics.iter().filter(|d| d.code == 2488).count();
@@ -556,7 +531,7 @@ fn test_object_rest_not_last_emits_ts2462() {
 var { ...rest, x } = { x: 1 };
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     let ts2462_count = diagnostics.iter().filter(|d| d.code == 2462).count();
     assert!(
@@ -571,7 +546,7 @@ fn test_array_rest_not_last_still_reports_ts2462() {
 var [...rest, x] = [1, 2, 3];
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
 
     let ts2462_count = diagnostics.iter().filter(|d| d.code == 2462).count();
     assert!(
@@ -592,7 +567,7 @@ function f<T extends { a: string, b: string }>(obj: T) {
     return rest;
 }
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
     assert_eq!(
         ts2783_count,
@@ -615,7 +590,7 @@ function f(obj: Obj) {
     const x: { b: number; c: boolean } = rest;
 }
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
@@ -638,7 +613,7 @@ function test<T extends { a: string }>(obj: T) {
 let o1 = { a: 'hello', x: 42 };
 let o2: { b: string, x: number } = test(o1);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2741_count = diagnostics.iter().filter(|d| d.code == 2741).count();
     assert_eq!(
         ts2741_count,
@@ -662,7 +637,7 @@ function pick<T extends { x: number, y: number }>(obj: T) {
 let input = { x: 1, y: 2, z: 'hello', w: true };
 let output: { sum: number, z: string, w: boolean } = pick(input);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let error_count = diagnostics
         .iter()
         .filter(|d| d.code == 2741 || d.code == 2322)
@@ -683,7 +658,7 @@ function getName<T extends { name: string }>(obj: T): string {
     return name;
 }
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
@@ -702,7 +677,7 @@ function test<T extends { a: string }>(obj: T) {
 let o1 = { a: 'hello', x: 42 };
 let o2: { b: number } = test(o1);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     // b is string, not number — should have an error
     let has_type_error = diagnostics.iter().any(|d| d.code == 2322 || d.code == 2741);
     assert!(
@@ -737,7 +712,7 @@ function test<T extends { a: string, b: string }>(obj: T): T {
     return { a: 'hello', ...rest } as T;
 }
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
     assert_eq!(
         ts2783_count,
@@ -767,7 +742,7 @@ class C {
 }
 "#;
 
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2339: Vec<_> = diagnostics.iter().filter(|d| d.code == 2339).collect();
     assert_eq!(
         ts2339.len(),
@@ -801,7 +776,7 @@ declare function withRest(a: any, ...args: any[]): void;
 declare var n: number[];
 withRest(...n);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert!(
         ts2556_count >= 1,
@@ -817,7 +792,7 @@ declare function withRest(a: any, ...args: any[]): void;
 declare var n: number[];
 withRest('a', ...n);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert_eq!(
         ts2556_count, 0,
@@ -833,7 +808,7 @@ declare function noRest(a: number, b: number): void;
 declare var n: number[];
 noRest(...n);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert!(
         ts2556_count >= 1,
@@ -849,7 +824,7 @@ declare function withRest(a: any, ...args: any[]): void;
 declare var t: [number];
 withRest(...t);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert_eq!(
         ts2556_count, 0,
@@ -869,7 +844,7 @@ function invoker<K extends string | number | symbol, A extends any[]>(key: K, ..
     return <T extends Record<K, (...args: A) => any>>(obj: T): ReturnType<T[K]> => obj[key](...args)
 }
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert_eq!(
         ts2556_count, 0,
@@ -892,7 +867,7 @@ type TupleMapper<T extends unknown[]> = { [K in keyof T]: T[K] };
 declare function mapped<T extends unknown[]>(...args: TupleMapper<T>): void;
 mapped("hello", 42);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count, 0,
@@ -908,7 +883,7 @@ type TupleMapper<T extends unknown[]> = { [K in keyof T]: T[K] };
 declare function mapTuple<T extends unknown[]>(...args: TupleMapper<T>): T;
 const result = mapTuple("hello", 42);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count, 0,
@@ -923,7 +898,7 @@ fn test_plain_tuple_rest_param_still_catches_mismatch() {
 declare function f(...args: [string, number]): void;
 f(42, "hello");
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
@@ -945,7 +920,7 @@ declare const t1: [number, string, ...boolean[]];
 declare let f10: (...x: [number, string, ...boolean[]]) => void;
 f10(...t1);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count,
@@ -969,7 +944,7 @@ declare let f10: (...x: [number, string, ...boolean[]]) => void;
 f10(42, ...t2);
 f10(42, "hello", ...t3);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count,
@@ -992,7 +967,7 @@ declare let f10: (...x: [number, string, ...boolean[]]) => void;
 f10(42, "hello", true, ...t4);
 f10(42, "hello", true, ...t4, false);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count,
@@ -1007,7 +982,7 @@ f10(42, "hello", true, ...t4, false);
 }
 
 fn assert_no_ts2345_for_generic_rest_call(source: &str) {
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert_eq!(
         ts2345_count,
@@ -1061,7 +1036,7 @@ declare const bad: [number, string, ...number[]];
 declare let f10: (...x: [number, string, ...boolean[]]) => void;
 f10(...bad);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
@@ -1080,7 +1055,7 @@ declare const x: number;
 declare function fn(a: number, b: number, bb: number, ...c: number[]): number;
 fn(...nnnu, x);
 ";
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
@@ -1098,7 +1073,7 @@ declare const s2: [string, string];
 declare function fs2(a: string, b: string): void;
 fs2("a", ...s2);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2554_count = diagnostics.iter().filter(|d| d.code == 2554).count();
     assert!(
         ts2554_count >= 1,
@@ -1114,7 +1089,7 @@ declare const s2: [string, string];
 declare function fs2(a: string, b: string): void;
 fs2(...s2);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let error_count = diagnostics
         .iter()
         .filter(|d| d.code == 2554 || d.code == 2556 || d.code == 2345)
@@ -1134,7 +1109,7 @@ declare const s_: string[];
 declare function fs2_(a: string, b: string, ...c: string[]): void;
 fs2_(...s_, ...s_);
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2556_count = diagnostics.iter().filter(|d| d.code == 2556).count();
     assert_eq!(
         ts2556_count, 1,
@@ -1153,7 +1128,7 @@ fn test_ts1265_rest_after_rest_concrete_arrays() {
 type T1 = [...string[], ...number[]];
 type T2 = [...Array<string>, ...number[]];
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
     assert_eq!(
         ts1265_count, 2,
@@ -1167,7 +1142,7 @@ fn test_ts1265_not_emitted_for_variadic_type_param_spreads() {
     let source = r#"
 type Tup3<T extends unknown[], U extends unknown[], V extends unknown[]> = [...T, ...U, ...V];
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
     assert_eq!(
         ts1265_count, 0,
@@ -1181,7 +1156,7 @@ fn test_ts1266_optional_after_rest() {
     let source = r#"
 type T1 = [number, ...string[], boolean?];
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts1266_count = diagnostics.iter().filter(|d| d.code == 1266).count();
     assert_eq!(
         ts1266_count, 1,
@@ -1196,7 +1171,7 @@ fn test_ts1265_and_ts1266_together() {
 type T1 = [number, ...string[], ...boolean[]];
 type T2 = [number, ...string[], boolean?];
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts1265_count = diagnostics.iter().filter(|d| d.code == 1265).count();
     let ts1266_count = diagnostics.iter().filter(|d| d.code == 1266).count();
     assert_eq!(ts1265_count, 1, "Expected 1 TS1265, got {ts1265_count}");
@@ -1213,7 +1188,7 @@ fn test_no_ts2698_for_destructuring_rest_in_assignment() {
 var x: any;
 [{ ...x }] = [{ abc: 1 }];
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2698 = diagnostics.iter().filter(|d| d.code == 2698).count();
     assert_eq!(
         ts2698,
@@ -1230,7 +1205,7 @@ fn test_no_ts2698_for_destructuring_rest_in_for_of() {
 var y: any;
 for ([{ ...y }] of [[{ abc: 1 }]]) ;
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2698 = diagnostics.iter().filter(|d| d.code == 2698).count();
     assert_eq!(
         ts2698,
@@ -1249,7 +1224,7 @@ var x, y;
 [{ ...x }] = [{ abc: 1 }];
 for ([{ ...y }] of [[{ abc: 1 }]]) ;
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2698_count = diagnostics.iter().filter(|d| d.code == 2698).count();
     assert_eq!(
         ts2698_count,
@@ -1281,7 +1256,7 @@ function test(opts: Opts) {
     });
 }
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
     assert!(
         ts2783_count >= 1,
@@ -1315,7 +1290,7 @@ create({
     }
 });
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2783_count = diagnostics.iter().filter(|d| d.code == 2783).count();
     assert!(
         ts2783_count >= 1,
@@ -1334,7 +1309,7 @@ fn test_object_spread_of_non_object_in_expression_emits_ts2698() {
 var x: undefined;
 var z = { ...x };
 "#;
-    let diagnostics = check_source(source);
+    let diagnostics = check_source_diagnostics(source);
     let ts2698_count = diagnostics.iter().filter(|d| d.code == 2698).count();
     assert!(
         ts2698_count >= 1,
