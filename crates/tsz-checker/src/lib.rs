@@ -157,6 +157,9 @@ mod name_resolution_boundary_tests;
 #[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+#[path = "../tests/optional_param_display_tests.rs"]
+mod optional_param_display_tests;
+#[cfg(test)]
 #[path = "../tests/overload_modifier_tests.rs"]
 mod overload_modifier_tests;
 #[cfg(test)]
