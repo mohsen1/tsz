@@ -3,8 +3,8 @@
 - **Date**: 2026-04-26
 - **Time**: 2026-04-26 08:02:44
 - **Branch**: `chore/binder-tests-lib-loader`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1323
+- **Status**: ready
 - **Workstream**: 8 (DRY/test coverage)
 
 ## Intent
@@ -32,4 +32,5 @@ inline `#[path = "../tests/lib_loader.rs"]` test module.
 
 ## Verification
 
-- `cargo nextest run -p tsz-binder -E 'test(lib_loader)'`
+- `cargo nextest run -p tsz-binder -E 'test(lib_loader)'` (24/24 pass)
+- `cargo nextest run -p tsz-binder` (448/448 pass)
