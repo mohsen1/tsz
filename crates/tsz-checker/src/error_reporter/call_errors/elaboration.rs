@@ -380,10 +380,46 @@ impl<'a> CheckerState<'a> {
 
     /// Try to elaborate a generic assignability mismatch when the source expression is
     /// a literal that can be decomposed into more precise element/property errors.
+    ///
+    /// Indirect callers reaching this entry from object-literal property values
+    /// or array element values inside a generic call argument should use
+    /// [`try_elaborate_assignment_source_error_in_call_arg`] instead, so the
+    /// arrow/function-expression interception below stays inside the
+    /// unresolved-holes guard.
     pub(crate) fn try_elaborate_assignment_source_error(
         &mut self,
         source_idx: NodeIndex,
         target_type: TypeId,
+    ) -> bool {
+        self.try_elaborate_assignment_source_error_with_options(
+            source_idx,
+            target_type,
+            /* allow_unresolved_holes */ true,
+        )
+    }
+
+    /// Variant for indirect callers (object-literal property values, array
+    /// element values) where `target_type` may still contain inference holes
+    /// belonging to an enclosing generic call. Skips the arrow/function-expr
+    /// interception that would otherwise produce false TS2322s by elaborating
+    /// against an uninstantiated parameter.
+    pub(crate) fn try_elaborate_assignment_source_error_in_call_arg(
+        &mut self,
+        source_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        self.try_elaborate_assignment_source_error_with_options(
+            source_idx,
+            target_type,
+            /* allow_unresolved_holes */ false,
+        )
+    }
+
+    fn try_elaborate_assignment_source_error_with_options(
+        &mut self,
+        source_idx: NodeIndex,
+        target_type: TypeId,
+        allow_unresolved_holes: bool,
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -407,7 +443,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if self.try_elaborate_assignment_source_error(branch_idx, target_type) {
+                if self.try_elaborate_assignment_source_error_with_options(
+                    branch_idx,
+                    target_type,
+                    allow_unresolved_holes,
+                ) {
                     elaborated = true;
                     continue;
                 }
@@ -429,6 +469,7 @@ impl<'a> CheckerState<'a> {
         if let Some(arg_node) = self.ctx.arena.get(expr_idx)
             && (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
                 || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            && allow_unresolved_holes
         {
             return self.try_elaborate_function_arg_return_error_with_options(
                 expr_idx,

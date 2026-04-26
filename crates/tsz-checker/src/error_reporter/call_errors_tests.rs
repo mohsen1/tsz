@@ -1106,3 +1106,32 @@ const f1 = pipe(list, box);
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2322_skips_arrow_body_elaboration_for_object_property_in_generic_call() {
+    // Guard against the indirect-caller variant of the unresolved-holes regression:
+    // when the arrow appears as a property value inside an object literal that is
+    // itself an argument to a generic call, `try_elaborate_assignment_source_error`
+    // is invoked from `try_elaborate_object_literal_properties_with_source` with a
+    // `target_prop_type` that still contains uninstantiated type parameters (`U`
+    // here). The new arrow interception must skip in this case to preserve the
+    // unresolved-holes guard the call-argument path relies on.
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function foo<T, U>(opts: { transform: (x: T) => U }): U;
+const r = foo({ transform: (x: string) => x.length });
+"#,
+    );
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        0,
+        "Arrow inside object-literal arg of generic call must not raise TS2322 \
+         from indirect elaboration, got: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2322)
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
