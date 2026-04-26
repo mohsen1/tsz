@@ -757,6 +757,33 @@ impl<'a> CheckerState<'a> {
         (source_display == constructor_display).then_some(constructor_name)
     }
 
+    /// When a source expression is a property/element access whose value type
+    /// is `unique symbol` (e.g. `Symbol.toPrimitive`), tsc renders the
+    /// assignability source as `typeof <expr>` rather than widening to
+    /// `symbol`. Mirrors that behavior so diagnostics like
+    /// "Type 'typeof Symbol.toPrimitive' is not assignable to type 'object'"
+    /// match tsc.
+    fn typeof_unique_symbol_source_display(&mut self, anchor_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let expr_idx = self.direct_diagnostic_source_expression(anchor_idx)?;
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let expr_type = self.get_type_of_node(expr_idx);
+        if !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, expr_type) {
+            return None;
+        }
+        let text = self.node_text(expr_idx)?;
+        // node_text spans the AST node; for trailing-semicolon expressions
+        // (e.g. `"" in Symbol.toPrimitive;`) the parsed PropertyAccess can
+        // include the `;` byte. tsc strips it before display.
+        let text = text.trim().trim_end_matches(';').trim_end().to_string();
+        Some(format!("typeof {text}"))
+    }
+
     fn jsdoc_annotated_expression_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -1086,6 +1113,14 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        // For property-access source expressions whose underlying value type is
+        // a `unique symbol` (e.g. `Symbol.toPrimitive`), tsc displays the source
+        // as `typeof <expr>` rather than widening to `symbol`. Match that here
+        // before any widening below collapses the source to its primitive.
+        if let Some(display) = self.typeof_unique_symbol_source_display(anchor_idx) {
+            return display;
+        }
+
         let has_optional_callable_param =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, source)
                 .is_some_and(|shape| shape.params.iter().any(|param| param.optional))
