@@ -145,7 +145,7 @@ export default /** @satisfies {Foo} */ ({});
 
 /// JSDoc @param types on exported functions should suppress TS7006.
 /// The JSDoc comment is before `export`, but function pos is at `function`.
-/// Regression test: find_jsdoc_for_function must walk up to ExportDeclaration.
+/// Regression test: `find_jsdoc_for_function` must walk up to `ExportDeclaration`.
 #[test]
 fn test_jsdoc_param_suppresses_ts7006_exported_function() {
     let source = r#"

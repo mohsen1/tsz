@@ -990,7 +990,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a type's ObjectShape comes from a class expression (anonymous class).
+    /// Check if a type's `ObjectShape` comes from a class expression (anonymous class).
     ///
     /// Used for TS4094: only class expressions need declaration-emit type literals,
     /// so only they require the private/protected member check.
@@ -1015,7 +1015,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Emit TS4094 for each private/protected member of an instance type, using the
-    /// solver's ObjectShape to include inherited members (not just direct AST members).
+    /// solver's `ObjectShape` to include inherited members (not just direct AST members).
     ///
     /// Properties are reported in alphabetical order to match tsc's output.
     pub(crate) fn report_instance_type_private_members_as_ts4094(

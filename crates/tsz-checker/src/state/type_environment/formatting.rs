@@ -125,7 +125,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Format a type for TS2741 messages, showing the merged object form
-    /// instead of following display_alias to intersection types.
+    /// instead of following `display_alias` to intersection types.
     pub fn format_type_diagnostic_flattened(&self, type_id: TypeId) -> String {
         let mut formatter = self
             .ctx

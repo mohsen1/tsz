@@ -31,7 +31,7 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
-    /// Format an Intersection type that has an Application display_alias, showing the
+    /// Format an Intersection type that has an Application `display_alias`, showing the
     /// structural intersection form (not the application alias). Matches tsc's behavior
     /// for branded primitive types in assignability messages: e.g., `Brand<T>` displayed
     /// as `Number & { __brand: T }` with widened member types and capitalized primitives.
@@ -958,7 +958,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if an intersection type contains a fresh anonymous object member
-    /// (one with display_properties and no symbol name).
+    /// (one with `display_properties` and no symbol name).
     fn intersection_has_fresh_anonymous_object(&self, ty: TypeId) -> bool {
         crate::query_boundaries::common::intersection_members(self.ctx.types.as_type_database(), ty)
             .is_some_and(|members| {

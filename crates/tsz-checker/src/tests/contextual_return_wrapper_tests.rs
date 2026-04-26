@@ -165,8 +165,8 @@ consume(make((x) => {
     );
 }
 
-/// Return-context seeding in compute_contextual_types should set
-/// had_return_context_substitution when the Round 1 substitution
+/// Return-context seeding in `compute_contextual_types` should set
+/// `had_return_context_substitution` when the Round 1 substitution
 /// already contains the same value, preventing unnecessary retries
 /// that could clear valid diagnostics.
 #[test]

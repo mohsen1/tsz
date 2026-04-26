@@ -1141,9 +1141,9 @@ impl<'a> CheckerContext<'a> {
         binder.alias_partners.contains_key(&sym_id)
     }
 
-    /// Reverse lookup: find the TYPE_ALIAS partner that points at
+    /// Reverse lookup: find the `TYPE_ALIAS` partner that points at
     /// `alias_sym_id`. Used by the type-position symbol resolver to redirect
-    /// an ALIAS symbol back to its merged TYPE_ALIAS counterpart. Prefers
+    /// an ALIAS symbol back to its merged `TYPE_ALIAS` counterpart. Prefers
     /// the project-wide map; falls back to the per-binder map for
     /// standalone callers.
     pub fn alias_partner_reverse(

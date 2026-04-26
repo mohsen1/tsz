@@ -2007,7 +2007,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// tsc reports TS4094 at the `export` keyword (col 1), not the `class` keyword.
     /// When the class is an expression inside an export statement, the parent node
-    /// starts at `export`. When it's a ClassDeclaration with own `export default`
+    /// starts at `export`. When it's a `ClassDeclaration` with own `export default`
     /// modifiers, the first modifier starts before the class keyword.
     fn get_anonymous_class_export_anchor(
         &self,

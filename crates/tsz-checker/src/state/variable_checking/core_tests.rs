@@ -1053,8 +1053,8 @@ var p: M2.Point;
 /// (e.g., `export interface Point { ... }` and `export var Point = 1`), accessing
 /// the property on the namespace value object should return the VARIABLE type,
 /// not the interface type. Previously, `symbol_has_exported_value_declaration` didn't
-/// check the `export` modifier on the grandparent VariableStatement (it only checked
-/// for EXPORT_DECLARATION wrapper and declare context), so the exported variable
+/// check the `export` modifier on the grandparent `VariableStatement` (it only checked
+/// for `EXPORT_DECLARATION` wrapper and declare context), so the exported variable
 /// was excluded from the namespace object type, resulting in `{}` instead of
 /// `{ Point: number }`.
 #[cfg(test)]
