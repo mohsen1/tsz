@@ -539,12 +539,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn receiver_type_from_shape_symbol(&self, shape: &ObjectShape) -> Option<TypeId> {
         let sym_id = shape.symbol?;
         let symbol_ref = crate::SymbolRef(sym_id.0);
-        Some(
-            self.resolver
-                .symbol_to_def_id(symbol_ref)
-                .map(|def_id| self.interner.lazy(def_id))
-                .unwrap_or_else(|| self.interner.reference(symbol_ref)),
-        )
+        // Only nominalize when the resolver can produce a real DefId.
+        // Falling back to `interner.reference(symbol_ref)` here would conflate
+        // `SymbolId.0` with `DefId.0` (independent ID spaces) and yield a
+        // Lazy(DefId) that points at an unrelated declaration.
+        self.resolver
+            .symbol_to_def_id(symbol_ref)
+            .map(|def_id| self.interner.lazy(def_id))
     }
 
     fn bind_property_receiver_this(&self, receiver: Option<TypeId>, type_id: TypeId) -> TypeId {
@@ -564,11 +565,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let shape = self.interner.object_shape(shape_id);
                 if let Some(sym_id) = shape.symbol {
                     let symbol_ref = crate::SymbolRef(sym_id.0);
-                    return self
-                        .resolver
-                        .symbol_to_def_id(symbol_ref)
-                        .map(|def_id| self.interner.lazy(def_id))
-                        .unwrap_or_else(|| self.interner.reference(symbol_ref));
+                    // Only nominalize when the resolver can produce a real DefId.
+                    // Falling back to `interner.reference(symbol_ref)` would conflate
+                    // `SymbolId.0` with `DefId.0` and produce a Lazy pointing at an
+                    // unrelated declaration. When no DefId mapping exists, keep the
+                    // original Object receiver — the structural shape is still a
+                    // sound `this` substitution target.
+                    if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+                        return self.interner.lazy(def_id);
+                    }
                 }
                 receiver
             }
