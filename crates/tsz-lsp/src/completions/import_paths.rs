@@ -164,3 +164,177 @@ fn compute_relative_path(from_dir: &str, to_file: &str) -> String {
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- get_import_path_completions -------------------------------------
+
+    fn entry(specifier: &str, is_directory: bool) -> ImportPathEntry {
+        ImportPathEntry {
+            specifier: specifier.to_string(),
+            is_directory,
+        }
+    }
+
+    #[test]
+    fn get_import_path_completions_returns_empty_for_empty_partial() {
+        let entries = vec![entry("./utils", false), entry("./types", false)];
+        assert!(get_import_path_completions("", &entries).is_empty());
+    }
+
+    #[test]
+    fn get_import_path_completions_filters_by_starts_with() {
+        let entries = vec![
+            entry("./utils", false),
+            entry("./util-helpers", false),
+            entry("./types", false),
+        ];
+        let completions = get_import_path_completions("./util", &entries);
+        assert_eq!(completions.len(), 2);
+        // Both `./utils` and `./util-helpers` match the prefix.
+    }
+
+    #[test]
+    fn get_import_path_completions_returns_empty_when_no_match() {
+        let entries = vec![entry("./utils", false)];
+        let completions = get_import_path_completions("./other", &entries);
+        assert!(completions.is_empty());
+    }
+
+    // ---- build_import_paths ----------------------------------------------
+
+    #[test]
+    fn build_import_paths_skips_self_reference() {
+        let current = "src/main.ts";
+        let files = vec!["src/main.ts".to_string(), "src/utils.ts".to_string()];
+        let entries = build_import_paths(current, &files);
+        assert!(entries.iter().all(|e| !e.specifier.contains("main")));
+    }
+
+    #[test]
+    fn build_import_paths_strips_ts_extension() {
+        let current = "src/a.ts";
+        let files = vec!["src/b.ts".to_string()];
+        let entries = build_import_paths(current, &files);
+        // Specifier should not contain `.ts`.
+        let specifier_entry = entries.iter().find(|e| !e.is_directory).unwrap();
+        assert!(!specifier_entry.specifier.ends_with(".ts"));
+        assert!(specifier_entry.specifier.ends_with("/b"));
+    }
+
+    #[test]
+    fn build_import_paths_filters_non_importable_extensions() {
+        let current = "src/a.ts";
+        let files = vec![
+            "src/b.ts".to_string(),
+            "src/img.png".to_string(),
+            "src/data.csv".to_string(),
+            "src/types.d.ts".to_string(),
+        ];
+        let entries = build_import_paths(current, &files);
+        let specifiers: Vec<&str> = entries.iter().map(|e| e.specifier.as_str()).collect();
+        assert!(!specifiers.iter().any(|s| s.contains("img")));
+        assert!(!specifiers.iter().any(|s| s.contains("csv")));
+    }
+
+    #[test]
+    fn build_import_paths_includes_parent_directories() {
+        let current = "src/a.ts";
+        let files = vec!["src/lib/b.ts".to_string(), "src/lib/c.ts".to_string()];
+        let entries = build_import_paths(current, &files);
+        // Should include both files AND the parent dir entry "lib"
+        let dir_entries: Vec<_> = entries.iter().filter(|e| e.is_directory).collect();
+        assert!(!dir_entries.is_empty());
+        assert!(dir_entries.iter().any(|e| e.specifier.contains("lib")));
+    }
+
+    #[test]
+    fn build_import_paths_no_parent_dir_added_twice() {
+        // Two files in the same directory — only one directory entry.
+        let current = "src/a.ts";
+        let files = vec!["src/sub/x.ts".to_string(), "src/sub/y.ts".to_string()];
+        let entries = build_import_paths(current, &files);
+        let sub_dir_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.is_directory && e.specifier.contains("sub"))
+            .collect();
+        assert_eq!(sub_dir_entries.len(), 1, "duplicate parent dir entries");
+    }
+
+    // ---- is_importable_file ----------------------------------------------
+
+    #[test]
+    fn is_importable_file_accepts_ts_jsx_and_json() {
+        for ext in &[
+            "a.ts", "a.tsx", "a.js", "a.jsx", "a.mts", "a.mjs", "a.cts", "a.cjs", "a.json",
+        ] {
+            assert!(is_importable_file(ext), "expected importable: {ext}");
+        }
+    }
+
+    #[test]
+    fn is_importable_file_rejects_non_source_extensions() {
+        for ext in &["a.png", "a.css", "a.md", "a.html", "a"] {
+            assert!(!is_importable_file(ext), "expected non-importable: {ext}");
+        }
+    }
+
+    // ---- strip_ts_extension ----------------------------------------------
+
+    #[test]
+    fn strip_ts_extension_removes_ts_jsx_variants() {
+        assert_eq!(strip_ts_extension("a.ts"), "a");
+        assert_eq!(strip_ts_extension("a.tsx"), "a");
+        assert_eq!(strip_ts_extension("a.mjs"), "a");
+        assert_eq!(strip_ts_extension("a.cts"), "a");
+    }
+
+    #[test]
+    fn strip_ts_extension_strips_d_dot_ts_to_base_name() {
+        // `.d.ts` strips both the `.ts` and the trailing `.d`.
+        assert_eq!(strip_ts_extension("types.d.ts"), "types");
+    }
+
+    #[test]
+    fn strip_ts_extension_leaves_unknown_extensions_untouched() {
+        assert_eq!(strip_ts_extension("readme.md"), "readme.md");
+        assert_eq!(strip_ts_extension("file"), "file");
+    }
+
+    // ---- compute_relative_path -------------------------------------------
+
+    #[test]
+    fn compute_relative_path_same_directory() {
+        // src/ → src/b.ts means b is a sibling: `./b.ts`.
+        assert_eq!(compute_relative_path("src", "src/b.ts"), "./b.ts");
+    }
+
+    #[test]
+    fn compute_relative_path_subdirectory() {
+        // src/ → src/lib/b.ts: `./lib/b.ts`.
+        assert_eq!(compute_relative_path("src", "src/lib/b.ts"), "./lib/b.ts");
+    }
+
+    #[test]
+    fn compute_relative_path_parent_directory() {
+        // src/sub → src/b.ts: `../b.ts`.
+        assert_eq!(compute_relative_path("src/sub", "src/b.ts"), "../b.ts");
+    }
+
+    #[test]
+    fn compute_relative_path_disjoint_branches() {
+        // src/a → other/b.ts: `../../other/b.ts`.
+        assert_eq!(
+            compute_relative_path("src/a", "other/b.ts"),
+            "../../other/b.ts"
+        );
+    }
+
+    #[test]
+    fn compute_relative_path_handles_leading_slashes() {
+        // Leading slashes treated as empty parts and skipped.
+        assert_eq!(compute_relative_path("/src", "/src/a.ts"), "./a.ts");
+    }
+}
