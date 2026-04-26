@@ -2328,7 +2328,11 @@ fn expr_prefix_postfix_unary() {
 }
 
 #[test]
-fn expr_prefix_update_delete_recovery_drops_outer_update() {
+fn expr_prefix_update_delete_recovery_keeps_outer_update_with_missing_operand() {
+    // `++ delete foo.bar` parses as two statements in tsc:
+    //   1) PrefixUnaryExpression `++<missing>` (TS1109 at `delete`)
+    //   2) PrefixUnaryExpression `delete foo.bar`
+    // The JS emitter prints them as `++;\ndelete foo.bar;`.
     let source = "++ delete foo.bar;";
     let (parser, root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
@@ -2343,26 +2347,58 @@ fn expr_prefix_update_delete_recovery_drops_outer_update() {
     );
 
     let arena = parser.get_arena();
-    let stmt = arena.get(get_first_statement(arena, root)).expect("stmt");
-    let expr_stmt = arena
-        .get_expression_statement(stmt)
-        .expect("expression statement");
-    let expr = arena.get(expr_stmt.expression).expect("expression");
+    let stmts = get_statements(arena, root);
     assert_eq!(
-        expr.kind,
-        syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
-        "recovered expression should still be unary"
+        stmts.len(),
+        2,
+        "expected outer ++ and inner delete to be two statements: {stmts:?}"
     );
-    let unary = arena.get_unary_expr(expr).expect("unary expression");
+
+    let outer = arena.get(stmts[0]).expect("outer stmt");
+    let outer_expr_stmt = arena
+        .get_expression_statement(outer)
+        .expect("outer expression statement");
+    let outer_expr = arena.get(outer_expr_stmt.expression).expect("outer expr");
     assert_eq!(
-        unary.operator,
+        outer_expr.kind,
+        syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
+        "outer ++ should be a prefix unary expression"
+    );
+    let outer_unary = arena.get_unary_expr(outer_expr).expect("outer unary data");
+    assert_eq!(
+        outer_unary.operator,
+        SyntaxKind::PlusPlusToken as u16,
+        "outer operator should be `++`"
+    );
+    assert!(
+        outer_unary.operand.is_none(),
+        "outer ++ should have a missing operand"
+    );
+
+    let inner = arena.get(stmts[1]).expect("inner stmt");
+    let inner_expr_stmt = arena
+        .get_expression_statement(inner)
+        .expect("inner expression statement");
+    let inner_expr = arena.get(inner_expr_stmt.expression).expect("inner expr");
+    assert_eq!(
+        inner_expr.kind,
+        syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
+        "inner delete should be a prefix unary expression"
+    );
+    let inner_unary = arena.get_unary_expr(inner_expr).expect("inner unary data");
+    assert_eq!(
+        inner_unary.operator,
         SyntaxKind::DeleteKeyword as u16,
-        "outer prefix update should be dropped during recovery"
+        "inner operator should be `delete`"
     );
 }
 
 #[test]
-fn expr_prefix_update_repeated_operator_recovers_to_inner_update() {
+fn expr_prefix_update_repeated_operator_keeps_outer_update_with_missing_operand() {
+    // `++\n++y;` parses as two statements in tsc:
+    //   1) PrefixUnaryExpression `++<missing>` (TS1109 at second `++`)
+    //   2) PrefixUnaryExpression `++y`
+    // The JS emitter prints them as `++;\n++y;`.
     let source = "++\n++y;";
     let (parser, root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
@@ -2377,23 +2413,41 @@ fn expr_prefix_update_repeated_operator_recovers_to_inner_update() {
     );
 
     let arena = parser.get_arena();
-    let stmt = arena.get(get_first_statement(arena, root)).expect("stmt");
-    let expr_stmt = arena
-        .get_expression_statement(stmt)
-        .expect("expression statement");
-    let expr = arena.get(expr_stmt.expression).expect("expression");
+    let stmts = get_statements(arena, root);
     assert_eq!(
-        expr.kind,
-        syntax_kind_ext::PREFIX_UNARY_EXPRESSION,
-        "recovered expression should keep the inner prefix update"
+        stmts.len(),
+        2,
+        "expected outer ++ and inner ++y to be two statements: {stmts:?}"
     );
-    let unary = arena.get_unary_expr(expr).expect("unary expression");
-    assert_eq!(unary.operator, SyntaxKind::PlusPlusToken as u16);
-    let operand = arena.get(unary.operand).expect("inner operand");
+
+    let outer = arena.get(stmts[0]).expect("outer stmt");
+    let outer_expr_stmt = arena
+        .get_expression_statement(outer)
+        .expect("outer expression statement");
+    let outer_expr = arena.get(outer_expr_stmt.expression).expect("outer expr");
+    assert_eq!(outer_expr.kind, syntax_kind_ext::PREFIX_UNARY_EXPRESSION);
+    let outer_unary = arena.get_unary_expr(outer_expr).expect("outer unary data");
+    assert_eq!(outer_unary.operator, SyntaxKind::PlusPlusToken as u16);
+    assert!(
+        outer_unary.operand.is_none(),
+        "outer ++ should have a missing operand"
+    );
+
+    let inner = arena.get(stmts[1]).expect("inner stmt");
+    let inner_expr_stmt = arena
+        .get_expression_statement(inner)
+        .expect("inner expression statement");
+    let inner_expr = arena.get(inner_expr_stmt.expression).expect("inner expr");
+    assert_eq!(inner_expr.kind, syntax_kind_ext::PREFIX_UNARY_EXPRESSION);
+    let inner_unary = arena.get_unary_expr(inner_expr).expect("inner unary data");
+    assert_eq!(inner_unary.operator, SyntaxKind::PlusPlusToken as u16);
+    let inner_operand = arena
+        .get(inner_unary.operand)
+        .expect("inner operand should exist");
     assert_eq!(
-        operand.kind,
+        inner_operand.kind,
         SyntaxKind::Identifier as u16,
-        "inner update should still target the identifier"
+        "inner ++ should target the identifier"
     );
 }
 
@@ -2482,6 +2536,53 @@ fn expr_prefix_update_repeated_operator_after_line_break_matches_sputnik_anchor(
         ts1109.start,
         source.rfind("\n++\n").expect("second update line") as u32 + 1,
         "TS1109 should anchor at the second `++`: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn expr_prefix_update_repeated_operator_after_line_break_matches_sputnik_shape() {
+    // Sputnik S7.9_A5.7_T1: tsc emits two top-level statements after the var
+    // declarations: `++<missing>;` and `++y;`. Track the AST shape so the JS
+    // emitter prints the `++;\n++y;` baseline.
+    let source = "var x=0, y=0;\nvar z=\nx\n++\n++\ny\n";
+    let (parser, root) = parse_source(source);
+
+    let arena = parser.get_arena();
+    let stmts = get_statements(arena, root);
+    assert_eq!(
+        stmts.len(),
+        4,
+        "expected 4 top-level statements (two `var`s, outer `++`, inner `++y`): {stmts:?}"
+    );
+
+    let outer = arena.get(stmts[2]).expect("outer ++");
+    let outer_expr_stmt = arena
+        .get_expression_statement(outer)
+        .expect("outer expression statement");
+    let outer_expr = arena.get(outer_expr_stmt.expression).expect("outer expr");
+    assert_eq!(outer_expr.kind, syntax_kind_ext::PREFIX_UNARY_EXPRESSION);
+    let outer_unary = arena.get_unary_expr(outer_expr).expect("outer unary data");
+    assert_eq!(outer_unary.operator, SyntaxKind::PlusPlusToken as u16);
+    assert!(
+        outer_unary.operand.is_none(),
+        "outer ++ should have a missing operand"
+    );
+
+    let inner = arena.get(stmts[3]).expect("inner ++y");
+    let inner_expr_stmt = arena
+        .get_expression_statement(inner)
+        .expect("inner expression statement");
+    let inner_expr = arena.get(inner_expr_stmt.expression).expect("inner expr");
+    assert_eq!(inner_expr.kind, syntax_kind_ext::PREFIX_UNARY_EXPRESSION);
+    let inner_unary = arena.get_unary_expr(inner_expr).expect("inner unary data");
+    assert_eq!(inner_unary.operator, SyntaxKind::PlusPlusToken as u16);
+    let inner_operand = arena
+        .get(inner_unary.operand)
+        .expect("inner operand should exist");
+    assert_eq!(
+        inner_operand.kind,
+        SyntaxKind::Identifier as u16,
+        "inner ++ should target the identifier `y`"
     );
 }
 
