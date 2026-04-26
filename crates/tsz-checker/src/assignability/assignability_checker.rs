@@ -1026,7 +1026,25 @@ impl<'a> CheckerState<'a> {
             || (should_suppress_for_complex_type(target)
                 && contains_type_parameters(source)
                 && !is_callable_or_function(target)
-                && !target_contains_indexed_access())
+                && !target_contains_indexed_access()
+                // Don't suppress when target is a template-literal pattern and the
+                // source is a bare type parameter. The pattern `${T}` is *not*
+                // trivially assignable from a bare T: T's instantiation could be
+                // a literal subtype ("a") that does not structurally match the
+                // template's pattern. tsc emits TS2322 for these cases (see
+                // templateLiteralTypes5.ts:14:11 — `const test1: \`${T3}\` = x`).
+                // Restrict the carve-out to bare type-parameter sources so that
+                // template-vs-template generic comparisons (e.g.
+                // `\`...${Uppercase<T>}.4\`` vs `\`...${Uppercase<T>}.3\``) keep
+                // their existing suppression — tsc tolerates those under generic
+                // constraint relationships.
+                && !(crate::query_boundaries::common::is_template_literal_type(
+                    self.ctx.types,
+                    target,
+                ) && crate::query_boundaries::common::is_type_parameter(
+                    self.ctx.types,
+                    source,
+                )))
             // Suppress TS2322 for callable types where the source contains generic type
             // parameters that may not have been fully inferred from context. When both
             // source and target contain type parameters that are COMPLETELY disjoint
