@@ -139,6 +139,8 @@ lto = "thin"
 
 [profile.ci-unit]
 # Used by cargo nextest in CI unit suite to cap peak LLVM memory.
-# 256 codegen-units (dev default) × HOST_CPUS concurrent jobs = OOM on large runners.
+# debug=2 (inherited from dev) × codegen-units × concurrent jobs = OOM on 8-CPU runners.
+# Disabling debug info is the single largest memory win (~3-4× reduction in LLVM backend RSS).
 inherits = "dev"
-codegen-units = 16
+debug = false
+codegen-units = 8
