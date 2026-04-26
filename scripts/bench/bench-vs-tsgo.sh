@@ -1644,12 +1644,10 @@ ensure_large_ts_repo_fixture() {
         pnpm --dir "$LARGE_TS_DIR" install --frozen-lockfile --silent
         touch "$deps_stamp"
     fi
-    # Use the repository's real tsconfig.json for large-ts-repo; skip synthetic
-    # flat-config generation used by previous benchmark iterations.
-    return
-
-    # Create flat tsconfig (includes all files directly) for consistent benchmarking.
-    # Note: tsz supports --build mode, but we use flat config for apples-to-apples comparison.
+    # The root tsconfig.json in large-ts-repo uses project references, so
+    # `tsc/tsgo/tsz --noEmit -p tsconfig.json` exits almost immediately
+    # without type-checking anything. Use a flat tsconfig that directly
+    # includes all source files for an apples-to-apples measurement.
     local flat_tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
     if [ ! -f "$flat_tsconfig" ]; then
         cat > "$flat_tsconfig" << 'FLATEOF'
@@ -1683,11 +1681,14 @@ run_large_ts_repo_benchmarks() {
     ensure_large_ts_repo_fixture
     echo -e "${GREEN}✓${NC} large-ts-repo pinned at $(git -C "$LARGE_TS_DIR" rev-parse --short HEAD)"
 
-    local tsconfig="$LARGE_TS_DIR/tsconfig.json"
+    # Use the flat tsconfig so all source files are included in a single
+    # compilation pass. The root tsconfig.json uses project references and
+    # completes in milliseconds without actually checking any files.
+    local tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
     local src_dir="$LARGE_TS_DIR/packages"
 
     if [ ! -f "$tsconfig" ]; then
-        echo -e "${RED}✗ tsconfig not found: $tsconfig${NC}"
+        echo -e "${RED}✗ tsconfig.flat.json not found (ensure_large_ts_repo_fixture should have created it)${NC}"
         return
     fi
 

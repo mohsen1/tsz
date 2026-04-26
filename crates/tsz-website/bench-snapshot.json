@@ -9,25 +9,13 @@
     "tsc": "/workspace/.target-bench/tools/tsc/node_modules/.bin/tsc"
   },
   "totals": {
-    "benchmarks_run": 26,
-    "rows": 25,
-    "tsz_wins": 2,
+    "benchmarks_run": 25,
+    "rows": 24,
+    "tsz_wins": 1,
     "tsgo_wins": 21,
     "error_cases": 2
   },
   "results": [
-    {
-      "name": "large-ts-repo",
-      "lines": 408410,
-      "kb": 59983,
-      "tsz_ms": 12.68,
-      "tsgo_ms": 109.76,
-      "tsz_lps": 32199769,
-      "tsgo_lps": 3720910,
-      "winner": "tsz",
-      "factor": 8.65,
-      "status": null
-    },
     {
       "name": "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts",
       "lines": 8012,
