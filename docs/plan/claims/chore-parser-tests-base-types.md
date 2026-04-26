@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `chore/parser-tests-base-types`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1320
+- **Status**: ready
 - **Workstream**: 8.x (DRY/test-coverage backfill)
 
 ## Intent
@@ -28,4 +28,6 @@ Pure additive — no behavior changes.
 
 ## Verification
 
-- `cargo nextest run -p tsz-parser --lib` (all parser tests pass)
+- `cargo nextest run -p tsz-parser --lib` (638 tests pass; 31 new in `base_tests`)
+- `cargo clippy -p tsz-parser --lib --tests --all-features -- -D warnings` (clean)
+- `cargo fmt -p tsz-parser --check` (clean)
