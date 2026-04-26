@@ -1489,11 +1489,6 @@ impl ParserState {
             ));
         }
 
-        if is_duplicate {
-            self.skip_heritage_type_references_for_recovery();
-            return None;
-        }
-
         let type_ref = self.parse_heritage_type_reference();
         let mut type_refs = vec![type_ref];
 
@@ -1512,12 +1507,17 @@ impl ParserState {
                 );
                 break;
             }
-            self.parse_error_at(
-                self.token_pos(),
-                0,
-                "Classes can only extend a single class.",
-                diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
-            );
+            // Only emit "Classes can only extend a single class" for the first
+            // (non-duplicate) extends clause. For a duplicate `extends` clause,
+            // the duplicate-keyword diagnostic already covers the bases.
+            if !is_duplicate {
+                self.parse_error_at(
+                    self.token_pos(),
+                    0,
+                    "Classes can only extend a single class.",
+                    diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
+                );
+            }
             let extra_ref = self.parse_heritage_type_reference();
             type_refs.push(extra_ref);
         }

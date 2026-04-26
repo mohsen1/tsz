@@ -1573,7 +1573,12 @@ fn class_extends_implements() {
 }
 
 #[test]
-fn class_duplicate_extends_recovery_discards_duplicate_clause_types() {
+fn class_duplicate_extends_recovery_keeps_duplicate_clause_types() {
+    // tsc reports TS1172 ('extends' clause already seen) but still preserves
+    // the duplicate clause in the AST so JS emit prints `extends A extends B`
+    // verbatim (matching tsc baseline output for `extendsClauseAlreadySeen`
+    // and `parserClassDeclaration2`).  Checker iterators that take the
+    // .first() heritage clause continue to ignore the duplicate.
     let (parser, root) = parse_source("class C extends A extends B {}");
     let codes: Vec<u32> = parser
         .get_diagnostics()
@@ -1593,16 +1598,26 @@ fn class_duplicate_extends_recovery_discards_duplicate_clause_types() {
     let heritage = class.heritage_clauses.as_ref().expect("heritage clauses");
     assert_eq!(
         heritage.nodes.len(),
-        1,
-        "duplicate extends recovery should keep only the first heritage clause"
+        2,
+        "duplicate extends recovery should keep both heritage clauses for emit parity"
     );
 
-    let clause_node = arena.get(heritage.nodes[0]).expect("heritage node");
-    let clause = arena.get_heritage(clause_node).expect("heritage data");
+    let first_node = arena.get(heritage.nodes[0]).expect("first heritage node");
+    let first = arena.get_heritage(first_node).expect("first heritage data");
     assert_eq!(
-        clause.types.nodes.len(),
+        first.types.nodes.len(),
         1,
-        "duplicate extends recovery should keep only the first base type"
+        "first extends clause should keep its base type"
+    );
+
+    let second_node = arena.get(heritage.nodes[1]).expect("second heritage node");
+    let second = arena
+        .get_heritage(second_node)
+        .expect("second heritage data");
+    assert_eq!(
+        second.types.nodes.len(),
+        1,
+        "duplicate extends clause should keep its base type so emit prints it"
     );
 }
 
