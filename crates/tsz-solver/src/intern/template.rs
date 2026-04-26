@@ -422,8 +422,68 @@ impl TypeInterner {
             }
         }
 
+        // Mirror tsc's `getTemplateLiteralType` collapse: a template literal
+        // whose only span is a single pattern-literal type (e.g.
+        // `Uppercase<\`${number}\`>`) is structurally identical to that span
+        // itself. Collapsing avoids wrapping pattern-literal placeholders in
+        // an extra `${...}` layer when callers re-construct templates around
+        // already-canonical pattern types (see
+        // `apply_string_intrinsic_to_template_literal`). See checker.ts
+        // `getTemplateLiteralType` "Normalize `${Mapping<xxx>}` into Mapping<xxx>".
+        if let [TemplateSpan::Type(only_type)] = normalized.as_slice() {
+            let only_type = *only_type;
+            if self.is_pattern_literal_type(only_type) {
+                return only_type;
+            }
+        }
+
         let list_id = self.intern_template_list(normalized);
         self.intern(TypeData::TemplateLiteral(list_id))
+    }
+
+    /// Check if a type is a "pattern literal type": a `TemplateLiteral` whose
+    /// every type span is a pattern-literal placeholder, or a `StringIntrinsic`
+    /// over a pattern-literal placeholder.
+    ///
+    /// Mirrors tsc's `isPatternLiteralType`.
+    fn is_pattern_literal_type(&self, type_id: TypeId) -> bool {
+        match self.lookup(type_id) {
+            Some(TypeData::TemplateLiteral(list_id)) => {
+                let spans = self.template_list(list_id);
+                spans.iter().all(|span| match span {
+                    TemplateSpan::Text(_) => true,
+                    TemplateSpan::Type(t) => self.is_pattern_literal_placeholder_type(*t),
+                })
+            }
+            Some(TypeData::StringIntrinsic { type_arg, .. }) => {
+                self.is_pattern_literal_placeholder_type(type_arg)
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a type is a "pattern literal placeholder": one of the
+    /// non-string primitives that can stand in for a stringified value in a
+    /// template literal pattern (`number`, `bigint`, `string`, `any`), or
+    /// itself a pattern literal type.
+    ///
+    /// Mirrors tsc's `isPatternLiteralPlaceholderType` (minus intersection
+    /// handling, which is not needed for the current
+    /// `getTemplateLiteralType`-style collapse).
+    fn is_pattern_literal_placeholder_type(&self, type_id: TypeId) -> bool {
+        match self.lookup(type_id) {
+            Some(TypeData::Intrinsic(kind)) => matches!(
+                kind,
+                crate::types::IntrinsicKind::Any
+                    | crate::types::IntrinsicKind::String
+                    | crate::types::IntrinsicKind::Number
+                    | crate::types::IntrinsicKind::Bigint
+            ),
+            Some(TypeData::TemplateLiteral(_)) | Some(TypeData::StringIntrinsic { .. }) => {
+                self.is_pattern_literal_type(type_id)
+            }
+            _ => false,
+        }
     }
 
     /// Get the interpolation positions from a template literal type
