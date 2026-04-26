@@ -1734,6 +1734,16 @@ pub(crate) fn widen_type_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId 
     tsz_solver::widen_type_deep(db, type_id)
 }
 
+/// Display-widen a type for TS2403 redeclaration messages.
+///
+/// Thin boundary wrapper over `tsz_solver::display_widen_for_redeclaration`.
+/// See the solver definition for semantics — preserves top-level literal /
+/// literal-union types while deep-widening fresh literals nested inside
+/// compound shapes.
+pub(crate) fn display_widen_for_redeclaration(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::display_widen_for_redeclaration(db, type_id)
+}
+
 pub(crate) fn string_intrinsic_components(
     db: &dyn TypeDatabase,
     type_id: TypeId,
