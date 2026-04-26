@@ -1270,8 +1270,26 @@ impl<'a> PropertyAccessEvaluator<'a> {
         prop_name: &str,
         prop_atom: Atom,
     ) -> PropertyAccessResult {
-        // Try hardcoded well-known Function members first (fast path, avoids
-        // pulling in the full Function interface for every property access).
+        // STEP 1: Consult the boxed `Function` interface from lib.d.ts FIRST so
+        // user augmentations (e.g., `interface Function { now(): string; }`)
+        // and target-specific lib differences win over the hardcoded list
+        // below. Mirrors the primitive resolver at `resolve_intrinsic_property`
+        // — boxed first, hardcoded only as a no-lib bootstrap.
+        //
+        // Robustness audit (PR #O, item 15 in
+        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`).
+        if let Some(boxed_type) =
+            crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Function)
+        {
+            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
+            if !result.is_not_found() {
+                return result;
+            }
+        }
+
+        // STEP 2: Hardcoded well-known Function members (no-lib / bootstrap path).
+        // Reached when the boxed `Function` interface is unavailable (no lib loaded)
+        // or didn't resolve the property.
         match prop_name {
             "apply" | "call" | "bind" => return self.method_result(TypeId::ANY),
             "toString" => return self.method_result(TypeId::STRING),
@@ -1284,18 +1302,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {
             return result;
-        }
-
-        // Consult the boxed Function interface from lib.d.ts for augmented members.
-        // This handles user augmentations (e.g., `interface Function { now(): string; }`)
-        // and any Function members not in the hardcoded list above.
-        if let Some(boxed_type) =
-            crate::def::resolver::TypeResolver::get_boxed_type(self.db, IntrinsicKind::Function)
-        {
-            let result = self.resolve_property_access_inner(boxed_type, prop_name, Some(prop_atom));
-            if !result.is_not_found() {
-                return result;
-            }
         }
 
         PropertyAccessResult::PropertyNotFound {
