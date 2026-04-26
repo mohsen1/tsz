@@ -2806,7 +2806,7 @@ fn build_lib_bound_file_for_interface_checks(
         augmentation_target_modules: FxHashMap::default(),
         flow_nodes: std::sync::Arc::new(tsz::binder::FlowNodeArena::default()),
         node_flow: std::sync::Arc::new(FxHashMap::default()),
-        switch_clause_to_switch: FxHashMap::default(),
+        switch_clause_to_switch: std::sync::Arc::new(FxHashMap::default()),
         is_external_module: lib_file.binder.is_external_module,
         expando_properties: FxHashMap::default(),
         file_features: tsz::binder::FileFeatures::NONE,

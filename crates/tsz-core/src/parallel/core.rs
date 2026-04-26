@@ -558,8 +558,11 @@ pub struct BindResult {
     /// `node_flow`.
     pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
-    /// Used by control flow analysis for switch exhaustiveness checking
-    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+    /// Used by control flow analysis for switch exhaustiveness checking.
+    ///
+    /// `Arc`-wrapped so per-file binders share via `Arc::clone` instead of
+    /// deep-cloning. Read-only after binding completes.
+    pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     /// Whether this file is an external module (has imports/exports)
     pub is_external_module: bool,
     /// Expando property assignments detected during binding
@@ -1466,8 +1469,11 @@ pub struct BoundFile {
     /// and `node_symbols` (#1227) Arc migrations.
     pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     /// Map from switch clause `NodeIndex` to parent switch statement `NodeIndex`
-    /// Used by control flow analysis for switch exhaustiveness checking
-    pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+    /// Used by control flow analysis for switch exhaustiveness checking.
+    ///
+    /// `Arc`-wrapped so per-file binders share via `Arc::clone` instead of
+    /// deep-cloning. Read-only after binding completes.
+    pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     /// Whether this file is an external module (has imports/exports)
     pub is_external_module: bool,
     /// Expando property assignments detected during binding
@@ -4119,7 +4125,7 @@ fn build_lib_bound_file_for_interface_checks(
         augmentation_target_modules: FxHashMap::default(),
         flow_nodes: Arc::new(FlowNodeArena::default()),
         node_flow: Arc::new(FxHashMap::default()),
-        switch_clause_to_switch: FxHashMap::default(),
+        switch_clause_to_switch: Arc::new(FxHashMap::default()),
         is_external_module: lib_file.binder.is_external_module,
         expando_properties: FxHashMap::default(),
         file_features: crate::binder::FileFeatures::NONE,

@@ -1206,7 +1206,7 @@ impl BinderState {
                             has_default_clause = true;
                         }
 
-                        self.switch_clause_to_switch.insert(clause_idx.0, idx);
+                        Arc::make_mut(&mut self.switch_clause_to_switch).insert(clause_idx.0, idx);
 
                         self.current_flow = pre_switch_flow;
                         if clause.expression.is_some() {
