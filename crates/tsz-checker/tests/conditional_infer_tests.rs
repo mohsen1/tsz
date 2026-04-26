@@ -113,6 +113,92 @@ const x: R1 = 42; // should error: number not assignable to string
     );
 }
 
+/// Regression test: `Prepend<V, T>` infers R = `[V, ...T]` from
+/// `(head: V, ...args: T) extends (...args: infer R)`.
+///
+/// Previously `match_rest_infer_tuple` returned `false` when source params had
+/// both fixed and rest elements (mixed case), causing `Prepend` to evaluate to
+/// `any` (false branch) instead of the correct prepended tuple type.
+#[test]
+fn test_prepend_infer_rest_from_mixed_params() {
+    // Prepend<V, T> infers R = [V, ...T] from (head: V, ...args: T) => void
+    // BuildTree uses Prepend to count depth: terminates when Length<I> == N.
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type Prepend<V, T extends any[]> = ((head: V, ...args: T) => void) extends (
+  ...args: infer R
+) => void
+  ? R
+  : any;
+
+// Prepend<any, []> must be [any] (length 1), not any.
+type P0 = Prepend<any, []>;
+type L0 = Length<P0>;
+const l0: L0 = 1; // Must not error
+
+// Prepend<any, [any]> must be [any, any] (length 2).
+type P1 = Prepend<any, [any]>;
+type L1 = Length<P1>;
+const l1: L1 = 2; // Must not error
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected Prepend infer pattern to check cleanly, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Regression test: BuildTree recursive conditional type terminates at depth N.
+///
+/// Without the Prepend fix, BuildTree<User, 2> would not terminate at depth 2
+/// because Prepend evaluated to `any` instead of a concrete 2-element tuple,
+/// preventing `Length<I> extends N ? 1 : 0` from evaluating to `1` at the
+/// right depth.  The TS2741 false positive was the symptom — GrandUser
+/// appeared to have an infinitely-required `children` chain.
+#[test]
+fn test_build_tree_no_false_ts2741() {
+    // Without the fix, Prepend evaluated to `any`, causing BuildTree never to
+    // terminate and emitting TS2741 (required property `children` missing).
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type Prepend<V, T extends any[]> = ((head: V, ...args: T) => void) extends (
+  ...args: infer R
+) => void
+  ? R
+  : any;
+
+type BuildTree<T, N extends number = -1, I extends any[] = []> = {
+  1: T;
+  0: T & { children: BuildTree<T, N, Prepend<any, I>>[] };
+}[Length<I> extends N ? 1 : 0];
+
+interface User {
+  name: string;
+}
+
+type GrandUser = BuildTree<User, 2>;
+
+// A correctly-typed assignment — depth-2 tree has no `children` requirement
+// at depth 2, so the object literal should be valid.
+const grandUser: GrandUser = {
+  name: "Grand User",
+  children: [
+    { name: "Son", children: [{ name: "Grandson" }] }
+  ]
+};
+"#;
+    let codes = tsz_checker::test_utils::check_source_codes(source);
+    assert!(
+        !codes.contains(&2741),
+        "Must NOT emit TS2741 — BuildTree must terminate at depth 2 without false property-missing errors, got: {:?}",
+        codes
+    );
+}
+
 #[test]
 fn test_utility_types_function_keys_generic_pick_has_no_false_diagnostics() {
     let source = r#"
