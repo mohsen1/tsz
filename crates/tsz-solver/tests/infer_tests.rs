@@ -345,6 +345,104 @@ fn test_resolve_from_property_candidates_prefers_source_order_on_union() {
 }
 
 #[test]
+fn test_resolve_from_property_candidates_preserves_nullable_strip_union() {
+    // Regression for `widenToAny1.ts`:
+    //
+    //   function foo1<T>(f1: { x: T; y: T }): T { return undefined; }
+    //   var z1: number = foo1({ x: undefined, y: "def" });
+    //
+    // tsc's getCommonSupertype strips `undefined` from the candidate set,
+    // unifies the remaining `string` candidate, then re-attaches `undefined`
+    // via getNullableType, producing `T = string | undefined`. The first-
+    // property-wins fallback used for non-nullable mismatches (e.g., `{x:3,y:""}`
+    // → number) must NOT collapse this nullable-stripped union back to a
+    // single member, otherwise we'd infer `T = undefined` and emit
+    // `Type 'undefined' is not assignable to type 'number'` instead of tsc's
+    // `Type 'string | undefined' is not assignable to type 'number'`.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
+    let x_name = interner.intern_string("x");
+    let y_name = interner.intern_string("y");
+
+    // Candidate from property `x: T` ← undefined.
+    // Object-literal source widening (widen_object_literal_properties) happens
+    // BEFORE constraint collection in the call resolver, so by the time we
+    // reach inference resolution the candidates are already primitive types
+    // (`string`, not the fresh `"def"` literal).
+    ctx.add_property_candidate_with_index(
+        var,
+        TypeId::UNDEFINED,
+        crate::types::InferencePriority::NakedTypeVariable,
+        0,
+        Some(x_name),
+        false,
+    );
+    // Candidate from property `y: T` ← string (already widened from "def").
+    ctx.add_property_candidate_with_index(
+        var,
+        TypeId::STRING,
+        crate::types::InferencePriority::NakedTypeVariable,
+        1,
+        Some(y_name),
+        false,
+    );
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+    assert_eq!(
+        result, expected,
+        "T should be inferred as `string | undefined` (nullable preserved \
+         after stripping during getCommonSupertype), not collapsed to a \
+         single candidate via the first-property-wins fallback"
+    );
+}
+
+#[test]
+fn test_resolve_from_property_candidates_first_wins_for_non_nullable_mismatch() {
+    // Companion to `_preserves_nullable_strip_union`. When neither candidate
+    // is nullable, the first-property-wins fallback must still apply: tsc
+    // infers `T = number` for `foo<T>(n: {x: T, y: T})` called with
+    // a primitive `{x: number, y: string}` source, NOT `T = number | string`.
+    //
+    // Using non-fresh primitive types (NUMBER/STRING) here mirrors the
+    // existing `_prefers_source_order_on_union` test fixture so the fallback
+    // returns the candidate's stored type directly (without re-widening).
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let var = ctx.fresh_type_param(interner.intern_string("T"), false);
+    let x_name = interner.intern_string("x");
+    let y_name = interner.intern_string("y");
+
+    ctx.add_property_candidate_with_index(
+        var,
+        TypeId::NUMBER,
+        crate::types::InferencePriority::NakedTypeVariable,
+        0,
+        Some(x_name),
+        false,
+    );
+    ctx.add_property_candidate_with_index(
+        var,
+        TypeId::STRING,
+        crate::types::InferencePriority::NakedTypeVariable,
+        1,
+        Some(y_name),
+        false,
+    );
+
+    let result = ctx.resolve_with_constraints(var).unwrap();
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "T should be inferred as `number` (first-property-wins) for \
+         non-nullable mismatched candidates, not a `number | string` union"
+    );
+}
+
+#[test]
 fn test_fresh_object_property_literal_is_widened() {
     // When a literal type is inferred from a fresh object literal property,
     // it should be widened (e.g., "hello" → string). This matches TSC's
