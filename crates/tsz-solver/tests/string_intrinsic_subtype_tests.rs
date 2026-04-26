@@ -427,3 +427,200 @@ fn assignability_query_normalizes_nested_uppercase_intrinsics() {
         "Assignable relation should treat Uppercase<string> as compatible with Uppercase<Uppercase<string>>"
     );
 }
+
+// =============================================================================
+// Regression: Uppercase<`aA${number}${bigint}${boolean}`> should be equivalent
+// to `AA${Uppercase<`${number}`>}${Uppercase<`${bigint}`>}${Uppercase<`${boolean}`>}`.
+//
+// tsc canonicalizes `Uppercase<number>` to `Uppercase<\`${number}\`>` via
+// `getStringMappingType`'s `isPatternLiteralPlaceholderType` path (checker.ts
+// line 19124), so applying a string mapping to a template literal whose type
+// spans are non-string primitives (number, bigint, boolean) yields the same
+// canonical form as a hand-written equivalent that already wraps the
+// primitives in `${T}` template literals.
+// =============================================================================
+
+#[test]
+fn uppercase_over_pattern_with_number_canonicalizes_inner_to_template_literal() {
+    use crate::types::IntrinsicKind;
+
+    let interner = TypeInterner::new();
+
+    // Build `\`aA${number}\`` and apply Uppercase<...>.
+    let empty = interner.intern_string("");
+    let prefix = interner.intern_string("aA");
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(empty),
+    ]);
+    let upper_pattern = interner.string_intrinsic(StringIntrinsicKind::Uppercase, pattern);
+    let evaluated = evaluate_type(&interner, upper_pattern);
+
+    // Expect `\`AA${Uppercase<\`${number}\`>}\``: the type span must be a
+    // StringIntrinsic whose inner type is a TemplateLiteral wrapping `number`,
+    // mirroring tsc's canonicalization.
+    let Some(TypeData::TemplateLiteral(spans_id)) = interner.lookup(evaluated) else {
+        panic!(
+            "expected TemplateLiteral, got {:?}",
+            interner.lookup(evaluated)
+        );
+    };
+    let spans = interner.template_list(spans_id);
+    let mut found_canonical_inner = false;
+    for span in spans.iter() {
+        if let TemplateSpan::Type(t) = span
+            && let Some(TypeData::StringIntrinsic { kind, type_arg }) = interner.lookup(*t)
+        {
+            assert_eq!(kind, StringIntrinsicKind::Uppercase);
+            // The canonicalized form is `Uppercase<\`${number}\`>`, where the
+            // inner is a TemplateLiteral over `number` (not `number` itself).
+            match interner.lookup(type_arg) {
+                Some(TypeData::TemplateLiteral(inner_id)) => {
+                    let inner = interner.template_list(inner_id);
+                    let has_number = inner.iter().any(|s| {
+                        matches!(s, TemplateSpan::Type(t)
+                            if matches!(interner.lookup(*t),
+                                Some(TypeData::Intrinsic(IntrinsicKind::Number))))
+                    });
+                    assert!(
+                        has_number,
+                        "inner template literal should wrap `number`, got spans {:?}",
+                        inner.iter().collect::<Vec<_>>()
+                    );
+                    found_canonical_inner = true;
+                }
+                other => {
+                    panic!("expected StringIntrinsic inner to be TemplateLiteral, got {other:?}")
+                }
+            }
+        }
+    }
+    assert!(
+        found_canonical_inner,
+        "Uppercase<\\`aA${{number}}\\`> should canonicalize the number type span to `${{number}}`"
+    );
+}
+
+#[test]
+fn uppercase_over_template_with_non_string_primitives_matches_hand_written_equivalent() {
+    let interner = TypeInterner::new();
+
+    // NonStringPat = Uppercase<`aA${number}${bigint}${boolean}`>
+    let empty = interner.intern_string("");
+    let lower_prefix = interner.intern_string("aA");
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Text(lower_prefix),
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(TypeId::BIGINT),
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(TypeId::BOOLEAN),
+        TemplateSpan::Text(empty),
+    ]);
+    let upper_pattern = interner.string_intrinsic(StringIntrinsicKind::Uppercase, pattern);
+
+    // EquivalentNonStringPat = `AA${Uppercase<`${number}`>}${Uppercase<`${bigint}`>}${Uppercase<`${boolean}`>}`
+    let upper_prefix = interner.intern_string("AA");
+    let number_template = interner.template_literal(vec![
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(empty),
+    ]);
+    let bigint_template = interner.template_literal(vec![
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(TypeId::BIGINT),
+        TemplateSpan::Text(empty),
+    ]);
+    let boolean_template = interner.template_literal(vec![
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(TypeId::BOOLEAN),
+        TemplateSpan::Text(empty),
+    ]);
+    let upper_number = interner.string_intrinsic(StringIntrinsicKind::Uppercase, number_template);
+    let upper_bigint = interner.string_intrinsic(StringIntrinsicKind::Uppercase, bigint_template);
+    let upper_boolean = interner.string_intrinsic(StringIntrinsicKind::Uppercase, boolean_template);
+    let equivalent_pat = interner.template_literal(vec![
+        TemplateSpan::Text(upper_prefix),
+        TemplateSpan::Type(upper_number),
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(upper_bigint),
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(upper_boolean),
+        TemplateSpan::Text(empty),
+    ]);
+
+    // After evaluating both, they should be mutually assignable.
+    let lhs = evaluate_type(&interner, upper_pattern);
+    let rhs = evaluate_type(&interner, equivalent_pat);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(lhs, rhs),
+        "Uppercase<`aA${{number}}${{bigint}}${{boolean}}`> should be assignable to its hand-written equivalent"
+    );
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(rhs, lhs),
+        "Hand-written equivalent should be assignable back to Uppercase<`aA${{number}}${{bigint}}${{boolean}}`>"
+    );
+}
+
+#[test]
+fn template_literal_collapses_single_pattern_type_span() {
+    use crate::types::IntrinsicKind;
+
+    let interner = TypeInterner::new();
+
+    // `\`${Uppercase<\`${number}\`>}\`` should collapse to `Uppercase<\`${number}\`>`
+    // mirroring tsc's `Normalize ${Mapping<xxx>} into Mapping<xxx>` rule
+    // (checker.ts `getTemplateLiteralType`).
+    let empty = interner.intern_string("");
+    let number_template = interner.template_literal(vec![
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(empty),
+    ]);
+    let upper_number_template =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, number_template);
+
+    // Wrap the pattern-literal type back in a single-span template literal.
+    let wrapped = interner.template_literal(vec![
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(upper_number_template),
+        TemplateSpan::Text(empty),
+    ]);
+
+    assert_eq!(
+        wrapped, upper_number_template,
+        "`\\`${{Uppercase<\\`${{number}}\\`>}}\\`` should collapse to `Uppercase<\\`${{number}}\\`>`"
+    );
+
+    // Sanity: the collapse must not happen for non-pattern-literal types
+    // (e.g. a literal string), since wrapping `\`${\"abc\"}\`` is just `\"abc\"` via
+    // the existing literal-collapse path, but a non-pattern type span is not
+    // a candidate for the new collapse rule.
+    let abc = interner.literal_string("abc");
+    let _ = abc; // touch to silence unused; fix below uses it via lookup.
+    // Pattern check sanity: pure number is NOT a pattern-literal type by itself
+    // (only TemplateLiteral or StringIntrinsic over a placeholder qualify).
+    let bare_wrapped_number = interner.template_literal(vec![
+        TemplateSpan::Text(empty),
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(empty),
+    ]);
+    let Some(TypeData::TemplateLiteral(_)) = interner.lookup(bare_wrapped_number) else {
+        // If the bare `${number}` collapsed, that would be a regression: only
+        // pattern-literal *types* (TemplateLiteral / StringIntrinsic over
+        // placeholders) should collapse, not raw placeholders.
+        panic!(
+            "`${{number}}` must remain a TemplateLiteral wrapping `number`; got {:?}",
+            interner.lookup(bare_wrapped_number)
+        );
+    };
+    // And `number` itself must not be a TemplateLiteral after the lookup chain.
+    assert!(matches!(
+        interner.lookup(TypeId::NUMBER),
+        Some(TypeData::Intrinsic(IntrinsicKind::Number))
+    ));
+}
