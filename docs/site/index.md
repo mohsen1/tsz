@@ -1,5 +1,5 @@
 ---
-title: Project Zang
+title: tsz
 layout: layouts/base.njk
 page_class: home
 permalink: /index.html
@@ -7,10 +7,11 @@ permalink: /index.html
 
 # `tsz`
 
-<p class="subtitle"><code>tsz</code> is a TypeScript checker and language service in Rust. It is faster than <code>tsgo</code>. On top of being fast <code>tsz</code> aims to offer a <a href="/sound-mode">Sound Mode</a> for stricter type-checking.</p>
+<p class="subtitle"><code>tsz</code> is a TypeScript checker and language service written in Rust. It is designed to outperform <code>tsgo</code>, and beyond speed, <code>tsz</code> also targets a <a href="/sound-mode">Sound Mode</a> for stricter type-checking.</p>
 
 <blockquote class="wip-warning">
-<p><strong>Work in progress.</strong> This project is not ready for general use yet. Many TypeScript features are still being implemented.</p>
+<h3>Project Status</h3>
+<p><strong>Nearly complete.</strong> TypeScript support is in its final compiler stages, with remaining work focused on performance tuning and LSP support in WebAssembly.</p>
 </blockquote>
 
 ## Performance

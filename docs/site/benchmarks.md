@@ -7,15 +7,15 @@ permalink: /benchmarks/index.html
 
 # Benchmarks
 
-<p class="subtitle">Compiler performance by benchmark category: tsz vs TSGO</p>
+<p class="subtitle">A practical snapshot of tsz vs tsgo, with focus on speed for large TypeScript projects.</p>
 
-Benchmarks are run using [hyperfine](https://github.com/sharkdp/hyperfine) with warmup passes and multiple runs. Each benchmark measures wall-clock time for a full type-check pass (no emit).
+## Summary
 
-tsz is compiled with `--profile dist` (LTO enabled, single codegen unit). tsgo is the native Go compiler from the TypeScript team.
+This page is a quick progress signal for relative performance across benchmark categories. It compares tsz against tsgo, and lower time is faster.
 
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>
-  <span class="bench-legend-item"><span class="bench-legend-swatch tsgo"></span> TSGO (Go compiler)</span>
+  <span class="bench-legend-item"><span class="bench-legend-swatch tsgo"></span> tsgo (Go compiler)</span>
 </div>
 
 ## Category Breakdown
