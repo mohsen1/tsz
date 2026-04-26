@@ -1441,6 +1441,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
         }
 
+        // When both source and target are closed tuples (no rest elements) and
+        // source has more elements than target allows, prefer the arity-mismatch
+        // reason over an element-level type mismatch. This matches tsc, which
+        // reports the outer "Source has N element(s) but target allows only M"
+        // diagnostic instead of drilling into a specific element when the
+        // length already disqualifies the relation.
+        let target_has_rest = target.iter().any(|e| e.rest);
+        let source_has_rest = source.iter().any(|e| e.rest);
+        if !target_has_rest && !source_has_rest && source.len() > target.len() {
+            return Some(SubtypeFailureReason::TupleElementMismatch {
+                source_count: source.len(),
+                target_count: target.len(),
+            });
+        }
+
         for (i, t_elem) in target.iter().enumerate() {
             if t_elem.rest {
                 let expansion = self.expand_tuple_rest(t_elem.type_id);

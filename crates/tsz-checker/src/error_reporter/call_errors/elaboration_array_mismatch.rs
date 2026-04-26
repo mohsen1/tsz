@@ -69,18 +69,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let effective_target_type = self.evaluate_type_with_env(target_type);
-        let effective_target_type = self.resolve_type_for_property_access(effective_target_type);
-        let effective_target_type = self.resolve_lazy_type(effective_target_type);
-        let effective_target_type = self.evaluate_application_type(effective_target_type);
-        let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
-            self.ctx.types,
-            effective_target_type,
-            self.ctx.compiler_options.no_implicit_any,
-        );
-        let tuple_target_elements =
-            crate::query_boundaries::common::tuple_elements(self.ctx.types, effective_target_type);
-
         let analysis = self.analyze_assignability_failure(source_type, target_type);
         match analysis.failure_reason {
             Some(SubtypeFailureReason::TupleElementTypeMismatch {
@@ -107,52 +95,14 @@ impl<'a> CheckerState<'a> {
                 true
             }
             Some(SubtypeFailureReason::TupleElementMismatch { .. }) => {
-                for (index, &elem_idx) in arr.elements.nodes.iter().enumerate() {
-                    let is_spread = self
-                        .ctx
-                        .arena
-                        .get(elem_idx)
-                        .is_some_and(|node| node.kind == syntax_kind_ext::SPREAD_ELEMENT);
-                    if is_spread {
-                        continue;
-                    }
-
-                    let target_element_type =
-                        if let Some(elements) = tuple_target_elements.as_deref() {
-                            let Some(t) = self.elaboration_tuple_element_type_at(elements, index)
-                            else {
-                                continue;
-                            };
-                            t
-                        } else if let Some(t) = ctx_helper.get_tuple_element_type(index) {
-                            t
-                        } else if let Some(t) = ctx_helper.get_array_element_type() {
-                            t
-                        } else if let Some(t) = crate::query_boundaries::common::array_element_type(
-                            self.ctx.types,
-                            effective_target_type,
-                        ) {
-                            t
-                        } else {
-                            continue;
-                        };
-
-                    let elem_type = self.elaboration_source_expression_type(elem_idx);
-                    if elem_type.is_any_unknown_or_error()
-                        || target_element_type.is_any_unknown_or_error()
-                    {
-                        continue;
-                    }
-
-                    if !self.is_assignable_to(elem_type, target_element_type) {
-                        self.error_type_not_assignable_at_with_anchor(
-                            elem_type,
-                            target_element_type,
-                            elem_idx,
-                        );
-                        return true;
-                    }
-                }
+                // Tuple arity mismatch (source has too many or too few elements
+                // for the target tuple). tsc reports this as the outer
+                // "Source has N element(s) but target requires/allows-only M."
+                // sub-message under the call-site TS2345/TS2322 — it does not
+                // drill into a specific source element (even when one of them
+                // would also fail an element-by-element assignability check).
+                // Returning false here lets the outer caller render the
+                // arity-aware TS2345 with related information directly.
                 false
             }
             Some(SubtypeFailureReason::ArrayElementMismatch {
