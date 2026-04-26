@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-catch-invalid-annotation-falls-back-to-any`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1393
+- **Status**: ready
 - **Workstream**: Conformance — fingerprint parity
 
 ## Intent
