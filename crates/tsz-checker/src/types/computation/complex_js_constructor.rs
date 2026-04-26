@@ -228,7 +228,7 @@ impl<'a> CheckerState<'a> {
                     .collect()
             } else {
                 fallback_param_type_map
-                    .clone()
+                    .take()
                     .unwrap_or_else(|| self.js_class_body_param_type_map(body_idx))
             };
 
