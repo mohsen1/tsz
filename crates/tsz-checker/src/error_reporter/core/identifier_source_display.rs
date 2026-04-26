@@ -247,7 +247,7 @@ mod tests {
     fn stable_declaration_resolves_to_variable_decl_node() {
         let source = "let xs = [{ a: 1 }, { a: 2 }];\n".to_string();
 
-        let mut parser = ParserState::new("syn.ts".to_string(), source.clone());
+        let mut parser = ParserState::new("syn.ts".to_string(), source);
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
         let mut binder = BinderState::new();

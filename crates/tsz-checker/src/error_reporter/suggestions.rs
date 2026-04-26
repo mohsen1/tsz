@@ -908,7 +908,7 @@ mod tests {
     fn stable_value_declaration_resolves_to_class_node() {
         let source = "class Foo extends Bar {}\n".to_string();
 
-        let mut parser = ParserState::new("syn.ts".to_string(), source.clone());
+        let mut parser = ParserState::new("syn.ts".to_string(), source);
         let root = parser.parse_source_file();
         let arena = parser.get_arena();
         let mut binder = BinderState::new();
