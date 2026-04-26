@@ -361,11 +361,12 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-                        if !fresh_assignable
-                            && !excess_property_recovery
-                            && !self
-                                .should_defer_contextual_argument_mismatch(arg_type, expected_param)
-                        {
+                        let defer_mismatch = is_type_parameter_type(self.ctx.types, expected_param)
+                            && self.should_defer_contextual_argument_mismatch(
+                                arg_type,
+                                expected_param,
+                            );
+                        if !fresh_assignable && !excess_property_recovery && !defer_mismatch {
                             allow_contextual_mismatch_deferral = false;
                         }
                         recovered_argument_mismatch = fresh_assignable || excess_property_recovery;

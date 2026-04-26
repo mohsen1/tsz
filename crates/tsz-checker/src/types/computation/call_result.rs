@@ -853,12 +853,6 @@ impl<'a> CheckerState<'a> {
         if callable_mismatch && (actual_has_generic_signatures || expected_has_generic_signatures) {
             return true;
         }
-        if callable_mismatch {
-            // In callback-heavy cases, contextual typing is refined on the argument
-            // expression itself (TS2322-style errors). Defer to preserve those
-            // inner diagnostics instead of forcing a top-level TS2345.
-            return true;
-        }
         if !callable_mismatch
             && assign_query::contains_type_parameters(self.ctx.types, expected)
             && assign_query::contains_any_type(self.ctx.types, actual)
