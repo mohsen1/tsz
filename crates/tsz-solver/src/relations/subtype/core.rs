@@ -1552,6 +1552,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         return SubtypeResult::True;
                     }
                 }
+                // tsc: a function value provides no number index signature, so
+                // `(s: string) => void` is NOT assignable to `{ [x: number]: T }`.
+                // The plain object-vs-object subtype path
+                // (`check_number_index_compatibility`) already fails this case
+                // correctly, but functions reach here through the function-like
+                // branch and otherwise fall through to default-allow.
+                if t_shape.number_index.is_some() && required_props.is_empty() {
+                    return SubtypeResult::False;
+                }
             }
         }
 
