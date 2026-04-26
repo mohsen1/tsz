@@ -1003,3 +1003,106 @@ var r5b = _.map<number, string, boolean>(c2, rf1);
         diag.message_text
     );
 }
+
+#[test]
+fn ts2322_anchors_at_arrow_body_when_assigning_to_generic_function_type_alias() {
+    // Regression test for elaboration in `try_elaborate_assignment_source_error`:
+    // when assigning an expression-bodied arrow to a *direct* generic function-
+    // type target (e.g. `EnvFunction = <T>() => T`), tsc anchors the TS2322 at
+    // the body expression and reports the body type vs the target's generic
+    // return type. Previously, `try_elaborate_function_arg_return_error` skipped
+    // elaboration whenever the expected return type contained type parameters,
+    // which is correct during generic-call inference but wrong for direct
+    // assignment (where the type parameter is bound by the target's own
+    // signature, not by an outer call's inference state).
+    let diagnostics = check_source_with_strict_null(
+        r#"
+type EnvFunction = <T>() => T;
+type SimpleType = string | Promise<SimpleType>;
+declare const simple: SimpleType;
+const env: EnvFunction = () => simple;
+"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for arrow body return-type mismatch, got: {codes:?}"
+    );
+
+    // The TS2322 should be anchored at the body expression `simple`, not on the
+    // outer `const env = ...` declaration.
+    let outer_anchor = "const env: EnvFunction = () => simple;";
+    let body_anchor = "simple";
+    let source_text_offset_of = |pat: &str| {
+        let s = "
+type EnvFunction = <T>() => T;
+type SimpleType = string | Promise<SimpleType>;
+declare const simple: SimpleType;
+const env: EnvFunction = () => simple;
+";
+        s.find(pat).expect("substring exists in fixture")
+    };
+    let body_offset = {
+        // The fixture references `simple` twice (declare + arrow body).
+        // Use the second occurrence (the arrow body).
+        let s = "
+type EnvFunction = <T>() => T;
+type SimpleType = string | Promise<SimpleType>;
+declare const simple: SimpleType;
+const env: EnvFunction = () => simple;
+";
+        let first = s.find(body_anchor).unwrap();
+        first + 1 + s[first + 1..].find(body_anchor).unwrap()
+    };
+    let outer_offset = source_text_offset_of(outer_anchor);
+
+    let ts2322_starts: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.start)
+        .collect();
+    assert!(
+        ts2322_starts.iter().any(|&s| s as usize == body_offset),
+        "Expected at least one TS2322 anchored at arrow body `simple` (offset \
+         {body_offset}), got starts: {ts2322_starts:?}"
+    );
+    assert!(
+        !ts2322_starts.iter().all(|&s| s as usize == outer_offset),
+        "TS2322 should not anchor only on the outer declaration (offset \
+         {outer_offset}), got: {ts2322_starts:?}"
+    );
+}
+
+#[test]
+fn ts2322_skips_arrow_body_elaboration_during_generic_call_inference() {
+    // Guard the negative case: during generic call inference, the expected
+    // callback return type may still reference uninstantiated type parameters
+    // (e.g., `B` from `compose<A, B, C>`). Elaborating against such placeholders
+    // would produce false TS2322s like "Type 'T[]' is not assignable to type
+    // 'B'". `try_elaborate_function_arg_return_error_with_options` retains the
+    // unresolved-holes skip on the call path (`allow_unresolved_holes = false`).
+    //
+    // This test exercises a generic pipe-style helper similar to
+    // genericContextualTypes1: passing arrow callbacks into a generic call
+    // should not produce spurious body-level TS2322 diagnostics on the
+    // callbacks' identifier bodies.
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function pipe<A, B, C>(ab: (a: A) => B, bc: (b: B) => C): (a: A) => C;
+declare function list<T>(a: T): T[];
+declare function box<V>(x: V): { value: V };
+const f1 = pipe(list, box);
+"#,
+    );
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count,
+        0,
+        "Generic call inference must not produce body-level TS2322s, got: {:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2322)
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

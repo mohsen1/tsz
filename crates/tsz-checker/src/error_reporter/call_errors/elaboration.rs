@@ -419,6 +419,24 @@ impl<'a> CheckerState<'a> {
             return elaborated;
         }
 
+        // Direct assignment to a function-type target: take the dedicated path that
+        // permits return-expression elaboration even when the expected return type
+        // contains a type parameter from the *target's own* generic signature.
+        // Unlike the call-argument path (which sees uninstantiated type parameters
+        // belonging to the enclosing call's inference state), the target type here
+        // is the final declared type, so a free `T` in the return position is
+        // genuinely unsatisfied by a concrete body type.
+        if let Some(arg_node) = self.ctx.arena.get(expr_idx)
+            && (arg_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || arg_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+        {
+            return self.try_elaborate_function_arg_return_error_with_options(
+                expr_idx,
+                target_type,
+                /* allow_unresolved_holes */ true,
+            );
+        }
+
         self.try_elaborate_object_literal_arg_error(expr_idx, target_type)
     }
 
@@ -490,6 +508,34 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         param_type: TypeId,
     ) -> bool {
+        self.try_elaborate_function_arg_return_error_with_options(
+            arg_idx, param_type, /* allow_unresolved_holes */ false,
+        )
+    }
+
+    /// Like [`try_elaborate_function_arg_return_error`], but with a switch that
+    /// controls whether elaboration runs when the expected return type contains
+    /// unresolved type parameters / inference placeholders.
+    ///
+    /// `allow_unresolved_holes = false` (default for call-argument paths):
+    ///     skip elaboration. During generic call inference the expected return
+    ///     type can still reference uninstantiated type parameters from the
+    ///     enclosing call (e.g., `B` from `compose<A, B, C>`); checking a
+    ///     concrete body type against such placeholders produces false TS2322s.
+    ///
+    /// `allow_unresolved_holes = true` (used by direct assignment):
+    ///     proceed with elaboration. The target type is the *final* declared
+    ///     target (e.g., the variable's annotation), so any type parameter in
+    ///     the return position is bound by the target's own generic signature
+    ///     rather than an outer inference state. A free `T` here is genuinely
+    ///     unsatisfied by a concrete body type, and tsc anchors the resulting
+    ///     TS2322 at the body expression.
+    fn try_elaborate_function_arg_return_error_with_options(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+        allow_unresolved_holes: bool,
+    ) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
@@ -536,7 +582,13 @@ impl<'a> CheckerState<'a> {
         // Checking the body expression type against such placeholders would
         // produce false TS2322 errors since concrete types like `T[]` are
         // not assignable to an unresolved type parameter `B`.
-        if self.type_has_unresolved_inference_holes(expected_return_type) {
+        //
+        // For direct variable-initializer / direct-assignment elaboration
+        // (`allow_unresolved_holes = true`), the target type is final and any
+        // remaining type parameters are bound by the target's own quantifier,
+        // so the elaboration is sound and matches tsc.
+        if !allow_unresolved_holes && self.type_has_unresolved_inference_holes(expected_return_type)
+        {
             return false;
         }
 
