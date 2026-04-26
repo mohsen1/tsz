@@ -151,6 +151,15 @@ save_archive() {
   fi
 }
 
+suite_needs_rust_compile() {
+  local suite
+  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
+  case "$suite" in
+    all|full|build|lint|unit|wasm) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 should_save_cargo_target() {
   local suite shard_index
   suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
@@ -219,26 +228,50 @@ restore_caches() {
 
   mkdir -p .ci-cache/cargo-home .ci-cache/npm .target scripts
 
-  restore_archive \
-    "cargo-home-${cargo_hash}" \
-    "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
-    ".ci-cache/cargo-home"
-
-  local cargo_target_uri
-  cargo_target_uri="$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")"
-  if gsutil -q stat "$cargo_target_uri"; then
+  if suite_needs_rust_compile; then
     restore_archive \
-      "cargo-target-${cargo_target_hash}" \
-      "$cargo_target_uri" \
-      "." \
-      .target
-    if [[ -d .target ]]; then
-      normalize_rust_source_mtimes
-      mkdir -p .ci-cache
-      touch .ci-cache/cargo-target-cache-hit
+      "cargo-home-${cargo_hash}" \
+      "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
+      ".ci-cache/cargo-home"
+
+    local cargo_target_uri
+    cargo_target_uri="$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")"
+    if gsutil -q stat "$cargo_target_uri"; then
+      restore_archive \
+        "cargo-target-${cargo_target_hash}" \
+        "$cargo_target_uri" \
+        "." \
+        .target
+      if [[ -d .target ]]; then
+        normalize_rust_source_mtimes
+        mkdir -p .ci-cache
+        touch .ci-cache/cargo-target-cache-hit
+      fi
+    else
+      echo "Cache miss: cargo-target-${cargo_target_hash}"
+      # Restore the most-recently-saved cargo-target as a warm fallback.
+      # sccache forces CARGO_INCREMENTAL=0 which makes incremental
+      # fingerprints incompatible across caches; the warm cache still
+      # seeds the .rlib files in .target/dist-fast/deps/ so Cargo skips
+      # crates whose content hashes match, avoiding sccache round-trips.
+      # Sort by GCS timestamp (gsutil ls -l col 2) to get the newest entry.
+      # Does not mark cache-hit so the exact-hash entry is still saved.
+      local fallback_uri
+      fallback_uri="$(gsutil ls -l "$(cache_uri "cargo-target/*.tar.gz")" 2>/dev/null \
+        | grep -v '^TOTAL:' \
+        | sort -k2 -r \
+        | head -1 \
+        | awk '{print $NF}' || true)"
+      if [[ -n "$fallback_uri" ]]; then
+        echo "Cache warm-fallback: cargo-target from ${fallback_uri}"
+        restore_archive "cargo-target-warm-fallback" "$fallback_uri" "." .target
+        if [[ -d .target ]]; then
+          normalize_rust_source_mtimes
+        fi
+      fi
     fi
   else
-    echo "Cache miss: cargo-target-${cargo_target_hash}"
+    echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
   fi
 
   restore_archive \
