@@ -584,8 +584,14 @@ impl<'a> CheckerState<'a> {
                             self.ctx.types,
                             return_type,
                         );
-                        if non_null_return == TypeId::NEVER
-                            || !self.is_assignable_to(non_null_return, element_type)
+                        // `never` after stripping nullish means the SFC only
+                        // returns nullish values (or unreachable). tsc treats
+                        // this as a valid JSX return type because `never` is
+                        // assignable to anything (e.g. `function F() { return null!; }`).
+                        // Mirrors the construct-signature handling below and
+                        // `check_jsx_sfc_return_type` (which also early-exits on never).
+                        if non_null_return != TypeId::NEVER
+                            && !self.is_assignable_to(non_null_return, element_type)
                         {
                             all_valid = false;
                         }
