@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `chore/solver-extended-constructors-tests`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1327
+- **Status**: ready
 - **Workstream**: 8 (test-fixture coverage; lock untested public solver helpers)
 
 ## Intent
@@ -38,4 +38,7 @@ fallback rows. Pure additive — no production code changes.
 
 ## Verification
 
-- `cargo nextest run -p tsz-solver --lib` (no regressions; new tests pass).
+- `cargo nextest run -p tsz-solver --lib` — 5449 tests pass, including 48
+  new `type_queries::extended_constructors::tests::*` cases. No regressions.
+- `cargo clippy -p tsz-solver --tests -- -D warnings` — clean.
+- `cargo fmt -p tsz-solver --check` — clean.
