@@ -246,7 +246,13 @@ pub struct BinderState {
     /// Expando property assignments: maps identifier name → set of property names
     /// that were assigned via `X.prop = value` patterns (single-level property access).
     /// Used to suppress false TS2339 errors on read-side property accesses.
-    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver share
+    /// via `Arc::clone` (atomic refcount bump) instead of deep-cloning the
+    /// nested `FxHashMap<String, FxHashSet<String>>`. Mutations during binding
+    /// go through `Arc::make_mut` (free when refcount=1, the case during a
+    /// single file's bind); read-only post-bind.
+    pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
     /// Ambient module declarations by specifier (e.g. "pkg", "./types")
     pub declared_modules: FxHashSet<String>,
     /// Whether the current source file is an external module (has top-level import/export).
@@ -932,7 +938,7 @@ pub struct BinderStateScopeInputs {
     pub flow_nodes: Arc<FlowNodeArena>,
     pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
-    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
+    pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
     pub alias_partners: FxHashMap<SymbolId, SymbolId>,
 }
 

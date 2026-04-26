@@ -2460,7 +2460,7 @@ impl BinderState {
             || obj_key == "exports"
             || obj_key.starts_with("exports.")
         {
-            self.expando_properties
+            Arc::make_mut(&mut self.expando_properties)
                 .entry(obj_key)
                 .or_default()
                 .insert(prop_name);
@@ -2489,7 +2489,7 @@ impl BinderState {
             != 0
             && (symbol.flags & symbol_flags::CLASS) == 0
         {
-            self.expando_properties
+            Arc::make_mut(&mut self.expando_properties)
                 .entry(obj_key.clone())
                 .or_default()
                 .insert(prop_name);
@@ -2526,7 +2526,7 @@ impl BinderState {
                     && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
                         || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION));
             if is_expando_init {
-                self.expando_properties
+                Arc::make_mut(&mut self.expando_properties)
                     .entry(obj_key)
                     .or_default()
                     .insert(prop_name);
