@@ -419,6 +419,10 @@ path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 name = "intersection_primitive_member_assignability_tests"
 path = "tests/intersection_primitive_member_assignability_tests.rs"
 
+[[test]]
+name = "union_origin_display_tests"
+path = "tests/union_origin_display_tests.rs"
+
 [lints]
 workspace = true
 

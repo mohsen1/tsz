@@ -578,6 +578,22 @@ pub struct TypeInterner {
     /// The formatter checks this to show `Dictionary<string>` instead
     /// of `{ [index: string]: string; }` in error messages.
     pub(super) display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// As-written origin members for a Union TypeId, used to preserve top-level
+    /// alias names that would otherwise be lost during union flattening.
+    ///
+    /// When a user writes `T | null` and `T` is a type alias whose body is itself
+    /// a union (e.g., `type T = "a" | "b" | undefined`), tsc's `getUnionType`
+    /// flattens the inputs into `"a" | "b" | undefined | null`, but the printer
+    /// still displays `T | null` by consulting the union's `origin` field.
+    ///
+    /// tsz captures the equivalent information here: the checker records the
+    /// *unflattened* member list (e.g., `[Lazy(T), null]`) for the resulting
+    /// flattened union. The formatter consults this map before falling through
+    /// to structural display.
+    ///
+    /// Key: the flattened Union `TypeId` returned to the checker.
+    /// Value: the unflattened input member list, in the order the user wrote.
+    pub(super) display_union_origin: DashMap<TypeId, Arc<Vec<TypeId>>, FxBuildHasher>,
     /// Flag set when union normalization detects that a union type is too complex
     /// to represent (would require > 1M pairwise subtype comparisons during
     /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
@@ -643,6 +659,7 @@ impl TypeInterner {
             exact_optional_property_types: AtomicBool::new(false),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
+            display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
@@ -1325,6 +1342,46 @@ impl TypeInterner {
     /// Returns `None` if this type was not produced from an Application evaluation.
     pub fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         self.display_alias.get(&type_id).map(|r| *r)
+    }
+
+    /// Record the as-written origin members for a flattened Union TypeId.
+    ///
+    /// Mirrors tsc's `UnionType.origin` mechanism: when `T | null` is built and
+    /// `T` is itself a union alias, normalization flattens the result, but the
+    /// printer needs the unflattened input list to display `T | null` instead
+    /// of the structural expansion.
+    ///
+    /// We only store the origin when normalization *actually flattened* a
+    /// nested union — i.e., the resulting Union has strictly more members than
+    /// the input list. Without this guard, recording the as-written order for
+    /// trivially-different inputs (e.g., user wrote `"foo" | Refrigerator` but
+    /// the interner sorted to `Refrigerator | "foo"`) would override tsc's
+    /// canonical sort and regress the diagnostic display.
+    pub fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        if origin_members.len() < 2 {
+            return;
+        }
+        let Some(TypeData::Union(list_id)) = self.lookup(union_type_id) else {
+            // Only store origins for actual Union TypeIds; other shapes have
+            // their own display paths.
+            return;
+        };
+        let current = self.type_list(list_id);
+        if current.len() <= origin_members.len() {
+            // No flattening occurred — same or fewer members. The structural
+            // display already matches what tsc shows after canonical sort.
+            return;
+        }
+        // First writer wins so deterministic display order is preserved when
+        // the same flattened union is reached from multiple annotation sites.
+        self.display_union_origin
+            .entry(union_type_id)
+            .or_insert_with(|| Arc::new(origin_members));
+    }
+
+    /// Look up the as-written origin members for a flattened Union TypeId.
+    pub fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        self.display_union_origin.get(&type_id).map(|r| r.clone())
     }
 
     pub(super) fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
