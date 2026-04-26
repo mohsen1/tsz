@@ -121,18 +121,15 @@ jobs:
       # Benchmarks now run on Cloud Build (c3-88, 88 vCPU) via cloudbuild-bench.yaml
       # and publish results to GCS. We download the latest result here so the site
       # always deploys immediately without waiting for a benchmark run.
+      - name: Authenticate to Google Cloud
+        id: gcp-auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+        continue-on-error: true
+
       - name: Download latest benchmark data from GCS
-        env:
-          SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
         run: |
-          set -euo pipefail
-          if [[ -z "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
-            echo "No GCS credentials — bench charts will show placeholder"
-            exit 0
-          fi
-          printf '%s' "$SCCACHE_GCS_KEY_JSON" > /tmp/gcs-key.json
-          trap 'rm -f /tmp/gcs-key.json' EXIT
-          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcs-key.json
           LATEST=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/latest.json
           if gsutil -q stat "$LATEST" 2>/dev/null; then
             gsutil cp "$LATEST" /tmp/bench-latest.json
