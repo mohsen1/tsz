@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/emit-js-error-recovery`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1385
+- **Status**: ready
 - **Workstream**: 2 (JS Emit Pass Rate)
 
 ## Intent
