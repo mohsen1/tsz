@@ -1,6 +1,6 @@
 //! Tests for TS2589: Type instantiation is excessively deep and possibly infinite.
 
-use crate::test_utils::check_source_code_messages;
+use crate::test_utils::{check_source_code_messages, check_source_diagnostics};
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     check_source_code_messages(source)
@@ -231,6 +231,52 @@ type Foo<T> = T extends unknown
     assert!(
         diags.iter().any(|d| d.0 == 2589),
         "Should emit TS2589 for recursive conditional type alias at definition site. Got: {diags:?}"
+    );
+}
+
+/// TS2589 at a type alias definition is anchored at the LAST recursive
+/// self-reference in source order — the same node `tsc` reports against
+/// (its `currentNode` when `instantiationDepth === 100` fires while
+/// instantiating the alias body).
+///
+/// `forEachChild` visits conditional-type children in
+/// check→extends→true→false order, so for `type Foo<T> = T extends U ?
+/// Foo<T> : Foo<unknown>;` the anchor lands on `Foo<unknown>` (false
+/// branch) rather than the body's first token or the alias name.
+///
+/// This locks in the anchor used by the
+/// `compiler/recursiveConditionalCrash4.ts` conformance fixture.
+#[test]
+fn recursive_conditional_type_alias_anchors_ts2589_at_last_self_reference() {
+    let source = r#"type Foo<T> = T extends unknown
+  ? unknown extends `${infer $Rest}`
+    ? Foo<T>
+    : Foo<unknown>
+  : unknown;
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2589 = diags
+        .iter()
+        .find(|d| d.code == 2589)
+        .expect("TS2589 should be emitted for recursive conditional alias");
+
+    // The anchor must point at the start of `Foo<unknown>` — the last
+    // self-reference in source order, matching tsc's currentNode.
+    let start = ts2589.start as usize;
+    let snippet = &source[start..(start + "Foo<unknown>".len()).min(source.len())];
+    assert_eq!(
+        snippet,
+        "Foo<unknown>",
+        "TS2589 should anchor at the last recursive self-reference (`Foo<unknown>`). \
+         Anchor was at byte {start}: {:?}, full diag: {ts2589:?}",
+        &source[start..(start + 20).min(source.len())]
+    );
+    // Length should cover only the type reference, not the entire body.
+    assert_eq!(
+        ts2589.length as usize,
+        "Foo<unknown>".len(),
+        "TS2589 span should cover only the type reference, got {}",
+        ts2589.length
     );
 }
 
