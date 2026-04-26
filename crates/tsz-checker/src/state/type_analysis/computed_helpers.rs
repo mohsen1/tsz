@@ -318,6 +318,51 @@ impl<'a> CheckerState<'a> {
             if evaluated != ctx_type && evaluated != TypeId::ERROR {
                 return self.contextual_type_allows_literal_inner(evaluated, literal_type, visited);
             }
+            // Fallback: when `evaluate_type_with_env` could not make progress
+            // on a `keyof Lazy(LibType)` because the lib def has not been
+            // registered in `TypeEnvironment` yet, force a stronger Lazy
+            // resolution and retry the evaluation. Without this, fresh
+            // string literals like `'currency'` get widened to `string`
+            // even though the keyof target accepts the literal.
+            if let Some(keyof_inner) = keyof_inner_type(self.ctx.types, ctx_type)
+                && lazy_def_id(self.ctx.types, keyof_inner).is_some()
+            {
+                self.ensure_relation_input_ready(keyof_inner);
+                let resolved_inner = self.evaluate_type_with_env(keyof_inner);
+                if resolved_inner != keyof_inner {
+                    let new_keyof = self.ctx.types.factory().keyof(resolved_inner);
+                    let evaluated2 = self.evaluate_type_with_env(new_keyof);
+                    if evaluated2 != new_keyof && evaluated2 != TypeId::ERROR {
+                        return self.contextual_type_allows_literal_inner(
+                            evaluated2,
+                            literal_type,
+                            visited,
+                        );
+                    }
+                }
+            }
+        }
+        // IndexAccess fallback: when `evaluate_type_with_env` could not make
+        // progress on `Object[Key]` (typically because `Object` is a `Lazy`
+        // ref to a lib-namespace interface like `Intl.NumberFormatOptions`
+        // whose def has not been registered in `TypeEnvironment` yet), look
+        // up the property type directly via the contextual property API.
+        // Without this, fresh literals like `'currency'` get widened to
+        // `string` even though the indexed-access target accepts the literal.
+        if let Some((object_type, index_type)) = index_access_types(self.ctx.types, ctx_type)
+            && let Some(prop_name_atom) = common::string_literal_value(self.ctx.types, index_type)
+        {
+            self.ensure_relation_input_ready(object_type);
+            let lookup_object = self.evaluate_type_with_env(object_type);
+            let prop_name = self.ctx.types.resolve_atom(prop_name_atom);
+            if let Some(prop_type) = self
+                .ctx
+                .types
+                .contextual_property_type(lookup_object, &prop_name)
+                && visited.insert(prop_type)
+            {
+                return self.contextual_type_allows_literal_inner(prop_type, literal_type, visited);
+            }
         }
         // Generic `keyof` contexts preserve literal arguments.
         if let Some(keyof_inner) = keyof_inner_type(self.ctx.types, ctx_type)
