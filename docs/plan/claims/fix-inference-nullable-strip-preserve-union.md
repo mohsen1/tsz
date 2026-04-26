@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/inference-nullable-strip-preserve-union`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1341
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -29,8 +29,14 @@ not a fallback union from incompatible candidates.
 
 ## Verification
 
-- `cargo nextest run -p tsz-solver --lib` — 5451 tests pass
+- `cargo nextest run -p tsz-solver --lib` — 5451 tests pass (incl. 2 new regression tests)
 - `./scripts/conformance/conformance.sh run --filter widenToAny1` — 1/1 pass
 - `./scripts/conformance/conformance.sh run --filter undefinedArgumentInference` — 1/1 pass
 - `./scripts/conformance/conformance.sh run --filter genericCallWithObjectLiteral` — 2/2 pass
 - `./scripts/conformance/conformance.sh run --filter widenedTypes` — 6/6 pass
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run` — Net 12144 → 12156 (**+12** tests, 0 regressions)
+  - widenToAny1.ts (target), booleanAssignment.ts, contravariantOnlyInferenceFromAnnotatedFunctionJs.ts,
+    mappedTypeIndexedAccessConstraint.ts, recursiveConditionalCrash4.ts, typePredicateInherit.ts,
+    parenthesizedContexualTyping3.ts, jsdocTemplateConstructorFunction.ts,
+    propertiesOfGenericConstructorFunctions.ts, intersectionReductionStrict.ts,
+    numericStringLiteralTypes.ts, stringLiteralsWithSwitchStatements03.ts
