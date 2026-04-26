@@ -268,11 +268,11 @@ impl CheckerState<'_> {
             rhs_node.kind,
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION || k == syntax_kind_ext::ARROW_FUNCTION
         );
-        let diag_guard = suppress_provisional_body_diagnostics
+        let diag_snap = suppress_provisional_body_diagnostics
             .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
         let rhs_type = self.get_type_of_node(rhs_idx);
-        if let Some(guard) = diag_guard {
-            guard.rollback(&mut self.ctx);
+        if let Some(snap) = diag_snap {
+            snap.rollback(&mut self.ctx);
         }
         rhs_type
     }
