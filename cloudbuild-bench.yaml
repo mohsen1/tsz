@@ -9,14 +9,41 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      LOCK_URI="gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/.lock"
-      if echo "$BUILD_ID" | gsutil -h 'x-goog-if-generation-match:0' cp -q - "$LOCK_URI" 2>/dev/null; then
-        echo "Lock acquired for BUILD_ID=$BUILD_ID"
-        touch /workspace/bench-enabled
-      else
-        holder=$(gsutil cat "$LOCK_URI" 2>/dev/null || echo "unknown")
-        echo "Benchmark already in progress (lock holder: $holder). Skipping this run."
-      fi
+      BUCKET="thirdface-ai-oauth_cloudbuild"
+      OBJECT="tsz-ci-cache/bench-runs/.lock"
+      LOCK_URI="gs://${BUCKET}/${OBJECT}"
+
+      # Use the GCS JSON API directly via curl + gcloud token so we get
+      # exact HTTP status codes and avoid gsutil auth quirks in private pools.
+      TOKEN=$(gcloud auth print-access-token)
+
+      # Atomic create: HTTP 412 = precondition failed (lock already exists).
+      HTTP=$(curl -s -o /tmp/lock-resp.txt -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: text/plain" \
+        -H "x-goog-if-generation-match: 0" \
+        "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${OBJECT}" \
+        --data-binary "${BUILD_ID}")
+
+      case "$HTTP" in
+        200|201)
+          echo "Lock acquired for BUILD_ID=$BUILD_ID"
+          touch /workspace/bench-enabled
+          ;;
+        412)
+          holder=$(curl -s \
+            -H "Authorization: Bearer ${TOKEN}" \
+            "https://storage.googleapis.com/download/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media" \
+            || echo "unknown")
+          echo "Benchmark already in progress (lock holder: ${holder}). Skipping this run."
+          ;;
+        *)
+          echo "Warning: unexpected HTTP ${HTTP} acquiring lock — treating as acquired."
+          cat /tmp/lock-resp.txt || true
+          touch /workspace/bench-enabled
+          ;;
+      esac
 
   # Step 2: Run the full benchmark suite on the beefy c3-88 node.
   # allowFailure: true ensures the publish step always runs even if bench
@@ -67,14 +94,21 @@ steps:
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      LOCK_URI="gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/.lock"
-      BENCH_BUCKET=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs
+      BUCKET="thirdface-ai-oauth_cloudbuild"
+      OBJECT="tsz-ci-cache/bench-runs/.lock"
+      BENCH_BUCKET=gs://${BUCKET}/tsz-ci-cache/bench-runs
 
       # Always release the lock when we exit (success or failure).
       release_lock() {
         if [[ -f /workspace/bench-enabled ]]; then
           echo "Releasing benchmark lock..."
-          gsutil rm -f "$LOCK_URI" 2>/dev/null || true
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || true)
+          if [[ -n "$TOKEN" ]]; then
+            curl -s -X DELETE \
+              -H "Authorization: Bearer ${TOKEN}" \
+              "https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}" \
+              -o /dev/null || true
+          fi
         fi
       }
       trap release_lock EXIT
@@ -92,8 +126,20 @@ steps:
 
       echo "=== Publishing results ==="
       TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-      gsutil cp /workspace/bench-results.json "${BENCH_BUCKET}/${TIMESTAMP}.json"
-      gsutil cp /workspace/bench-results.json "${BENCH_BUCKET}/latest.json"
+      TOKEN=$(gcloud auth print-access-token)
+      gcs_upload() {
+        local dest_obj="$1"
+        curl -s -o /dev/null -w "%{http_code}" \
+          -X POST \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -H "Content-Type: application/json" \
+          "https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o?uploadType=media&name=${dest_obj}" \
+          --data-binary @/workspace/bench-results.json
+      }
+      code=$(gcs_upload "tsz-ci-cache/bench-runs/${TIMESTAMP}.json")
+      echo "Timestamped upload HTTP ${code}"
+      code=$(gcs_upload "tsz-ci-cache/bench-runs/latest.json")
+      echo "latest.json upload HTTP ${code}"
       echo "Saved to ${BENCH_BUCKET}/${TIMESTAMP}.json and latest.json"
 
       echo "=== Triggering website redeploy ==="
