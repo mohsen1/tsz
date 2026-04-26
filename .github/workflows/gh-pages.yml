@@ -127,7 +127,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
-            echo "No GCS credentials — using checked-in benchmark data"
+            echo "No GCS credentials — bench charts will show placeholder"
             exit 0
           fi
           printf '%s' "$SCCACHE_GCS_KEY_JSON" > /tmp/gcs-key.json
@@ -139,13 +139,14 @@ jobs:
             # Reject data where bc was missing and all timings are zero.
             nonzero=$(jq '[.results[]? | select(.tsz_ms > 0)] | length' /tmp/bench-latest.json 2>/dev/null || echo "0")
             if [ "${nonzero}" -gt 0 ]; then
-              cp /tmp/bench-latest.json crates/tsz-website/data/benchmarks.json
+              mkdir -p artifacts
+              cp /tmp/bench-latest.json artifacts/bench-vs-tsgo-latest.json
               echo "Downloaded fresh benchmark data from GCS (${nonzero} valid results, $(date -u))"
             else
-              echo "GCS data has no valid timing results — keeping checked-in benchmark data"
+              echo "GCS data has no valid timing results — skipping bench charts"
             fi
           else
-            echo "No latest.json in GCS yet — using checked-in benchmark data"
+            echo "No latest.json in GCS yet — bench charts will show placeholder"
           fi
         continue-on-error: true
 
