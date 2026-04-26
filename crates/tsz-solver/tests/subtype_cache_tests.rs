@@ -615,6 +615,34 @@ fn subtype_checker_with_query_db_uses_cache() {
     assert!(checker2.is_subtype_of(wider, narrow));
 }
 
+/// `string` is NOT a subtype of `string[]` — even when the `SubtypeChecker` is
+/// configured with a `QueryDatabase`. The String/iterable shortcut in
+/// `is_boxed_primitive_subtype` previously misclassified arrays as
+/// "purely iterable" because `target_has_non_iterable_properties` only
+/// inspected `ObjectShape` and missed `TypeData::Array`. Regression for
+/// `conformance/jsdoc/extendsTag5.ts` (TS2344 was being suppressed by
+/// `string <: boolean | string[]` returning true via this path).
+#[test]
+fn string_is_not_subtype_of_array_string_with_query_db() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let array_string = interner.array(TypeId::STRING);
+
+    let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+    assert!(
+        !checker.is_subtype_of(TypeId::STRING, array_string),
+        "string must not be a subtype of string[] (with query_db)"
+    );
+
+    let union = interner.union(vec![TypeId::BOOLEAN, array_string]);
+    let mut checker2 = SubtypeChecker::new(&interner).with_query_db(&db);
+    assert!(
+        !checker2.is_subtype_of(TypeId::STRING, union),
+        "string must not be a subtype of boolean | string[] (with query_db)"
+    );
+}
+
 // =============================================================================
 // Fast Path Tests (identity, any, unknown, never, error)
 // =============================================================================
