@@ -275,6 +275,17 @@ pub trait TypeDatabase {
     /// Record the result of `contains_this_type(type_id)` in the shared
     /// interner cache. Default impl is a no-op.
     fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    /// Whether `exactOptionalPropertyTypes` is enabled.
+    ///
+    /// Exposed on `TypeDatabase` (in addition to `QueryDatabase`) so that
+    /// inference matching can distinguish synthetic `| undefined` from
+    /// optional markers vs. explicit `| undefined` in user-written types.
+    /// The default returns `false`; canonical implementations live on
+    /// `TypeInterner` and `QueryCache`.
+    fn exact_optional_property_types(&self) -> bool {
+        false
+    }
 }
 
 impl TypeDatabase for TypeInterner {
@@ -623,6 +634,10 @@ impl TypeDatabase for TypeInterner {
 
     fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
         self.contains_this_cache.insert(type_id, result);
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        TypeInterner::exact_optional_property_types(self)
     }
 }
 

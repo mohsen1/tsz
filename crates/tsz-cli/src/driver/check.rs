@@ -751,6 +751,11 @@ pub(super) fn collect_diagnostics(
     program
         .type_interner
         .set_no_unchecked_indexed_access(options.checker.no_unchecked_indexed_access);
+    // Propagate exactOptionalPropertyTypes to the TypeInterner so that solver-side
+    // queries (e.g. index-signature inference) see the same flag as the checker.
+    program
+        .type_interner
+        .set_exact_optional_property_types(options.checker.exact_optional_property_types);
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
     let query_cache = QueryCache::new(&program.type_interner);
@@ -3641,6 +3646,9 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         program
             .type_interner
             .set_no_unchecked_indexed_access(resolved.checker.no_unchecked_indexed_access);
+        program
+            .type_interner
+            .set_exact_optional_property_types(resolved.checker.exact_optional_property_types);
         let query_cache = tsz_solver::QueryCache::new(&program.type_interner);
         let mut checker = CheckerState::with_options(
             &program.files[0].arena,

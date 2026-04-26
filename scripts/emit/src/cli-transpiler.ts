@@ -52,6 +52,7 @@ interface CompilerFlagOptions {
   experimentalDecorators?: boolean;
   emitDecoratorMetadata?: boolean;
   strictNullChecks?: boolean;
+  exactOptionalPropertyTypes?: boolean;
   jsx?: string;
   jsxFactory?: string;
   jsxFragmentFactory?: string;
@@ -88,6 +89,12 @@ function appendCompilerOptionFlags(args: string[], opts: CompilerFlagOptions): v
   if (opts.experimentalDecorators) args.push('--experimentalDecorators');
   if (opts.emitDecoratorMetadata) args.push('--emitDecoratorMetadata');
   if (opts.strictNullChecks !== undefined) args.push('--strictNullChecks', String(opts.strictNullChecks));
+  // tsz CLI defines `--exactOptionalPropertyTypes` as a presence-only flag.
+  // Passing the literal "true" turns into a positional input file, so only emit
+  // the flag when the option is enabled.
+  if (opts.exactOptionalPropertyTypes === true) {
+    args.push('--exactOptionalPropertyTypes');
+  }
   if (opts.jsx) args.push('--jsx', opts.jsx);
   if (opts.jsxFactory) args.push('--jsxFactory', opts.jsxFactory);
   if (opts.jsxFragmentFactory) args.push('--jsxFragmentFactory', opts.jsxFragmentFactory);
@@ -225,6 +232,7 @@ export class CliTranspiler {
       experimentalDecorators?: boolean;
       emitDecoratorMetadata?: boolean;
       strictNullChecks?: boolean;
+      exactOptionalPropertyTypes?: boolean;
       jsx?: string;
       jsxFactory?: string;
       jsxFragmentFactory?: string;
@@ -263,6 +271,7 @@ export class CliTranspiler {
       experimentalDecorators = false,
       emitDecoratorMetadata = false,
       strictNullChecks,
+      exactOptionalPropertyTypes,
       jsx,
       jsxFactory,
       jsxFragmentFactory,
@@ -373,6 +382,7 @@ export class CliTranspiler {
         experimentalDecorators,
         emitDecoratorMetadata,
         strictNullChecks,
+        exactOptionalPropertyTypes,
         jsx,
         jsxFactory,
         jsxFragmentFactory,
@@ -462,6 +472,7 @@ export class CliTranspiler {
             experimentalDecorators,
             emitDecoratorMetadata,
             strictNullChecks,
+            exactOptionalPropertyTypes,
             jsx,
             jsxFactory,
             jsxFragmentFactory,
