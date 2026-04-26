@@ -300,19 +300,28 @@ impl<'a> CheckerState<'a> {
             ("Object", object_type, IntrinsicKind::Object),
             ("Function", function_type, IntrinsicKind::Function),
         ];
+        // PERF: Collect (kind, ty, def_id) once. The interner-side and the
+        // two env-side registrations below all walk the same lib contexts and
+        // resolve the same def_ids. Hoisting this loop avoids 2× redundant
+        // file_locals.get + get_lib_def_id calls per (name, lib_context) pair.
+        let mut boxed_def_entries: smallvec::SmallVec<
+            [(IntrinsicKind, TypeId, tsz_solver::DefId); 16],
+        > = smallvec::SmallVec::new();
         for &(name, type_opt, kind) in boxed_names {
-            if type_opt.is_some() {
-                for ctx in self.ctx.lib_contexts.iter() {
-                    if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                        let def_id = self.ctx.get_lib_def_id(sym_id);
-                        self.ctx.types.register_boxed_def_id(kind, def_id);
-                    }
-                }
-                if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+            let Some(ty) = type_opt else { continue };
+            for ctx in self.ctx.lib_contexts.iter() {
+                if let Some(sym_id) = ctx.binder.file_locals.get(name) {
                     let def_id = self.ctx.get_lib_def_id(sym_id);
-                    self.ctx.types.register_boxed_def_id(kind, def_id);
+                    boxed_def_entries.push((kind, ty, def_id));
                 }
             }
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
+                let def_id = self.ctx.get_lib_def_id(sym_id);
+                boxed_def_entries.push((kind, ty, def_id));
+            }
+        }
+        for &(kind, _ty, def_id) in &boxed_def_entries {
+            self.ctx.types.register_boxed_def_id(kind, def_id);
         }
 
         // Register ThisType marker DefIds so ThisTypeMarkerExtractor can identify
@@ -364,42 +373,18 @@ impl<'a> CheckerState<'a> {
             // uses TypeEnvironment as its resolver, which resolves Lazy types via
             // def_types. Without this registration, Lazy(DefId) for Function can't
             // be resolved, causing false TS2345/TS2322 errors.
-            for &(name, type_opt, kind) in boxed_names {
-                if let Some(ty) = type_opt {
-                    for ctx in self.ctx.lib_contexts.iter() {
-                        if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                            let def_id = self.ctx.get_lib_def_id(sym_id);
-                            env.insert_def(def_id, ty);
-                            env.register_boxed_def_id(kind, def_id);
-                        }
-                    }
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                        let def_id = self.ctx.get_lib_def_id(sym_id);
-                        env.insert_def(def_id, ty);
-                        env.register_boxed_def_id(kind, def_id);
-                    }
-                }
+            for &(kind, ty, def_id) in &boxed_def_entries {
+                env.insert_def(def_id, ty);
+                env.register_boxed_def_id(kind, def_id);
             }
         }
 
         // Mirror boxed DefId mappings into type_environment (flow-analyzer env)
         // so both environments stay consistent for narrowing contexts.
         if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-            for &(name, type_opt, kind) in boxed_names {
-                if let Some(ty) = type_opt {
-                    for ctx in self.ctx.lib_contexts.iter() {
-                        if let Some(sym_id) = ctx.binder.file_locals.get(name) {
-                            let def_id = self.ctx.get_lib_def_id(sym_id);
-                            env.insert_def(def_id, ty);
-                            env.register_boxed_def_id(kind, def_id);
-                        }
-                    }
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-                        let def_id = self.ctx.get_lib_def_id(sym_id);
-                        env.insert_def(def_id, ty);
-                        env.register_boxed_def_id(kind, def_id);
-                    }
-                }
+            for &(kind, ty, def_id) in &boxed_def_entries {
+                env.insert_def(def_id, ty);
+                env.register_boxed_def_id(kind, def_id);
             }
 
             // Mirror boxed types and array base type into flow-analyzer env
