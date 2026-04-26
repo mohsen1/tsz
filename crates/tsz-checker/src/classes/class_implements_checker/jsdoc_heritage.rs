@@ -167,7 +167,21 @@ impl<'a> CheckerState<'a> {
             }
 
             let arg_display = self.format_type_diagnostic(arg_type);
-            let constraint_display = self.format_type_diagnostic(constraint);
+            // Prefer the original constraint expression text — when the user
+            // wrote `@template {Foo} T` we want to display `Foo`, not the
+            // expanded structural shape of the typedef. tsc keeps the alias
+            // name. Fall back to the formatter when the source text is a
+            // structural form (contains `<`, `|`, `&`, `(`, `[`, `{`, `?`).
+            let trimmed_constraint_expr = constraint_expr.trim();
+            let constraint_display = if !trimmed_constraint_expr.is_empty()
+                && !trimmed_constraint_expr
+                    .chars()
+                    .any(|c| matches!(c, '<' | '|' | '&' | '(' | ')' | '[' | ']' | '{' | '}' | '?'))
+            {
+                trimmed_constraint_expr.to_string()
+            } else {
+                self.format_type_diagnostic(constraint)
+            };
             let message = format!(
                 "Type '{arg_display}' does not satisfy the constraint '{constraint_display}'."
             );
