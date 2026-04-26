@@ -526,3 +526,7 @@ fn skip_type_annotation(bytes: &[u8], mut i: usize) -> usize {
     }
     i
 }
+
+#[cfg(test)]
+#[path = "../tests/import_usage.rs"]
+mod tests;
