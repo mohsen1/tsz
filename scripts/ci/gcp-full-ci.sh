@@ -301,17 +301,21 @@ configure_sccache() {
   export SCCACHE_GCS_BUCKET="$gcs_bucket"
   export SCCACHE_GCS_KEY_PREFIX="$gcs_prefix"
   export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_WRITE}"
+  # Use GCE metadata server for OAuth2 tokens (works on Cloud Run workers)
+  export SCCACHE_GCS_CREDENTIALS_URL="${SCCACHE_GCS_CREDENTIALS_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
+  export SCCACHE_GCS_CREDENTIALS_URL_HEADERS="${SCCACHE_GCS_CREDENTIALS_URL_HEADERS:-Metadata-Flavor:Google}"
   export RUSTC_WRAPPER="sccache"
   export CARGO_INCREMENTAL="0"  # incompatible with sccache
   export SCCACHE_LOG="${SCCACHE_LOG:-warn}"
 
   echo "sccache: GCS bucket=${gcs_bucket} prefix=${gcs_prefix} mode=${SCCACHE_GCS_RW_MODE}"
   sccache --stop-server 2>/dev/null || true
-  if sccache --start-server 2>/dev/null; then
+  if sccache --start-server; then
     echo "sccache server started"
   else
     echo "warning: sccache server failed to start; unsetting RUSTC_WRAPPER" >&2
     unset RUSTC_WRAPPER
+    export CARGO_INCREMENTAL="1"
   fi
 }
 
