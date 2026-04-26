@@ -13,9 +13,15 @@ steps:
       if echo "$BUILD_ID" | gsutil -h 'x-goog-if-generation-match:0' cp -q - "$LOCK_URI" 2>/dev/null; then
         echo "Lock acquired for BUILD_ID=$BUILD_ID"
         touch /workspace/bench-enabled
-      else
+      elif gsutil -q stat "$LOCK_URI" 2>/dev/null; then
+        # Precondition failed because the lock genuinely exists.
         holder=$(gsutil cat "$LOCK_URI" 2>/dev/null || echo "unknown")
         echo "Benchmark already in progress (lock holder: $holder). Skipping this run."
+      else
+        # cp failed for a transient reason (network, permissions) — treat as
+        # acquired so we don't silently drop benchmark runs on GCS hiccups.
+        echo "Warning: lock cp failed but lock does not exist — treating as acquired."
+        touch /workspace/bench-enabled
       fi
 
   # Step 2: Run the full benchmark suite on the beefy c3-88 node.
