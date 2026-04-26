@@ -68,5 +68,9 @@ path = "tests/prefix_unary_recovery_tests.rs"
 name = "property_access_recovery_tests"
 path = "tests/property_access_recovery_tests.rs"
 
+[[test]]
+name = "duplicate_extends_recovery_tests"
+path = "tests/duplicate_extends_recovery_tests.rs"
+
 [lints]
 workspace = true
