@@ -16,7 +16,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .create_diagnostic_type_formatter()
             .with_display_properties()
-            .with_preserve_optional_parameter_surface_syntax(false);
+            .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
 
@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
-            .with_preserve_optional_parameter_surface_syntax(false);
+            .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
 
@@ -174,7 +174,11 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::TypeFormatter::with_symbols(state.ctx.types, &state.ctx.binder.symbols)
                     .with_def_store(&state.ctx.definition_store)
                     .with_diagnostic_mode()
-                    .with_preserve_optional_parameter_surface_syntax(false)
+                    // Match tsc: optional parameters in assignability messages
+                    // display as `(a?: T)`, not `(a?: T | undefined)`. The `?`
+                    // already implies `| undefined`; tsc only writes the union
+                    // form when the source explicitly types the param that way.
+                    .with_preserve_optional_parameter_surface_syntax(true)
                     .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks);
             formatter.format(type_id).into_owned()
         };
