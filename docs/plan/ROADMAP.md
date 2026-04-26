@@ -10,13 +10,16 @@ This document supersedes the previous scattered plan files in `docs/plan/` and t
 
 To avoid duplicate work, roadmap-adjacent implementation, including DRY cleanup, must be claimed before coding starts.
 
+**Claim format (preferred):** add a file under `docs/plan/claims/<branch-slug>.md`. One file per PR keeps parallel agents from constantly rebasing into the same `Active Implementation Claims` section. See `docs/plan/claims/README.md` for the file template.
+
 Workflow:
 
-1. Pull latest `main` and inspect open PRs.
+1. Pull latest `main` and inspect open PRs and `docs/plan/claims/` for overlap.
 2. Create a branch for the intended work.
-3. Make a minimal roadmap edit in the section below, describing the intent, scope, branch, and draft PR title.
+3. Add `docs/plan/claims/<branch-slug>.md` with `Status: claim` (do not edit ROADMAP.md).
 4. Open a draft PR immediately with the `WIP` label.
 5. Only then start implementation.
+6. Before marking ready, flip the claim file's `Status: ready` and update the PR.
 
 Draft PR command shape:
 
@@ -26,7 +29,7 @@ gh pr create --draft --label WIP --title "[WIP] <scope>: <intent>" --body "$(cat
 - <what this PR intends to change>
 
 ## Roadmap Claim
-- Updated `docs/plan/ROADMAP.md` before implementation.
+- Added `docs/plan/claims/<branch-slug>.md` before implementation.
 
 ## Planned Scope
 - <files/systems expected to change>
@@ -41,9 +44,19 @@ Rules:
 
 1. A WIP PR is a coordination claim, not a merge candidate.
 2. Never merge a branch while its PR is draft, labeled `WIP`, titled with `[WIP]`, or otherwise described as WIP.
-3. Before marking ready, update this roadmap with the actual status, remove the `WIP` label, remove the `[WIP]` title prefix, and mark the PR ready.
-4. If implementation is abandoned, close the draft PR and remove or mark the roadmap claim as abandoned.
+3. Before marking ready, flip the claim file's `Status: ready` (or update the inline `Active Implementation Claims` entry if you used the legacy format), remove the `WIP` label, remove the `[WIP]` title prefix, and mark the PR ready.
+4. If implementation is abandoned, close the draft PR and either delete the claim file or set `Status: abandoned` (legacy: mark the inline claim as abandoned).
 5. DRY cleanup uses this same claim flow. Keep each DRY slice small and reviewable.
+
+### Merging Policy
+
+When a PR's CI is otherwise green and the only remaining merge blocker is a `docs/plan/ROADMAP.md` rebase conflict (typical for parallel agents that all appended entries to `Active Implementation Claims`):
+
+1. Resolve the ROADMAP conflict locally — keep both sides; dedupe stale "claim" entries when the PR's matching "ready" entry already exists.
+2. `git push --force-with-lease`.
+3. Run `gh pr merge <N> --squash --admin --delete-branch` **without waiting for the post-rebase CI re-run**. ROADMAP.md is documentation; the conflict-resolution push cannot affect the lanes that already passed.
+
+This applies only when the prior CI run was fully green and the conflict is exclusively in ROADMAP.md (or other docs). For real code/test conflicts, the normal "wait for CI" rule still applies.
 
 ### Active Implementation Claims
 
