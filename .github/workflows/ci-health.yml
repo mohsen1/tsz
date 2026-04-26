@@ -1,0 +1,94 @@
+name: CI Health Check
+
+on:
+  schedule:
+    # Every 15 minutes — uses free ubuntu-latest, not self-hosted runners
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  health:
+    name: runner-health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check runner pool health
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          repo="${{ github.repository }}"
+
+          # Fetch runners (paginated)
+          runners=$(gh api "repos/${repo}/actions/runners" --paginate --jq '.runners[]' 2>/dev/null)
+
+          total=$(echo "$runners" | python3 -c "
+          import json,sys
+          r=[json.loads(l) for l in sys.stdin if l.strip()]
+          print(len(r))
+          ")
+          online=$(echo "$runners" | python3 -c "
+          import json,sys
+          r=[json.loads(l) for l in sys.stdin if l.strip()]
+          print(sum(1 for x in r if x.get('status')=='online'))
+          ")
+          busy=$(echo "$runners" | python3 -c "
+          import json,sys
+          r=[json.loads(l) for l in sys.stdin if l.strip()]
+          print(sum(1 for x in r if x.get('status')=='online' and x.get('busy')))
+          ")
+          offline=$(echo "$runners" | python3 -c "
+          import json,sys
+          r=[json.loads(l) for l in sys.stdin if l.strip()]
+          print(sum(1 for x in r if x.get('status')=='offline'))
+          ")
+          idle=$(( online - busy ))
+
+          in_progress=$(gh api "repos/${repo}/actions/runs?status=in_progress&per_page=50" \
+            --jq '.total_count' 2>/dev/null || echo 0)
+          queued=$(gh api "repos/${repo}/actions/runs?status=queued&per_page=50" \
+            --jq '.total_count' 2>/dev/null || echo 0)
+
+          # Write GitHub step summary
+          {
+            echo "## CI Health — $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Runners online | ${online} / ${total} |"
+            echo "| Runners busy | ${busy} |"
+            echo "| Runners idle | ${idle} |"
+            echo "| Runners offline (stale) | ${offline} |"
+            echo "| Workflow runs in progress | ${in_progress} |"
+            echo "| Workflow runs queued | ${queued} |"
+
+            if [[ "${idle}" -eq 0 && "${in_progress}" -gt 0 ]]; then
+              echo ""
+              echo "> ⚠️ **Runner pool saturated** — all runners busy, ${queued} run(s) queued"
+            fi
+            if [[ "${offline}" -gt 15 ]]; then
+              echo ""
+              echo "> ⚠️ **${offline} stale offline runners** — run \`scripts/ci/cleanup-stale-runners.sh\` to purge"
+            fi
+            if [[ "${online}" -lt 20 ]]; then
+              echo ""
+              echo "> 🔴 **Low runner count (${online})** — CREMA may not be scaling; check GCP console"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          echo "runners: online=${online}/${total} busy=${busy} idle=${idle} offline=${offline}"
+          echo "runs: in_progress=${in_progress} queued=${queued}"
+
+          # Fail loudly when runner pool is critically low (blocks future jobs)
+          if [[ "${online}" -lt 5 ]]; then
+            echo "::error::CRITICAL: only ${online} runners online — CI is effectively down"
+            exit 1
+          fi
