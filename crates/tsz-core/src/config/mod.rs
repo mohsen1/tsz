@@ -3933,7 +3933,7 @@ fn build_lib_map_uncached(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> 
 /// Backward-compat lib name aliases applied at lookup time.
 /// Mirrors the tail of tsc's `libEntries` table (the "Fallback for backward
 /// compatibility" block).
-fn legacy_lib_aliases() -> &'static [(&'static str, &'static str)] {
+const fn legacy_lib_aliases() -> &'static [(&'static str, &'static str)] {
     &[
         ("es6", "es2015"),
         ("es7", "es2016"),
