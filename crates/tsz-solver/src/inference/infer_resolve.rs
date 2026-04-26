@@ -711,9 +711,26 @@ impl<'a> InferenceContext<'a> {
         } else {
             resolved
         };
+        // First-property-wins fallback: when BCT/getCommonSupertype produced a
+        // union from object-property candidates that don't share a subtype
+        // relationship (e.g., `{x: 3, y: ""}` → `number | string`), tsc actually
+        // picks the first candidate (number). We replicate that here.
+        //
+        // EXCEPTION: when any candidate is a nullable type (undefined/null/void),
+        // the union is the *correct* result of tsc's getCommonSupertype, which
+        // strips nullables, runs the tournament on what remains, and then
+        // re-attaches the nullable members via getNullableType. For example,
+        // `foo<T>(f1: { x: T; y: T })` called with `{ x: undefined, y: "def" }`
+        // strips `undefined`, sees a single non-nullable candidate `string`
+        // (after widening), and returns `string | undefined`. Applying first-
+        // wins here would collapse that back to `undefined`, which is wrong:
+        // tsc emits `Type 'string | undefined' is not assignable to type 'number'`,
+        // not `Type 'undefined' is not assignable to type 'number'`.
+        let any_candidate_is_nullable = filtered_no_never.iter().any(|c| c.type_id.is_nullable());
         if all_from_object_properties
             && !has_index_signature_candidates
             && !is_const
+            && !any_candidate_is_nullable
             && let Some(TypeData::Union(member_list_id)) = self.interner.lookup(resolved)
         {
             let member_count = self.interner.type_list(member_list_id).len();
