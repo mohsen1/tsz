@@ -1322,8 +1322,8 @@ var z = { ...x };
 /// element-vs-element TS2322 anchored on the spread expression instead of
 /// the whole-array TS2322 at the assignment.
 ///
-/// Regression for TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts:
-///   var array: number[] = [0, 1, ...new SymbolIterator];
+/// Regression for `TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts`:
+///   `var array: number[] = [0, 1, ...new SymbolIterator];`
 /// Expected message at the spread expression:
 ///   `Type 'symbol' is not assignable to type 'number'`.
 ///
