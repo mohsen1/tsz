@@ -240,6 +240,10 @@ name = "type_arg_count_mismatch_tests"
 path = "tests/type_arg_count_mismatch_tests.rs"
 
 [[test]]
+name = "ts2314_in_type_literal_suppresses_ts2322_tests"
+path = "tests/ts2314_in_type_literal_suppresses_ts2322_tests.rs"
+
+[[test]]
 name = "commonjs_module_export_alias_tests"
 path = "tests/commonjs_module_export_alias_tests.rs"
 

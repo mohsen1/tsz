@@ -405,11 +405,23 @@ impl<'a> CheckerState<'a> {
                 }
                 // Resolve the symbol's structural body first
                 let _ = self.type_reference_symbol_type(sym_id);
+                let type_params = self.get_type_params_for_symbol(sym_id);
+                // Mirror `resolve_simple_type_reference`: when a bare type reference
+                // omits required type arguments, return ERROR so cascading TS2322
+                // checks against the naked-type-parameter form are suppressed.  The
+                // TS2314 diagnostic is emitted independently by
+                // `check_type_for_missing_names`, so we don't double-emit here.
+                let required_count = type_params
+                    .iter()
+                    .filter(|param| param.default.is_none())
+                    .count();
+                if required_count > 0 {
+                    return TypeId::ERROR;
+                }
                 // For generic types with all-default type parameters (e.g., Uint8Array<T = ArrayBufferLike>),
                 // wrap in Application(Lazy(DefId), defaults) to match resolve_simple_type_reference behavior.
                 // Without this, bare Lazy(DefId) misses the default instantiation and causes false
                 // TS2322 when compared against an explicit Application (e.g., Uint8Array<ArrayBuffer>).
-                let type_params = self.get_type_params_for_symbol(sym_id);
                 if !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some()) {
                     let default_args: Vec<TypeId> =
                         crate::query_boundaries::common::resolve_default_type_args(
