@@ -112,7 +112,6 @@ jobs:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
       TSZ_CI_CONFORMANCE_SHARDS: 32
-      TSZ_CI_CONFORMANCE_WORKERS: 8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,7 +144,6 @@ jobs:
     timeout-minutes: 90
     env:
       TSZ_CI_SHARDS: 16
-      TSZ_CI_SHARD_WORKERS: 8
       TSZ_CI_EMIT_CHUNK: 2000
     steps:
       - uses: actions/checkout@v4
@@ -162,7 +160,6 @@ jobs:
     timeout-minutes: 90
     env:
       TSZ_CI_SHARDS: 4
-      TSZ_CI_FOURSLASH_WORKERS: 8
     steps:
       - uses: actions/checkout@v4
         with:
