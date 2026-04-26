@@ -70,6 +70,64 @@ fn if_statement_with_invalid_character_and_asterisk_reports_ts1127_and_ts1109() 
     );
 }
 
+// Regression for #1342-style emit divergence in MemberFunctionDeclaration8_es6:
+// `if (a) ¬ * bar;` must leave the `*` for the outer parser so `* bar;` becomes
+// a separate top-level expression statement, matching tsc's emit
+// (`if (a) ;\n * bar;`). The bug consumed the `*` during if-body recovery,
+// erasing it from emit and producing `bar;` instead of `* bar;`.
+#[test]
+fn if_statement_recovery_does_not_consume_following_asterisk() {
+    // Place the input at the source-file top level for direct AST inspection.
+    let source = "if (a) ¬ * bar;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+    // Two top-level statements: `if (a) ;` (empty body) and `* bar;`.
+    assert_eq!(
+        sf.statements.nodes.len(),
+        2,
+        "expected the trailing `* bar;` to be parsed as a separate top-level statement, \
+         got {} statements",
+        sf.statements.nodes.len()
+    );
+    // Second statement should start at the `*` token (column 7 / pos 7 in this input,
+    // since `if (a) ` is 7 bytes before the unicode char and `¬` is two UTF-8 bytes).
+    let star_pos = source.find('*').expect("source must contain `*`") as u32;
+    let second = arena
+        .get(sf.statements.nodes[1])
+        .expect("second statement must be present");
+    assert_eq!(
+        second.pos, star_pos,
+        "second statement should begin at the `*` position, but begins at {}",
+        second.pos
+    );
+}
+
+// Regression: `if (a) * bar;` (no invalid char) must parse `* bar` as the
+// if-body itself (a binary expression with missing LHS), NOT as a separate
+// statement. This matches tsc's `if (a)\n     * bar;`.
+#[test]
+fn if_statement_with_leading_asterisk_body_keeps_asterisk_in_body() {
+    let source = "if (a) * bar;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+    // Only one top-level statement: the if-statement.
+    assert_eq!(
+        sf.statements.nodes.len(),
+        1,
+        "expected `* bar;` to be parsed as the if-body, not a separate statement, \
+         got {} statements",
+        sf.statements.nodes.len()
+    );
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected TS1109 for missing LHS at `*`, got {diags:?}"
+    );
+}
+
 #[test]
 fn function_declaration_missing_open_paren_recovers_into_body() {
     assert_function_body_recovery_uses_statement_errors(
