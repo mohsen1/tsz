@@ -3,6 +3,8 @@
 //! LSP uses line/column positions, while our AST uses byte offsets.
 //! This module provides conversion utilities.
 
+use crate::span::Span;
+
 /// A position in a source file (0-indexed line and column).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Position {
@@ -178,6 +180,35 @@ impl LineMap {
         }
 
         u32::try_from(line_start + byte_count).ok()
+    }
+
+    /// Convert a byte `Span` to an LSP `Range` (UTF-16 code-unit columns).
+    ///
+    /// Equivalent to calling `offset_to_position` for both `span.start` and
+    /// `span.end` and wrapping in `Range::new`. This is the canonical helper;
+    /// callers building a `Range` from a `Span` should use this instead of
+    /// open-coding the two calls.
+    ///
+    /// Dummy spans (`Span::dummy()`) and out-of-source offsets are clamped to
+    /// the end of `source`, matching `offset_to_position` semantics.
+    #[must_use]
+    pub fn span_to_range(&self, span: Span, source: &str) -> Range {
+        let start = self.offset_to_position(span.start, source);
+        let end = self.offset_to_position(span.end, source);
+        Range::new(start, end)
+    }
+
+    /// Convert an LSP `Range` to a byte `Span`.
+    ///
+    /// Returns `None` if either endpoint references a line outside the source
+    /// (matches `position_to_offset` semantics). The returned span preserves
+    /// `start` and `end` regardless of ordering; callers wanting a normalized
+    /// span should clamp themselves.
+    #[must_use]
+    pub fn range_to_span(&self, range: Range, source: &str) -> Option<Span> {
+        let start = self.position_to_offset(range.start, source)?;
+        let end = self.position_to_offset(range.end, source)?;
+        Some(Span::new(start, end))
     }
 
     /// Get the number of lines.
