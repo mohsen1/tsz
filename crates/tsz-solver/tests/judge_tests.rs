@@ -7,13 +7,12 @@ use crate::types::{
 #[allow(clippy::duplicate_mod)]
 #[path = "common/mod.rs"]
 mod common;
-use common::create_test_interner;
+use common::JudgeSetup;
 
 #[test]
 fn test_is_subtype_identity() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(judge.is_subtype(TypeId::NUMBER, TypeId::NUMBER));
     assert!(judge.is_subtype(TypeId::STRING, TypeId::STRING));
@@ -22,9 +21,8 @@ fn test_is_subtype_identity() {
 
 #[test]
 fn test_is_subtype_any_unknown() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     // Everything is subtype of any
     assert!(judge.is_subtype(TypeId::NUMBER, TypeId::ANY));
@@ -45,9 +43,8 @@ fn test_is_subtype_any_unknown() {
 
 #[test]
 fn test_classify_primitive() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     let flags = judge.classify_primitive(TypeId::NUMBER);
     assert!(flags.contains(PrimitiveFlags::NUMBER_LIKE));
@@ -68,9 +65,8 @@ fn test_classify_primitive() {
 
 #[test]
 fn test_classify_truthiness() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert_eq!(
         judge.classify_truthiness(TypeId::BOOLEAN_TRUE),
@@ -100,9 +96,9 @@ fn test_classify_truthiness() {
 
 #[test]
 fn test_classify_iterable_array() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let array_number = interner.array(TypeId::NUMBER);
     match judge.classify_iterable(array_number) {
@@ -113,9 +109,8 @@ fn test_classify_iterable_array() {
 
 #[test]
 fn test_classify_iterable_string() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert_eq!(
         judge.classify_iterable(TypeId::STRING),
@@ -125,9 +120,9 @@ fn test_classify_iterable_string() {
 
 #[test]
 fn test_classify_callable_function() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let fn_type = interner.function(FunctionShape {
         type_params: vec![],
@@ -160,9 +155,9 @@ fn test_classify_callable_function() {
 
 #[test]
 fn test_get_property_object() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let foo_atom = interner.intern_string("foo");
     let obj = interner.object(vec![PropertyInfo {
@@ -201,9 +196,9 @@ fn test_get_property_object() {
 
 #[test]
 fn test_get_property_special_types() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let foo_atom = interner.intern_string("foo");
 
@@ -223,9 +218,8 @@ fn test_get_property_special_types() {
 
 #[test]
 fn test_caching() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     // First call - not cached
     let result1 = judge.is_subtype(TypeId::NUMBER, TypeId::ANY);
@@ -249,9 +243,8 @@ fn test_caching() {
 
 #[test]
 fn test_primitive_subtype_reflexivity() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     // Every primitive type is a subtype of itself
     assert!(judge.is_subtype(TypeId::NUMBER, TypeId::NUMBER));
@@ -267,9 +260,8 @@ fn test_primitive_subtype_reflexivity() {
 
 #[test]
 fn test_primitive_not_subtype_of_different_primitive() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(!judge.is_subtype(TypeId::STRING, TypeId::NUMBER));
     assert!(!judge.is_subtype(TypeId::NUMBER, TypeId::STRING));
@@ -283,9 +275,9 @@ fn test_primitive_not_subtype_of_different_primitive() {
 
 #[test]
 fn test_string_literal_subtype_of_string() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let hello = interner.literal_string("hello");
     let world = interner.literal_string("world");
@@ -307,9 +299,9 @@ fn test_string_literal_subtype_of_string() {
 
 #[test]
 fn test_number_literal_subtype_of_number() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let forty_two = interner.literal_number(42.0);
     let zero = interner.literal_number(0.0);
@@ -322,9 +314,8 @@ fn test_number_literal_subtype_of_number() {
 
 #[test]
 fn test_boolean_literal_subtype_of_boolean() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(judge.is_subtype(TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN));
     assert!(judge.is_subtype(TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN));
@@ -340,9 +331,9 @@ fn test_boolean_literal_subtype_of_boolean() {
 
 #[test]
 fn test_never_is_subtype_of_everything() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     assert!(judge.is_subtype(TypeId::NEVER, TypeId::NUMBER));
     assert!(judge.is_subtype(TypeId::NEVER, TypeId::STRING));
@@ -368,9 +359,8 @@ fn test_never_is_subtype_of_everything() {
 
 #[test]
 fn test_everything_is_subtype_of_unknown() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(judge.is_subtype(TypeId::NUMBER, TypeId::UNKNOWN));
     assert!(judge.is_subtype(TypeId::STRING, TypeId::UNKNOWN));
@@ -392,9 +382,8 @@ fn test_everything_is_subtype_of_unknown() {
 
 #[test]
 fn test_any_is_bidirectional_subtype() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     // any is subtype of everything (except never)
     assert!(judge.is_subtype(TypeId::ANY, TypeId::NUMBER));
@@ -415,9 +404,9 @@ fn test_any_is_bidirectional_subtype() {
 
 #[test]
 fn test_any_subtype_of_object_types() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let obj = interner.object(vec![PropertyInfo::new(
         interner.intern_string("x"),
@@ -446,9 +435,9 @@ fn test_any_subtype_of_object_types() {
 #[test]
 fn test_object_subtype_extra_properties_allowed() {
     // { x: number, y: string } <: { x: number }
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -469,9 +458,9 @@ fn test_object_subtype_extra_properties_allowed() {
 #[test]
 fn test_object_subtype_missing_property_fails() {
     // { x: number } is NOT <: { x: number, y: string }
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -491,9 +480,9 @@ fn test_object_subtype_missing_property_fails() {
 #[test]
 fn test_object_subtype_property_type_mismatch() {
     // { x: string } is NOT <: { x: number }
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
 
@@ -509,9 +498,9 @@ fn test_object_subtype_property_type_mismatch() {
 #[test]
 fn test_empty_object_is_supertype() {
     // Everything structural is subtype of {} (empty object)
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let empty = interner.object(Vec::new());
     let x_atom = interner.intern_string("x");
@@ -527,9 +516,9 @@ fn test_empty_object_is_supertype() {
 fn test_object_subtype_with_optional_property() {
     // { x: number } <: { x: number, y?: string }
     // An object without y satisfies optional y
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -553,9 +542,9 @@ fn test_object_subtype_with_optional_property() {
 #[test]
 fn test_function_subtype_return_covariant() {
     // () => "hello" <: () => string (return is covariant)
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let hello = interner.literal_string("hello");
 
@@ -593,13 +582,12 @@ fn test_function_subtype_return_covariant() {
 fn test_function_subtype_params_contravariant() {
     // (x: string) => void <: (x: "hello") => void  (params are contravariant)
     // A function that accepts wider input is subtype of one that accepts narrower
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let config = JudgeConfig {
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge_with_config(JudgeConfig {
         strict_function_types: true,
         ..JudgeConfig::default()
-    };
-    let judge = DefaultJudge::new(&interner, &env, config);
+    });
 
     let hello = interner.literal_string("hello");
 
@@ -647,9 +635,9 @@ fn test_function_subtype_params_contravariant() {
 fn test_function_subtype_fewer_params_ok() {
     // () => void <: (x: number) => void
     // A function with fewer params is subtype (TS callback compatibility)
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let fn_no_params = interner.function(FunctionShape {
         params: Vec::new(),
@@ -689,9 +677,9 @@ fn test_function_subtype_fewer_params_ok() {
 #[test]
 fn test_union_subtype_all_members_must_be_subtypes() {
     // A | B <: C iff A <: C AND B <: C
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     // number | string <: number | string | boolean
     let num_str = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
@@ -710,9 +698,9 @@ fn test_union_subtype_all_members_must_be_subtypes() {
 #[test]
 fn test_single_type_subtype_of_union_containing_it() {
     // number <: number | string
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let union = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
 
@@ -733,9 +721,9 @@ fn test_single_type_subtype_of_union_containing_it() {
 #[test]
 fn test_union_not_subtype_of_single_member() {
     // number | string is NOT <: number
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let union = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
 
@@ -748,9 +736,9 @@ fn test_union_not_subtype_of_single_member() {
 #[test]
 fn test_union_with_never() {
     // never | T = T, so never | number <: number
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let never_or_number = interner.union(vec![TypeId::NEVER, TypeId::NUMBER]);
 
@@ -767,9 +755,9 @@ fn test_union_with_never() {
 #[test]
 fn test_intersection_subtype_of_each_constituent() {
     // A & B <: A  and  A & B <: B
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -791,9 +779,9 @@ fn test_intersection_subtype_of_each_constituent() {
 #[test]
 fn test_intersection_has_all_properties() {
     // { x: number } & { y: string } <: { x: number, y: string }
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -820,9 +808,9 @@ fn test_intersection_has_all_properties() {
 #[test]
 fn test_tuple_subtype_same_elements() {
     // [number, string] <: [number, string]
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -848,9 +836,9 @@ fn test_tuple_subtype_same_elements() {
 #[test]
 fn test_tuple_subtype_element_wise() {
     // ["hello", 42] <: [string, number]
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let hello = interner.literal_string("hello");
     let forty_two = interner.literal_number(42.0);
@@ -898,9 +886,9 @@ fn test_tuple_subtype_element_wise() {
 #[test]
 fn test_tuple_length_mismatch() {
     // [number] is NOT <: [number, string]
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let short = interner.tuple(vec![TupleElement {
         type_id: TypeId::NUMBER,
@@ -937,9 +925,9 @@ fn test_tuple_length_mismatch() {
 #[test]
 fn test_array_subtype_element_covariant() {
     // Array<"hello"> <: Array<string> (arrays are covariant in TS)
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let hello = interner.literal_string("hello");
     let arr_hello = interner.array(hello);
@@ -958,9 +946,9 @@ fn test_array_subtype_element_covariant() {
 #[test]
 fn test_array_subtype_different_element_types() {
     // Array<number> is NOT <: Array<string>
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let arr_num = interner.array(TypeId::NUMBER);
     let arr_str = interner.array(TypeId::STRING);
@@ -975,9 +963,8 @@ fn test_array_subtype_different_element_types() {
 
 #[test]
 fn test_are_identical_same_type() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(judge.are_identical(TypeId::NUMBER, TypeId::NUMBER));
     assert!(judge.are_identical(TypeId::STRING, TypeId::STRING));
@@ -986,9 +973,8 @@ fn test_are_identical_same_type() {
 
 #[test]
 fn test_are_identical_different_types() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(!judge.are_identical(TypeId::NUMBER, TypeId::STRING));
     assert!(!judge.are_identical(TypeId::STRING, TypeId::BOOLEAN));
@@ -998,9 +984,8 @@ fn test_are_identical_different_types() {
 fn test_are_identical_any_is_not_identical_to_concrete() {
     // any <: number and number <: any, but they are "identical" by the are_identical impl
     // since it uses bidirectional subtyping
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     // Since are_identical checks a <: b && b <: a, and any is bidirectional,
     // any is considered "identical" to number
@@ -1013,13 +998,11 @@ fn test_are_identical_any_is_not_identical_to_concrete() {
 
 #[test]
 fn test_strict_null_checks_enabled() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let config = JudgeConfig {
+    let setup = JudgeSetup::new();
+    let judge = setup.judge_with_config(JudgeConfig {
         strict_null_checks: true,
         ..JudgeConfig::default()
-    };
-    let judge = DefaultJudge::new(&interner, &env, config);
+    });
 
     assert!(!judge.is_subtype(TypeId::NULL, TypeId::NUMBER));
     assert!(!judge.is_subtype(TypeId::UNDEFINED, TypeId::NUMBER));
@@ -1029,13 +1012,11 @@ fn test_strict_null_checks_enabled() {
 
 #[test]
 fn test_strict_null_checks_disabled() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let config = JudgeConfig {
+    let setup = JudgeSetup::new();
+    let judge = setup.judge_with_config(JudgeConfig {
         strict_null_checks: false,
         ..JudgeConfig::default()
-    };
-    let judge = DefaultJudge::new(&interner, &env, config);
+    });
 
     // When strict null checks are disabled, null and undefined are assignable to everything
     assert!(judge.is_subtype(TypeId::NULL, TypeId::NUMBER));
@@ -1051,9 +1032,8 @@ fn test_strict_null_checks_disabled() {
 #[test]
 fn test_error_type_is_bidirectional() {
     // ERROR type behaves like any - assignable to/from everything
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(judge.is_subtype(TypeId::ERROR, TypeId::NUMBER));
     assert!(judge.is_subtype(TypeId::NUMBER, TypeId::ERROR));
@@ -1068,9 +1048,8 @@ fn test_error_type_is_bidirectional() {
 
 #[test]
 fn test_void_subtyping() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     // void is subtype of void
     assert!(judge.is_subtype(TypeId::VOID, TypeId::VOID));
@@ -1091,9 +1070,9 @@ fn test_void_subtyping() {
 
 #[test]
 fn test_classify_primitive_literals() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let hello = interner.literal_string("hello");
     let flags = judge.classify_primitive(hello);
@@ -1106,9 +1085,9 @@ fn test_classify_primitive_literals() {
 
 #[test]
 fn test_classify_primitive_union() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     // number | string union should have both flags
     let union = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
@@ -1123,9 +1102,9 @@ fn test_classify_primitive_union() {
 
 #[test]
 fn test_classify_truthiness_literals() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let hello = interner.literal_string("hello");
     assert_eq!(
@@ -1151,9 +1130,9 @@ fn test_classify_truthiness_literals() {
 
 #[test]
 fn test_classify_truthiness_object_always_truthy() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let obj = interner.object(vec![PropertyInfo::new(
         interner.intern_string("x"),
@@ -1164,9 +1143,9 @@ fn test_classify_truthiness_object_always_truthy() {
 
 #[test]
 fn test_classify_truthiness_union_sometimes() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     // number | null can be truthy (non-zero number) or falsy (null)
     let union = interner.union(vec![TypeId::NUMBER, TypeId::NULL]);
@@ -1179,9 +1158,9 @@ fn test_classify_truthiness_union_sometimes() {
 
 #[test]
 fn test_classify_iterable_tuple() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -1210,9 +1189,8 @@ fn test_classify_iterable_tuple() {
 
 #[test]
 fn test_classify_iterable_not_iterable() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert_eq!(
         judge.classify_iterable(TypeId::NUMBER),
@@ -1230,9 +1208,9 @@ fn test_classify_iterable_not_iterable() {
 
 #[test]
 fn test_classify_callable_constructor() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let ctor = interner.function(FunctionShape {
         params: Vec::new(),
@@ -1254,9 +1232,9 @@ fn test_classify_callable_constructor() {
 
 #[test]
 fn test_classify_callable_overloaded() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let callable = interner.callable(CallableShape {
         call_signatures: vec![
@@ -1307,9 +1285,8 @@ fn test_classify_callable_overloaded() {
 
 #[test]
 fn test_classify_callable_not_callable() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     assert!(matches!(
         judge.classify_callable(TypeId::NUMBER),
@@ -1327,9 +1304,9 @@ fn test_classify_callable_not_callable() {
 
 #[test]
 fn test_get_property_union() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -1357,9 +1334,9 @@ fn test_get_property_union() {
 
 #[test]
 fn test_get_property_intersection() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -1391,9 +1368,9 @@ fn test_get_property_intersection() {
 
 #[test]
 fn test_get_property_array_length() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let arr = interner.array(TypeId::NUMBER);
     let length_atom = interner.intern_string("length");
@@ -1408,9 +1385,9 @@ fn test_get_property_array_length() {
 
 #[test]
 fn test_get_property_tuple_element_access() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -1453,9 +1430,9 @@ fn test_get_property_tuple_element_access() {
 
 #[test]
 fn test_get_property_tuple_length() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let tuple = interner.tuple(vec![
         TupleElement {
@@ -1493,9 +1470,9 @@ fn test_get_property_tuple_length() {
 
 #[test]
 fn test_get_property_string_index_signature() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let obj = interner.object_with_index(ObjectShape {
         symbol: None,
@@ -1540,17 +1517,17 @@ fn test_judge_config_defaults() {
 
 #[test]
 fn test_apparent_type_resolves_lazy() {
-    let interner = create_test_interner();
-    let mut env = TypeEnvironment::new();
-
-    let x_atom = interner.intern_string("x");
-    let inner = interner.object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
+    let mut setup = JudgeSetup::new();
+    let x_atom = setup.interner.intern_string("x");
+    let inner = setup
+        .interner
+        .object(vec![PropertyInfo::new(x_atom, TypeId::NUMBER)]);
 
     let def_id = DefId(42);
-    env.insert_def(def_id, inner);
-    let lazy = interner.lazy(def_id);
+    setup.env.insert_def(def_id, inner);
+    let lazy = setup.interner.lazy(def_id);
 
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let judge = setup.judge();
     let apparent = judge.apparent_type(lazy);
 
     assert_eq!(
@@ -1565,9 +1542,9 @@ fn test_apparent_type_resolves_lazy() {
 
 #[test]
 fn test_get_members_object() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let x_atom = interner.intern_string("x");
     let y_atom = interner.intern_string("y");
@@ -1583,9 +1560,8 @@ fn test_get_members_object() {
 
 #[test]
 fn test_get_members_non_object() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let judge = setup.judge();
 
     let members = judge.get_members(TypeId::NUMBER);
     assert!(members.is_empty());
@@ -1597,9 +1573,9 @@ fn test_get_members_non_object() {
 
 #[test]
 fn test_get_call_signatures_function() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let func = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -1624,9 +1600,9 @@ fn test_get_call_signatures_function() {
 
 #[test]
 fn test_get_construct_signatures_constructor() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let ctor = interner.function(FunctionShape {
         params: Vec::new(),
@@ -1655,9 +1631,9 @@ fn test_get_construct_signatures_constructor() {
 
 #[test]
 fn test_object_with_string_index_is_subtype() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     // { [key: string]: number } should accept any object with compatible properties
     let indexed = interner.object_with_index(ObjectShape {
@@ -1689,9 +1665,9 @@ fn test_object_with_string_index_is_subtype() {
 
 #[test]
 fn test_literal_union_subtype() {
-    let interner = create_test_interner();
-    let env = TypeEnvironment::new();
-    let judge = DefaultJudge::with_defaults(&interner, &env);
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
 
     let hello = interner.literal_string("hello");
     let world = interner.literal_string("world");
