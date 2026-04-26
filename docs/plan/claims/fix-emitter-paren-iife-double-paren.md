@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/emitter-paren-iife-double-paren`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1342
+- **Status**: ready
 - **Workstream**: 2 (JS emit pass-rate)
 
 ## Intent
