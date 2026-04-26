@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-suite="${1:?usage: $0 <build|lint|unit|wasm|conformance|emit|fourslash>}"
+suite="${1:?usage: $0 <build|lint|unit|wasm|conformance|conformance-aggregate|emit|fourslash>}"
 export _TSZ_CI_SUITE="$suite"
 export TSZ_CI_SUITE="$suite"
 export _TSZ_CI_CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache}}"
