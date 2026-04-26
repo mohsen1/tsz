@@ -1410,7 +1410,21 @@ impl ParserState {
             return self.parse_for_of_statement_rest(start_pos, initializer, await_modifier);
         }
         // Regular for statement: for (init; cond; incr)
-        self.parse_expected(SyntaxKind::SemicolonToken);
+        // When the initializer is a variable declaration list and the next token
+        // is `)` instead of `;`, tsc's `parseDelimitedList(VariableDeclarations)`
+        // recovery emits `',' expected.` at the unexpected token (treating it as
+        // the missing comma between declarators) rather than the default
+        // `';' expected.`. Mirror that message so our diagnostic at the `)`
+        // matches tsc for `for (let X)`-style malformed inputs.
+        let init_is_var_decl = self
+            .arena
+            .get(initializer)
+            .is_some_and(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST);
+        if init_is_var_decl && self.is_token(SyntaxKind::CloseParenToken) {
+            self.parse_expected(SyntaxKind::CommaToken);
+        } else {
+            self.parse_expected(SyntaxKind::SemicolonToken);
+        }
 
         // Condition
         let condition = if self.is_token(SyntaxKind::SemicolonToken) {
