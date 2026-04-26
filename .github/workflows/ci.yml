@@ -43,9 +43,24 @@ jobs:
           fi
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
 
+  build:
+    name: build
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 30
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Build dist-fast binaries
+        run: scripts/ci/github-suite.sh build
+
   lint:
     name: lint
-    needs: gate
+    needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -58,7 +73,7 @@ jobs:
 
   unit:
     name: unit
-    needs: gate
+    needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 60
@@ -71,7 +86,7 @@ jobs:
 
   wasm:
     name: wasm
-    needs: gate
+    needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -84,19 +99,19 @@ jobs:
 
   conformance:
     name: conformance-${{ matrix.shard }}
-    needs: gate
+    needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 16
-      TSZ_CI_CONFORMANCE_SHARDS: 16
-      TSZ_CI_CONFORMANCE_WORKERS: 6
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
+      TSZ_CI_CONFORMANCE_SHARDS: 32
+      TSZ_CI_CONFORMANCE_WORKERS: 8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,13 +121,13 @@ jobs:
 
   emit:
     name: emit
-    needs: gate
+    needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 90
     env:
-      TSZ_CI_SHARDS: 8
-      TSZ_CI_SHARD_WORKERS: 6
+      TSZ_CI_SHARDS: 16
+      TSZ_CI_SHARD_WORKERS: 8
       TSZ_CI_EMIT_CHUNK: 2000
     steps:
       - uses: actions/checkout@v4
@@ -123,13 +138,13 @@ jobs:
 
   fourslash:
     name: fourslash
-    needs: gate
+    needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 90
     env:
-      TSZ_CI_SHARDS: 8
-      TSZ_CI_FOURSLASH_WORKERS: 6
+      TSZ_CI_SHARDS: 16
+      TSZ_CI_FOURSLASH_WORKERS: 8
     steps:
       - uses: actions/checkout@v4
         with:
