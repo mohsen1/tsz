@@ -391,19 +391,31 @@ impl<'a> CheckerState<'a> {
                             matches!(lookup_presence, ContextualPropertyPresence::Present);
                         let mut property_context_type =
                             self.contextual_object_property_type_for_lookup(ctx_type, &name);
-                        // For optional properties (e.g., `set?` in ProxyHandler), the
-                        // contextual type includes `undefined` from optionality. When
+                        // For optional callable properties (e.g., `set?` in ProxyHandler),
+                        // the contextual type includes `undefined` from optionality. When
                         // the property IS present in the literal, that `undefined` is
-                        // irrelevant — the property is being assigned, not read. Strip
-                        // it so the callable type flows through for generic inference
-                        // (e.g., `deprecate<T extends Function>(fn: T): T` should
-                        // infer T as the handler type, not fall back to `Function`).
+                        // irrelevant for callable inference — strip it so a generic
+                        // wrapper like `deprecate<T extends Function>(fn: T): T` can
+                        // infer T as the handler function type rather than falling back
+                        // to `Function`.
+                        //
+                        // Restrict the strip to callable property types so non-callable
+                        // optional properties (e.g., `y?: number` in `{ y?: number }`)
+                        // keep `undefined` in their contextual type. tsc's
+                        // `getTypeOfPropertyOfContextualType` always returns
+                        // `T | undefined` for such optional properties, so a generic
+                        // call like `match<T>(cb)` used as a value still infers
+                        // `T = number | undefined` and TS18048 fires inside the
+                        // callback as expected.
                         if let Some(pct) = property_context_type {
                             let stripped = crate::query_boundaries::common::remove_undefined(
                                 self.ctx.types,
                                 pct,
                             );
-                            if stripped != TypeId::UNDEFINED && stripped != pct {
+                            if stripped != TypeId::UNDEFINED
+                                && stripped != pct
+                                && self.stripped_property_context_is_callable(stripped)
+                            {
                                 property_context_type = Some(stripped);
                             }
                         }
