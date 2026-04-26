@@ -183,7 +183,7 @@ impl BinderState {
             scope_chain: Vec::with_capacity(32),
             current_scope_idx: 0,
             node_symbols: Arc::new(FxHashMap::with_capacity_and_hasher(256, Default::default())),
-            module_declaration_exports_publicly: FxHashMap::default(),
+            module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
             symbol_arenas: Arc::new(FxHashMap::default()),
             declaration_arenas: Arc::new(FxHashMap::default()),
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
@@ -253,7 +253,7 @@ impl BinderState {
         self.scope_chain.clear();
         self.current_scope_idx = 0;
         Arc::make_mut(&mut self.node_symbols).clear();
-        self.module_declaration_exports_publicly.clear();
+        Arc::make_mut(&mut self.module_declaration_exports_publicly).clear();
         Arc::make_mut(&mut self.symbol_arenas).clear();
         Arc::make_mut(&mut self.declaration_arenas).clear();
         Arc::make_mut(&mut self.sym_to_decl_indices).clear();
@@ -425,7 +425,7 @@ impl BinderState {
             scope_chain: Vec::new(),
             current_scope_idx: 0,
             node_symbols,
-            module_declaration_exports_publicly: FxHashMap::default(),
+            module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
             symbol_arenas: Arc::new(FxHashMap::default()),
             declaration_arenas: Arc::new(FxHashMap::default()),
             sym_to_decl_indices: Arc::new(FxHashMap::default()),
