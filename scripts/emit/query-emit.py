@@ -35,7 +35,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.query_snapshot import load_snapshot, print_top_counter
+from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
 
 DETAIL_FILE = Path(__file__).parent / "emit-detail.json"
 
@@ -102,8 +102,7 @@ def show_js_failures(data, top=40, paths_only=False):
     for r in fails[:top]:
         err = r.get("jsError", "")[:80]
         print(f"  {r['name']}  {err}")
-    if len(fails) > top:
-        print(f"  ... and {len(fails) - top} more")
+    print_truncated_more(fails, top)
 
 
 def show_dts_failures(data, top=40, paths_only=False):
@@ -120,8 +119,7 @@ def show_dts_failures(data, top=40, paths_only=False):
     for r in fails[:top]:
         err = r.get("dtsError", "")[:80]
         print(f"  {r['name']}  {err}")
-    if len(fails) > top:
-        print(f"  ... and {len(fails) - top} more")
+    print_truncated_more(fails, top)
 
 
 def show_top_errors(data, top=20):
@@ -159,8 +157,7 @@ def show_close(data, top=40):
     for kind, r in close[:top]:
         err = r.get("jsError") or r.get("dtsError") or ""
         print(f"  [{kind}] {r['name']}  {err[:60]}")
-    if len(close) > top:
-        print(f"  ... and {len(close) - top} more")
+    print_truncated_more(close, top)
 
 
 def show_filter(data, pattern, top=40, paths_only=False):
@@ -178,8 +175,7 @@ def show_filter(data, pattern, top=40, paths_only=False):
     for r in matches[:top]:
         status = f"js={r['jsStatus']} dts={r['dtsStatus']}"
         print(f"  {r['name']}  [{status}]")
-    if len(matches) > top:
-        print(f"  ... and {len(matches) - top} more")
+    print_truncated_more(matches, top)
 
 
 def show_status(data, status, top=40):
@@ -190,8 +186,7 @@ def show_status(data, status, top=40):
         st = f"js={r['jsStatus']} dts={r['dtsStatus']}"
         err = r.get("jsError") or r.get("dtsError") or ""
         print(f"  {r['name']}  [{st}]  {err[:60]}")
-    if len(matches) > top:
-        print(f"  ... and {len(matches) - top} more")
+    print_truncated_more(matches, top)
 
 
 def main():
