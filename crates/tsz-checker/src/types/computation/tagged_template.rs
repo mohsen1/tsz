@@ -82,9 +82,21 @@ impl<'a> CheckerState<'a> {
         let resolved_tag_type = self.resolve_ref_type(tag_type);
         let resolved_tag_type = self.resolve_lazy_type(resolved_tag_type);
 
-        // Extract function shape from the tag function type
-        let callee_shape =
-            call_checker::get_contextual_signature(self.ctx.types, resolved_tag_type);
+        // Extract function shape from the tag function type. Tagged templates
+        // pass `TemplateStringsArray` as the first argument followed by the
+        // substitution expressions, so the effective arg count is
+        // `1 + substitution_exprs.len()`. Threading this arity into signature
+        // selection lets overload-aware contextual typing pick the matching
+        // overload (mirrors the regular call expression path) instead of
+        // returning `None` for mixed-arity overload sets and falling back to a
+        // signature-less single pass.
+        let total_arg_count = 1 + substitution_exprs.len();
+        let callee_shape = call_checker::get_contextual_signature_for_arity(
+            self.ctx.types,
+            resolved_tag_type,
+            total_arg_count,
+        )
+        .or_else(|| call_checker::get_contextual_signature(self.ctx.types, resolved_tag_type));
 
         // Detect constructor-only callable types (classes, interfaces with only `new` sigs).
         // `get_contextual_signature` falls back to construct signatures when call
