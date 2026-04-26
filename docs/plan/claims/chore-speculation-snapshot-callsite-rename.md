@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `chore/speculation-snapshot-callsite-rename`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1379
+- **Status**: ready
 - **Workstream**: ROBUSTNESS_AUDIT_2026-04-26 item #5 (#E)
 
 ## Intent
