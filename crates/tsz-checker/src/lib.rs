@@ -23,7 +23,6 @@
 #![allow(clippy::question_mark)]
 #![allow(clippy::redundant_clone)]
 #![allow(clippy::uninlined_format_args)]
-#![allow(clippy::unnecessary_map_or)]
 
 extern crate self as tsz_checker;
 

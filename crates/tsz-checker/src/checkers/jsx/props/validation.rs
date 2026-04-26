@@ -296,7 +296,7 @@ impl<'a> CheckerState<'a> {
                         let mut chars = n.chars();
                         let is_ident = chars
                             .next()
-                            .map_or(false, |c| c == '_' || c == '$' || c.is_ascii_alphabetic())
+                            .is_some_and(|c| c == '_' || c == '$' || c.is_ascii_alphabetic())
                             && chars.all(|c| c == '_' || c == '$' || c.is_ascii_alphanumeric());
                         if is_ident {
                             n.to_string()
