@@ -4,11 +4,6 @@
 //! (widened), not `Generator<never, 1, any>`. Matches tsc's async wrapper
 //! widening applied in the same file.
 
-use tsz_binder::BinderState;
-use tsz_checker::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
 const GENERATOR_STUBS: &str = r#"
 interface IteratorYieldResult<TYield> { done?: false; value: TYield; }
 interface IteratorReturnResult<TReturn> { done: true; value: TReturn; }
@@ -33,27 +28,9 @@ interface Generator<T = unknown, TReturn = any, TNext = any> extends IterableIte
 "#;
 
 fn get_diagnostics(user_source: &str) -> Vec<(u32, String)> {
-    let full_source = format!("{GENERATOR_STUBS}\n{user_source}");
-    let mut parser = ParserState::new("test.ts".to_string(), full_source);
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        Default::default(),
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source_code_messages(&format!(
+        "{GENERATOR_STUBS}\n{user_source}"
+    ))
 }
 
 #[test]
