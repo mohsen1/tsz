@@ -104,6 +104,10 @@ mod parser_unit_tests;
 #[path = "../../tests/incremental_parse_interner_tests.rs"]
 mod incremental_parse_interner_tests;
 
+#[cfg(test)]
+#[path = "../../tests/node_modifiers_tests.rs"]
+mod node_modifiers_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
