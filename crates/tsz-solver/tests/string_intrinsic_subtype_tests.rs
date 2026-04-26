@@ -283,6 +283,128 @@ fn uppercase_template_literal_accepts_only_uppercase_suffixes() {
     );
 }
 
+// =============================================================================
+// String mapping over non-string primitive type args (number, bigint, boolean).
+// tsc represents these as `Mapping<\`${T}\`>`; tsz collapses them to `Mapping<T>`
+// during evaluation but must still accept literals matching the underlying
+// stringification pattern (e.g. `"1"` for `Uppercase<\`${number}\`>`).
+// =============================================================================
+
+#[test]
+fn uppercase_over_number_template_accepts_digit_literal() {
+    let interner = TypeInterner::new();
+
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let uppercase_number_template =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, number_template);
+
+    let one_literal = interner.literal_string("1");
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(one_literal, uppercase_number_template),
+        r#""1" should be assignable to Uppercase<`${number}`> (uppercase of "1" is "1", and "1" matches `${number}`)"#
+    );
+}
+
+#[test]
+fn lowercase_over_number_template_accepts_digit_literal() {
+    let interner = TypeInterner::new();
+
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let lowercase_number_template =
+        interner.string_intrinsic(StringIntrinsicKind::Lowercase, number_template);
+
+    let one_literal = interner.literal_string("1");
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(one_literal, lowercase_number_template),
+        r#""1" should be assignable to Lowercase<`${number}`>"#
+    );
+}
+
+#[test]
+fn uppercase_over_number_template_rejects_non_digit_literal() {
+    let interner = TypeInterner::new();
+
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let uppercase_number_template =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, number_template);
+
+    // "ABC" is uppercase but doesn't match `${number}`.
+    let abc_literal = interner.literal_string("ABC");
+    // "abc" is neither uppercase nor a number stringification.
+    let abc_lower = interner.literal_string("abc");
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(abc_literal, uppercase_number_template),
+        r#""ABC" should NOT be assignable to Uppercase<`${number}`>"#
+    );
+    assert!(
+        !checker.is_subtype_of(abc_lower, uppercase_number_template),
+        r#""abc" should NOT be assignable to Uppercase<`${number}`>"#
+    );
+}
+
+#[test]
+fn nested_uppercase_lowercase_over_number_template_accepts_digit_literal() {
+    let interner = TypeInterner::new();
+
+    // Uppercase<Lowercase<`${number}`>>
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let lowercase_number =
+        interner.string_intrinsic(StringIntrinsicKind::Lowercase, number_template);
+    let upper_lower_number =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, lowercase_number);
+
+    let one_literal = interner.literal_string("1");
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(one_literal, upper_lower_number),
+        r#""1" should be assignable to Uppercase<Lowercase<`${number}`>>"#
+    );
+}
+
+#[test]
+fn evaluate_uppercase_over_number_intrinsic_is_preserved() {
+    use crate::types::IntrinsicKind;
+
+    let interner = TypeInterner::new();
+
+    // After evaluation, `Uppercase<number>` (the *intrinsic*, not the template
+    // literal) must NOT collapse to TypeId::ERROR. We preserve the StringMapping
+    // wrapping so downstream consumers (template literal pattern matcher,
+    // visit_literal) can still apply the assignability rule.
+    let uppercase_number =
+        interner.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::NUMBER);
+    let evaluated = evaluate_type(&interner, uppercase_number);
+
+    assert_ne!(
+        evaluated,
+        TypeId::ERROR,
+        "Uppercase<number> must not evaluate to ERROR; it should preserve the StringMapping wrapping"
+    );
+    // The result should still be a StringMapping over a number-pattern argument.
+    if let Some(TypeData::StringIntrinsic { kind, type_arg }) = interner.lookup(evaluated) {
+        assert_eq!(kind, StringIntrinsicKind::Uppercase);
+        assert!(
+            type_arg == TypeId::NUMBER
+                || matches!(
+                    interner.lookup(type_arg),
+                    Some(TypeData::TemplateLiteral(_))
+                        | Some(TypeData::Intrinsic(IntrinsicKind::Number))
+                ),
+            "type arg should be number or `${{number}}`, got {:?}",
+            interner.lookup(type_arg)
+        );
+    } else {
+        panic!(
+            "expected StringIntrinsic after evaluation, got {:?}",
+            interner.lookup(evaluated)
+        );
+    }
+}
+
 #[test]
 fn assignability_query_normalizes_nested_uppercase_intrinsics() {
     let interner = TypeInterner::new();
