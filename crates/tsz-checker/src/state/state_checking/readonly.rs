@@ -731,9 +731,17 @@ impl<'a> CheckerState<'a> {
             return self.is_broad_index_type(resolved);
         }
 
-        let evaluated = self.evaluate_type_with_env(type_id);
-        if evaluated != type_id && evaluated != TypeId::ERROR {
-            return self.is_broad_index_type(evaluated);
+        // Skip eager evaluation for types containing type parameters (e.g. `keyof T`).
+        // Otherwise `evaluate_type_with_env(keyof T)` resolves through T's constraint
+        // to a primitive key space and the recursive call returns `true`, bypassing
+        // the explicit "keep generic `keyof T` out of this path" guard at the
+        // keyof-inner check below. Writes through `T[keyof T]` are reported by
+        // assignment compatibility instead, not TS2862.
+        if !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id) {
+            let evaluated = self.evaluate_type_with_env(type_id);
+            if evaluated != type_id && evaluated != TypeId::ERROR {
+                return self.is_broad_index_type(evaluated);
+            }
         }
 
         let display = self.format_type(type_id);
