@@ -1641,7 +1641,13 @@ fn checker_files_stay_under_loc_limit() {
         // Bumped by 12 (2041→2053) for the sync-contextual-return branch that
         // fixes TS2322 on block-body methods carrying `/** @type {function(...)} */`
         // (checkJsdocTypeTagOnObjectProperty2.ts).
-        ("types/function_type.rs", 2053),
+        // Bumped by 13 (2053→2066) for the contextual-generator return-type
+        // pinning that fixes TS2345 false positives on
+        // `f<0,0,1>(function* () { return 0 })` style call-site type-arg
+        // pinning (`generatorYieldContextualType.ts`). The +3 over the
+        // initial 2063 came from the `void` carve-out that preserves tsc's
+        // widening for `IterableIterator<T, void>` (`generatorTypeCheck63.ts`).
+        ("types/function_type.rs", 2066),
     ];
 
     let mut violations = Vec::new();
