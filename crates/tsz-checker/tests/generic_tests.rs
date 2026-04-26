@@ -1,10 +1,5 @@
 //! Tests for generic type parameter handling and TS2322 errors
 
-use crate::state::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
 #[test]
 fn test_generic_type_argument_satisfies_constraint() {
     let source = r#"
@@ -15,32 +10,12 @@ function identity<T extends number>(x: T): T {
 const result1 = identity(42); // OK - 42 is number
 const result2 = identity("string"); // TS2322: "string" doesn't satisfy "extends number"
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // Should emit TS2345 for string argument not assignable to number parameter.
     // tsc reports TS2345 ("Argument of type 'string' is not assignable to parameter
     // of type 'number'") because the constraint violation is at the argument level.
-    let ts2345_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .count();
+    let ts2345_count = diags.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
         "Expected at least 1 TS2345 error, got {ts2345_count}"
@@ -61,36 +36,14 @@ function test<P extends Props>(props: Readonly<P>) {
 }
 ";
 
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts2339_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2339)
-        .count();
+    let ts2339_count = diags.iter().filter(|d| d.code == 2339).count();
     assert_eq!(
         ts2339_count,
         0,
         "Expected no TS2339 for Readonly<P> property access, got diagnostics: {:?}",
-        checker
-            .ctx
-            .diagnostics
+        diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>()
@@ -109,30 +62,10 @@ const result2 = foo(42); // OK - T inferred as number
 const result3 = foo<number>(true); // TS2345: boolean not assignable to number
 const result4 = foo<number>([]); // TS2345: never[] not assignable to number
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // tsc emits TS2345 for argument type mismatches against explicit type params
-    let ts2345_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .count();
+    let ts2345_count = diags.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 2,
         "Expected at least 2 TS2345 errors for explicit type arg mismatches, got {ts2345_count}"
@@ -154,30 +87,10 @@ const c2 = new Container("hello"); // TS2345: string not assignable to number
 const c3 = new Container<number>(true); // TS2345: boolean not assignable to number
 const c4 = new Container<number>({}); // TS2345: {} not assignable to number
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // tsc emits TS2345 for all 3 bad arguments (c2, c3, c4)
-    let ts2345_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .count();
+    let ts2345_count = diags.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 3,
         "Expected at least 3 TS2345 errors for type mismatches, got {ts2345_count}"
@@ -220,22 +133,7 @@ const consDerived: Consumer<Derived> = { consume: (value: Derived) => {} };
 useConsumer(consBase);     // OK
 useConsumer(consDerived); // TS2322 if invariance (should error)
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let _diags = crate::test_utils::check_source_diagnostics(source);
     // This test checks variance, which may or may not error
 }
 
@@ -250,30 +148,10 @@ const result1 = pair(1, "hello"); // OK - T inferred as number, U as string
 const result2 = pair<number, string>(1, "hello"); // OK - explicit type args
 const result3 = pair<number, number>(1, "hello"); // TS2345: string not assignable to number
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // tsc emits TS2345 for argument type mismatch
-    let ts2345_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .count();
+    let ts2345_count = diags.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
         "Expected at least 1 TS2345 error for type mismatch, got {ts2345_count}"
@@ -292,30 +170,10 @@ const result2 = identity("hello"); // OK - T inferred as string
 const result3 = identity<number>(42); // OK - explicit number
 const result4 = identity<string>(42); // TS2345: number not assignable to string
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // tsc emits TS2345 for argument type mismatch against explicit type param
-    let ts2345_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .count();
+    let ts2345_count = diags.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 1,
         "Expected at least 1 TS2345 error for type mismatch, got {ts2345_count}"
@@ -334,30 +192,10 @@ const r2 = foo<string, boolean>(true, false); // TS2345: boolean not assignable 
 const r3 = foo<number, number>(1, 2); // OK
 const r4 = foo<number, boolean>(1, "hello"); // TS2345: string not assignable to boolean
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // tsc emits TS2345 for argument type mismatches (r2 and r4)
-    let ts2345_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2345)
-        .count();
+    let ts2345_count = diags.iter().filter(|d| d.code == 2345).count();
     assert!(
         ts2345_count >= 2,
         "Expected at least 2 TS2345 errors for type mismatches, got {ts2345_count}"
@@ -371,36 +209,14 @@ class C<T extends T> { }
 function f<T extends T>() { }
 interface I<T extends T> { }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts2313_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2313)
-        .count();
+    let ts2313_count = diags.iter().filter(|d| d.code == 2313).count();
     assert_eq!(
         ts2313_count,
         3,
         "Expected 3 TS2313 errors for direct circular constraints, got {ts2313_count}. Diagnostics: {:?}",
-        checker
-            .ctx
-            .diagnostics
+        diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>()
@@ -413,36 +229,14 @@ fn test_ts2313_indirect_circular_constraint() {
 class C<U extends T, T extends U> { }
 class C2<T extends U, U extends V, V extends T> { }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts2313_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2313)
-        .count();
+    let ts2313_count = diags.iter().filter(|d| d.code == 2313).count();
     assert_eq!(
         ts2313_count,
         5,
         "Expected 5 TS2313 errors for indirect circular constraints (2 for C, 3 for C2), got {ts2313_count}. Diagnostics: {:?}",
-        checker
-            .ctx
-            .diagnostics
+        diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>()
@@ -456,36 +250,14 @@ fn test_ts2313_no_false_positive_for_non_circular() {
 type Foo<T> = [T] extends [number] ? {} : {};
 function foo<S extends Foo<S>>() {}
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts2313_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2313)
-        .count();
+    let ts2313_count = diags.iter().filter(|d| d.code == 2313).count();
     assert_eq!(
         ts2313_count,
         0,
         "Expected 0 TS2313 errors for non-circular constraint Foo<S>, got {ts2313_count}. Diagnostics: {:?}",
-        checker
-            .ctx
-            .diagnostics
+        diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>()
@@ -498,29 +270,9 @@ fn test_ts2313_non_cyclic_chain_not_flagged() {
     let source = r"
 class D<U extends T, T extends V, V extends T> { }
 ";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts2313_diags: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2313)
-        .collect();
+    let ts2313_diags: Vec<_> = diags.iter().filter(|d| d.code == 2313).collect();
 
     // T and V form a cycle, but U just points to the cycle - should not be flagged
     assert_eq!(
@@ -550,30 +302,10 @@ function getProps<T, K extends keyof T>(obj: T, list: K[]): Pick<T, K> {
 const myAny: any = {};
 const o2: { foo: any; bar: any } = getProps(myAny, ['foo', 'bar']);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // Should have NO errors — Pick<any, "foo" | "bar"> = { foo: any; bar: any }
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2322)
-        .collect();
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
     assert!(
         errors.is_empty(),
         "Expected no TS2322 errors for Pick<any, 'foo' | 'bar'> assignment, got {}: {:?}",
@@ -592,29 +324,9 @@ Promise.all([getT<string>(), ...getT<any>()]).then((result) => {
   tail satisfies string[];
 });
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts1360_errors: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 1360)
-        .collect();
+    let ts1360_errors: Vec<_> = diags.iter().filter(|d| d.code == 1360).collect();
     assert!(
         ts1360_errors.is_empty(),
         "Expected no TS1360 for Promise.all spread-any tail satisfies check, got: {:?}",
@@ -653,48 +365,21 @@ fn2<MyObjA>({
   b: {},
 });
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts2559_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2559)
-        .count();
+    let ts2559_count = diags.iter().filter(|d| d.code == 2559).count();
     assert!(
         ts2559_count >= 1,
         "Expected TS2559 (weak type: no common properties) for MyObjA vs ObjA constraint, got {} TS2559 errors. All errors: {:?}",
         ts2559_count,
-        checker
-            .ctx
-            .diagnostics
+        diags
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
     );
 
     // Should NOT emit TS2344 (constraint not satisfied) — TS2559 is more specific
-    let ts2344_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2344)
-        .count();
+    let ts2344_count = diags.iter().filter(|d| d.code == 2344).count();
     assert_eq!(
         ts2344_count, 0,
         "Expected no TS2344 when TS2559 (weak type) applies, got {ts2344_count}"
@@ -717,32 +402,10 @@ interface ExtensionConfig<Options = any>
 
 interface ExplicitArgDefault<T = SelfRef<number>> {}
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let ts2716_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2716)
-        .count();
-    let all_errors = checker
-        .ctx
-        .diagnostics
+    let ts2716_count = diags.iter().filter(|d| d.code == 2716).count();
+    let all_errors = diags
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect::<Vec<_>>();
@@ -846,26 +509,9 @@ s = map("", dottedIdentity.x);
 // Parenthesized
 s = map("", (identity));
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    let errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let errors: Vec<_> = diags
         .iter()
         .filter(|d| d.code == 2322 || d.code == 2345)
         .map(|d| (d.code, d.message_text.clone()))
@@ -910,27 +556,10 @@ declare function f18<T, U = V, V = U | C>(a?: T, b?: U, c?: V): [T, U, V];
 f18<A>(a, b);
 f18<A>(a, b, b);
 "#;
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
+    let diags = crate::test_utils::check_source_diagnostics(source);
 
     // Should only have TS2744 (forward reference warnings), no TS2345
-    let ts2345_errors: Vec<_> = checker
-        .ctx
-        .diagnostics
+    let ts2345_errors: Vec<_> = diags
         .iter()
         .filter(|d| d.code == 2345)
         .map(|d| d.message_text.clone())
@@ -941,12 +570,7 @@ f18<A>(a, b, b);
     );
 
     // Should have TS2744 errors for the forward references
-    let ts2744_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2744)
-        .count();
+    let ts2744_count = diags.iter().filter(|d| d.code == 2744).count();
     assert!(
         ts2744_count > 0,
         "Expected TS2744 errors for forward-referencing defaults"
