@@ -73,17 +73,24 @@ jobs:
         run: scripts/ci/github-suite.sh lint
 
   unit:
-    name: unit
+    name: unit-${{ matrix.shard }}
     needs: [gate, build]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 60
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_UNIT_SHARD_COUNT: 4
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit suite
-        run: scripts/ci/github-suite.sh unit
+      - name: Run unit shard
+        run: scripts/ci/github-suite.sh unit-shard
 
   wasm:
     name: wasm

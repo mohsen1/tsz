@@ -185,7 +185,7 @@ suite_needs_group() {
       [[ "$suite" == "lint" ]]
       ;;
     unit)
-      [[ "$suite" == "unit" ]]
+      [[ "$suite" == "unit" || "$suite" == "unit-shard" ]]
       ;;
     wasm)
       [[ "$suite" == "wasm" ]]
@@ -426,18 +426,88 @@ nextest_allow_no_tests() {
   return "$rc"
 }
 
+_UNIT_TEST_PACKAGES=(
+  -p tsz-common
+  -p tsz-scanner
+  -p tsz-parser
+  -p tsz-binder
+  -p tsz-solver
+  -p tsz-checker
+  -p tsz-emitter
+  -p tsz-lsp
+  -p tsz-core
+)
+
 run_unit_tests() {
   ci_section "Workspace nextest suites"
   cargo nextest run --profile ci --cargo-profile ci-unit --no-tests=pass \
-    -p tsz-common \
-    -p tsz-scanner \
-    -p tsz-parser \
-    -p tsz-binder \
-    -p tsz-solver \
-    -p tsz-checker \
-    -p tsz-emitter \
-    -p tsz-lsp \
-    -p tsz-core
+    "${_UNIT_TEST_PACKAGES[@]}"
+}
+
+build_unit_test_archive() {
+  ci_section "Build unit test archive"
+  local bucket run_key archive_uri tmp_archive
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+
+  if [[ -z "$bucket" ]]; then
+    echo "No GCS bucket configured, skipping unit test archive"
+    return 0
+  fi
+
+  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
+
+  if gsutil -q stat "$archive_uri" 2>/dev/null; then
+    echo "Unit test archive already exists for ${run_key}: ${archive_uri}"
+    return 0
+  fi
+
+  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
+  echo "Building unit test archive → ${tmp_archive}"
+  cargo nextest archive \
+    --cargo-profile ci-unit \
+    --archive-file "$tmp_archive" \
+    --no-tests=pass \
+    "${_UNIT_TEST_PACKAGES[@]}"
+
+  echo "Uploading unit test archive → ${archive_uri}"
+  gsutil -q cp "$tmp_archive" "$archive_uri"
+  rm -f "$tmp_archive"
+  echo "Unit test archive uploaded: ${archive_uri}"
+}
+
+run_unit_shard() {
+  ci_section "Unit shard"
+  local bucket run_key shard_index shard_count archive_uri tmp_archive
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  shard_index="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_INDEX:-0}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_COUNT:-4}")"
+
+  echo "Unit shard $((shard_index + 1))/${shard_count}"
+
+  if [[ -z "$bucket" ]]; then
+    echo "No GCS bucket — running all unit tests without sharding"
+    run_unit_tests
+    return
+  fi
+
+  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
+  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
+
+  echo "Downloading unit test archive: ${archive_uri}"
+  if ! gsutil -q cp "$archive_uri" "$tmp_archive"; then
+    echo "warning: unit test archive not found for ${run_key}; falling back to full build" >&2
+    run_unit_tests
+    return
+  fi
+
+  cargo nextest run \
+    --archive-file "$tmp_archive" \
+    --profile ci \
+    --no-tests=pass \
+    --partition "count:$((shard_index + 1))/${shard_count}"
+  rm -f "$tmp_archive"
 }
 
 build_test_binaries() {
@@ -1122,6 +1192,7 @@ aggregate_fourslash() {
 run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
+  timed build_unit_test_archive build_unit_test_archive
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
   fi
@@ -1171,6 +1242,9 @@ main() {
     unit)
       timed run_unit_tests run_unit_tests
       ;;
+    unit-shard)
+      timed run_unit_shard run_unit_shard
+      ;;
     wasm)
       timed build_wasm build_wasm
       ;;
@@ -1211,7 +1285,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, lint, unit, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, lint, unit, unit-shard, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac
