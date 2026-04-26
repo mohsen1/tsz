@@ -795,7 +795,7 @@ run_emit_aggregate() {
   local bucket run_key
   bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
   run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-  local expected_shards="${_TSZ_CI_EMIT_SHARD_COUNT:-${TSZ_CI_EMIT_SHARDS:-7}}"
+  local expected_shards="${_TSZ_CI_EMIT_SHARD_COUNT:-${TSZ_CI_EMIT_SHARDS:-4}}"
 
   if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
     echo "error: cannot aggregate — no bucket or run key available" >&2
