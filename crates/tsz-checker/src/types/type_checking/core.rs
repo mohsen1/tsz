@@ -1313,6 +1313,22 @@ impl<'a> CheckerState<'a> {
             self.check_strict_mode_reserved_name_at(element_data.name, element_data.name);
         }
 
+        // TS1100: Check binding element name for `eval` or `arguments` in strict mode.
+        // Covers destructuring patterns like `var { arguments } = ...` and
+        // `var [eval] = [1]` in strict mode. tsc emits this as a grammar error on
+        // the destructured identifier, so we mirror it here. In non-ambient class
+        // bodies, `arguments` becomes TS1210 (handled by emit_eval_or_arguments_strict_mode_error).
+        if let Some(name_node) = self.ctx.arena.get(element_data.name)
+            && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && crate::state_checking::is_eval_or_arguments(&ident.escaped_text)
+            && self.is_strict_mode_for_node(element_data.name)
+            && !self.ctx.is_declaration_file()
+        {
+            let name = ident.escaped_text.clone();
+            self.emit_eval_or_arguments_strict_mode_error(element_data.name, &name);
+        }
+
         // If the name is a nested binding pattern, recursively check it
         if let Some(name_node) = self.ctx.arena.get(element_data.name)
             && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
