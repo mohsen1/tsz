@@ -3146,3 +3146,82 @@ fn union_with_origin_preserves_alias_name_after_flattening() {
     let rendered = fmt.format(flattened);
     assert_eq!(rendered, "Foo | null", "got: {rendered}");
 }
+
+// Regression: tsc displays anonymous-object union members in declaration
+// order, not in the canonical sort order our interner uses (by ShapeId).
+// When source declares `var x: {} | { a: number };` after `{ a: number }`
+// has already been interned (e.g., from an earlier `declare const`), the
+// canonical sort puts `{ a: number; }` first because it has a smaller
+// ShapeId. tsc would still show `{} | { a: number; }`. Storing the
+// origin members lets the printer reproduce the source order.
+//
+// See: TypeScript/tests/cases/conformance/types/spread/spreadUnion2.ts
+#[test]
+fn store_union_origin_overrides_canonical_anon_object_sort() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // Mimic the test fixture: `{ a: number }` is interned BEFORE `{}` so
+    // the canonical sort would otherwise emit `{ a: number; } | {}`.
+    let a_prop = PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER);
+    let a_object = db.object(vec![a_prop]);
+    let empty_object = db.object(vec![]);
+
+    // Build the union as the user would have written it:
+    // `{} | { a: number }`. The interner re-sorts these by ShapeId.
+    // Use diagnostic mode to skip the synthetic `?: undefined`
+    // optionalization (only relevant for hover/quickinfo, not errors).
+    let union_id =
+        crate::utils::union_or_single_literal_reduce(&db, vec![empty_object, a_object]);
+    {
+        let mut fmt = TypeFormatter::new(&db)
+            .with_def_store(&def_store)
+            .with_diagnostic_mode();
+        let rendered = fmt.format(union_id);
+        assert_eq!(
+            rendered, "{ a: number; } | {}",
+            "Pre-condition: canonical sort reorders by ShapeId"
+        );
+    }
+
+    // Store the as-written origin members. Even though no flattening
+    // occurred (2 in / 2 out), we should accept this because the canonical
+    // order disagrees with the source order on anonymous Object members.
+    db.store_union_origin(union_id, vec![empty_object, a_object]);
+
+    let mut fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_diagnostic_mode();
+    let rendered = fmt.format(union_id);
+    assert_eq!(rendered, "{} | { a: number; }", "got: {rendered}");
+}
+
+// Negative case: when the union members are non-anonymous (e.g., a literal
+// and a Lazy alias), tsc and our interner agree on canonical sort. Storing
+// the as-written origin in this case would override tsc's sort and regress
+// diagnostics. The `<= origin_members.len()` guard must keep these out.
+#[test]
+fn store_union_origin_skips_canonical_sort_for_non_anon_members() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let foo_name = db.intern_string("Foo");
+    let foo_def =
+        crate::def::DefinitionInfo::type_alias(foo_name, vec![], TypeId::NUMBER);
+    let foo_def_id = def_store.register(foo_def);
+    def_store.register_type_to_def(TypeId::NUMBER, foo_def_id);
+    let foo_lazy = db.lazy(foo_def_id);
+    let lit_x = db.literal_string("x");
+
+    // Build `Foo | "x"` — same length, no flattening, no anonymous object.
+    let union_id = crate::utils::union_or_single_literal_reduce(&db, vec![foo_lazy, lit_x]);
+
+    // Attempt to store an origin in REVERSED order. The guard should reject
+    // this so the canonical structural form wins.
+    db.store_union_origin(union_id, vec![lit_x, foo_lazy]);
+
+    assert!(
+        db.get_union_origin(union_id).is_none(),
+        "Origin must be rejected when no anonymous object members are present"
+    );
+}

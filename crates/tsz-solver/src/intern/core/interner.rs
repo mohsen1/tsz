@@ -1351,12 +1351,18 @@ impl TypeInterner {
     /// printer needs the unflattened input list to display `T | null` instead
     /// of the structural expansion.
     ///
-    /// We only store the origin when normalization *actually flattened* a
-    /// nested union — i.e., the resulting Union has strictly more members than
-    /// the input list. Without this guard, recording the as-written order for
-    /// trivially-different inputs (e.g., user wrote `"foo" | Refrigerator` but
-    /// the interner sorted to `Refrigerator | "foo"`) would override tsc's
-    /// canonical sort and regress the diagnostic display.
+    /// We store the origin when normalization changed the visible order:
+    /// - Flattening occurred (resulting Union has strictly more members), OR
+    /// - The Union contains anonymous Object members whose canonical sort
+    ///   (by `ShapeId`) doesn't match tsc's display order. tsc displays
+    ///   anonymous objects in source/declaration order, but our interner
+    ///   sorts by `ShapeId` (allocation order), which can reorder e.g.
+    ///   `{} | { a: number }` to `{ a: number; } | {}` when the empty
+    ///   shape was interned later than `{ a: number }`.
+    ///
+    /// We DO NOT store origin for canonical sort that matches tsc for non-
+    /// anonymous-object cases (e.g., user wrote `"foo" | Refrigerator` but
+    /// the interner sorted to `Refrigerator | "foo"` — tsc does the same).
     pub fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         if origin_members.len() < 2 {
             return;
@@ -1367,16 +1373,59 @@ impl TypeInterner {
             return;
         };
         let current = self.type_list(list_id);
-        if current.len() <= origin_members.len() {
-            // No flattening occurred — same or fewer members. The structural
-            // display already matches what tsc shows after canonical sort.
-            return;
+        let flattened = current.len() > origin_members.len();
+        if !flattened {
+            // No flattening — only store if the canonical sort reordered
+            // anonymous objects whose display order tsc preserves verbatim.
+            if !self.union_origin_overrides_canonical_anon_object_sort(
+                current.as_ref(),
+                &origin_members,
+            ) {
+                return;
+            }
         }
         // First writer wins so deterministic display order is preserved when
         // the same flattened union is reached from multiple annotation sites.
         self.display_union_origin
             .entry(union_type_id)
             .or_insert_with(|| Arc::new(origin_members));
+    }
+
+    /// Decide whether storing the as-written origin is needed even when no
+    /// flattening occurred — i.e. the union contains anonymous Object members
+    /// and our canonical sort reordered them relative to the input.
+    ///
+    /// tsc displays anonymous (symbol-less) object union members in source/
+    /// declaration order. Our interner sorts by `ShapeId` (allocation order),
+    /// which can reorder them when the same shape is reached from earlier
+    /// annotations in the file. Returns true only when (a) at least one
+    /// member of the resulting union is an anonymous Object/ObjectWithIndex
+    /// and (b) the resulting member order differs from the input.
+    fn union_origin_overrides_canonical_anon_object_sort(
+        &self,
+        current: &[TypeId],
+        origin: &[TypeId],
+    ) -> bool {
+        if current.len() != origin.len() {
+            return false;
+        }
+        let mut has_anon_object = false;
+        for &id in current {
+            match self.lookup(id) {
+                Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                    let shape = self.object_shape(shape_id);
+                    if shape.symbol.is_none() {
+                        has_anon_object = true;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !has_anon_object {
+            return false;
+        }
+        current != origin
     }
 
     /// Look up the as-written origin members for a flattened Union TypeId.
