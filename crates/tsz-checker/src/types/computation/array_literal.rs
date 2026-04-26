@@ -489,8 +489,45 @@ impl<'a> CheckerState<'a> {
         let mut element_types = Vec::new();
         let mut element_nodes = Vec::new();
         let mut tuple_elements = Vec::new();
+        // Total element count for tuple contextual typing. Elided slots count toward
+        // the position of subsequent elements (e.g. `[42,,true]` has length 3 with
+        // an undefined slot at index 1), matching tsc's `elementCount = elements.length`.
+        let total_elem_count = array.elements.nodes.len();
         for (index, &elem_idx) in array.elements.nodes.iter().enumerate() {
             if elem_idx.is_none() {
+                // Elided element (hole) in array literal: `[a, , b]` has an
+                // OmittedExpression at index 1. tsc types `OmittedExpression` as
+                // `undefinedWideningType` (see `case SyntaxKind.OmittedExpression`
+                // in checkExpressionWorker) and pushes it as a Required element
+                // when `exactOptionalPropertyTypes` is OFF — the resulting source
+                // tuple `[number, undefined, true]` then assigns to `[number, string?, boolean?]`
+                // because each Required source slot of type `undefined` is widened to
+                // `T | undefined` against an Optional target slot in tuple subtyping.
+                //
+                // For destructuring targets (`[a, , b] = expr`) the elision is a
+                // "skip" rather than a value, so preserve the current skip behavior.
+                if self.ctx.in_destructuring_target {
+                    continue;
+                }
+                let undef_type = TypeId::UNDEFINED;
+                if tuple_context.is_some()
+                    || force_tuple_for_union_context
+                    || force_tuple_for_mapped
+                    || force_tuple_for_constraint_hint
+                    || force_tuple_for_tuple_like
+                    || self.ctx.in_const_assertion
+                {
+                    tuple_elements.push(TupleElement {
+                        type_id: undef_type,
+                        name: None,
+                        optional: false,
+                        rest: false,
+                    });
+                } else {
+                    element_types.push(undef_type);
+                    // Note: we don't add to element_nodes since there is no node
+                    // for an elision. Excess property checks are skipped for the slot.
+                }
                 continue;
             }
 
@@ -502,8 +539,7 @@ impl<'a> CheckerState<'a> {
                 crate::context::TypingRequest::NONE
             } else if let Some(ref helper) = ctx_helper {
                 if tuple_context.is_some() {
-                    let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
-                    match helper.get_tuple_element_type_with_count(index, elem_count) {
+                    match helper.get_tuple_element_type_with_count(index, total_elem_count) {
                         Some(ty) => request.read().contextual(ty),
                         None => crate::context::TypingRequest::NONE,
                     }
@@ -677,17 +713,19 @@ impl<'a> CheckerState<'a> {
             // `[ObjType, string]`), each element that is an object literal must be checked for
             // excess properties against the expected tuple element type. This mirrors the array
             // context path (below) but uses per-position tuple element types.
+            //
+            // Use the source-position-aligned tuple_index (matching the contextual extractor's
+            // index) so excess property checks line up with the correct contextual element type
+            // even when the array literal contains elisions like `[ {x:1}, , {y:2} ]`.
             if let Some(ref helper) = ctx_helper {
-                let elem_count = array.elements.nodes.iter().filter(|n| n.is_some()).count();
-                let mut tuple_index = 0usize;
-                for &elem_idx in &array.elements.nodes {
+                for (tuple_index, &elem_idx) in array.elements.nodes.iter().enumerate() {
                     if elem_idx.is_none() {
                         continue;
                     }
                     if let Some(elem_node) = self.ctx.arena.get(elem_idx)
                         && elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        && let Some(expected_type) =
-                            helper.get_tuple_element_type_with_count(tuple_index, elem_count)
+                        && let Some(expected_type) = helper
+                            .get_tuple_element_type_with_count(tuple_index, total_elem_count)
                     {
                         let elem_type = tuple_elements
                             .get(tuple_index)
@@ -699,7 +737,6 @@ impl<'a> CheckerState<'a> {
                             elem_idx,
                         );
                     }
-                    tuple_index += 1;
                 }
             }
             return factory.tuple(tuple_elements);
@@ -954,6 +991,51 @@ let x: [...(string | number)[]] = arr;
         assert!(
             !errors.contains(&2322),
             "array is still assignable to rest-only tuple, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn elided_array_literal_element_typed_as_undefined_required() {
+        // Regression for conformance test optionalTupleElements1.ts:
+        // an elision (hole) in a non-destructuring array literal — e.g. `[42,,true]` —
+        // must produce a tuple slot with type `undefined` (Required), matching tsc's
+        // OmittedExpression -> undefinedWideningType. Previously the slot was dropped,
+        // which both shifted subsequent positions and caused contextual typing to
+        // mismatch optional tuple targets.
+        //
+        // `T3 = [number, string?, boolean?]` accepts `[42,,true]` because the source
+        // tuple `[number, undefined, true]` (all Required) widens each Required
+        // `undefined` against an Optional target slot to `T | undefined`.
+        let source = r#"
+type T3 = [number, string?, boolean?];
+type T4 = [number?, string?, boolean?];
+let t3: T3;
+let t4: T4;
+t3 = [42, , true];
+t4 = [42, , true];
+t4 = [, "hello", true];
+t4 = [, , true];
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "elided array literal slots should produce undefined-typed Required tuple slots, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn elided_array_literal_in_array_context_pushes_undefined() {
+        // Without a tuple contextual type, an elision still contributes
+        // `undefined` to the resulting array element type. tsc widens
+        // `[1, , 3]` (no contextual) to `(number | undefined)[]`, so the
+        // array literal is assignable to `(number | undefined)[]`.
+        let source = r#"
+const xs: (number | undefined)[] = [1, , 3];
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "[1, , 3] should be assignable to (number | undefined)[], got: {errors:?}"
         );
     }
 }
