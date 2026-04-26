@@ -1277,6 +1277,13 @@ impl<'a> CheckerState<'a> {
             ctor.body.is_some(),
         );
 
+        // Check binding-element property/index lookups in destructuring parameters
+        // (e.g., `constructor([{ x1, x2 }, y]: [ObjType1, number])` emits TS2339 for
+        // properties not on `ObjType1`). Mirrors the call in `check_function_decl`.
+        // This must run for constructors too — otherwise destructuring parameter
+        // patterns silently skip nested property-existence checks.
+        self.check_parameter_binding_pattern_defaults(&ctor.parameters.nodes);
+
         // Set in_constructor flag for abstract property checks (error 2715)
         if let Some(ref mut class_info) = self.ctx.enclosing_class {
             class_info.in_constructor = true;

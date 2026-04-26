@@ -1376,6 +1376,18 @@ impl<'a> CheckerState<'a> {
                 }
                 if fallback_return != TypeId::ERROR {
                     fallback_return
+                } else if let Some(instance_type) =
+                    crate::query_boundaries::common::construct_return_type_for_type(
+                        self.ctx.types,
+                        constructor_type,
+                    )
+                {
+                    // When the solver's `ArgumentTypeMismatch` carries no
+                    // explicit fallback, recover the constructor's instance
+                    // type so `var a = new C(<bad-args>)` still types `a` as
+                    // the instance and subsequent property accesses can emit
+                    // TS2339 (matching tsc).
+                    instance_type
                 } else {
                     TypeId::ERROR
                 }
@@ -1474,5 +1486,35 @@ new A?.b();
             "TS1209 should anchor at `?.`, got: {diag:?}"
         );
         assert_eq!(diag.length, 2, "TS1209 should cover only `?.`");
+    }
+
+    /// Regression: `var a = new C(<bad-args>)` must keep `a` typed as the
+    /// constructor's instance type so subsequent property accesses still
+    /// emit TS2339 when the property doesn't exist. Previously, the solver
+    /// returned `TypeId::ERROR` on argument mismatch, which silenced TS2339
+    /// on `a.foo`.
+    #[test]
+    fn new_with_bad_arg_still_emits_ts2339_on_subsequent_member_access() {
+        let source = r#"
+class C1 {
+    constructor(n: number) {}
+}
+var a = new C1("bad");
+a.foo;
+"#;
+        let codes: Vec<u32> = crate::test_utils::check_source_diagnostics(source)
+            .iter()
+            .map(|d| d.code)
+            .collect();
+        assert!(
+            codes.contains(
+                &diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            ),
+            "Expected TS2345 for bad constructor arg: {codes:?}"
+        );
+        assert!(
+            codes.contains(&diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+            "Expected TS2339 on `a.foo` even when `new C1` had bad args: {codes:?}"
+        );
     }
 }

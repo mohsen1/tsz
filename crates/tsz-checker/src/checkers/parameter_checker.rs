@@ -1451,6 +1451,29 @@ mod binding_pattern_defaults_tests {
             "JSDoc-optional binding-pattern parameter should not cascade into TS2339: {codes:?}"
         );
     }
+
+    /// Regression: nested binding-pattern check must run for class
+    /// constructors too. Previously, `check_parameter_binding_pattern_defaults`
+    /// was only invoked for function declarations, so missing properties
+    /// inside a constructor's binding-pattern parameter (e.g., `{ x1, x2 }`
+    /// extracted from `ObjType1` which has `{ x; y; z }`) silently passed.
+    /// tsc emits TS2339 in this position.
+    #[test]
+    fn constructor_binding_pattern_emits_ts2339_for_missing_properties() {
+        let codes = check_source_codes(
+            "type ObjType1 = { x: number; y: string; z: boolean }
+             type TupleType1 = [ObjType1, number, string]
+             class C1 {
+                 constructor([{ x1, x2, x3 }, y, z]: TupleType1) {}
+             }",
+        );
+        let ts2339_count = codes.iter().filter(|&&c| c == 2339).count();
+        assert!(
+            ts2339_count >= 3,
+            "Constructor binding pattern with missing properties should \
+             emit TS2339 for x1, x2, x3 (>=3 occurrences). Got codes: {codes:?}"
+        );
+    }
 }
 
 #[cfg(test)]
