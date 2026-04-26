@@ -714,8 +714,19 @@ impl<'a> CheckerState<'a> {
                 if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
                     // && passes outer contextual type to the right operand only.
                     // The left operand gets no contextual type.
+                    //
+                    // Preserve literal types for the left operand: tsc's
+                    // checkExpression returns the FRESH literal type for literal
+                    // expressions (e.g., `"baz"` stays `"baz"`, not widened to
+                    // `string`). This matters for `||`/`&&`/`??` because the
+                    // logical evaluator uses truthiness narrowing — a widened
+                    // `string` cannot be narrowed to NEVER on the falsy branch,
+                    // so the result wrongly unions in the right operand.
+                    let prev_preserve = self.ctx.preserve_literal_types;
+                    self.ctx.preserve_literal_types = true;
                     let left_type =
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
+                    self.ctx.preserve_literal_types = prev_preserve;
                     let right_type = self.get_type_of_node_with_request(right_idx, request);
 
                     type_stack.push(left_type);
@@ -726,7 +737,12 @@ impl<'a> CheckerState<'a> {
                 if op_kind == SyntaxKind::BarBarToken as u16
                     || op_kind == SyntaxKind::QuestionQuestionToken as u16
                 {
+                    // Preserve literal types for the left operand — see comment
+                    // on the && branch above for the rationale.
+                    let prev_preserve = self.ctx.preserve_literal_types;
+                    self.ctx.preserve_literal_types = true;
                     let left_type = self.get_type_of_node(left_idx);
+                    self.ctx.preserve_literal_types = prev_preserve;
                     let outer_context = request.contextual_type;
                     // Right operand: prefer the whole-expression contextual type
                     // inherited from the parent (e.g. assignment target). Fall back

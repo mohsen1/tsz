@@ -380,6 +380,9 @@ mod keyof_mapped_as_clause_tests;
 #[path = "../tests/logical_assignment_narrowing_tests.rs"]
 mod logical_assignment_narrowing_tests;
 #[cfg(test)]
+#[path = "../tests/logical_operator_literal_preservation_tests.rs"]
+mod logical_operator_literal_preservation_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
