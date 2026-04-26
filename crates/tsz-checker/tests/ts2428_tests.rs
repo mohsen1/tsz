@@ -401,12 +401,10 @@ type A = {}"#;
     let codes: Vec<u32> = diags.iter().map(|d| d.0).collect();
     assert!(
         codes.contains(&2395),
-        "Should emit TS2395 (not TS2300) when type alias has mixed export/local: got {:?}",
-        codes
+        "Should emit TS2395 (not TS2300) when type alias has mixed export/local: got {codes:?}"
     );
     assert!(
         !codes.contains(&2300),
-        "Should NOT emit TS2300 when TS2395 is emitted: got {:?}",
-        codes
+        "Should NOT emit TS2300 when TS2395 is emitted: got {codes:?}"
     );
 }

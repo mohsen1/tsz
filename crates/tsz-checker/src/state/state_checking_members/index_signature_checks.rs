@@ -1891,8 +1891,7 @@ interface B extends A {}
         assert_eq!(
             ts2413.len(),
             1,
-            "Expected exactly 1 TS2413 (on A), not a duplicate at B's name. Got: {:?}",
-            diags
+            "Expected exactly 1 TS2413 (on A), not a duplicate at B's name. Got: {diags:?}"
         );
     }
 
