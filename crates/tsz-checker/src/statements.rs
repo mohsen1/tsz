@@ -643,11 +643,10 @@ impl StatementChecker {
                     }
 
                     // If the condition always throws, the incrementer is unreachable
-                    if !init_terminates && condition_terminates && incrementor.is_some() {
-                        if !state.report_unreachable_code_at_terminating_iife_body(incrementor) {
+                    if !init_terminates && condition_terminates && incrementor.is_some()
+                        && !state.report_unreachable_code_at_terminating_iife_body(incrementor) {
                             state.report_unreachable_code_at_node(incrementor);
                         }
-                    }
 
                     let prev_unreachable = state.is_unreachable();
                     let prev_reported = state.has_reported_unreachable();

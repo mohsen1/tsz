@@ -268,19 +268,17 @@ impl<'a> CheckerState<'a> {
         let name_or_arg = left_access.name_or_argument;
 
         // exports.<name> / exports["<name>"]
-        if let Some(ident) = arena.get_identifier_at(expr_idx) {
-            if ident.escaped_text == "exports" {
+        if let Some(ident) = arena.get_identifier_at(expr_idx)
+            && ident.escaped_text == "exports" {
                 return Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
                     .map(|name| (name, None));
             }
-        }
 
         // module.exports.<name> / module["exports"].<name>
-        if let Some(container_node) = arena.get(expr_idx) {
-            if container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || container_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            {
-                if let Some(container_access) = arena.get_access_expr(container_node) {
+        if let Some(container_node) = arena.get(expr_idx)
+            && (container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || container_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(container_access) = arena.get_access_expr(container_node) {
                     let is_module_exports =
                         if container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                             arena
@@ -304,8 +302,6 @@ impl<'a> CheckerState<'a> {
                             .map(|n| (n, None));
                     }
                 }
-            }
-        }
 
         // <alias>.<name> where alias is in export_aliases
         arena

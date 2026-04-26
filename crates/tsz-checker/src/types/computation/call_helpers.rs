@@ -73,11 +73,10 @@ impl<'a> CheckerState<'a> {
         // ID, causing false TS2448/TS2454 (cross-binder SymbolId collision).
         // Cross-file symbols (e.g., UMD global aliases from `export as namespace`)
         // have no same-file TDZ — they are evaluated when their origin file loads.
-        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id) {
-            if file_idx != self.ctx.current_file_idx {
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+            && file_idx != self.ctx.current_file_idx {
                 return false;
             }
-        }
         let is_tdz_in_static_block =
             self.is_variable_used_before_declaration_in_static_block(sym_id, idx);
         let is_tdz_in_property_initializer =
@@ -1209,8 +1208,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(mapped_id) = crate::query_boundaries::common::mapped_type_id(
                     self.ctx.types,
                     target_prop_type,
-                ) {
-                    if let Some(nested_partial) = self.extract_inference_from_mapped_type_target(
+                )
+                    && let Some(nested_partial) = self.extract_inference_from_mapped_type_target(
                         prop.initializer,
                         mapped_id,
                         type_param_names,
@@ -1218,7 +1217,6 @@ impl<'a> CheckerState<'a> {
                         properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
                         continue;
                     }
-                }
 
                 // Get the function shape for the target property
                 let target_fn_shape =
@@ -1403,8 +1401,8 @@ impl<'a> CheckerState<'a> {
             }
             // Handle method declarations - for mapped types, these typically aren't at this level
             // but handle them for completeness
-            else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+            else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                && let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
                     // Check if this method is "thisless" (no params, no this)
                     let has_params = !method.parameters.nodes.is_empty();
                     if has_params {
@@ -1421,7 +1419,6 @@ impl<'a> CheckerState<'a> {
                         self.speculative_type_of_function(elem_idx, &TypingRequest::NONE);
                     properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
                 }
-            }
         }
 
         if properties.is_empty() {

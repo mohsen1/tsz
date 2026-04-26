@@ -661,11 +661,10 @@ impl<'a> CheckerState<'a> {
                             }
                             if let Some(parent_node) = self.ctx.arena.get(parent) {
                                 for comment in comments.iter().rev() {
-                                    if comment.end <= parent_node.pos
+                                    if (comment.end <= parent_node.pos
                                         || (comment.pos <= parent_node.pos
-                                            && comment.end <= parent_node.end)
-                                    {
-                                        if tsz_common::comments::is_jsdoc_comment(
+                                            && comment.end <= parent_node.end))
+                                        && tsz_common::comments::is_jsdoc_comment(
                                             comment,
                                             source_text,
                                         ) {
@@ -674,7 +673,6 @@ impl<'a> CheckerState<'a> {
                                                 comment.pos,
                                             );
                                         }
-                                    }
                                 }
                                 current = parent;
                             } else {

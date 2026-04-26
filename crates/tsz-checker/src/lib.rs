@@ -14,7 +14,6 @@
 //! is an alias to the thin checker.
 
 #![allow(dead_code)]
-#![allow(clippy::collapsible_if)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::uninlined_format_args)]
 

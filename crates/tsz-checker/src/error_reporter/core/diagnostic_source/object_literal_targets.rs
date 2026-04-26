@@ -113,8 +113,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 raw_callee_type,
                 args.nodes.len(),
-            ) {
-                if let Some(param_type) = raw_sig
+            )
+                && let Some(param_type) = raw_sig
                     .params
                     .get(arg_index)
                     .map(|param| param.type_id)
@@ -140,7 +140,6 @@ impl<'a> CheckerState<'a> {
                             Some(self.ctx.types.union2(target, TypeId::UNDEFINED));
                     }
                 }
-            }
         }
         let contextual_target = raw_call_param_property_target
             .or(object_property_target)

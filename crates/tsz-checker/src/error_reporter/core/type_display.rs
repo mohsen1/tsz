@@ -1415,8 +1415,7 @@ impl<'a> CheckerState<'a> {
             // Process ReadonlyArray<T> first to avoid matching inner Array<T>.
             if slice.starts_with("ReadonlyArray<")
                 && (i == 0 || !text.as_bytes()[i - 1].is_ascii_alphanumeric())
-            {
-                if let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 14) {
+                && let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 14) {
                     let end = i + 14 + inner.len() + 1; // "ReadonlyArray<" + inner + ">"
                     if is_extends_constraint_position(text, i) {
                         out.push_str(&text[i..end]);
@@ -1431,12 +1430,10 @@ impl<'a> CheckerState<'a> {
                     i = end;
                     continue;
                 }
-            }
 
             if slice.starts_with("Array<")
                 && (i == 0 || !text.as_bytes()[i - 1].is_ascii_alphanumeric())
-            {
-                if let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 6) {
+                && let Some(inner) = Self::extract_balanced_angle_bracket_content(text, i + 6) {
                     let end = i + 6 + inner.len() + 1; // "Array<" + inner + ">"
                     if is_extends_constraint_position(text, i) {
                         out.push_str(&text[i..end]);
@@ -1451,7 +1448,6 @@ impl<'a> CheckerState<'a> {
                     i = end;
                     continue;
                 }
-            }
 
             if let Some(ch) = slice.chars().next() {
                 out.push(ch);
