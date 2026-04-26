@@ -67,6 +67,23 @@ impl<'a> CheckerState<'a> {
     }
 
     fn has_prior_value_declaration_for_symbol(&self, decl_idx: NodeIndex) -> bool {
+        self.has_prior_value_declaration_for_symbol_impl(decl_idx, false)
+    }
+
+    // TS2502 variant: alias-style declarations (imports, namespace exports) do not
+    // establish a value-typed binding in the redeclaring scope, so `typeof X` inside
+    // a later same-named declaration is genuinely circular.  Use this variant only for
+    // the circularity check; the general variant is used for symbol-type caching so
+    // that module augmentations cannot overwrite a prior JS-export type.
+    fn has_prior_value_declaration_for_ts2502(&self, decl_idx: NodeIndex) -> bool {
+        self.has_prior_value_declaration_for_symbol_impl(decl_idx, true)
+    }
+
+    fn has_prior_value_declaration_for_symbol_impl(
+        &self,
+        decl_idx: NodeIndex,
+        exclude_aliases: bool,
+    ) -> bool {
         let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx).or_else(|| {
             self.ctx
                 .arena
@@ -120,38 +137,40 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
             }
-            // Filter out alias-style prior declarations (imports / UMD namespace
-            // exports). These bind a name to another module's surface but do not
-            // establish a value-typed binding in the redeclaring scope, so
-            // `typeof X` inside a later same-named `const X` declaration is
-            // genuinely circular (matches tsc's TS2502 behaviour for cases like
-            // `import * as foo` + `declare global { const foo: typeof foo; }`).
-            if let Some(other_node) = self.ctx.arena.get(other) {
-                let kind = other_node.kind;
-                if kind == syntax_kind_ext::NAMESPACE_IMPORT
-                    || kind == syntax_kind_ext::IMPORT_CLAUSE
-                    || kind == syntax_kind_ext::IMPORT_SPECIFIER
-                    || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                    || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                    || kind == syntax_kind_ext::NAMESPACE_EXPORT
-                    || kind == syntax_kind_ext::EXPORT_SPECIFIER
-                {
-                    return false;
-                }
-                // The UMD `export as namespace foo` (and a few namespace-export
-                // forms) record the export_clause identifier as the declaration
-                // node; check the parent kind to filter that case as well.
-                if kind == SyntaxKind::Identifier as u16
-                    && let Some(other_ext) = self.ctx.arena.get_extended(other)
-                    && let Some(parent_node) = self.ctx.arena.get(other_ext.parent)
-                    && (parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-                        || parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT
-                        || parent_node.kind == syntax_kind_ext::IMPORT_CLAUSE
-                        || parent_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
-                        || parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
-                        || parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER)
-                {
-                    return false;
+            // When checking for TS2502 circular references, alias-style prior
+            // declarations (imports / UMD namespace exports) do not establish a
+            // value-typed binding in the redeclaring scope, so `typeof X` inside
+            // a later same-named `const X` declaration is genuinely circular.
+            // For symbol-type caching we keep imports as valid prior declarations
+            // so that module augmentations cannot overwrite a JS-export type.
+            if exclude_aliases {
+                if let Some(other_node) = self.ctx.arena.get(other) {
+                    let kind = other_node.kind;
+                    if kind == syntax_kind_ext::NAMESPACE_IMPORT
+                        || kind == syntax_kind_ext::IMPORT_CLAUSE
+                        || kind == syntax_kind_ext::IMPORT_SPECIFIER
+                        || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                        || kind == syntax_kind_ext::NAMESPACE_EXPORT
+                        || kind == syntax_kind_ext::EXPORT_SPECIFIER
+                    {
+                        return false;
+                    }
+                    // The UMD `export as namespace foo` (and a few namespace-export
+                    // forms) record the export_clause identifier as the declaration
+                    // node; check the parent kind to filter that case as well.
+                    if kind == SyntaxKind::Identifier as u16
+                        && let Some(other_ext) = self.ctx.arena.get_extended(other)
+                        && let Some(parent_node) = self.ctx.arena.get(other_ext.parent)
+                        && (parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                            || parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT
+                            || parent_node.kind == syntax_kind_ext::IMPORT_CLAUSE
+                            || parent_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                            || parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                            || parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER)
+                    {
+                        return false;
+                    }
                 }
             }
             true
@@ -1327,6 +1346,13 @@ impl<'a> CheckerState<'a> {
             // previously-established type, not circularly to itself.
             // This matches tsc behavior where `var p: Point; var p: typeof p;` is valid and
             // where `function f(x: A) { var x: typeof x; }` uses the parameter surface.
+            //
+            // Two variants are used intentionally:
+            // - ts2502: excludes alias-style declarations (imports) so that `typeof a` inside
+            //   a same-named `const a` is treated as circular (crashDeclareGlobalTypeofExport).
+            // - general: includes imports so that module-augmentation declarations cannot
+            //   overwrite the JS-export type established by `import { a }`.
+            let is_redeclaration_for_ts2502 = self.has_prior_value_declaration_for_ts2502(decl_idx);
             let is_redeclaration = self.has_prior_value_declaration_for_symbol(decl_idx);
             let is_js_require_binding = self.ctx.is_js_file()
                 && self.ctx.compiler_options.check_js
@@ -1334,7 +1360,7 @@ impl<'a> CheckerState<'a> {
                 && self
                     .get_require_module_specifier(var_decl.initializer)
                     .is_some();
-            if var_decl.type_annotation.is_some() && !is_redeclaration {
+            if var_decl.type_annotation.is_some() && !is_redeclaration_for_ts2502 {
                 let accessor_circular =
                     self.type_literal_has_circular_accessor_reference(var_decl.type_annotation);
                 // Try AST-based check first (catches complex circularities that confuse the solver)
