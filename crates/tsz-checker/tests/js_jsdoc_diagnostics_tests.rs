@@ -317,6 +317,52 @@ module.exports = ns;
     );
 }
 
+/// Regression for `jsDeclarationsTypeReassignmentFromDeclaration.ts`: when a
+/// JSDoc `@type {typeof import("/some-mod")}` references an unresolvable
+/// module specifier (here an absolute path `/some-mod` that tsc rejects),
+/// tsc emits only TS2307. The follow-on TS9006 about `Item` being a private
+/// name from `"some-mod"` would be misleading because the module never
+/// resolved to begin with — `Item` cannot become "private" from a module
+/// the program cannot find.
+#[test]
+fn checked_js_jsdoc_type_with_unresolvable_module_does_not_emit_ts9006() {
+    let diagnostics = compile_named_files(
+        &[
+            (
+                "/some-mod.d.ts",
+                r#"
+interface Item {
+    x: string;
+}
+declare const items: Item[];
+export = items;
+                "#,
+            ),
+            (
+                "index.js",
+                r#"
+/** @type {typeof import("/some-mod")} */
+const items = [];
+module.exports = items;
+                "#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            emit_declarations: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 9006),
+        "TS9006 must not be emitted when the JSDoc `typeof import(...)` module specifier is unresolvable (TS2307 already covers the failure). Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn checked_js_optional_nested_jsdoc_param_flows_into_destructured_binding() {
     let diagnostics = compile_named_files(
