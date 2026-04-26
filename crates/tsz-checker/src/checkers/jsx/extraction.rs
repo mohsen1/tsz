@@ -1464,10 +1464,10 @@ impl<'a> CheckerState<'a> {
         if sig.type_params.is_empty() {
             // Non-generic class: explicit type args are irrelevant; use the first
             // parameter directly.
-            return sig.params.first().map(|p| {
-                let evaluated = self.evaluate_type_with_env(p.type_id);
-                evaluated
-            });
+            return sig
+                .params
+                .first()
+                .map(|p| self.evaluate_type_with_env(p.type_id));
         }
 
         // Only substitute when the arity matches (count validation already ran).

@@ -17,7 +17,6 @@
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::doc_markdown)]
-#![allow(clippy::let_and_return)]
 #![allow(clippy::needless_return)]
 #![allow(clippy::redundant_clone)]
 #![allow(clippy::uninlined_format_args)]
