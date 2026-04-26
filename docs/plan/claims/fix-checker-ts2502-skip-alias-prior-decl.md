@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-ts2502-skip-alias-prior-decl`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1363
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
