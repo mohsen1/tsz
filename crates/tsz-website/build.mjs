@@ -191,20 +191,16 @@ function computeLoc() {
 // ── Step 3: Load benchmark data ─────────────────────────────
 
 function loadBenchmarks() {
-  // Check multiple locations
-  const locations = [
-    path.join(WEBSITE, "data", "benchmarks.json"),
-    ...(() => {
-      const artifactsDir = path.join(ROOT, "artifacts");
-      try {
-        return fs.readdirSync(artifactsDir)
-          .filter(f => f.startsWith("bench-vs-tsgo-") && f.endsWith(".json"))
-          .sort()
-          .reverse()
-          .map(f => path.join(artifactsDir, f));
-      } catch { return []; }
-    })(),
-  ];
+  const artifactsDir = path.join(ROOT, "artifacts");
+  const locations = (() => {
+    try {
+      return fs.readdirSync(artifactsDir)
+        .filter(f => f.startsWith("bench-vs-tsgo-") && f.endsWith(".json"))
+        .sort()
+        .reverse()
+        .map(f => path.join(artifactsDir, f));
+    } catch { return []; }
+  })();
 
   for (const loc of locations) {
     const data = readJsonIfExists(loc);
@@ -220,8 +216,7 @@ function generateBenchmarkCharts(data) {
   if (!data?.results?.length) {
     return `<div class="bench-placeholder">
       <p>No benchmark data available.</p>
-      <p>Run <code>./scripts/bench/bench-vs-tsgo.sh --json</code> to generate benchmarks,<br>
-      then copy the output to <code>crates/tsz-website/data/benchmarks.json</code>.</p>
+      <p>Run <code>./scripts/bench/bench-vs-tsgo.sh --json</code> to generate benchmarks.</p>
     </div>`;
   }
 

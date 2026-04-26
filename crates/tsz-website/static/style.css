@@ -509,6 +509,19 @@ tr:nth-child(even) { background: var(--table-stripe); }
   border-radius: 4px;
 }
 
+.bench-bar-failed {
+  background: var(--text-secondary);
+  opacity: 0.3;
+}
+
+.bench-failed-label {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--kw);
+  opacity: 0.8;
+}
+
 .bench-legend {
   display: flex;
   gap: 1.5rem;

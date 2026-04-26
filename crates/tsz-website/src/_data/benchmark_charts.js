@@ -57,23 +57,20 @@ function readJsonIfExists(p) {
 }
 
 function loadBenchmarks() {
-  const locations = [
-    path.join(WEBSITE, "data", "benchmarks.json"),
-    ...(() => {
-      const artifactsDir = path.join(ROOT, "artifacts");
-      try {
-        return fs.readdirSync(artifactsDir)
-          .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-          .sort()
-          .reverse()
-          .map((file) => path.join(artifactsDir, file));
-      } catch {
-        return [];
-      }
-    })(),
-  ];
+  const artifactsDir = path.join(ROOT, "artifacts");
+  const artifactFiles = (() => {
+    try {
+      return fs.readdirSync(artifactsDir)
+        .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
+        .sort()
+        .reverse()
+        .map((file) => path.join(artifactsDir, file));
+    } catch {
+      return [];
+    }
+  })();
 
-  for (const location of locations) {
+  for (const location of artifactFiles) {
     const data = readJsonIfExists(location);
     if (data?.results) return data;
   }
@@ -285,8 +282,10 @@ function generateCharts(data) {
 </div>`;
   }
 
-  const results = data.results.filter((r) => r.tsz_ms != null && r.tsz_ms > 0 && r.tsgo_ms != null && r.tsgo_ms > 0);
-  if (!results.length) return `<div class="bench-placeholder">No valid benchmark results found.</div>`;
+  const allResults = data.results;
+  const results = allResults.filter((r) => r.tsz_ms != null && r.tsz_ms > 0 && r.tsgo_ms != null && r.tsgo_ms > 0);
+  const failedResults = allResults.filter((r) => !(r.tsz_ms != null && r.tsz_ms > 0) && r.tsgo_ms != null && r.tsgo_ms > 0);
+  if (!results.length && !failedResults.length) return `<div class="bench-placeholder">No valid benchmark results found.</div>`;
   const grouped = new Map();
   for (const row of results) {
     const category = categoryFor(row.name || "", row.lines);
@@ -399,6 +398,35 @@ ${shouldHideSingleProjectNames ? "" : `    <div class="bench-name">${escapeHtml(
       html += `  </div>
  </section>\n`;
     }
+  }
+
+  if (failedResults.length > 0) {
+    html += `<section class="bench-category bench-failures">
+  <h3 class="bench-category-title" id="failures">Failures</h3>
+  <p class="bench-category-desc">These benchmarks could not be completed by tsz. tsgo time shown for reference.</p>
+  <div class="bench-chart">\n`;
+    const maxFailMs = Math.max(...failedResults.map((r) => r.tsgo_ms || 0));
+    for (const r of failedResults) {
+      const tsgoWidth = maxFailMs > 0 ? Math.max(2, (r.tsgo_ms / maxFailMs) * barMaxWidth) : 2;
+      html += `  <div class="bench-row">
+    <div class="bench-name">${escapeHtml(displayName(r.name))}</div>
+    <div class="bench-meta">${fmt(r.lines || 0)} lines, ${fmt(r.kb || 0)} KB</div>
+    <div class="bench-bars">
+      <div class="bench-bar-row">
+        <span class="bench-bar-label">tsz</span>
+        <div class="bench-bar tsz bench-bar-failed" style="width: 2px"></div>
+        <span class="bench-bar-time bench-failed-label">${escapeHtml(r.status || "failed")}</span>
+      </div>
+      <div class="bench-bar-row">
+        <span class="bench-bar-label">tsgo</span>
+        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
+        <span class="bench-bar-time">${r.tsgo_ms.toFixed(0)}ms</span>
+      </div>
+    </div>
+  </div>\n`;
+    }
+    html += `  </div>
+ </section>\n`;
   }
 
   html += `<section class="bench-category bench-notes">

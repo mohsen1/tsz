@@ -15,7 +15,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WEBSITE_DIR="$ROOT/crates/tsz-website"
-BENCH_JSON="$WEBSITE_DIR/data/benchmarks.json"
+BENCH_JSON="$ROOT/artifacts/bench-vs-tsgo-local-sample.json"
 
 if ! command -v cp >/dev/null 2>&1; then
   echo "error: required system command not found: cp" >&2
@@ -45,17 +45,11 @@ prepare_wasm() {
 }
 
 prepare_benchmarks() {
-  mkdir -p "$WEBSITE_DIR/data"
-
-  if [ -f "$BENCH_JSON" ]; then
-    echo "Benchmarks: using existing data/benchmarks.json"
-    return
-  fi
+  mkdir -p "$ROOT/artifacts"
 
   latest="$(ls -t "$ROOT"/artifacts/bench-vs-tsgo-*.json 2>/dev/null | head -n 1 || true)"
   if [ -n "${latest:-}" ] && [ -f "$latest" ]; then
-    echo "Benchmarks: copying latest artifact $(basename "$latest")"
-    cp "$latest" "$BENCH_JSON"
+    echo "Benchmarks: using existing artifact $(basename "$latest")"
     return
   fi
 
