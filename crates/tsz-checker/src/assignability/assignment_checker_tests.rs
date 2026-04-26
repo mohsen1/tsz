@@ -1513,3 +1513,78 @@ function ft1<T extends string>(
         ts2345s.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+/// `function h({ prop = "baz" }: StringUnion)` — when a binding-element default
+/// is a non-elaboratable expression (e.g. a string literal that doesn't fit a
+/// literal-union target), tsc anchors TS2322 on the binding name (`prop`)
+/// rather than the initializer expression (`"baz"`).
+///
+/// Regression test for
+/// `conformance/types/contextualTypes/methodDeclarations/contextuallyTypedBindingInitializerNegative.ts`.
+#[test]
+fn binding_default_string_lit_anchors_at_binding_name() {
+    let source = r#"
+interface StringUnion { prop: "foo" | "bar"; }
+function h({ prop = "baz" }: StringUnion) {}
+"#;
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for non-fitting binding default");
+
+    // Locate the binding name `prop` and the initializer `"baz"` in the
+    // source so the assertion stays robust if surrounding text changes.
+    let prop_offset = source.find("prop = ").expect("expected `prop = `") as u32;
+    let baz_offset = source.find("\"baz\"").expect("expected `\"baz\"`") as u32;
+
+    assert_eq!(
+        diag.start, prop_offset,
+        "TS2322 should anchor at the binding name `prop` (offset {prop_offset}), \
+         not the initializer `\"baz\"` (offset {baz_offset}); got: {diag:?}"
+    );
+    assert!(
+        diag.message_text.contains("\"baz\"")
+            && diag.message_text.contains("\"foo\" | \"bar\""),
+        "TS2322 message should still describe the actual mismatch (\"baz\" vs literal union), \
+         got: {:?}",
+        diag.message_text
+    );
+}
+
+/// Even though the binding-default anchor walks to the binding name, an arrow
+/// function default with a body return-type mismatch (e.g.
+/// `function f({ show: x = v => v }: Show)` where `Show.show` returns `string`)
+/// should still elaborate to the body expression — the elaboration path
+/// (`try_elaborate_function_arg_return_error`) overrides the binding-name
+/// anchor with its own body anchor. This test pins that contract.
+#[test]
+fn binding_default_arrow_body_return_mismatch_still_elaborates_to_body() {
+    let source = r#"
+interface Show { show: (x: number) => string; }
+function f({ show: showRename = v => v }: Show) {}
+"#;
+    let diagnostics = diagnostics_for(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for arrow body return type mismatch");
+
+    // The error must anchor at the second `v` (the body), not at `show:`,
+    // `showRename`, or the whole arrow `v => v`.
+    let body_offset = {
+        let arrow_idx = source.find("v => v").expect("expected `v => v`");
+        let body_start = arrow_idx + "v => ".len();
+        body_start as u32
+    };
+    assert_eq!(
+        diag.start, body_offset,
+        "TS2322 for arrow body return mismatch should anchor at the body expression \
+         (offset {body_offset}); got: {diag:?}"
+    );
+    assert!(
+        diag.message_text.contains("'number'") && diag.message_text.contains("'string'"),
+        "TS2322 should describe the body return-type mismatch (number vs string), got: {:?}",
+        diag.message_text
+    );
+}

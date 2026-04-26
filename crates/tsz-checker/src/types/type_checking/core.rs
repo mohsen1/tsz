@@ -1296,11 +1296,21 @@ impl<'a> CheckerState<'a> {
             // regardless of whether the property type includes undefined.
             // Even for required properties, if the user provides a default value,
             // tsc still validates it against the declared type.
+            //
+            // tsc anchors binding-default TS2322 on the binding name (e.g. `prop`
+            // in `function h({ prop = "baz" }: StringUnion)`) rather than on the
+            // initializer expression. Source-side elaboration paths (arrow body
+            // return, object/array literals) still override this anchor with
+            // their own body/property positions via
+            // `try_elaborate_assignment_source_error`, so passing the binding
+            // name only affects the fallback anchor for non-elaborated value
+            // mismatches.
             if check_default_assignability {
-                let _ = self.check_assignable_or_report(
+                let _ = self.check_assignable_or_report_at(
                     default_value_type,
                     element_type,
                     element_data.initializer,
+                    element_data.name,
                 );
             }
         }

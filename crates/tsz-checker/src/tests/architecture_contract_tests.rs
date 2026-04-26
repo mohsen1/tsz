@@ -731,9 +731,16 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         }
         s
     };
+    // Binding-default and conditional-branch assignability checks must route
+    // through the central `check_assignable_or_report*` family. Accept either
+    // the initializer-anchored variant (`check_assignable_or_report`) or the
+    // explicit-anchor variant (`check_assignable_or_report_at`) so the test
+    // stays robust as anchors get tuned without bypassing the gateway.
     assert!(
-        type_checking_src.contains("check_assignable_or_report("),
-        "binding/default-value assignability should route through check_assignable_or_report"
+        type_checking_src.contains("check_assignable_or_report(")
+            || type_checking_src.contains("check_assignable_or_report_at("),
+        "binding/default-value assignability should route through check_assignable_or_report \
+         or check_assignable_or_report_at (central TS2322 gateway helpers)"
     );
     assert!(
         type_checking_src.contains("ensure_relation_input_ready("),
