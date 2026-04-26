@@ -240,15 +240,13 @@ steps:
 
       if [[ -n "$THIS_SHA" && -n "$LATEST_SHA" && "$THIS_SHA" != "$LATEST_SHA" ]]; then
         echo "main moved (this=${THIS_SHA:0:8}, latest=${LATEST_SHA:0:8}) — triggering next bench run..."
-        http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
-          -H "Authorization: Bearer ${TOKEN}" \
-          -H "Content-Type: application/json" \
-          "https://cloudbuild.googleapis.com/v1/projects/${PROJECT_ID}/locations/${REGION}/triggers/${TRIGGER_ID}:run" \
-          -d '{"source": {"branchName": "main"}}')
-        if [[ "$http_code" =~ ^2 ]]; then
-          echo "Retrigger successful (HTTP ${http_code})"
+        if gcloud builds triggers run "$TRIGGER_ID" \
+            --branch=main \
+            --project="$PROJECT_ID" \
+            --region="$REGION" 2>&1; then
+          echo "Retrigger successful"
         else
-          echo "Warning: retrigger returned HTTP ${http_code}"
+          echo "Warning: retrigger failed (gcloud exit $?)"
         fi
       else
         echo "main is at ${THIS_SHA:0:8} — no retrigger needed."
