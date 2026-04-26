@@ -2444,6 +2444,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
     }
+    if args.exact_optional_property_types {
+        options.checker.exact_optional_property_types = true;
+    }
     if args.no_property_access_from_index_signature {
         options.checker.no_property_access_from_index_signature = true;
     }
