@@ -627,6 +627,16 @@ pub fn unpack_tuple_rest_parameter(
         return vec![*param];
     }
 
+    // Union of prefix-aligned tuples (the lib's `[] | [TNext]` pattern in
+    // `Iterator.next` / `AsyncIterator.next`) is structurally equivalent to a
+    // list of optional fixed parameters. tsc treats `(...args: [] | [X])` as
+    // `(value?: X)` for signature compat, so unpack here too. Only fires when
+    // every union member is a fixed-length tuple (no rest tail) and shorter
+    // members are position-wise prefixes of the longest member.
+    if let Some(unpacked) = unpack_union_of_prefix_tuples(db, param.type_id) {
+        return unpacked;
+    }
+
     // Check if the rest parameter type is a tuple
     if let Some(tuple_elements) = get_tuple_elements(db, param.type_id) {
         let mut unpacked = Vec::new();
@@ -673,6 +683,88 @@ pub fn unpack_tuple_rest_parameter(
         // This handles cases like `...args: string[]` which should remain a rest parameter
         vec![*param]
     }
+}
+
+/// Unpack a union of prefix-aligned fixed tuples into a flat list of optional
+/// parameters. Returns `Some` only when:
+///
+/// - the input type is a union, and
+/// - every union member is a fixed-length tuple (no rest tail), and
+/// - every shorter member is the position-wise prefix of the longest member
+///   (positions 0..len(short) have identical types across members that include
+///   that position).
+///
+/// On a match, positions held by the longest tuple are emitted as `ParamInfo`s
+/// with `optional = true` for any position that some shorter member doesn't
+/// cover. Tuples that contain rest spread elements bail out — variadic shape
+/// can't be flattened.
+///
+/// Mirrors tsc's treatment of `(...args: [] | [X])` ≡ `(x?: X)` used in the
+/// `Iterator.next` / `AsyncIterator.next` lib signatures.
+fn unpack_union_of_prefix_tuples(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<crate::types::ParamInfo>> {
+    let members = get_union_members(db, type_id)?;
+    if members.len() < 2 {
+        return None;
+    }
+
+    // Collect each member's tuple elements; bail on any non-tuple or any tuple
+    // containing a rest/spread element (variadic shape can't be flattened).
+    let mut tuples: Vec<Vec<crate::types::TupleElement>> = Vec::with_capacity(members.len());
+    for &m in &members {
+        let elems = get_tuple_elements(db, m)?;
+        if elems.iter().any(|e| e.rest) {
+            return None;
+        }
+        tuples.push(elems);
+    }
+
+    // Find the longest tuple — it defines the parameter list shape.
+    let max_len = tuples.iter().map(|t| t.len()).max()?;
+    if max_len == 0 {
+        return None;
+    }
+
+    // Verify the prefix property: at each position, all members that have an
+    // element there must agree on type. tsc's `(...args: [] | [X])` pattern
+    // satisfies this trivially; mismatched unions like `[X] | [Y]` do not and
+    // should keep the rest-typed param.
+    let mut shape: Vec<crate::types::TupleElement> = Vec::with_capacity(max_len);
+    for pos in 0..max_len {
+        let mut element: Option<crate::types::TupleElement> = None;
+        let mut optional_at_pos = false;
+        for tuple in &tuples {
+            if pos >= tuple.len() {
+                optional_at_pos = true;
+                continue;
+            }
+            let candidate = &tuple[pos];
+            match &element {
+                None => element = Some(*candidate),
+                Some(existing) if existing.type_id != candidate.type_id => return None,
+                _ => {}
+            }
+        }
+        let mut e = element?;
+        if optional_at_pos {
+            e.optional = true;
+        }
+        shape.push(e);
+    }
+
+    Some(
+        shape
+            .into_iter()
+            .map(|e| crate::types::ParamInfo {
+                name: e.name,
+                type_id: e.type_id,
+                optional: e.optional,
+                rest: false,
+            })
+            .collect(),
+    )
 }
 
 /// Get the object shape ID for an object type.
