@@ -282,6 +282,23 @@ impl BinderState {
             return Some(found);
         }
 
+        // Pre-merge: lib symbols still live in their per-lib `file_locals`,
+        // so we have to traverse `lib_binders` directly to find them.
+        //
+        // Post-merge: every globally-visible lib symbol has been hoisted into
+        // `self.file_locals` by `merge_lib_contexts_into_binder` (Phase 3).
+        // Module-scoped lib names that do NOT belong in the global scope are
+        // intentionally excluded from the merge — re-walking `lib_binders`
+        // would put them back. Callers that legitimately need access to those
+        // module-scoped lib symbols (lib augmentation handlers, the checker's
+        // type-position resolver) probe `lib_contexts.file_locals` themselves
+        // and apply their own scope-filter.
+        //
+        // Robustness audit (PR #B, item 2 in
+        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): the gating is
+        // deliberate, not a bug. See the matching comments in
+        // `crates/tsz-checker/src/symbols/symbol_resolver.rs` at the
+        // `resolve_identifier_symbol` and `resolve_type_symbol` fallbacks.
         if !self.lib_symbols_merged {
             for lib_binder in lib_binders {
                 if let Some(sym_id) = lib_binder.file_locals.get(name)

@@ -456,11 +456,37 @@ impl<'a> CheckerState<'a> {
         );
 
         // IMPORTANT: If the binder didn't find the symbol, check lib_contexts directly as a fallback.
-        // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
-        // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
-        // causing the binder to skip lib lookup entirely. By checking lib_contexts.file_locals
-        // directly here as a fallback, we bypass that bug and ensure global symbols are always resolved.
-        // This matches the pattern used successfully in generators.rs (lookup_global_type).
+        //
+        // # Why this fallback exists (and why it is NOT a bug)
+        //
+        // The binder's `resolve_identifier_with_filter` deliberately gates its
+        // `lib_binders` traversal on `!self.lib_symbols_merged`. After
+        // `merge_lib_contexts_into_binder` runs, the main binder's `file_locals`
+        // is supposed to carry every globally-visible lib symbol — so the
+        // binder skips re-walking `lib_binders` to avoid re-introducing the
+        // symbols it just merged.
+        //
+        // Phase 3 of the merge intentionally EXCLUDES file_locals belonging to
+        // external-module lib files unless the name appears in the lib's
+        // `global_augmentations` map (`crates/tsz-binder/src/state/lib_merge.rs`,
+        // around the `is_external_module && !global_augmentations.contains_key`
+        // check). This prevents module-scoped names like the `class Iterator`
+        // in `es2025.iterator.d.ts` from contaminating the global scope of
+        // user code that doesn't explicitly augment.
+        //
+        // BUT: some lookups DO need access to those module-scoped lib symbols
+        // (e.g. when generators.rs walks the iterator chain). The fallback
+        // below queries `lib_contexts.file_locals` directly so those callers
+        // can find the symbol. `should_skip_lib_symbol` filters the candidates
+        // to keep the global pollution boundary intact.
+        //
+        // Robustness audit (PR #B, item 2 in
+        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): the audit's
+        // initial framing ("the binder has a bug") was misleading — the
+        // skip-after-merge is deliberate, and the divergence is a coordinated
+        // policy. A future restructure should hoist the merge-phase filter and
+        // the checker-side fallback into a single declarative resolver
+        // boundary so the policy is co-located.
         if result.is_none() && !ignore_libs {
             // Get the identifier name
             let name = if let Some(ident) = self.ctx.arena.get_identifier_at(idx) {
@@ -726,12 +752,24 @@ impl<'a> CheckerState<'a> {
         };
 
         // IMPORTANT: Check lib_contexts directly BEFORE calling binder's resolve_identifier_with_filter.
-        // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
-        // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
-        // causing the binder to skip lib lookup entirely. By checking lib_contexts.file_locals
-        // directly here, we bypass that bug and ensure global type symbols are always resolved.
-        // However, skip this early check when the name is declared in a local scope (namespace, etc.)
-        // so that local symbols can shadow global ones.
+        //
+        // The binder's `resolve_identifier_with_filter` skips `lib_binders` when
+        // `self.lib_symbols_merged == true`. The skip is deliberate (see the
+        // long comment at `resolve_identifier_symbol` above for why), but the
+        // merge phase intentionally excludes external-module lib file_locals
+        // unless the name is in `global_augmentations`. For type-position
+        // resolution we still need access to those module-scoped lib symbols
+        // (e.g. lib types referenced from user augmentations), so we probe
+        // `lib_contexts.file_locals` directly here.
+        //
+        // The `name_in_local_scope` short-circuit ensures local declarations
+        // (namespaces, modules) shadow global lib types — without it, an
+        // ambient `class Iterator` in a target lib would mask a user-defined
+        // namespace-local `Iterator`.
+        //
+        // Robustness audit (PR #B, item 2): see the matching comment at
+        // `resolve_identifier_symbol`. This is the type-position twin of
+        // that bypass.
         if !ignore_libs && !name_in_local_scope {
             for lib_ctx in self.ctx.lib_contexts.iter() {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
