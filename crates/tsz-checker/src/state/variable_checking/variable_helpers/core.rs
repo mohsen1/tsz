@@ -990,6 +990,65 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if a type's ObjectShape comes from a class expression (anonymous class).
+    ///
+    /// Used for TS4094: only class expressions need declaration-emit type literals,
+    /// so only they require the private/protected member check.
+    pub(crate) fn instance_type_is_from_anonymous_class(&self, instance_type: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some(shape) =
+            crate::query_boundaries::checkers::generic::get_object_shape(db, instance_type)
+        else {
+            return false;
+        };
+        let Some(sym_id) = shape.symbol else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.symbols.get(sym_id) else {
+            return false;
+        };
+        let decl = symbol.value_declaration;
+        self.ctx
+            .arena
+            .get(decl)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+    }
+
+    /// Emit TS4094 for each private/protected member of an instance type, using the
+    /// solver's ObjectShape to include inherited members (not just direct AST members).
+    ///
+    /// Properties are reported in alphabetical order to match tsc's output.
+    pub(crate) fn report_instance_type_private_members_as_ts4094(
+        &mut self,
+        report_at: NodeIndex,
+        instance_type: TypeId,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_common::common::Visibility;
+
+        let shape = {
+            let db = self.ctx.types.as_type_database();
+            crate::query_boundaries::checkers::generic::get_object_shape(db, instance_type)
+        };
+        let Some(shape) = shape else {
+            return;
+        };
+        let mut names: Vec<String> = shape
+            .properties
+            .iter()
+            .filter(|p| matches!(p.visibility, Visibility::Private | Visibility::Protected))
+            .map(|p| self.ctx.types.resolve_atom(p.name))
+            .collect();
+        names.sort();
+        for name in &names {
+            self.error_at_node_msg(
+                report_at,
+                diagnostic_codes::PROPERTY_OF_EXPORTED_ANONYMOUS_CLASS_TYPE_MAY_NOT_BE_PRIVATE_OR_PROTECTED,
+                &[name.as_str()],
+            );
+        }
+    }
+
     pub(crate) fn maybe_report_unnameable_exported_variable_type(
         &mut self,
         name_idx: NodeIndex,

@@ -750,11 +750,40 @@ impl<'a> CheckerState<'a> {
         // private/protected members represented in .d.ts files.
         // Anchor at the export statement, not the class keyword — tsc reports at the
         // `export` position (col 1), which is the parent when class is a ClassExpression.
-        if self.ctx.emit_declarations() && !self.ctx.is_declaration_file() && class.name.is_none() {
-            if let Some(report_at) =
-                self.get_anonymous_class_export_anchor(stmt_idx, &class.modifiers)
-            {
-                self.report_anonymous_class_private_members(report_at, &class.members);
+        if self.ctx.emit_declarations() && !self.ctx.is_declaration_file() {
+            if class.name.is_none() {
+                if let Some(report_at) =
+                    self.get_anonymous_class_export_anchor(stmt_idx, &class.modifiers)
+                {
+                    // Use the solver's ObjectShape to get ALL properties including inherited
+                    // ones, not just the direct AST members.
+                    self.report_instance_type_private_members_as_ts4094(
+                        report_at,
+                        class_instance_type,
+                    );
+                }
+            } else {
+                // Named exported class extending an anonymous class base: the base's
+                // private/protected members appear in the .d.ts type literal for the
+                // anonymous heritage type.  Report at the named class's name node.
+                //
+                // Two patterns for exported named classes:
+                // 1. `export class Foo` — TSZ wraps CLASS_DECLARATION in an EXPORT_DECLARATION
+                //    node; the class's own `modifiers` list is empty, so we check the parent.
+                // 2. `class Foo` with `export` in modifiers — less common but possible.
+                let is_exported = self
+                    .ctx
+                    .arena
+                    .has_modifier(&class.modifiers, tsz_scanner::SyntaxKind::ExportKeyword)
+                    || self
+                        .ctx
+                        .arena
+                        .get_extended(stmt_idx)
+                        .and_then(|ext| self.ctx.arena.get(ext.parent))
+                        .is_some_and(|parent| parent.kind == syntax_kind_ext::EXPORT_DECLARATION);
+                if is_exported {
+                    self.check_ts4094_named_class_anonymous_heritage(stmt_idx, class);
+                }
             }
         }
 
@@ -2022,6 +2051,57 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// TS4094: Named exported class whose `extends` heritage resolves to an anonymous
+    /// class type.  The anonymous base's private/protected members appear in the .d.ts
+    /// type literal and must be reported.  Errors are anchored at the named class's
+    /// name identifier (matching tsc's anchor position).
+    fn check_ts4094_named_class_anonymous_heritage(
+        &mut self,
+        _class_idx: tsz_parser::parser::NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) {
+        let Some(ref heritage_list) = class.heritage_clauses else {
+            return;
+        };
+        for &clause_idx in &heritage_list.nodes {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            // Only `extends` clauses carry the anonymous constructor type.
+            if heritage.token != tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_ref_idx in &heritage.types.nodes {
+                let Some(type_ref_node) = self.ctx.arena.get(type_ref_idx) else {
+                    continue;
+                };
+                // Mirror the existing heritage-resolution pattern: if the node is an
+                // ExpressionWithTypeArguments, unpack it; otherwise treat the node itself
+                // as the expression (handles bare identifier heritage like `extends Foo`).
+                let (expr_idx, type_args) =
+                    if let Some(eta) = self.ctx.arena.get_expr_type_args(type_ref_node) {
+                        (eta.expression, eta.type_arguments.as_ref())
+                    } else {
+                        (type_ref_idx, None)
+                    };
+                let Some(base_instance_type) =
+                    self.base_instance_type_from_expression(expr_idx, type_args)
+                else {
+                    continue;
+                };
+                if self.instance_type_is_from_anonymous_class(base_instance_type) {
+                    self.report_instance_type_private_members_as_ts4094(
+                        class.name,
+                        base_instance_type,
+                    );
+                }
+            }
+        }
+    }
+
     /// TS1497: Check that a decorator expression follows the valid grammar.
     ///
     /// Valid decorator expressions are:
@@ -2125,7 +2205,120 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::check_source_diagnostics;
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{check_source, check_source_diagnostics};
+
+    fn check_with_declaration(source: &str) -> Vec<u32> {
+        check_source(
+            source,
+            "test.ts",
+            CheckerOptions {
+                emit_declarations: true,
+                ..CheckerOptions::default()
+            },
+        )
+        .iter()
+        .map(|d| d.code)
+        .collect()
+    }
+
+    // TS4094 — property of exported anonymous class type may not be private or protected
+
+    #[test]
+    fn ts4094_export_default_anon_class_private_member() {
+        // `export default class { private x() {} }` — tsc emits TS4094 for `x`.
+        let codes = check_with_declaration(
+            r#"
+export default class {
+    private x() {}
+    protected y() {}
+    public z() {}
+}
+"#,
+        );
+        assert!(
+            codes.contains(&4094),
+            "TS4094 expected for private/protected in exported anonymous class, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts4094_no_error_for_named_export_own_class() {
+        // `export class Foo { private x() {} }` — tsc does NOT emit TS4094 because
+        // the named class's private members are stripped in the .d.ts.
+        let codes = check_with_declaration(
+            r#"
+export class Foo {
+    private x() {}
+}
+"#,
+        );
+        assert!(
+            !codes.contains(&4094),
+            "TS4094 should NOT fire for named exported class with own private members, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts4094_export_default_mixin_call_anon_class() {
+        // `export default mix(AnonClass)` where mix<T>(x:T):T returns the anonymous
+        // constructor — tsc emits TS4094 for private/protected members.
+        let codes = check_with_declaration(
+            r#"
+declare function mix<TMix>(mixin: TMix): TMix;
+const AnonBase = class {
+    protected _onDispose() {}
+    private _assertIsStripped() {}
+};
+export default mix(AnonBase);
+"#,
+        );
+        assert!(
+            codes.contains(&4094),
+            "TS4094 expected for `export default mix(AnonClass)`, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts4094_named_class_extending_mixin_anon_class() {
+        // `export class Monitor extends mix(AnonBase)` — tsc emits TS4094 at Monitor's
+        // name because the anonymous base's private/protected appear in the .d.ts.
+        let codes = check_with_declaration(
+            r#"
+declare function mix<TMix>(mixin: TMix): TMix;
+const AnonBase = class {
+    protected _onDispose() {}
+    private _assertIsStripped() {}
+};
+export class Monitor extends mix(AnonBase) {
+    protected _onDispose() {}
+}
+"#,
+        );
+        assert!(
+            codes.contains(&4094),
+            "TS4094 expected for named exported class extending mixin of anonymous class, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts4094_no_error_without_declaration_flag() {
+        // Without `declaration: true`, TS4094 should not be emitted.
+        let codes: Vec<u32> = check_source_diagnostics(
+            r#"
+export default class {
+    private x() {}
+}
+"#,
+        )
+        .iter()
+        .map(|d| d.code)
+        .collect();
+        assert!(
+            !codes.contains(&4094),
+            "TS4094 should NOT fire without declaration flag, got: {codes:?}"
+        );
+    }
 
     #[test]
     fn ts1267_abstract_property_with_initializer() {
