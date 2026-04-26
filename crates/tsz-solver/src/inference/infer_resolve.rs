@@ -390,7 +390,7 @@ impl<'a> InferenceContext<'a> {
         // `__infer_0 | PromiseLike<__infer_0>`) are filtered. These arise when
         // contextually-typed callback parameters carry forward unresolved
         // placeholder types from Round 1 into Round 2's constraint collection.
-        let concrete_contra_candidates: Vec<_> = contra_candidates
+        let mut concrete_contra_candidates: Vec<_> = contra_candidates
             .iter()
             .filter(|c| {
                 // Check bare placeholder first (fast path)
@@ -414,6 +414,20 @@ impl<'a> InferenceContext<'a> {
             })
             .cloned()
             .collect();
+
+        // Discard contra-candidates whose priority is strictly worse than the
+        // best covariant priority. Mirrors tsc's `inferTypes` (checker.ts
+        // ~line 26895), which clears any existing candidates and ignores new
+        // ones whose priority is worse than `inference.priority`. Without this,
+        // a low-priority `LiteralKeyof` contra-candidate (synthesised from
+        // `keyof T = "z"`) can override a high-priority `NakedTypeVariable`
+        // covariant candidate (from `obj: T = a`).
+        if !candidates.is_empty()
+            && !concrete_contra_candidates.is_empty()
+            && let Some(best_cov_priority) = candidates.iter().map(|c| c.priority).min()
+        {
+            concrete_contra_candidates.retain(|c| c.priority <= best_cov_priority);
+        }
 
         let upper_bounds_only = candidates.is_empty()
             && concrete_contra_candidates.is_empty()
@@ -1681,7 +1695,7 @@ impl<'a> InferenceContext<'a> {
             }
             // Filter out only synthetic inference placeholders from contra-candidates.
             // Real outer type parameters remain meaningful inference evidence.
-            let concrete_contra_candidates: Vec<_> = info
+            let mut concrete_contra_candidates: Vec<_> = info
                 .contra_candidates
                 .iter()
                 .filter(|c| {
@@ -1692,6 +1706,17 @@ impl<'a> InferenceContext<'a> {
                 })
                 .cloned()
                 .collect();
+            // Mirror the priority filter from `compute_constraint_result`: when
+            // both co- and contra-variant candidates exist, drop contra-candidates
+            // with strictly worse priority than the best covariant priority.
+            // Without this, low-priority `LiteralKeyof` contras can override
+            // high-priority `NakedTypeVariable` covariants during round-fixing.
+            if !candidates.is_empty()
+                && !concrete_contra_candidates.is_empty()
+                && let Some(best_cov_priority) = candidates.iter().map(|c| c.priority).min()
+            {
+                concrete_contra_candidates.retain(|c| c.priority <= best_cov_priority);
+            }
             let result = if !candidates.is_empty() {
                 let covariant_result =
                     self.resolve_from_candidates(&candidates, is_const, &info.upper_bounds, dc);
