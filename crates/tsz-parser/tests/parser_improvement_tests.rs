@@ -2288,6 +2288,57 @@ const y = 1;
 }
 
 #[test]
+fn test_argument_list_colon_followed_by_var_keyword_emits_ts1135() {
+    // Regression for `f(x: var ...)` parser recovery.
+    //
+    // tsc emits:
+    //   - TS1005 ',' expected at the spurious `:`
+    //   - TS1135 "Argument expression expected." at `var`
+    //   - TS1134 "Variable declaration expected." at `(`
+    // The keyword should also break the argument list so the outer statement
+    // parser can keep recovering. This prevents earlier behaviour where the
+    // colon branch tried to parse `var` as a type, followed by another TS1005
+    // ',' expected at `(`.
+    let source = "f(x: var (--a)\n);";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let ts1135 = diagnostics.iter().filter(|d| d.code == 1135).count();
+    let ts1134 = diagnostics.iter().filter(|d| d.code == 1134).count();
+    let ts1110 = diagnostics.iter().filter(|d| d.code == 1110).count();
+
+    assert!(
+        ts1135 >= 1,
+        "Expected TS1135 'Argument expression expected.' at `var`, got: {diagnostics:?}"
+    );
+    assert!(
+        ts1134 >= 1,
+        "Expected TS1134 'Variable declaration expected.' downstream of `var (`, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts1110, 0,
+        "Expected no TS1110 'Type expected.' (the colon branch must not parse `var` as a type), got: {diagnostics:?}"
+    );
+
+    // Ensure we don't double-report `,` expected at `:` and at `(` of the
+    // call site (the previous bug emitted both).
+    let ts1005_at_paren = diagnostics
+        .iter()
+        .filter(|d| d.code == 1005)
+        .filter(|d| {
+            let pos = d.start as usize;
+            pos < source.len() && &source[pos..=pos] == "("
+        })
+        .count();
+    assert_eq!(
+        ts1005_at_paren, 0,
+        "TS1005 should not be emitted at `(` of `var (...)` after recovery, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_invalid_unicode_escape_in_var_no_extra_semicolon_error() {
     let source = r"var arg\uxxxx";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
