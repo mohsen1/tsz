@@ -120,6 +120,40 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
             }
+            // Filter out alias-style prior declarations (imports / UMD namespace
+            // exports). These bind a name to another module's surface but do not
+            // establish a value-typed binding in the redeclaring scope, so
+            // `typeof X` inside a later same-named `const X` declaration is
+            // genuinely circular (matches tsc's TS2502 behaviour for cases like
+            // `import * as foo` + `declare global { const foo: typeof foo; }`).
+            if let Some(other_node) = self.ctx.arena.get(other) {
+                let kind = other_node.kind;
+                if kind == syntax_kind_ext::NAMESPACE_IMPORT
+                    || kind == syntax_kind_ext::IMPORT_CLAUSE
+                    || kind == syntax_kind_ext::IMPORT_SPECIFIER
+                    || kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    || kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    || kind == syntax_kind_ext::NAMESPACE_EXPORT
+                    || kind == syntax_kind_ext::EXPORT_SPECIFIER
+                {
+                    return false;
+                }
+                // The UMD `export as namespace foo` (and a few namespace-export
+                // forms) record the export_clause identifier as the declaration
+                // node; check the parent kind to filter that case as well.
+                if kind == SyntaxKind::Identifier as u16
+                    && let Some(other_ext) = self.ctx.arena.get_extended(other)
+                    && let Some(parent_node) = self.ctx.arena.get(other_ext.parent)
+                    && (parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                        || parent_node.kind == syntax_kind_ext::NAMESPACE_EXPORT
+                        || parent_node.kind == syntax_kind_ext::IMPORT_CLAUSE
+                        || parent_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                        || parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                        || parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER)
+                {
+                    return false;
+                }
+            }
             true
         })
     }
