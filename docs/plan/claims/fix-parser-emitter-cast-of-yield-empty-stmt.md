@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/parser-emitter-cast-of-yield-empty-stmt`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1367
+- **Status**: ready
 - **Workstream**: 2 (JS Emit Pass Rate)
 
 ## Intent
