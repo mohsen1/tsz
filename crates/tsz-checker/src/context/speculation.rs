@@ -3,12 +3,30 @@
 //! Speculative type computation (overload resolution, return-type inference,
 //! contextual typing probes) must not leak committed checker state. This module
 //! provides a reusable transaction boundary that snapshots the mutable
-//! diagnostic / dedup / cache state of `CheckerContext` and supports:
+//! diagnostic / dedup / cache state of `CheckerContext`.
 //!
-//! - **Rollback-on-drop** (default): all speculative state is discarded.
-//! - **Explicit commit**: promotes speculative state into the parent context.
-//! - **Selective keep**: applies a user-supplied filter to diagnostics before
-//!   committing, for sites that intentionally preserve some speculative results.
+//! # Drop semantics — important
+//!
+//! The snapshot/holder types in this module use **explicit-action** semantics,
+//! not RAII. Specifically:
+//!
+//! - **Default on drop: implicit commit.** Speculative state produced after a
+//!   snapshot is taken survives. `Drop` is intentionally not implemented because
+//!   `CheckerContext` is not accessible from `Drop`, and several call sites
+//!   legitimately want to keep speculative output. Names carry `Snapshot`
+//!   (`DiagnosticSnapshot`, `FullSnapshot`, `CacheSnapshot`,
+//!   `DiagnosticSpeculationSnapshot`) to signal this — readers must invoke
+//!   `rollback()` or `rollback_filtered()` themselves when discarding is the
+//!   intent.
+//! - **Explicit commit (no-op vs. drop):** equivalent to dropping the snapshot.
+//!   Provided as a self-documenting call site.
+//! - **Explicit rollback:** the only way to discard speculative diagnostics.
+//! - **Selective keep:** `rollback_filtered` applies a user-supplied filter to
+//!   diagnostics before discarding the rest.
+//!
+//! See `docs/plan/ROADMAP.md` Operating Principle 6 + Workstream 4 Speculation
+//! Policy 3 for the naming rule, and `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`
+//! item #5 for the rationale behind the naming policy.
 //!
 //! # Architecture note
 //!
