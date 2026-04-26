@@ -1445,3 +1445,71 @@ function f() {
         "destructuring declaration with empty pattern must not emit TS2353; got: {ts2353:?}"
     );
 }
+
+/// Regression: TS2322 must fire when a bare type parameter is assigned to a
+/// template-literal pattern referencing the same type parameter.
+///
+/// `tsc` reports TS2322 here because `\`${T}\`` is an opaque pattern type;
+/// `T`'s instantiation could be a literal subtype that does not structurally
+/// match the template, so the assignment is not statically sound. Without the
+/// template-literal carve-out in `should_suppress_assignability_diagnostic`,
+/// the generic "complex type" suppression would silently accept it because
+/// `\`${T}\`` "contains" T but is not itself a type parameter.
+///
+/// Repros the missing fingerprint at
+/// `templateLiteralTypes5.ts(14,11)`.
+#[test]
+fn type_parameter_to_template_literal_of_self_emits_ts2322() {
+    let source = r#"
+function f<T extends "a" | "b">(x: T) {
+    const test1: `${T}` = x;
+}
+"#;
+    let diags = diagnostics_for(source);
+    let ts2322s: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322s.is_empty(),
+        "expected TS2322 for `T -> \\`${{T}}\\`` assignment; diagnostics: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    let lhs_diag = ts2322s
+        .iter()
+        .find(|d| d.message_text.contains("'T'") && d.message_text.contains("`${T}`"))
+        .expect("expected TS2322 message naming T and `${T}`");
+    let test1_start = source.find("test1").expect("expected variable name") as u32;
+    assert_eq!(
+        lhs_diag.start, test1_start,
+        "TS2322 should anchor at the variable declaration name (test1)"
+    );
+}
+
+/// Companion check: template-literal vs template-literal assignments where
+/// both sides share a type parameter (e.g. `\`${Uppercase<T>}\``) must keep
+/// their existing suppression. This locks in the narrowness of the
+/// template-literal carve-out so it does not regress
+/// `templateLiteralTypes3.ts` (where tsc accepts the spread of values typed
+/// `Uppercase<\`1.${T}.4\`>` against an inferred `Uppercase<\`1.${T}.3\`>`).
+#[test]
+fn template_literal_to_template_literal_with_generic_intrinsic_does_not_emit_ts2345() {
+    let source = r#"
+type DotString = `${string}.${string}.${string}`;
+declare function spread<P extends DotString>(...args: P[]): P;
+function ft1<T extends string>(
+    u1: Uppercase<`1.${T}.3`>,
+    u2: Uppercase<`1.${T}.4`>,
+) {
+    spread(u1, u2);
+}
+"#;
+    let diags = diagnostics_for(source);
+    let ts2345s: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345s.is_empty(),
+        "template-vs-template generic intrinsic spread must stay suppressed; \
+         got TS2345 diagnostics: {:?}",
+        ts2345s.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
