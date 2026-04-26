@@ -691,7 +691,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                     .get_literal(expr)
                                     .and_then(|lit| {
                                         tsz_solver::utils::canonicalize_numeric_name(&lit.text).map(
-                                            |canonical| canonical == "NaN" || canonical == lit.text,
+                                            |canonical| {
+                                                canonical == lit.text
+                                                    && canonical != "NaN"
+                                                    && canonical != "Infinity"
+                                                    && canonical != "-Infinity"
+                                            },
                                         )
                                     })
                                     .unwrap_or(false)
