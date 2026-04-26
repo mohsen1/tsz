@@ -1687,11 +1687,23 @@ impl<'a> CheckerState<'a> {
                         conflicts.contains(decl_idx)
                             && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
                     });
+                // For cross-file scenarios, the remote block-scoped declaration is
+                // not stored in `conflicts` (which only tracks local declarations),
+                // so check `declarations` directly for any remote block-scoped
+                // variable that could be triggering the redeclaration error. See
+                // duplicateIdentifierRelatedSpans1.ts: a local `class Bar` conflicts
+                // with a remote `const Bar` from another file — tsc emits TS2451.
+                let has_remote_block_scoped_conflict =
+                    declarations.iter().any(|(_, flags, is_local, _, _)| {
+                        !*is_local && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                    });
                 let has_function_conflict =
                     declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                         conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
                     });
-                let use_ts2451 = if has_remote_declaration && has_block_scoped_conflict {
+                let use_ts2451 = if has_remote_declaration
+                    && (has_block_scoped_conflict || has_remote_block_scoped_conflict)
+                {
                     // Cross-file mixed conflicts generally use TS2451, except for
                     // synthetic default-import alias collisions where tsc reports
                     // TS2300 (for example impliedNodeFormatInterop1.ts).
