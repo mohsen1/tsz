@@ -366,3 +366,56 @@ const checked_ = checkType_<{x: number, y: string}>()({
         "expected target type to match tsc baseline `{{ x: number; y: \"y\"; }}`, got message: {msg}"
     );
 }
+
+#[test]
+fn reverse_mapped_finite_recursive_alias_drills_to_leaf() {
+    // Regression test for reverseMappedTypeDeepDeclarationEmit.ts.
+    //
+    // When a homomorphic mapped type's template recursively references itself
+    // via a type alias indirection (here through `Validator<T>`), reverse
+    // inference must continue drilling into nested object sources until a
+    // non-recursive leaf (e.g. a function type) is reached. The previous
+    // recursion guard short-circuited on ANY re-entry of Case 6, returning
+    // the source unchanged and producing
+    //   `V = { Test: { Test1: { Test2: NativeTypeValidator<string> } } }`
+    // when the correct inferred T is
+    //   `V = { Test: { Test1: { Test2: string } } }`.
+    //
+    // The fix tracks `(template, source_value)` pairs in the recursion chain
+    // and only converges to the source when the SAME pair re-occurs (true
+    // structural recursion like `interface A { a: A }`). Distinct sub-objects
+    // are still allowed to recurse, so finite sources reverse-map all the way
+    // down. We assert the correct inference by writing a `string`-typed leaf
+    // back into the inferred shape: if T collapsed early to
+    // `NativeTypeValidator<string>`, the assignment would emit TS2322.
+    let code = r#"
+type Validator<T> = NativeTypeValidator<T> | ObjectValidator<T>
+type NativeTypeValidator<T> = (n: any) => T | undefined
+type ObjectValidator<O> = {
+  [K in keyof O]: Validator<O[K]>
+}
+declare const SimpleStringValidator: NativeTypeValidator<string>;
+declare const ObjValidator: <V>(validatorObj: ObjectValidator<V>) => (o: any) => V;
+const test = {
+  Test: {
+    Test1: {
+      Test2: SimpleStringValidator
+    },
+  }
+}
+const validatorFunc = ObjValidator(test);
+const outputExample: { Test: { Test1: { Test2: string } } } = validatorFunc({
+  Test: {
+    Test1: {
+      Test2: "hi"
+    },
+  }
+});
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "Expected no TS2322 (V should reverse-infer all the way to leaf `string`, \
+         not stop at `NativeTypeValidator<string>`), got: {codes:?}"
+    );
+}
