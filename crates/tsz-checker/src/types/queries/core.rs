@@ -1532,6 +1532,15 @@ impl<'a> CheckerState<'a> {
             && value.is_finite()
             && value.fract() == 0.0
             && value >= 0.0
+            // Skip values that would lose precision when cast to usize (e.g.
+            // an enormous octal literal that evaluates to `5.46e+244`). The
+            // `as usize` cast saturates at `usize::MAX`, which would lead
+            // the property-access path to look up `"18446744073709551615"`
+            // and emit a spurious TS7053. tsc handles such literals via the
+            // canonical numeric property name (`"5.462437423415177e+244"`),
+            // not the saturated integer index.
+            && value <= usize::MAX as f64
+            && (value as usize) as f64 == value
         {
             return Some(value as usize);
         }
