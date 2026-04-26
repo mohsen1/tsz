@@ -15,7 +15,6 @@
 
 #![allow(dead_code)]
 #![allow(clippy::collapsible_if)]
-#![allow(clippy::collapsible_match)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::let_and_return)]
 #![allow(clippy::missing_const_for_fn)]
