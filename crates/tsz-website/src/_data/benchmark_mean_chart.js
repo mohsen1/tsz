@@ -13,23 +13,20 @@ function readJsonIfExists(p) {
 }
 
 function loadBenchmarks() {
-  const locations = [
-    path.join(WEBSITE, "data", "benchmarks.json"),
-    ...(() => {
-      const artifactsDir = path.join(ROOT, "artifacts");
-      try {
-        return fs.readdirSync(artifactsDir)
-          .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-          .sort()
-          .reverse()
-          .map((file) => path.join(artifactsDir, file));
-      } catch {
-        return [];
-      }
-    })(),
-  ];
+  const artifactsDir = path.join(ROOT, "artifacts");
+  const artifactFiles = (() => {
+    try {
+      return fs.readdirSync(artifactsDir)
+        .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
+        .sort()
+        .reverse()
+        .map((file) => path.join(artifactsDir, file));
+    } catch {
+      return [];
+    }
+  })();
 
-  for (const location of locations) {
+  for (const location of artifactFiles) {
     const data = readJsonIfExists(location);
     if (data?.results?.length) return data.results;
   }
@@ -124,7 +121,7 @@ function renderMeanChart(results) {
   const widthMax = 420;
   const tszWidth = Math.max(2, (tszMean / maxMs) * widthMax);
   const tsgoWidth = Math.max(2, (tsgoMean / maxMs) * widthMax);
-  const factor = tszMean > 0 ? tsgoMean / tszMean : 0;
+  const speedupLabel = formatSpeedupLabel(tszMean, tsgoMean);
 
   return `<section class="benchmark-mean-card">
   <p class="bench-category-desc">Arithmetic mean across ${format(valid.length)} <a href="/benchmarks/">benchmark cases</a>.</p>
@@ -138,7 +135,7 @@ function renderMeanChart(results) {
       <span class="bench-bar-label">tsgo</span>
       <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
       <span class="bench-bar-time">${tsgoMean.toFixed(1)}ms</span>
-      <span class="bench-winner">tsz ${factor.toFixed(2)}x faster</span>
+      ${speedupLabel ? `<span class="bench-winner">${speedupLabel}</span>` : ""}
     </div>
   </div>
 </section>`;
