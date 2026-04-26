@@ -90,22 +90,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner().string_intrinsic(kind, evaluated_arg)
             }
 
-            // For type parameters and other deferred types, keep as StringIntrinsic
+            // For type parameters and other deferred types, keep as StringIntrinsic.
+            //
+            // Also: for non-string primitive intrinsics that are pattern literal
+            // placeholders (number, bigint, boolean), preserve the StringMapping
+            // wrapping. tsc represents this as `Mapping<\`${T}\`>`, but storing
+            // `Mapping<T>` directly works as long as downstream consumers treat
+            // the type_arg as a stringification pattern. See `visit_literal` in
+            // the subtype visitor for the matching assignability rule.
+            //
+            // Without the primitive case, evaluation collapses to TypeId::ERROR,
+            // and downstream template-literal matching
+            // (e.g., `"1" <: \`${Uppercase<number>}\``) silently returns false
+            // instead of accepting the literal.
             TypeData::TypeParameter(_)
             | TypeData::Infer(_)
             | TypeData::KeyOf(_)
-            | TypeData::IndexAccess(_, _) => self.interner().string_intrinsic(kind, evaluated_arg),
-
-            // For non-string primitive intrinsics that are pattern literal placeholders
-            // (number, bigint, boolean), preserve the StringMapping wrapping. tsc represents
-            // this as `Mapping<\`${T}\`>`, but storing `Mapping<T>` directly works as long as
-            // downstream consumers treat the type_arg as a stringification pattern.
-            // See `visit_literal` in the subtype visitor for the matching assignability rule.
-            //
-            // Without this case, evaluation collapses to TypeId::ERROR, and downstream
-            // template-literal matching (e.g., `"1" <: \`${Uppercase<number>}\``) silently
-            // returns false instead of accepting the literal.
-            TypeData::Intrinsic(
+            | TypeData::IndexAccess(_, _)
+            | TypeData::Intrinsic(
                 IntrinsicKind::Number | IntrinsicKind::Bigint | IntrinsicKind::Boolean,
             ) => self.interner().string_intrinsic(kind, evaluated_arg),
 

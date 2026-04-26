@@ -106,7 +106,14 @@ impl<'a> CodeActionProvider<'a> {
     /// Returns actions for:
     /// - `source.removeUnusedImports` — remove unused imports only
     /// - `source.sortImports` — sort import declarations only
-    /// - `source.addMissingImports` — placeholder for adding missing imports
+    ///
+    /// `source.addMissingImports` is intentionally NOT advertised: it would
+    /// need workspace-level import candidate resolution that this LSP does
+    /// not yet implement, and previously surfaced as an editor entry that
+    /// did nothing (`edit: None`). See robustness audit
+    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 16 (PR #P).
+    /// When the candidate-resolution path is added, advertise this action
+    /// only when at least one candidate is found.
     ///
     /// Note: `source.organizeImports` is handled separately in `organize_imports()`.
     pub fn source_actions(&self, root: tsz_parser::NodeIndex) -> Vec<CodeAction> {
@@ -121,17 +128,6 @@ impl<'a> CodeActionProvider<'a> {
         if let Some(action) = self.sort_imports_action(root) {
             actions.push(action);
         }
-
-        // Add missing imports (stub — needs workspace-level import candidates)
-        actions.push(CodeAction {
-            title: "Add Missing Imports".to_string(),
-            kind: CodeActionKind::SourceAddMissingImports,
-            edit: None,
-            is_preferred: false,
-            data: Some(serde_json::json!({
-                "fixName": "addMissingImports"
-            })),
-        });
 
         actions
     }
