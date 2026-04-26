@@ -1552,43 +1552,91 @@ impl ScannerState {
     /// `scanHexDigits`/`scanBinaryOrOctalDigits` "did we read anything" signal,
     /// so callers like `scan_integer_base_literal` can emit
     /// `Hexadecimal/Binary/Octal digit expected` for empty prefixed literals.
+    /// Also emits one diagnostic per invalid numeric separator as we walk the
+    /// digit run, distinguishing TS6189 ("multiple consecutive") from TS6188
+    /// ("not allowed here") by tracking whether the immediately preceding
+    /// token was a *valid* separator.
     fn scan_digits_with_separators(&mut self, is_valid_digit: fn(u32) -> bool) -> bool {
+        let scan_start = self.pos;
         let mut saw_digit = false;
-        let mut prev_separator = false;
+        let mut allow_separator = false;
+        let mut is_previous_separator = false;
 
         while self.pos < self.end {
             let ch = self.char_code_unchecked(self.pos);
             if ch == CharacterCodes::UNDERSCORE {
                 self.token_flags |= TokenFlags::ContainsSeparator as u32;
-                if !saw_digit || prev_separator {
-                    self.token_flags |= TokenFlags::ContainsInvalidSeparator as u32;
-                    if self.token_invalid_separator_pos.is_none() {
-                        self.token_invalid_separator_pos = Some(self.pos);
-                        self.token_invalid_separator_is_consecutive = prev_separator;
-                    }
+                if allow_separator {
+                    allow_separator = false;
+                    is_previous_separator = true;
+                } else if is_previous_separator {
+                    self.push_invalid_numeric_separator(self.pos, /*consecutive*/ true);
+                } else {
+                    self.push_invalid_numeric_separator(self.pos, /*consecutive*/ false);
                 }
-                prev_separator = true;
                 self.pos += 1;
                 continue;
             }
             if is_valid_digit(ch) {
                 saw_digit = true;
-                prev_separator = false;
+                allow_separator = true;
+                is_previous_separator = false;
                 self.pos += 1;
                 continue;
             }
             break;
         }
 
-        if prev_separator {
-            self.token_flags |= TokenFlags::ContainsInvalidSeparator as u32;
-            if self.token_invalid_separator_pos.is_none() {
-                self.token_invalid_separator_pos = Some(self.pos.saturating_sub(1));
-                self.token_invalid_separator_is_consecutive = false;
-            }
+        // Trailing underscore — tsc fires Numeric_separators_are_not_allowed_here
+        // unconditionally if the byte before pos is `_`. The scanner-level
+        // dedup in `push_invalid_numeric_separator` collapses the same-position
+        // pair (TS6189 + TS6188) that arises when the inner loop already emitted
+        // for that same byte. Bound the look-back at `scan_start` so a zero-iter
+        // call (e.g., a `.5` decimal where the first byte is `.`) cannot inspect
+        // a byte from a preceding token like the `_` in `_.5`.
+        if self.pos > scan_start
+            && self.char_code_unchecked(self.pos - 1) == CharacterCodes::UNDERSCORE
+        {
+            self.push_invalid_numeric_separator(self.pos - 1, /*consecutive*/ false);
         }
 
         saw_digit
+    }
+
+    /// Push a numeric-separator diagnostic, applying the same "skip if last
+    /// diagnostic shares this start position" rule that tsc's
+    /// `parseErrorAtPosition` enforces (only the first of a same-start run
+    /// survives). Also records the first invalid separator position for the
+    /// parser's recovery path (e.g. TS2304 emission for `0_X0101`).
+    fn push_invalid_numeric_separator(&mut self, pos: usize, consecutive: bool) {
+        self.token_flags |= TokenFlags::ContainsInvalidSeparator as u32;
+        if self.token_invalid_separator_pos.is_none() {
+            self.token_invalid_separator_pos = Some(pos);
+            self.token_invalid_separator_is_consecutive = consecutive;
+        }
+        if let Some(last) = self.scanner_diagnostics.last()
+            && last.pos == pos
+        {
+            return;
+        }
+        let (message, code) = if consecutive {
+            (
+                diagnostic_messages::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
+                diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
+            )
+        } else {
+            (
+                diagnostic_messages::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+            )
+        };
+        self.scanner_diagnostics.push(ScannerDiagnostic {
+            pos,
+            length: 1,
+            message,
+            code,
+            args: Vec::new(),
+        });
     }
 
     /// Scan an identifier.
@@ -3783,5 +3831,82 @@ mod tests {
         // Rescan to get >=
         let rescanned = scanner.re_scan_greater_token();
         assert_eq!(rescanned, SyntaxKind::GreaterThanEqualsToken);
+    }
+
+    // ── Numeric separator diagnostics ────────────────────────────────
+    //
+    // These lock in tsc parity for `scanHexDigits`/`scanNumberFragment`:
+    // each invalid `_` produces its own diagnostic, distinguished by whether
+    // the preceding character was a *valid* separator (TS6189) or not
+    // (TS6188). Same-position emissions collapse to the first, mirroring
+    // tsc's `parseErrorAtPosition` skip-if-same-start dedup.
+
+    fn scan_separator_diagnostics(source: &str) -> Vec<(usize, u32)> {
+        let mut scanner = ScannerState::new(source.to_string(), true);
+        loop {
+            let kind = scanner.scan();
+            if kind == SyntaxKind::EndOfFileToken {
+                break;
+            }
+        }
+        scanner
+            .get_scanner_diagnostics()
+            .iter()
+            .map(|d| (d.pos, d.code))
+            .collect()
+    }
+
+    #[test]
+    fn separator_three_leading_underscores_emits_three_ts6188() {
+        // `0x___0111010_0101_1` — tsc reports TS6188 at each of the three
+        // leading underscores. Previously we only recorded the first one.
+        let diags = scan_separator_diagnostics("0x___0111010_0101_1");
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        assert_eq!(
+            diags,
+            vec![(2, ts6188), (3, ts6188), (4, ts6188)],
+            "expected three TS6188 at positions 2,3,4 for `0x___...`",
+        );
+    }
+
+    #[test]
+    fn separator_trailing_double_underscore_emits_one_ts6189() {
+        // `0X0110_0110__` — tsc emits TS6189 at the second trailing `_`
+        // and tsc's parser dedups the would-be TS6188 trailing-underscore
+        // companion at the same byte. Mirror the dedup at the scanner.
+        let diags = scan_separator_diagnostics("0X0110_0110__");
+        let ts6189 = diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED;
+        assert_eq!(diags, vec![(12, ts6189)]);
+    }
+
+    #[test]
+    fn separator_consecutive_after_valid_emits_ts6189() {
+        // `0x01__11` — first `_` valid, second `_` is consecutive → TS6189.
+        let diags = scan_separator_diagnostics("0x01__11");
+        let ts6189 = diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED;
+        assert_eq!(diags, vec![(5, ts6189)]);
+    }
+
+    #[test]
+    fn separator_leading_emits_ts6188() {
+        // `0x_110` — leading `_` after the prefix is invalid (TS6188).
+        let diags = scan_separator_diagnostics("0x_110");
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        assert_eq!(diags, vec![(2, ts6188)]);
+    }
+
+    #[test]
+    fn separator_trailing_single_underscore_emits_ts6188() {
+        // `0x00_` — trailing `_` only fires the post-loop trailing check.
+        let diags = scan_separator_diagnostics("0x00_");
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        assert_eq!(diags, vec![(4, ts6188)]);
+    }
+
+    #[test]
+    fn separator_valid_does_not_emit() {
+        // `1_000_000` and `0xFF_FF` are well-formed.
+        assert!(scan_separator_diagnostics("1_000_000").is_empty());
+        assert!(scan_separator_diagnostics("0xFF_FF").is_empty());
     }
 }
