@@ -1716,9 +1716,9 @@ fn test_type_environment_get_lazy_type_params_definition_store_fallback() {
     assert_eq!(params[0].name, t_param.name);
 }
 
-/// Intrinsic TypeIds (number, string, boolean, etc.) must never carry a
+/// Intrinsic `TypeIds` (number, string, boolean, etc.) must never carry a
 /// `type_to_def` mapping.  Their canonical display is the keyword
-/// (`number`, `string`, ...) provided by the TypeFormatter's intrinsic
+/// (`number`, `string`, ...) provided by the `TypeFormatter`'s intrinsic
 /// short-circuit. If a checker path tries to register an intrinsic type
 /// to a class/interface/alias def, that mapping later poisons
 /// `find_def_for_type` lookups and produces wrong-source-name diagnostics
