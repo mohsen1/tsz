@@ -90,6 +90,18 @@ impl<'a> CheckerState<'a> {
                         param.name,
                         param.dot_dot_dot_token,
                     );
+                } else if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    && let Some(init_len) =
+                        Self::array_literal_init_len(self.ctx.arena, param.initializer)
+                {
+                    // Array-literal default `[v0, v1, ...]` is non-empty but may
+                    // be shorter than the binding pattern. Emit TS7031 for
+                    // binding leaves at indices the literal does not cover.
+                    self.emit_implicit_any_for_array_pattern_beyond_default(
+                        param.name,
+                        param.dot_dot_dot_token,
+                        init_len,
+                    );
                 }
                 return;
             }
@@ -554,6 +566,96 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Emit TS7031 for array binding leaves at indices the array-literal default
+    /// does not cover. Used when a parameter has the form `[a, b, ...] = [v0, v1]`
+    /// and the literal is shorter than the pattern. Leaves with their own
+    /// initializer (e.g. `b = 'x'`) are not reported; nested patterns are
+    /// recursed into via `emit_implicit_any_parameter_for_pattern` (which
+    /// assumes no outer initializer covers them, since the outer literal does
+    /// not extend to this index).
+    pub(crate) fn emit_implicit_any_for_array_pattern_beyond_default(
+        &mut self,
+        pattern_idx: NodeIndex,
+        is_rest_parameter: bool,
+        default_len: usize,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
+            return;
+        };
+        if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return;
+        }
+        let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) else {
+            return;
+        };
+
+        for (logical_index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
+            // Indices within the literal get their type from the corresponding
+            // literal element; nothing to report.
+            if logical_index < default_len {
+                continue;
+            }
+
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            // Skip omitted expressions (holes in array patterns).
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                continue;
+            }
+            let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) else {
+                continue;
+            };
+
+            let is_rest_element = binding_elem.dot_dot_dot_token;
+
+            // Nested pattern: recurse without a default — the outer literal
+            // does not cover this index at all.
+            let name_is_pattern = self
+                .ctx
+                .arena
+                .get(binding_elem.name)
+                .map(|n| {
+                    n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                })
+                .unwrap_or(false);
+
+            if name_is_pattern {
+                self.emit_implicit_any_parameter_for_pattern(
+                    binding_elem.name,
+                    is_rest_parameter || is_rest_element,
+                );
+                continue;
+            }
+
+            // Leaf binding: emit TS7031 only when it has no own initializer
+            // (or an empty array literal default).
+            let implicit_type = if binding_elem.initializer.is_none() {
+                Some(if is_rest_parameter || is_rest_element {
+                    "any[]"
+                } else {
+                    "any"
+                })
+            } else if Self::is_empty_array_literal_init(self.ctx.arena, binding_elem.initializer) {
+                Some("any[]")
+            } else {
+                None
+            };
+            if let Some(implicit_type) = implicit_type {
+                let binding_name = self.parameter_name_for_error(binding_elem.name);
+                self.error_at_node_msg(
+                    binding_elem.name,
+                    diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE,
+                    &[&binding_name, implicit_type],
+                );
+            }
+        }
+    }
+
     /// Returns true if `init` points to an empty object literal `{}`.
     fn is_empty_object_literal_init(
         arena: &tsz_parser::parser::NodeArena,
@@ -577,6 +679,31 @@ impl<'a> CheckerState<'a> {
                     .get_literal_expr(node)
                     .is_some_and(|arr| arr.elements.nodes.is_empty())
         })
+    }
+
+    /// Returns the element count of `init` if it is an array literal, else `None`.
+    ///
+    /// Spread elements (`...rest`) make the literal's effective length not
+    /// statically known, so we conservatively return `None` and let the
+    /// existing path skip TS7031 emission entirely.
+    fn array_literal_init_len(
+        arena: &tsz_parser::parser::NodeArena,
+        init: NodeIndex,
+    ) -> Option<usize> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let node = arena.get(init)?;
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let arr = arena.get_literal_expr(node)?;
+        for &el_idx in &arr.elements.nodes {
+            if let Some(el) = arena.get(el_idx)
+                && el.kind == syntax_kind_ext::SPREAD_ELEMENT
+            {
+                return None;
+            }
+        }
+        Some(arr.elements.nodes.len())
     }
 
     /// Emit TS7031 errors for binding elements in destructuring variable declarations
@@ -830,6 +957,101 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
+    fn check_codes_no_implicit_any(source: &str) -> Vec<u32> {
+        crate::test_utils::check_source(
+            source,
+            "test.ts",
+            crate::context::CheckerOptions {
+                no_implicit_any: true,
+                ..crate::context::CheckerOptions::default()
+            },
+        )
+        .iter()
+        .map(|d| d.code)
+        .collect()
+    }
+
+    fn count_code(codes: &[u32], code: u32) -> usize {
+        codes.iter().filter(|c| **c == code).count()
+    }
+
+    #[test]
+    fn ts7031_emitted_for_array_pattern_index_beyond_array_default() {
+        // `[x, y] = [1]` — the default literal `[1]` covers index 0 only, so
+        // `y` at index 1 must still report TS7031 (implicit any).
+        let codes = check_codes_no_implicit_any("function f02([x, y] = [1]) {}");
+        assert_eq!(
+            count_code(&codes, 7031),
+            1,
+            "expected exactly one TS7031 (for `y`) in `[x, y] = [1]`, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts7031_emitted_for_array_pattern_index_beyond_array_default_with_inner_default() {
+        // `[x = 0, y] = [1]` — `x` has its own default, so no TS7031 for x.
+        // `y` at index 1 is still uncovered by the literal and has no own
+        // default, so TS7031 must fire for `y`.
+        let codes = check_codes_no_implicit_any("function f12([x = 0, y] = [1]) {}");
+        assert_eq!(
+            count_code(&codes, 7031),
+            1,
+            "expected exactly one TS7031 (for `y`) in `[x = 0, y] = [1]`, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn no_ts7031_when_array_default_covers_pattern() {
+        // `[x, y] = [1, 'foo']` — both indices are covered by the literal,
+        // so the bindings are implicitly typed `number` / `string`. No TS7031.
+        let codes = check_codes_no_implicit_any("function f03([x, y] = [1, 'foo']) {}");
+        assert_eq!(
+            count_code(&codes, 7031),
+            0,
+            "expected no TS7031 when literal default covers all binding indices, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn no_ts7031_when_inner_default_present_beyond_array_default() {
+        // `[x = 0, y = 'bar'] = [1]` — `y` has an own default `'bar'` so it
+        // is typed `string`. Even though the literal does not cover index 1,
+        // no TS7031 should fire.
+        let codes = check_codes_no_implicit_any("function f22([x = 0, y = 'bar'] = [1]) {}");
+        assert_eq!(
+            count_code(&codes, 7031),
+            0,
+            "expected no TS7031 when leaves carry their own default, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn ts7031_for_each_uncovered_index_in_longer_pattern() {
+        // `[x, y, z] = [1]` — only index 0 is covered. y and z must each
+        // report TS7031.
+        let codes = check_codes_no_implicit_any("function fN([x, y, z] = [1]) {}");
+        assert_eq!(
+            count_code(&codes, 7031),
+            2,
+            "expected TS7031 for both `y` and `z`, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn no_ts7031_for_array_pattern_with_spread_default() {
+        // `[x, y] = [...rest]` — spread makes the literal's effective length
+        // not statically known. We conservatively skip TS7031 (matching tsc,
+        // which infers a tuple type from the spread context).
+        let codes = check_codes_no_implicit_any(
+            "declare const rest: number[]; function f([x, y] = [...rest]) {}",
+        );
+        assert_eq!(
+            count_code(&codes, 7031),
+            0,
+            "expected no TS7031 when default contains a spread, got {codes:?}"
+        );
+    }
+
     #[test]
     fn ts7019_emitted_with_rest_not_last_parse_error() {
         // tsc emits TS7019 for rest params even when TS1014 (rest not last) is present.
