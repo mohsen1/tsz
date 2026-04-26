@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/index-sig-target-display-ts2322`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1422
+- **Status**: ready
 - **Workstream**: 1 (Conformance — fingerprint-only TS2322 fixes)
 
 ## Intent
