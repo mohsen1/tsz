@@ -249,13 +249,19 @@ restore_caches() {
       fi
     else
       echo "Cache miss: cargo-target-${cargo_target_hash}"
-      # Restore most recent available cargo-target as a warm fallback. With
-      # a warm (stale) cache Cargo only recompiles changed crates rather than
-      # the full dependency tree. Does not mark cache-hit so we still save
-      # the exact-hash entry at the end of the job.
+      # Restore the most-recently-saved cargo-target as a warm fallback.
+      # sccache forces CARGO_INCREMENTAL=0 which makes incremental
+      # fingerprints incompatible across caches; the warm cache still
+      # seeds the .rlib files in .target/dist-fast/deps/ so Cargo skips
+      # crates whose content hashes match, avoiding sccache round-trips.
+      # Sort by GCS timestamp (gsutil ls -l col 2) to get the newest entry.
+      # Does not mark cache-hit so the exact-hash entry is still saved.
       local fallback_uri
-      fallback_uri="$(gsutil ls "$(cache_uri "cargo-target/*.tar.gz")" 2>/dev/null \
-        | sort | tail -1 || true)"
+      fallback_uri="$(gsutil ls -l "$(cache_uri "cargo-target/*.tar.gz")" 2>/dev/null \
+        | grep -v '^TOTAL:' \
+        | sort -k2 -r \
+        | head -1 \
+        | awk '{print $NF}' || true)"
       if [[ -n "$fallback_uri" ]]; then
         echo "Cache warm-fallback: cargo-target from ${fallback_uri}"
         restore_archive "cargo-target-warm-fallback" "$fallback_uri" "." .target
