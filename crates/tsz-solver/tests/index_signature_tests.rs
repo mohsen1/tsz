@@ -558,3 +558,155 @@ fn test_empty_object_assignable_to_dual_index_target() {
         "Empty object should be assignable to {{ [x: string]: string; [x: number]: string }}"
     );
 }
+
+/// Regression for tsc parity: when the target has a string index signature whose
+/// value type is `any`, the source need NOT declare a matching string/number
+/// index signature -- even when the source is a class/interface (which would
+/// normally require an explicit declared index signature).
+///
+/// This mirrors `indexSignaturesRelatedTo` short-circuit in tsc's checker.ts
+/// (around line 24828):
+///
+///     const related = relation !== strictSubtypeRelation
+///         && !sourceIsPrimitive
+///         && targetHasStringIndex
+///         && targetInfo.type.flags & TypeFlags.Any
+///         ? Ternary.True : ...
+///
+/// Conformance test:
+/// `tests/cases/conformance/types/members/objectTypeWithStringAndNumberIndexSignatureToAny.ts`
+#[test]
+fn test_named_source_assignable_to_string_index_any_target() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(7)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    // Source: a class-like named type with only a number index, e.g. `class NumberTo<any> { [x: number]: any }`.
+    let source = interner.object_with_index(ObjectShape {
+        symbol: Some(SymbolId(7)),
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    // Target: anonymous `{ [x: string]: any }`.
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "Named class with only a number index must be assignable to a target whose \
+         string index value is `any` (tsc short-circuit)"
+    );
+}
+
+/// When the target has both string and number indexes that map to `any`, a
+/// source class/interface with NO index signatures (only properties) should be
+/// assignable. Mirrors tsc behavior for
+/// `interface Obj { hello: string }` -> `{ [s: string]: any, [n: number]: any }`.
+#[test]
+fn test_named_source_with_props_assignable_to_dual_any_index_target() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(8)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("hello"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("world"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(SymbolId(8)),
+    );
+
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "Named class with only properties must be assignable to a dual-index target \
+         where both index values are `any` (tsc short-circuit)"
+    );
+}
+
+/// The "string-index-any" short-circuit must NOT apply when the target lacks a
+/// string index. A number-only `{ [n: number]: any }` target still requires the
+/// source to provide a numeric-compatible index signature or properties. A
+/// named class/interface source with NO numeric members must continue to be
+/// rejected.
+#[test]
+fn test_named_source_still_rejected_by_number_only_any_target() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(9)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("hello"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("world"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(SymbolId(9)),
+    );
+
+    // Target: `{ [n: number]: any }` -- number index only, NO string index.
+    let target = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "Named class without numeric members must NOT satisfy a number-only `any` index \
+         target (the short-circuit only applies when target also has a string index)"
+    );
+}
+

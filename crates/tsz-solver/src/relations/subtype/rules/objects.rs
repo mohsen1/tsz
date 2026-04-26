@@ -619,6 +619,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True; // Target has no string index constraint
         };
 
+        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
+        //   when the target has a string index AND the target's index info value
+        //   maps to `any`, the source need not declare a matching index signature.
+        //   This is the rule that allows `{ [n: number]: any }` -> `{ [s: string]: any }`
+        //   even when the source is a named class/interface. We mirror it here for
+        //   the assignability path (non-strict subtype).
+        if !self.disable_method_bivariance && t_string_idx.value_type.is_any() {
+            return SubtypeResult::True;
+        }
+
         match &source.string_index {
             Some(s_string_idx) => {
                 // Note: tsc does NOT enforce readonly on index signatures during
@@ -735,6 +745,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let Some(ref t_number_idx) = target.number_index else {
             return SubtypeResult::True; // Target has no number index constraint
         };
+
+        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
+        //   if THIS target index info maps to `any` AND the target ALSO has a
+        //   string index signature, the source need not declare a matching
+        //   number index. This permits `{ [s: string]: any, [n: number]: any }`
+        //   targets to accept any source -- including class/interface sources
+        //   without explicit index signatures. The "target has string index"
+        //   gate is what distinguishes this from a number-only `{ [n: number]: any }`
+        //   target, which still requires a numeric-compatible source.
+        if !self.disable_method_bivariance
+            && t_number_idx.value_type.is_any()
+            && target.string_index.is_some()
+        {
+            return SubtypeResult::True;
+        }
 
         match &source.number_index {
             Some(s_number_idx) => {
