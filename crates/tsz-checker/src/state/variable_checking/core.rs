@@ -608,12 +608,15 @@ impl<'a> CheckerState<'a> {
                 checker.check_type_for_missing_names_skip_top_level_ref(var_decl.type_annotation);
                 checker.check_type_for_parameter_properties(var_decl.type_annotation);
                 let type_id = checker.get_type_from_type_node(var_decl.type_annotation);
-                // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'
-                if is_catch_variable
+                // TS1196: Catch clause variable type annotation must be 'any' or 'unknown'.
+                // When the annotation is invalid, fall back to the catch-variable default
+                // (any/unknown) so the catch body sees the same type tsc uses, preventing
+                // cascade errors like TS2339 on `e.method()` or destructured names.
+                let invalid_catch_annotation = is_catch_variable
                     && type_id != TypeId::ANY
                     && type_id != TypeId::UNKNOWN
-                    && !checker.type_contains_error(type_id)
-                {
+                    && !checker.type_contains_error(type_id);
+                if invalid_catch_annotation {
                     use crate::diagnostics::diagnostic_codes;
                     checker.error_at_node(
                         var_decl.type_annotation,
@@ -621,7 +624,13 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::CATCH_CLAUSE_VARIABLE_TYPE_ANNOTATION_MUST_BE_ANY_OR_UNKNOWN_IF_SPECIFIED,
                     );
                 }
-                type_id
+                if invalid_catch_annotation {
+                    flow_boundary::resolve_catch_variable_type(
+                        checker.ctx.use_unknown_in_catch_variables(),
+                    )
+                } else {
+                    type_id
+                }
             } else if is_catch_variable {
                 // Route catch variable type resolution through the flow
                 // observation boundary for centralized policy.
@@ -2345,7 +2354,23 @@ impl<'a> CheckerState<'a> {
             // This type is used for both default-value checking and for assigning types to
             // binding element symbols created by the binder.
             let pattern_type = if var_decl.type_annotation.is_some() {
-                self.get_type_from_type_node(var_decl.type_annotation)
+                let annotated = self.get_type_from_type_node(var_decl.type_annotation);
+                // Catch-clause variables with an invalid type annotation (anything other
+                // than `any`/`unknown`) trigger TS1196. Mirror tsc by falling back to the
+                // catch-variable default for the binding pattern so destructured names
+                // like `({ x }: object)` don't cascade into spurious TS2339s alongside
+                // the TS1196 emitted on the annotation.
+                if is_catch_variable
+                    && annotated != TypeId::ANY
+                    && annotated != TypeId::UNKNOWN
+                    && !self.type_contains_error(annotated)
+                {
+                    flow_boundary::resolve_catch_variable_type(
+                        self.ctx.use_unknown_in_catch_variables(),
+                    )
+                } else {
+                    annotated
+                }
             } else if let Some(jsdoc_type) = jsdoc_declared_type {
                 jsdoc_type
             } else if let Some(inferred) =

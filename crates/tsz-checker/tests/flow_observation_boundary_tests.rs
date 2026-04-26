@@ -195,6 +195,86 @@ try {
     );
 }
 
+/// When a catch clause has an invalid type annotation (anything other than
+/// `any`/`unknown`), tsc emits TS1196 on the annotation but treats the variable
+/// as `any`/`unknown` in the body. Regression for
+/// catchClauseWithTypeAnnotation.ts: `catch (e: number) { e.toLowerCase(); }`
+/// must NOT cascade into a TS2339 on `.toLowerCase`.
+#[test]
+fn catch_invalid_type_annotation_does_not_cascade_property_errors() {
+    let diags = tsz_checker::test_utils::check_source(
+        r#"
+function f() {
+    try { console.log(); }
+    catch (e: number) {
+        console.log(e.toLowerCase());
+    }
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            use_unknown_in_catch_variables: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts1196 = codes(&diags, 1196);
+    assert_eq!(
+        ts1196.len(),
+        1,
+        "Expected exactly one TS1196 for invalid catch annotation, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    let ts2339 = codes(&diags, 2339);
+    assert!(
+        ts2339.is_empty(),
+        "Invalid catch annotation should fall back to any/unknown — \
+         no TS2339 should fire on body property accesses, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+/// Same fallback behavior must apply when the catch clause uses a destructuring
+/// binding pattern. Regression for catchClauseWithTypeAnnotation.ts:
+/// `catch ({ x }: object) { }` and `catch ({ x }: SomeType) { }` should emit
+/// only TS1196 on the annotation — no spurious TS2339 on `x`.
+#[test]
+fn catch_destructure_invalid_type_annotation_does_not_cascade_property_errors() {
+    let diags = tsz_checker::test_utils::check_source(
+        r#"
+interface Foo { y: number; }
+function f() {
+    try { } catch ({ x }: object) { }
+    try { } catch ({ x }: Foo) { }
+}
+"#,
+        "test.ts",
+        CheckerOptions {
+            use_unknown_in_catch_variables: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts1196 = codes(&diags, 1196);
+    assert_eq!(
+        ts1196.len(),
+        2,
+        "Expected two TS1196 for invalid catch annotations, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    let ts2339 = codes(&diags, 2339);
+    assert!(
+        ts2339.is_empty(),
+        "Invalid catch destructure annotation should fall back to any/unknown — \
+         no TS2339 should fire on bound names, got: {:?}",
+        ts2339.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // For-of destructuring
 // =============================================================================
