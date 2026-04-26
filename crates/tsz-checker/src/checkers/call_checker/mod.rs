@@ -1630,7 +1630,10 @@ impl<'a> CheckerState<'a> {
             // same way — TS2556 is only reported for spreads of opaque arrays/iterables
             // whose runtime length is unknown at the call site.
             if array_element_type_for_type(self.ctx.types, spread_type).is_some()
-                && let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
+                && let Some(expr_node) = self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(spread_data.expression))
                 && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
             {
                 effective_index += literal.elements.nodes.len();
@@ -1700,7 +1703,10 @@ impl<'a> CheckerState<'a> {
             // per-element type error (TS2345/TS2322), not a TS2556. Skip past the literal's
             // elements without setting `prior_non_tuple_spread`.
             if array_element_type_for_type(self.ctx.types, spread_type).is_some()
-                && let Some(expr_node) = self.ctx.arena.get(spread_data.expression)
+                && let Some(expr_node) = self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(spread_data.expression))
                 && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
             {
                 let count = literal.elements.nodes.len();
