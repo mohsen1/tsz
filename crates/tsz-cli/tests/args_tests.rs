@@ -101,6 +101,7 @@ fn parses_target_variants() {
         ("es2022", Target::Es2022),
         ("es2023", Target::Es2023),
         ("es2024", Target::Es2024),
+        ("es2025", Target::Es2025),
         ("esnext", Target::EsNext),
         ("es-next", Target::EsNext), // alias
     ];
@@ -865,4 +866,291 @@ fn parses_use_define_for_class_fields() {
     let args = CliArgs::try_parse_from(["tsz", "--useDefineForClassFields", "false"])
         .expect("useDefineForClassFields false should parse");
     assert_eq!(args.use_define_for_class_fields, Some(false));
+}
+
+// ==================== Enum-to-runtime-kind conversion tests ====================
+//
+// These exhaustively cover every variant of the three CLI enums that are
+// converted to runtime kinds (`ScriptTarget`, `ModuleKind`,
+// `ModuleResolutionKind`) before being threaded into `PrinterOptions` /
+// `CheckerOptions` by `tsz-cli/src/driver/core.rs`. A regression in any one
+// arm silently mismaps every flag for that target — the surface is wide and
+// each mismap would be an effectively invisible CLI bug.
+//
+// The previous coverage (`target_and_module_aliases_map_to_runtime_kinds`)
+// only verified one variant of `Target` and one of `Module`, and no variant
+// of `ModuleResolution`.
+
+#[test]
+fn target_to_script_target_covers_every_variant() {
+    use crate::config::ModuleResolutionKind as _; // ensure alias path compiles
+
+    let cases = [
+        (Target::Es5, ScriptTarget::ES5),
+        (Target::Es2015, ScriptTarget::ES2015),
+        (Target::Es2016, ScriptTarget::ES2016),
+        (Target::Es2017, ScriptTarget::ES2017),
+        (Target::Es2018, ScriptTarget::ES2018),
+        (Target::Es2019, ScriptTarget::ES2019),
+        (Target::Es2020, ScriptTarget::ES2020),
+        (Target::Es2021, ScriptTarget::ES2021),
+        (Target::Es2022, ScriptTarget::ES2022),
+        (Target::Es2023, ScriptTarget::ES2023),
+        (Target::Es2024, ScriptTarget::ES2024),
+        (Target::Es2025, ScriptTarget::ES2025),
+        (Target::EsNext, ScriptTarget::ESNext),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            input.to_script_target(),
+            expected,
+            "Target::{input:?} should map to {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn target_to_script_target_alias_routes_to_same_runtime_kind() {
+    // The `es6` alias is parsed as `Target::Es2015` (locked by
+    // `parses_target_variants`), and Es2015 maps to ScriptTarget::ES2015.
+    // This test pins the end-to-end mapping for the alias path so a
+    // future drift in either the alias or the conversion arm fails CI.
+    let args = CliArgs::try_parse_from(["tsz", "--target", "es6"])
+        .expect("--target es6 alias should parse");
+    let target = args.target.expect("target should be present");
+    assert_eq!(target, Target::Es2015);
+    assert_eq!(target.to_script_target(), ScriptTarget::ES2015);
+
+    let args = CliArgs::try_parse_from(["tsz", "--target", "es-next"])
+        .expect("--target es-next alias should parse");
+    let target = args.target.expect("target should be present");
+    assert_eq!(target, Target::EsNext);
+    assert_eq!(target.to_script_target(), ScriptTarget::ESNext);
+}
+
+#[test]
+fn target_to_script_target_is_total() {
+    // Locks the {variant -> ScriptTarget} mapping as a total function.
+    // If a new variant is added to `Target` without a matching arm in
+    // `to_script_target`, this test will not compile (exhaustiveness),
+    // and the assertion below catches an accidental duplicate codomain.
+    let all = [
+        Target::Es5,
+        Target::Es2015,
+        Target::Es2016,
+        Target::Es2017,
+        Target::Es2018,
+        Target::Es2019,
+        Target::Es2020,
+        Target::Es2021,
+        Target::Es2022,
+        Target::Es2023,
+        Target::Es2024,
+        Target::Es2025,
+        Target::EsNext,
+    ];
+    let mut kinds: Vec<ScriptTarget> = all.iter().map(|t| t.to_script_target()).collect();
+    let count = kinds.len();
+    kinds.sort_by_key(|k| format!("{k:?}"));
+    kinds.dedup();
+    assert_eq!(
+        kinds.len(),
+        count,
+        "every Target variant must map to a unique ScriptTarget"
+    );
+}
+
+#[test]
+fn module_to_module_kind_covers_every_variant() {
+    let cases = [
+        (Module::None, ModuleKind::None),
+        (Module::CommonJs, ModuleKind::CommonJS),
+        (Module::Amd, ModuleKind::AMD),
+        (Module::Umd, ModuleKind::UMD),
+        (Module::System, ModuleKind::System),
+        (Module::Es2015, ModuleKind::ES2015),
+        (Module::Es2020, ModuleKind::ES2020),
+        (Module::Es2022, ModuleKind::ES2022),
+        (Module::EsNext, ModuleKind::ESNext),
+        (Module::Node16, ModuleKind::Node16),
+        (Module::Node18, ModuleKind::Node18),
+        (Module::Node20, ModuleKind::Node20),
+        (Module::NodeNext, ModuleKind::NodeNext),
+        (Module::Preserve, ModuleKind::Preserve),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            input.to_module_kind(),
+            expected,
+            "Module::{input:?} should map to {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn module_to_module_kind_alias_routes_to_same_runtime_kind() {
+    // `--module common-js` -> `Module::CommonJs` -> `ModuleKind::CommonJS`
+    let args = CliArgs::try_parse_from(["tsz", "--module", "common-js"])
+        .expect("--module common-js alias should parse");
+    let module = args.module.expect("module should be present");
+    assert_eq!(module, Module::CommonJs);
+    assert_eq!(module.to_module_kind(), ModuleKind::CommonJS);
+
+    // `--module es6` -> `Module::Es2015` -> `ModuleKind::ES2015`
+    let args = CliArgs::try_parse_from(["tsz", "--module", "es6"])
+        .expect("--module es6 alias should parse");
+    let module = args.module.expect("module should be present");
+    assert_eq!(module, Module::Es2015);
+    assert_eq!(module.to_module_kind(), ModuleKind::ES2015);
+
+    // `--module node-next` -> `Module::NodeNext` -> `ModuleKind::NodeNext`
+    let args = CliArgs::try_parse_from(["tsz", "--module", "node-next"])
+        .expect("--module node-next alias should parse");
+    let module = args.module.expect("module should be present");
+    assert_eq!(module, Module::NodeNext);
+    assert_eq!(module.to_module_kind(), ModuleKind::NodeNext);
+}
+
+#[test]
+fn module_to_module_kind_is_total() {
+    let all = [
+        Module::None,
+        Module::CommonJs,
+        Module::Amd,
+        Module::Umd,
+        Module::System,
+        Module::Es2015,
+        Module::Es2020,
+        Module::Es2022,
+        Module::EsNext,
+        Module::Node16,
+        Module::Node18,
+        Module::Node20,
+        Module::NodeNext,
+        Module::Preserve,
+    ];
+    let mut kinds: Vec<ModuleKind> = all.iter().map(|m| m.to_module_kind()).collect();
+    let count = kinds.len();
+    kinds.sort_by_key(|k| format!("{k:?}"));
+    kinds.dedup();
+    assert_eq!(
+        kinds.len(),
+        count,
+        "every Module variant must map to a unique ModuleKind"
+    );
+}
+
+#[test]
+fn module_resolution_to_kind_covers_every_variant() {
+    use crate::config::ModuleResolutionKind;
+
+    let cases = [
+        (ModuleResolution::Classic, ModuleResolutionKind::Classic),
+        // `Node10` collapses to `Node` in the runtime kind (the runtime
+        // enum predates the Node10/Node renaming and only exposes `Node`).
+        (ModuleResolution::Node10, ModuleResolutionKind::Node),
+        (ModuleResolution::Node16, ModuleResolutionKind::Node16),
+        (ModuleResolution::NodeNext, ModuleResolutionKind::NodeNext),
+        (ModuleResolution::Bundler, ModuleResolutionKind::Bundler),
+    ];
+
+    for (input, expected) in cases {
+        assert_eq!(
+            input.to_module_resolution_kind(),
+            expected,
+            "ModuleResolution::{input:?} should map to {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn module_resolution_alias_routes_to_same_runtime_kind() {
+    use crate::config::ModuleResolutionKind;
+
+    // `--moduleResolution node` is an alias for `Node10` and must map to
+    // `ModuleResolutionKind::Node` (the legacy runtime kind name).
+    let args = CliArgs::try_parse_from(["tsz", "--moduleResolution", "node"])
+        .expect("--moduleResolution node alias should parse");
+    let resolution = args
+        .module_resolution
+        .expect("module_resolution should be present");
+    assert_eq!(resolution, ModuleResolution::Node10);
+    assert_eq!(
+        resolution.to_module_resolution_kind(),
+        ModuleResolutionKind::Node
+    );
+
+    // `--moduleResolution node-next` -> `NodeNext` -> `NodeNext`
+    let args = CliArgs::try_parse_from(["tsz", "--moduleResolution", "node-next"])
+        .expect("--moduleResolution node-next alias should parse");
+    let resolution = args
+        .module_resolution
+        .expect("module_resolution should be present");
+    assert_eq!(resolution, ModuleResolution::NodeNext);
+    assert_eq!(
+        resolution.to_module_resolution_kind(),
+        ModuleResolutionKind::NodeNext
+    );
+}
+
+#[test]
+fn module_resolution_to_kind_is_total_modulo_node10_alias() {
+    use crate::config::ModuleResolutionKind;
+
+    // The runtime `ModuleResolutionKind` enum has 5 distinct variants
+    // (Classic, Node, Node16, NodeNext, Bundler). The CLI `ModuleResolution`
+    // enum also has 5 (Classic, Node10, Node16, NodeNext, Bundler) — Node10
+    // maps to the legacy-named `Node`. We expect a perfect 5->5 bijection.
+    let all = [
+        ModuleResolution::Classic,
+        ModuleResolution::Node10,
+        ModuleResolution::Node16,
+        ModuleResolution::NodeNext,
+        ModuleResolution::Bundler,
+    ];
+    let mut kinds: Vec<ModuleResolutionKind> =
+        all.iter().map(|r| r.to_module_resolution_kind()).collect();
+    let count = kinds.len();
+    kinds.sort_by_key(|k| format!("{k:?}"));
+    kinds.dedup();
+    assert_eq!(
+        kinds.len(),
+        count,
+        "every ModuleResolution variant must map to a unique ModuleResolutionKind"
+    );
+}
+
+#[test]
+fn end_to_end_target_module_resolution_wiring() {
+    use crate::config::ModuleResolutionKind;
+
+    // Sanity-check the full CLI -> runtime-kind wiring for a representative
+    // mix of options that downstream `driver/core.rs` depends on.
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--target",
+        "es2025",
+        "--module",
+        "node20",
+        "--moduleResolution",
+        "bundler",
+    ])
+    .expect("flagged conversion args should parse");
+
+    assert_eq!(
+        args.target.expect("target").to_script_target(),
+        ScriptTarget::ES2025
+    );
+    assert_eq!(
+        args.module.expect("module").to_module_kind(),
+        ModuleKind::Node20
+    );
+    assert_eq!(
+        args.module_resolution
+            .expect("module_resolution")
+            .to_module_resolution_kind(),
+        ModuleResolutionKind::Bundler
+    );
 }
