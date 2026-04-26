@@ -163,20 +163,36 @@ jobs:
 
       - name: Download latest benchmark data from GCS
         run: |
-          LATEST=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/latest.json
-          if gsutil -q stat "$LATEST" 2>/dev/null; then
-            gsutil cp "$LATEST" /tmp/bench-latest.json
-            # Reject data where bc was missing and all timings are zero.
-            nonzero=$(jq '[.results[]? | select(.tsz_ms > 0)] | length' /tmp/bench-latest.json 2>/dev/null || echo "0")
-            if [ "${nonzero}" -gt 0 ]; then
-              mkdir -p artifacts
-              cp /tmp/bench-latest.json artifacts/bench-vs-tsgo-latest.json
-              echo "Downloaded fresh benchmark data from GCS (${nonzero} valid results, $(date -u))"
-            else
-              echo "GCS data has no valid timing results — skipping bench charts"
-            fi
+          BUCKET="thirdface-ai-oauth_cloudbuild"
+          OBJECT="tsz-ci-cache/bench-runs/latest.json"
+          URL="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media"
+
+          # Get OAuth token from credentials wired by google-github-actions/auth above.
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
+
+          if [[ -z "$TOKEN" ]]; then
+            echo "No OAuth token — GCP auth step may have failed or secret is missing"
           else
-            echo "No latest.json in GCS yet — bench charts will show placeholder"
+            HTTP=$(curl -s -w "\n%{http_code}" -o /tmp/bench-latest.json \
+              -H "Authorization: Bearer ${TOKEN}" "$URL")
+            STATUS=$(echo "$HTTP" | tail -1)
+            echo "GCS fetch HTTP ${STATUS}"
+            if [[ "$STATUS" == "200" ]]; then
+              nonzero=$(jq '[.results[]? | select(.tsz_ms > 0)] | length' /tmp/bench-latest.json 2>/dev/null || echo "0")
+              if [ "${nonzero}" -gt 0 ]; then
+                mkdir -p artifacts
+                cp /tmp/bench-latest.json artifacts/bench-vs-tsgo-latest.json
+                echo "Downloaded ${nonzero} valid results from GCS ($(date -u))"
+              else
+                echo "GCS data has no valid timing results — skipping bench charts"
+              fi
+            elif [[ "$STATUS" == "404" ]]; then
+              echo "latest.json not found in GCS — bench job has not written results yet"
+            elif [[ "$STATUS" == "401" || "$STATUS" == "403" ]]; then
+              echo "GCS access denied HTTP ${STATUS} — service account in SCCACHE_GCS_KEY_JSON lacks read on ${BUCKET}"
+            else
+              echo "GCS fetch failed HTTP ${STATUS}"
+            fi
           fi
         continue-on-error: true
 
