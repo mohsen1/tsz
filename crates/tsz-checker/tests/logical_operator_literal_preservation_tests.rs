@@ -11,10 +11,6 @@
 //! See conformance test
 //! `tests/cases/conformance/types/literal/stringLiteralsWithSwitchStatements03.ts`.
 use crate::context::CheckerOptions;
-use crate::state::CheckerState;
-use tsz_binder::BinderState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
 
 fn check_strict(source: &str) -> Vec<u32> {
     let options = CheckerOptions {
@@ -23,21 +19,10 @@ fn check_strict(source: &str) -> Vec<u32> {
         no_implicit_any: true,
         ..Default::default()
     };
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    crate::test_utils::check_source(source, "test.ts", options)
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
 }
 
 /// `"baz" || z` (where z is a non-literal identifier) should produce the
