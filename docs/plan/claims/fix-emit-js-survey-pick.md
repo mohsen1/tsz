@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/emit-js-survey-pick`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1373
+- **Status**: ready
 - **Workstream**: 2 (JS Emit pass-rate)
 
 ## Intent
