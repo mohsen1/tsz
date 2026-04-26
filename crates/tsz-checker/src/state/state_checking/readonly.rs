@@ -628,7 +628,49 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // When the object IS a type parameter T, the index must reference a foreign
+        // key space to be considered a "broad" write. tsc treats `T[keyof T]` and
+        // `T[K extends keyof T]` as bounded by T's own keys (only TS2322 applies),
+        // and reserves TS2862 for writes through a different concrete keyof
+        // (e.g., `keyof Dict` where T extends Dict) or a primitive key.
+        if self.index_is_bounded_by_object_keys(object_type, index_type) {
+            return false;
+        }
+
         self.constraint_has_index_signature(object_type, index_type)
+    }
+
+    /// Returns true when the index references the receiver's own key space.
+    ///
+    /// This excludes TS2862 for writes like `obj[k]` where:
+    /// - `k: keyof T` (literal `keyof` of the receiver type parameter), or
+    /// - `k: K extends keyof T` (a type parameter constrained by `keyof T`).
+    ///
+    /// In both cases tsc emits only TS2322 because `T[keyof T]` / `T[K]` is the
+    /// receiver's own value space, not a broader index-signature write.
+    fn index_is_bounded_by_object_keys(&mut self, object_type: TypeId, index_type: TypeId) -> bool {
+        use crate::query_boundaries::common as common_query;
+
+        // Direct case: index is `keyof object_type` (e.g., obj: T, k: keyof T).
+        if let Some(inner) = common_query::keyof_inner_type(self.ctx.types, index_type)
+            && inner == object_type
+        {
+            return true;
+        }
+
+        // Indirect case: index is itself a type parameter K whose constraint
+        // narrows to `keyof object_type` (e.g., obj: T, k: K extends keyof T).
+        if crate::query_boundaries::state::checking::is_type_parameter(self.ctx.types, index_type)
+            && let Some(info) = common_query::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = info.constraint
+            && let Some(constraint_inner) =
+                common_query::keyof_inner_type(self.ctx.types, constraint)
+            && constraint_inner == object_type
+        {
+            return true;
+        }
+
+        false
     }
 
     /// Check if the constraint of a type parameter has an index signature
