@@ -151,6 +151,31 @@ impl NodeArena {
         }
     }
 
+    /// Returns `true` when the node is an identifier synthesized by parser
+    /// error recovery — i.e. an empty-text identifier with `Atom::NONE`
+    /// produced by helpers like `create_missing_expression`. Distinguishes
+    /// recovery placeholders from genuine empty-named identifiers (which
+    /// the scanner would never produce, but downstream synthesizers might).
+    ///
+    /// Use this to suppress cascading diagnostics or skip semantic checks
+    /// that would treat a placeholder as a meaningful name. Codifies the
+    /// implicit `escaped_text.is_empty() && atom == Atom::NONE` heuristic
+    /// that several call sites already use ad-hoc, into a stable API.
+    ///
+    /// Robustness audit (PR #L, item 12 in
+    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`).
+    #[inline]
+    #[must_use]
+    pub fn is_missing_recovery_identifier(&self, index: NodeIndex) -> bool {
+        let Some(node) = self.get(index) else {
+            return false;
+        };
+        let Some(ident) = self.get_identifier(node) else {
+            return false;
+        };
+        ident.atom == tsz_common::interner::Atom::NONE && ident.escaped_text.is_empty()
+    }
+
     /// Get the owned text of an `Identifier` node. Returns `None` for any
     /// other kind, including `PrivateIdentifier` — mirrors the common
     /// caller-side pattern that pre-filters on `SyntaxKind::Identifier`
@@ -1979,3 +2004,88 @@ impl Node {
 //  add_opt_child, add_list, add_opt_list)
 
 // NodeAccess trait and NodeInfo are in node_view.rs
+
+#[cfg(test)]
+mod is_missing_recovery_identifier_tests {
+    use super::*;
+    use crate::parser::node::NodeArena;
+    use tsz_common::interner::Atom;
+    use tsz_scanner::SyntaxKind;
+
+    #[test]
+    fn returns_true_for_synthesized_recovery_placeholder() {
+        let mut arena = NodeArena::with_capacity(8);
+        let idx = arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            0,
+            0,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: String::new(),
+                original_text: None,
+                type_arguments: None,
+            },
+        );
+        assert!(arena.is_missing_recovery_identifier(idx));
+    }
+
+    #[test]
+    fn returns_false_for_real_named_identifier() {
+        let mut arena = NodeArena::with_capacity(8);
+        // A real identifier has a non-NONE atom AND non-empty escaped_text;
+        // either condition alone is enough for the helper to reject it.
+        let idx = arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            0,
+            3,
+            IdentifierData {
+                atom: Atom(1),
+                escaped_text: "foo".to_string(),
+                original_text: None,
+                type_arguments: None,
+            },
+        );
+        assert!(!arena.is_missing_recovery_identifier(idx));
+    }
+
+    #[test]
+    fn returns_false_when_only_atom_is_set() {
+        let mut arena = NodeArena::with_capacity(8);
+        let idx = arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            0,
+            0,
+            IdentifierData {
+                atom: Atom(1),
+                escaped_text: String::new(),
+                original_text: None,
+                type_arguments: None,
+            },
+        );
+        assert!(!arena.is_missing_recovery_identifier(idx));
+    }
+
+    #[test]
+    fn returns_false_when_only_escaped_text_is_set() {
+        let mut arena = NodeArena::with_capacity(8);
+        let idx = arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            0,
+            3,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: "x".to_string(),
+                original_text: None,
+                type_arguments: None,
+            },
+        );
+        assert!(!arena.is_missing_recovery_identifier(idx));
+    }
+
+    #[test]
+    fn returns_false_for_non_identifier_node() {
+        let arena = NodeArena::with_capacity(8);
+        // Default-init NodeIndex points at nothing — get() returns None.
+        assert!(!arena.is_missing_recovery_identifier(NodeIndex::NONE));
+    }
+}
