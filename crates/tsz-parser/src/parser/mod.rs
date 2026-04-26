@@ -49,6 +49,10 @@ mod parser_improvement_tests;
 mod tests;
 
 #[cfg(test)]
+#[path = "../../tests/flags_tests.rs"]
+mod flags_tests;
+
+#[cfg(test)]
 #[path = "../../tests/trailing_comma_tests.rs"]
 mod trailing_comma_tests;
 
