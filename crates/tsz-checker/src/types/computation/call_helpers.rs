@@ -156,7 +156,18 @@ impl<'a> CheckerState<'a> {
                     // Only emit TS2454 for these binding-element cases.
                     !self.symbol_is_destructured_binding_element(sym_id)
                 } else {
-                    false
+                    // Self-circular `typeof` annotations like `const fn: typeof fn = ...`
+                    // produce TS2502 at the declaration site and reduce to an unresolved
+                    // type. tsc does not also emit TS2454 here — the circularity already
+                    // signals that the variable's runtime value cannot be reasoned about.
+                    let target = sym_id.0;
+                    let types = self.ctx.types;
+                    crate::query_boundaries::state::checking::has_type_query_for_symbol(
+                        types,
+                        declared_type,
+                        target,
+                        |ty| self.resolve_lazy_type(ty),
+                    )
                 };
                 if !should_skip {
                     let key = (usage_node.pos, sym_id);
