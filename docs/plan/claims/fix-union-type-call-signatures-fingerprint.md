@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/union-type-call-signatures-fingerprint`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1459
+- **Status**: ready
 - **Workstream**: Conformance fingerprint parity (Tier 1 type-display-parity)
 
 ## Intent
