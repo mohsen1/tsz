@@ -852,3 +852,59 @@ fn parse_as_and_satisfies_as_identifiers_in_primary_position() {
         );
     }
 }
+
+/// `for (let X)` (or `var`/`const`) without a `;`-terminated init is a malformed
+/// loop. tsc's `parseDelimitedList(VariableDeclarations)` recovers by emitting
+/// `',' expected.` at the unexpected non-terminator (here `)`), treating it as
+/// a missing comma between declarators. Plain expression initializers (e.g.
+/// `for (a)`) still produce `';' expected.`. Locks in this message split.
+#[test]
+fn parse_for_with_var_decl_init_unterminated_emits_comma_expected_at_close_paren() {
+    let var_decl_cases = [
+        "for (let a) {}",
+        "for (const a) {}",
+        "for (var a) {}",
+        "for (let a: y) {}",
+        "for (let a, b) {}",
+        "for (let {a}) {}",
+        "for (let [a]) {}",
+    ];
+    for source in var_decl_cases {
+        let (parser, _root) = parse_source(source);
+        let diags = parser.get_diagnostics();
+        let close_paren_pos = source.find(')').unwrap() as u32;
+        let comma_at_paren = diags.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED
+                && d.start == close_paren_pos
+                && d.message.contains("','")
+        });
+        let semi_at_paren = diags.iter().any(|d| {
+            d.code == diagnostic_codes::EXPECTED
+                && d.start == close_paren_pos
+                && d.message.contains("';'")
+        });
+        assert!(
+            comma_at_paren,
+            "`{source}` should emit `',' expected.` at `)`; got {diags:?}"
+        );
+        assert!(
+            !semi_at_paren,
+            "`{source}` should NOT emit `';' expected.` at `)` after var-decl init; got {diags:?}"
+        );
+    }
+
+    // Sanity check: for `for (a) {}` (expression init, not a var-decl), the
+    // diagnostic at `)` is still the default `';' expected.`.
+    let (parser, _root) = parse_source("for (a) {}");
+    let diags = parser.get_diagnostics();
+    let close_paren_pos = "for (a".len() as u32;
+    let semi_at_paren = diags.iter().any(|d| {
+        d.code == diagnostic_codes::EXPECTED
+            && d.start == close_paren_pos
+            && d.message.contains("';'")
+    });
+    assert!(
+        semi_at_paren,
+        "`for (a) {{}}` (expression init) should still emit `';' expected.` at `)`; got {diags:?}"
+    );
+}
