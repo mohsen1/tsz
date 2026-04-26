@@ -82,6 +82,10 @@
 
   function mountEditors(monaco) {
     ensureContainerStyle();
+    monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+      noSemanticValidation: true,
+      noSyntaxValidation: true,
+    });
     containers.forEach(({ container, codeText, language }) => {
       monaco.editor.create(container, {
         value: codeText,
