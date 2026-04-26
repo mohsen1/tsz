@@ -56,14 +56,29 @@ default_emit_workers() {
 }
 
 default_fourslash_workers() {
-  local usable per
+  local usable per mem_mb mem_per_worker_mb mem_cap shard_count
   usable=$((HOST_CPUS - 16))
   if (( usable < SHARD_COUNT )); then
     usable="$HOST_CPUS"
   fi
   per=$((usable / SHARD_COUNT))
-  if (( per < 8 )); then
-    per=8
+
+  mem_mb="$(host_memory_mb)"
+  mem_per_worker_mb="${TSZ_CI_FOURSLASH_MB_PER_WORKER:-1024}"
+  shard_count="${SHARD_COUNT:-1}"
+  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_worker_mb" =~ ^[0-9]+$ && "$mem_per_worker_mb" -gt 0 && "$shard_count" -gt 0 ]]; then
+    # All shards run concurrently, so divide total budget by shard count for per-shard cap.
+    mem_cap=$(( mem_mb / (mem_per_worker_mb * shard_count) ))
+    if (( mem_cap < 2 )); then
+      mem_cap=2
+    fi
+    if (( per > mem_cap )); then
+      per="$mem_cap"
+    fi
+  fi
+
+  if (( per < 2 )); then
+    per=2
   elif (( per > 16 )); then
     per=16
   fi
@@ -414,7 +429,7 @@ nextest_allow_no_tests() {
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  cargo nextest run --profile ci --no-tests=pass \
+  cargo nextest run --profile ci --cargo-profile ci-unit --no-tests=pass \
     -p tsz-common \
     -p tsz-scanner \
     -p tsz-parser \
@@ -636,15 +651,15 @@ run_conformance() {
   fi
 
   if [[ "$shard_count" -gt 1 ]]; then
-    if [[ "$shard_expected_total" -gt 0 && $((total_tests + skipped_tests)) -lt "$shard_expected_total" ]]; then
-      echo "error: conformance shard coverage is incomplete: ${total_tests}+${skipped_tests} skipped < ${shard_expected_total}" >&2
-      show_log_tail "$log_file"
-      return 1
-    fi
-    if [[ "$shard_expected_passed" -gt 0 && "$total_passed" -lt "$shard_expected_passed" ]]; then
-      echo "error: conformance shard regression: ${total_passed} < ${shard_expected_passed}" >&2
-      show_log_tail "$log_file"
-      return 1
+    # Upload shard result to GCS so the conformance-aggregate job can check the global total.
+    # Per-shard count assertions removed: baseline.txt counts go stale and cause off-by-one flakes.
+    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+    if [[ -n "$bucket" && "$run_key" != "unknown" ]] && command -v gsutil >/dev/null 2>&1; then
+      gsutil -q cp "$METRICS_DIR/conformance.json" \
+        "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null \
+        && echo "Uploaded shard result: shard-${shard_index}.json" \
+        || echo "warning: failed to upload shard result (non-fatal)" >&2
     fi
     return 0
   fi
@@ -661,6 +676,60 @@ run_conformance() {
     show_log_tail "$log_file"
     return 1
   fi
+}
+
+run_conformance_aggregate() {
+  ci_section "Conformance aggregate"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
+
+  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    echo "error: cannot aggregate — no bucket or run key available" >&2
+    return 1
+  fi
+
+  local prefix="${bucket%/}/conformance-runs/${run_key}"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+
+  echo "Downloading shard results from ${prefix}/shard-*.json ..."
+  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+    echo "error: failed to download shard results from GCS" >&2
+    return 1
+  fi
+
+  local total_passed=0 total_tests=0 shard_count=0
+  for f in "$tmp_dir"/shard-*.json; do
+    [[ -f "$f" ]] || continue
+    local p t
+    p="$(jq -r '.passed // 0' "$f" 2>/dev/null)"
+    t="$(jq -r '.total // 0' "$f" 2>/dev/null)"
+    total_passed=$(( total_passed + $(num_or_zero "$p") ))
+    total_tests=$(( total_tests + $(num_or_zero "$t") ))
+    shard_count=$(( shard_count + 1 ))
+  done
+
+  echo "Conformance aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards"
+
+  if [[ "$shard_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${shard_count}/${expected_shards} shard results collected; some shards may have crashed" >&2
+    return 1
+  fi
+
+  local baseline baseline_total
+  baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
+  baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+
+  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt "$baseline_total" ]]; then
+    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total}" >&2
+    return 1
+  fi
+  if [[ "$baseline" -gt 0 && "$total_passed" -lt "$baseline" ]]; then
+    echo "error: conformance regression: ${total_passed} < ${baseline}" >&2
+    return 1
+  fi
+  echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
 }
 
 run_emit_shards() {
@@ -884,6 +953,9 @@ main() {
       timed build_test_binaries build_test_binaries
       timed run_conformance run_conformance
       ;;
+    conformance-aggregate)
+      timed run_conformance_aggregate run_conformance_aggregate
+      ;;
     emit)
       timed build_test_binaries build_test_binaries
       timed prep_node_artifacts prep_node_artifacts
@@ -898,7 +970,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, lint, unit, wasm, conformance, emit, fourslash" >&2
+      echo "valid suites: all, build, lint, unit, wasm, conformance, conformance-aggregate, emit, fourslash" >&2
       return 2
       ;;
   esac

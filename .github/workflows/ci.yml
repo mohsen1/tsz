@@ -120,6 +120,23 @@ jobs:
       - name: Run conformance shard
         run: scripts/ci/github-suite.sh conformance
 
+  conformance-aggregate:
+    name: conformance-aggregate
+    needs: [gate, conformance]
+    if: needs.gate.outputs.should_run == 'true' && !cancelled()
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
+      TSZ_CI_CONFORMANCE_SHARDS: 32
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Aggregate conformance results
+        run: scripts/ci/github-suite.sh conformance-aggregate
+
   emit:
     name: emit
     needs: [gate, build]
