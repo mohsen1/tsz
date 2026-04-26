@@ -1094,3 +1094,32 @@ const printFn = (action: typeof foo) => { action(1); };
         "arrow parameter `typeof X` must be preserved in dts: {output}"
     );
 }
+
+#[test]
+fn test_anonymous_function_returning_outer_var_emits_elided_recursive_type() {
+    // Regression for declFileTypeofFunction: a `var foo3 = function () { return foo3; }`
+    // (anonymous function expression returning the binding it's assigned to)
+    // and the matching arrow form `var x = () => { return x; }` must be emitted
+    // as `() => () => /*elided*/ any`, matching tsc. Previously these emitted
+    // `() => any` because the self-returning detector only inspected the
+    // function's own name (which is None for anonymous expressions and
+    // arrows).
+    let output = emit_dts_with_binding(
+        r#"
+var foo3 = function () {
+    return foo3;
+}
+var x = () => {
+    return x;
+}
+"#,
+    );
+    assert!(
+        output.contains("foo3: () => () => /*elided*/ any"),
+        "anonymous function returning outer var should emit recursive elided form: {output}"
+    );
+    assert!(
+        output.contains("x: () => () => /*elided*/ any"),
+        "arrow returning outer var should emit recursive elided form: {output}"
+    );
+}
