@@ -157,7 +157,7 @@ should_save_cargo_target() {
   shard_index="${_TSZ_CI_CONFORMANCE_SHARD_INDEX:-${TSZ_CI_CONFORMANCE_SHARD_INDEX:-0}}"
 
   case "$suite" in
-    all|full)
+    all|full|build)
       return 0
       ;;
     conformance)
