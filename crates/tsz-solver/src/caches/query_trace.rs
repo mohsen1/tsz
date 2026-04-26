@@ -119,13 +119,15 @@ mod tests {
 
     #[test]
     fn next_query_id_increments_monotonically() {
+        // NEXT_QUERY_ID is a process-level static AtomicU64 shared across the
+        // whole test binary. Other tests running in parallel can interleave
+        // increments between our calls, so we can only assert strict monotonic
+        // ordering here, not consecutive values (`b == a + 1` would be flaky).
         let a = next_query_id();
         let b = next_query_id();
         let c = next_query_id();
         assert!(a < b);
         assert!(b < c);
-        assert_eq!(b, a + 1);
-        assert_eq!(c, b + 1);
     }
 
     #[test]
