@@ -3,8 +3,8 @@
 - **Date**: 2026-04-26
 - **Timestamp**: **2026-04-26 07:59:06**
 - **Branch**: `chore/emitter-ir-builders-tests`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1321
+- **Status**: ready
 - **Workstream**: 8.4 (DRY emitter helpers / coverage)
 
 ## Intent
@@ -29,4 +29,6 @@ field shape each builder produces, behaviour-preserving.
 
 ## Verification
 
-- `cargo nextest run -p tsz-emitter --lib` (full lib test suite passes)
+- `cargo nextest run -p tsz-emitter --lib` — 1518 tests pass, 2 skipped
+- `cargo nextest run -p tsz-emitter --lib -E 'test(/test_ir_/)'` — 53 IR tests
+  pass (17 new, 36 pre-existing)
