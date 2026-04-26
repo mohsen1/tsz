@@ -6060,3 +6060,120 @@ fn test_explain_function_to_callable_with_properties_produces_missing_properties
         }
     }
 }
+
+/// Regression: when a closed source tuple has more elements than a closed
+/// target tuple, the failure reason must be the arity mismatch — not an
+/// element-level type mismatch — even if some interior element would also
+/// fail to assign. tsc reports
+/// "Source has N element(s) but target allows only M." in this case and
+/// stops there; tsz must do the same so that the call-site diagnostic is the
+/// outer TS2345 (with the correct `Source has ...` sub-message) instead of a
+/// drilled-in TS2322 at a single tuple element. Without this rule, the
+/// conformance test
+/// `destructuringParameterDeclaration3ES5.ts` fingerprints differently from
+/// tsc on the call `a9([1, 2, [["string"]], false, true])` because the inner
+/// `[["string"]]` vs `[[any]]` element comparison fires before the length
+/// check.
+#[test]
+fn test_explain_tuple_arity_takes_priority_over_element_mismatch() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Inner tuple types so the element-level check would otherwise drill in.
+    let inner_string = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let nested_string = interner.tuple(vec![TupleElement {
+        type_id: inner_string,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let inner_any = interner.tuple(vec![TupleElement {
+        type_id: TypeId::ANY,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let nested_any = interner.tuple(vec![TupleElement {
+        type_id: inner_any,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+
+    // Source: [number, number, [[string]], boolean, boolean] — length 5.
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: nested_string,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    // Target: [any, any, [[any]]] — length 3.
+    let target = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::ANY,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: nested_any,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+
+    assert!(!checker.is_assignable(source, target));
+
+    match checker.explain_failure(source, target) {
+        Some(SubtypeFailureReason::TupleElementMismatch {
+            source_count,
+            target_count,
+        }) => {
+            assert_eq!(source_count, 5);
+            assert_eq!(target_count, 3);
+        }
+        other => panic!(
+            "Expected TupleElementMismatch (arity) to take priority over an inner \
+             TupleElementTypeMismatch, got: {other:?}"
+        ),
+    }
+}
