@@ -767,7 +767,9 @@ impl<'a> CheckerState<'a> {
         if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
             return *cached;
         }
-        if let Some(ref shared) = self.ctx.shared_lib_type_cache
+        // Skip shared cache when this checker locally augments `name`.
+        if !self.lib_name_locally_augmented(name)
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
             && let Some(entry) = shared.get(name)
         {
             let cached = *entry;
@@ -1196,13 +1198,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For generic lib interfaces, we already cached the type params in the
-        // interface lowering code above. The type is already correctly lowered
-        // and can be returned directly.
+        // Generic lib interfaces had their type params cached above.
         self.ctx
             .lib_type_resolution_cache
             .insert(name.to_string(), lib_type_id);
-        if let Some(ref shared) = self.ctx.shared_lib_type_cache {
+        if !self.lib_name_locally_augmented(name)
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
+        {
             shared.insert(name.to_string(), lib_type_id);
         }
 

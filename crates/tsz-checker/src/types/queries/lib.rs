@@ -22,6 +22,24 @@ use tsz_solver::TypeParamInfo;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
+    /// True when callers must skip `shared_lib_type_cache` for `name`:
+    /// either this checker locally augments `name`, or `name` is multi-lib
+    /// merged where property-listing order in printed diagnostic messages
+    /// is sensitive to who resolves first (e.g. `Array<T>`).
+    pub(crate) fn lib_name_locally_augmented(&self, name: &str) -> bool {
+        // Array is merged across lib.es5/lib.es2015.iterable/etc.; cross-checker
+        // shared TypeIds expose property-order races to the type printer
+        // (e.g. mappedTypeWithAsClauseAndLateBoundProperty).
+        if name == "Array" {
+            return true;
+        }
+        self.ctx
+            .binder
+            .global_augmentations
+            .get(name)
+            .is_some_and(|v| !v.is_empty())
+    }
+
     /// Resolve a lib type by name and also return its type parameters.
     /// Used by `register_boxed_types` for generic types like Array<T> to extract
     /// the actual type parameters from the interface definition rather than
@@ -32,12 +50,11 @@ impl<'a> CheckerState<'a> {
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
-        // PERF: when an earlier checker has already resolved this lib type,
-        // the merged TypeId is in `shared_lib_type_cache` and the canonical
-        // type params are in the project-shared `definition_store` (written
-        // via `cache_canonical_lib_type_params`). Short-circuit the entire
-        // multi-context interface merge in that case.
-        if let Some(ref shared) = self.ctx.shared_lib_type_cache
+        // Short-circuit via shared cache; skip when this checker locally
+        // augments `name` (its merged TypeId would differ from peers').
+        let lib_name_locally_augmented = self.lib_name_locally_augmented(name);
+        if !lib_name_locally_augmented
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
             && let Some(entry) = shared.get(name)
             && let Some(ty) = *entry
         {
@@ -225,8 +242,8 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(merged);
         }
 
-        // Mirror into the project-wide cache so other checkers can short-circuit.
-        if let Some(ref shared) = self.ctx.shared_lib_type_cache {
+        // Mirror into shared cache when safe (no local augmentations).
+        if !lib_name_locally_augmented && let Some(ref shared) = self.ctx.shared_lib_type_cache {
             shared.insert(name.to_string(), lib_type_id);
         }
 
