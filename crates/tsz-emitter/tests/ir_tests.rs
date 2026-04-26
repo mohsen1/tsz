@@ -404,3 +404,250 @@ fn test_ir_chained_property_access() {
         _ => panic!("Expected CallExpr"),
     }
 }
+
+// =============================================================================
+// Additional builder coverage: helpers not exercised by the suite above.
+// All assertions check the variant + field shape produced by each builder so a
+// future refactor cannot silently change the IR contract.
+// =============================================================================
+
+#[test]
+fn test_ir_elem_access() {
+    // arr[0]
+    let access = IRNode::elem(IRNode::id("arr"), IRNode::number("0"));
+
+    match access {
+        IRNode::ElementAccess { object, index } => {
+            assert!(matches!(*object, IRNode::Identifier(name) if name == "arr"));
+            assert!(matches!(*index, IRNode::NumericLiteral(n) if n == "0"));
+        }
+        _ => panic!("Expected ElementAccess"),
+    }
+}
+
+#[test]
+fn test_ir_elem_access_with_string_key() {
+    // obj["computed"]
+    let access = IRNode::elem(IRNode::id("obj"), IRNode::string("computed"));
+
+    match access {
+        IRNode::ElementAccess { object, index } => {
+            assert!(matches!(*object, IRNode::Identifier(name) if name == "obj"));
+            assert!(matches!(*index, IRNode::StringLiteral(s) if s == "computed"));
+        }
+        _ => panic!("Expected ElementAccess with string index"),
+    }
+}
+
+#[test]
+fn test_ir_paren_wraps_expression() {
+    let inner = IRNode::binary(IRNode::id("a"), "+", IRNode::id("b"));
+    let wrapped = inner.paren();
+
+    match wrapped {
+        IRNode::Parenthesized(boxed) => {
+            assert!(matches!(*boxed, IRNode::BinaryExpr { .. }));
+        }
+        _ => panic!("Expected Parenthesized"),
+    }
+}
+
+#[test]
+fn test_ir_paren_double_wraps() {
+    // Double-wrapping should produce two distinct Parenthesized layers — the
+    // builder is intentionally dumb so transforms can rely on a 1:1 mapping.
+    let inner = IRNode::id("x");
+    let wrapped = inner.paren().paren();
+
+    match wrapped {
+        IRNode::Parenthesized(outer) => {
+            assert!(matches!(*outer, IRNode::Parenthesized(_)));
+        }
+        _ => panic!("Expected Parenthesized"),
+    }
+}
+
+#[test]
+fn test_ir_var_decl_uninitialized() {
+    // `var x;` (no initializer)
+    let decl = IRNode::var_decl("x", None);
+
+    match decl {
+        IRNode::VarDecl { name, initializer } => {
+            assert_eq!(name, "x");
+            assert!(initializer.is_none());
+        }
+        _ => panic!("Expected VarDecl with no initializer"),
+    }
+}
+
+#[test]
+fn test_ir_object_literal_builder_default_source_range() {
+    // The `object` builder always produces `source_range: None`. Anything that
+    // wants to track the original literal span has to set it explicitly.
+    let obj = IRNode::object(vec![IRProperty::init("x", IRNode::number("1"))]);
+
+    match obj {
+        IRNode::ObjectLiteral {
+            properties,
+            source_range,
+        } => {
+            assert_eq!(properties.len(), 1);
+            assert!(source_range.is_none());
+        }
+        _ => panic!("Expected ObjectLiteral"),
+    }
+}
+
+#[test]
+fn test_ir_empty_object_is_empty() {
+    let obj = IRNode::empty_object();
+
+    match obj {
+        IRNode::ObjectLiteral {
+            properties,
+            source_range,
+        } => {
+            assert!(properties.is_empty());
+            assert!(source_range.is_none());
+        }
+        _ => panic!("Expected empty ObjectLiteral"),
+    }
+}
+
+#[test]
+fn test_ir_array_builder_preserves_order() {
+    let arr = IRNode::array(vec![
+        IRNode::number("1"),
+        IRNode::string("two"),
+        IRNode::id("three"),
+    ]);
+
+    match arr {
+        IRNode::ArrayLiteral(elements) => {
+            assert_eq!(elements.len(), 3);
+            assert!(matches!(&elements[0], IRNode::NumericLiteral(n) if n == "1"));
+            assert!(matches!(&elements[1], IRNode::StringLiteral(s) if s == "two"));
+            assert!(matches!(&elements[2], IRNode::Identifier(name) if name == "three"));
+        }
+        _ => panic!("Expected ArrayLiteral"),
+    }
+}
+
+#[test]
+fn test_ir_empty_array_is_empty() {
+    let arr = IRNode::empty_array();
+
+    match arr {
+        IRNode::ArrayLiteral(elements) => assert!(elements.is_empty()),
+        _ => panic!("Expected empty ArrayLiteral"),
+    }
+}
+
+#[test]
+fn test_ir_logical_or_builder() {
+    // `a || b`
+    let expr = IRNode::logical_or(IRNode::id("a"), IRNode::id("b"));
+
+    match expr {
+        IRNode::LogicalOr { left, right } => {
+            assert!(matches!(*left, IRNode::Identifier(name) if name == "a"));
+            assert!(matches!(*right, IRNode::Identifier(name) if name == "b"));
+        }
+        _ => panic!("Expected LogicalOr"),
+    }
+}
+
+#[test]
+fn test_ir_logical_and_builder() {
+    // `a && b`
+    let expr = IRNode::logical_and(IRNode::id("a"), IRNode::id("b"));
+
+    match expr {
+        IRNode::LogicalAnd { left, right } => {
+            assert!(matches!(*left, IRNode::Identifier(name) if name == "a"));
+            assert!(matches!(*right, IRNode::Identifier(name) if name == "b"));
+        }
+        _ => panic!("Expected LogicalAnd"),
+    }
+}
+
+#[test]
+fn test_ir_sequence_builder() {
+    let seq = IRNode::sequence(vec![
+        IRNode::expr_stmt(IRNode::call(IRNode::id("a"), vec![])),
+        IRNode::expr_stmt(IRNode::call(IRNode::id("b"), vec![])),
+        IRNode::ret(None),
+    ]);
+
+    match seq {
+        IRNode::Sequence(nodes) => {
+            assert_eq!(nodes.len(), 3);
+            assert!(matches!(nodes[0], IRNode::ExpressionStatement(_)));
+            assert!(matches!(nodes[1], IRNode::ExpressionStatement(_)));
+            assert!(matches!(nodes[2], IRNode::ReturnStatement(None)));
+        }
+        _ => panic!("Expected Sequence"),
+    }
+}
+
+#[test]
+fn test_ir_property_init_helper() {
+    let prop = IRProperty::init("count", IRNode::number("42"));
+
+    assert!(matches!(&prop.key, IRPropertyKey::Identifier(k) if k == "count"));
+    assert!(matches!(prop.value, IRNode::NumericLiteral(n) if n == "42"));
+    assert_eq!(prop.kind, IRPropertyKind::Init);
+}
+
+#[test]
+fn test_ir_expr_stmt_wraps_inner_expr() {
+    // The `expr_stmt` helper boxes the inner expression — make sure the
+    // resulting variant is `ExpressionStatement` and the inner shape is
+    // preserved verbatim.
+    let inner = IRNode::call(IRNode::id("doSomething"), vec![IRNode::number("1")]);
+    let stmt = IRNode::expr_stmt(inner);
+
+    match stmt {
+        IRNode::ExpressionStatement(boxed) => match *boxed {
+            IRNode::CallExpr { callee, arguments } => {
+                assert!(matches!(*callee, IRNode::Identifier(name) if name == "doSomething"));
+                assert_eq!(arguments.len(), 1);
+            }
+            _ => panic!("Expected inner CallExpr"),
+        },
+        _ => panic!("Expected ExpressionStatement"),
+    }
+}
+
+#[test]
+fn test_ir_block_empty() {
+    let block = IRNode::block(vec![]);
+
+    match block {
+        IRNode::Block(statements) => assert!(statements.is_empty()),
+        _ => panic!("Expected empty Block"),
+    }
+}
+
+#[test]
+fn test_ir_param_new_defaults() {
+    let param = IRParam::new("x");
+
+    assert_eq!(param.name, "x");
+    assert!(!param.rest);
+    assert!(param.default_value.is_none());
+}
+
+#[test]
+fn test_ir_param_rest_with_default_combo() {
+    // `with_default` should override the default field even on a rest param —
+    // the builder does not currently reject this combination, and the test
+    // pins the existing behaviour so future refactors are explicit if they
+    // want to change it.
+    let param = IRParam::rest("args").with_default(IRNode::empty_array());
+
+    assert_eq!(param.name, "args");
+    assert!(param.rest);
+    assert!(param.default_value.is_some());
+}
