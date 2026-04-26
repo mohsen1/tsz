@@ -1,4 +1,29 @@
+# TSZ fast CI — parallel Cloud Build pipeline
+#
+# All steps share the /workspace volume.  Steps that don't depend on each other
+# run concurrently on the same worker machine (tsz-ci-c3-88, 88 vCPU).
+#
+# Pipeline shape:
+#
+#   restore-cache
+#       └── setup  (host tools + TypeScript submodule)
+#               ├── build  ──────────────────────────────┐
+#               ├── lint   (concurrent with build)       │  (binaries in /workspace)
+#               ├── unit   (concurrent with build)       │
+#               └── wasm   (concurrent with build)       │
+#                                                        ▼
+#                                   conformance  (waitFor: build, 50 workers)
+#                                   emit         (waitFor: build, 16 workers)
+#                                   fourslash    (waitFor: build, 12 workers)
+#                                        │
+#                               conformance-aggregate
+#                                        │
+#                                    save-cache
+#                                        │
+#                                    finish-ci
+
 steps:
+  # ── 1. Restore caches from GCS ─────────────────────────────────────────────
   - id: restore-cache
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     script: |
@@ -15,29 +40,206 @@ steps:
       fi
       scripts/ci/gcp-cache.sh restore
 
-  - id: full-ci
+  # ── 2. Setup: host tools + TypeScript submodule ────────────────────────────
+  - id: setup
     name: rust:1.90-bookworm
+    waitFor: [restore-cache]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      mkdir -p .ci-status .ci-logs
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      scripts/ci/gcp-full-ci.sh setup
+
+  # ── 3a. Build dist-fast binaries ───────────────────────────────────────────
+  - id: build
+    name: rust:1.90-bookworm
+    waitFor: [setup]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      export SCCACHE_GCS_KEY_JSON="${SCCACHE_GCS_KEY_JSON:-}"
+      mkdir -p .ci-status .ci-logs .ci-metrics
       set +e
-      scripts/ci/gcp-full-ci.sh "${_TSZ_CI_SUITE}" 2>&1 | tee .ci-logs/full-ci.log
+      scripts/ci/gcp-full-ci.sh build 2>&1 | tee .ci-logs/build.log
       rc="${PIPESTATUS[0]}"
       set -e
-      printf '%s\n' "$rc" > .ci-status/full-ci.exit
+      printf '%s\n' "$rc" > .ci-status/build.exit
       python3 scripts/ci/gcp-summary.py \
-        --suite "${_TSZ_CI_SUITE}" \
-        --exit-code "$rc" \
-        --metrics-dir "${TSZ_CI_METRICS_DIR:-.ci-metrics}" \
-        --logs-dir "${TSZ_CI_LOG_DIR:-.ci-logs}" \
-        --out .ci-status/check-summary.md || true
+        --suite build --exit-code "$rc" \
+        --metrics-dir .ci-metrics --logs-dir .ci-logs \
+        --out .ci-status/build-summary.md || true
       exit 0
 
+  # ── 3b. Lint (concurrent with build) ───────────────────────────────────────
+  - id: lint
+    name: rust:1.90-bookworm
+    waitFor: [setup]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      set +e
+      scripts/ci/gcp-full-ci.sh lint 2>&1 | tee .ci-logs/lint.log
+      rc="${PIPESTATUS[0]}"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/lint.exit
+      python3 scripts/ci/gcp-summary.py \
+        --suite lint --exit-code "$rc" \
+        --metrics-dir .ci-metrics --logs-dir .ci-logs \
+        --out .ci-status/lint-summary.md || true
+      exit 0
+
+  # ── 3c. Unit tests (concurrent with build) ─────────────────────────────────
+  - id: unit
+    name: rust:1.90-bookworm
+    waitFor: [setup]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      set +e
+      scripts/ci/gcp-full-ci.sh unit 2>&1 | tee .ci-logs/unit.log
+      rc="${PIPESTATUS[0]}"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/unit.exit
+      python3 scripts/ci/gcp-summary.py \
+        --suite unit --exit-code "$rc" \
+        --metrics-dir .ci-metrics --logs-dir .ci-logs \
+        --out .ci-status/unit-summary.md || true
+      exit 0
+
+  # ── 3d. WASM build (concurrent with build) ─────────────────────────────────
+  - id: wasm
+    name: rust:1.90-bookworm
+    waitFor: [setup]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      set +e
+      scripts/ci/gcp-full-ci.sh wasm 2>&1 | tee .ci-logs/wasm.log
+      rc="${PIPESTATUS[0]}"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/wasm.exit
+      python3 scripts/ci/gcp-summary.py \
+        --suite wasm --exit-code "$rc" \
+        --metrics-dir .ci-metrics --logs-dir .ci-logs \
+        --out .ci-status/wasm-summary.md || true
+      exit 0
+
+  # ── 4a. Conformance (after build, 50 workers on 88-core machine) ────────────
+  - id: conformance
+    name: rust:1.90-bookworm
+    waitFor: [build]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      # 50 workers: conformance is CPU+memory-heavy; with emit+fourslash concurrent
+      # this allocates ~50 of 88 cores for conformance.
+      export TSZ_CI_CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-50}"
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      set +e
+      scripts/ci/gcp-full-ci.sh conformance 2>&1 | tee .ci-logs/conformance.log
+      rc="${PIPESTATUS[0]}"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/conformance.exit
+      python3 scripts/ci/gcp-summary.py \
+        --suite conformance --exit-code "$rc" \
+        --metrics-dir .ci-metrics --logs-dir .ci-logs \
+        --out .ci-status/conformance-summary.md || true
+      exit 0
+
+  # ── 4b. Emit shards (after build, 16 workers across 4 shards) ──────────────
+  - id: emit
+    name: rust:1.90-bookworm
+    waitFor: [build]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      export TSZ_CI_SHARDS="${TSZ_CI_SHARDS:-4}"
+      export TSZ_CI_EMIT_WORKERS="${TSZ_CI_EMIT_WORKERS:-16}"
+      export TSZ_CI_EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-2000}"
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      set +e
+      scripts/ci/gcp-full-ci.sh emit 2>&1 | tee .ci-logs/emit.log
+      rc="${PIPESTATUS[0]}"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/emit.exit
+      python3 scripts/ci/gcp-summary.py \
+        --suite emit --exit-code "$rc" \
+        --metrics-dir .ci-metrics --logs-dir .ci-logs \
+        --out .ci-status/emit-summary.md || true
+      exit 0
+
+  # ── 4c. Fourslash (after build, 12 workers across 2 shards) ────────────────
+  - id: fourslash
+    name: rust:1.90-bookworm
+    waitFor: [build]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      export TSZ_CI_SHARDS="${TSZ_CI_SHARDS:-2}"
+      export TSZ_CI_FOURSLASH_WORKERS="${TSZ_CI_FOURSLASH_WORKERS:-12}"
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      set +e
+      scripts/ci/gcp-full-ci.sh fourslash 2>&1 | tee .ci-logs/fourslash.log
+      rc="${PIPESTATUS[0]}"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/fourslash.exit
+      python3 scripts/ci/gcp-summary.py \
+        --suite fourslash --exit-code "$rc" \
+        --metrics-dir .ci-metrics --logs-dir .ci-logs \
+        --out .ci-status/fourslash-summary.md || true
+      exit 0
+
+  # ── 5. Conformance aggregate (after all conformance shards) ─────────────────
+  - id: conformance-aggregate
+    name: rust:1.90-bookworm
+    waitFor: [conformance]
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      export TSZ_CI_SKIP_COMMON_SETUP=1
+      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
+      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+      # No shards in the single-machine path — the conformance step ran without
+      # sharding, so skip the GCS aggregate and just validate the local result.
+      mkdir -p .ci-status .ci-logs .ci-metrics
+      set +e
+      # Re-read the conformance exit code; the aggregate is the same result
+      # since all tests ran in one step on this machine.
+      rc="$(cat .ci-status/conformance.exit 2>/dev/null || echo 1)"
+      set -e
+      printf '%s\n' "$rc" > .ci-status/conformance-aggregate.exit
+      exit 0
+
+  # ── 6. Save caches (after all test suites complete) ────────────────────────
   - id: save-cache
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    waitFor:
-      - full-ci
+    waitFor: [lint, unit, wasm, conformance-aggregate, emit, fourslash]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
@@ -45,20 +247,43 @@ steps:
         echo "warning: cache save failed" >&2
       fi
 
+  # ── 7. Finish: aggregate exit codes and print summaries ────────────────────
   - id: finish-ci
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    waitFor:
-      - save-cache
+    waitFor: [save-cache]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      rc="$(cat .ci-status/full-ci.exit 2>/dev/null || echo 1)"
-      if [[ -f .ci-status/check-summary.md ]]; then
-        echo
-        echo "==> TSZ CI summary"
-        cat .ci-status/check-summary.md
+
+      overall_rc=0
+      suites=(build lint unit wasm conformance emit fourslash)
+
+      echo
+      echo "==> TSZ CI results"
+      for suite in "${suites[@]}"; do
+        rc_file=".ci-status/${suite}.exit"
+        rc="$(cat "$rc_file" 2>/dev/null || echo 1)"
+        if [[ "$rc" -eq 0 ]]; then
+          status="PASS"
+        else
+          status="FAIL"
+          overall_rc=1
+        fi
+        printf '  %-22s %s\n' "$suite" "$status"
+        summary=".ci-status/${suite}-summary.md"
+        if [[ -f "$summary" ]]; then
+          cat "$summary"
+        fi
+      done
+
+      echo
+      if [[ "$overall_rc" -eq 0 ]]; then
+        echo "==> All suites passed"
+      else
+        echo "==> One or more suites failed"
       fi
-      exit "$rc"
+
+      exit "$overall_rc"
 
 options:
   pool:
@@ -69,7 +294,8 @@ options:
 substitutions:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
   _TSZ_CI_POOL: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-c3-88
-  _TSZ_CI_SUITE: all
 
+# Generous timeout: parallel steps make this fast in practice (~30 min target),
+# but we keep a high ceiling so memory-constrained retries don't time out.
 queueTtl: 7200s
 timeout: 3600s

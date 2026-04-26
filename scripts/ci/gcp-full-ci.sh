@@ -1156,11 +1156,19 @@ run_all_suites() {
 main() {
   local suite="${1:-${TSZ_CI_SUITE:-all}}"
 
-  run_common_setup "$suite"
+  if [[ "${TSZ_CI_SKIP_COMMON_SETUP:-0}" != "1" ]]; then
+    run_common_setup "$suite"
+  fi
 
   case "$suite" in
     all|full)
       run_all_suites
+      ;;
+    setup)
+      # Standalone setup step: install host tools + init TypeScript submodule.
+      # Used by the Cloud Build parallel pipeline's dedicated setup step so that
+      # subsequent parallel steps can set TSZ_CI_SKIP_COMMON_SETUP=1.
+      run_common_setup all
       ;;
     build)
       run_build
@@ -1211,7 +1219,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, lint, unit, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, lint, unit, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate, setup" >&2
       return 2
       ;;
   esac
