@@ -1181,13 +1181,20 @@ impl<'a> Printer<'a> {
         // in JS output) to find the actual leading token.
         // e.g., `<unknown>function() {}();` → `(function () { })();`
         // e.g., `<unknown>{foo() {}}.foo();` → `({ foo() { } }.foo());`
+        //
+        // EXCEPTION: when the outer expression is itself a ParenthesizedExpression that
+        // will survive emit (e.g., `(<any>{a:0})`), its own surviving parens already
+        // disambiguate the leading `{`/`function` token. Adding another pair here would
+        // produce double parens like `(({a:0}))`. Skip the wrapping in that case —
+        // `emit_parenthesized` will print `({a:0})`.
         let needs_parens = if let Some(expr_node) = self.arena.get(expr_stmt.expression) {
             let leftmost = self
                 .leftmost_expression_kind_after_erasure(expr_stmt.expression)
                 .unwrap_or(expr_node.kind);
-            leftmost == syntax_kind_ext::FUNCTION_EXPRESSION
+            let leftmost_needs_parens = leftmost == syntax_kind_ext::FUNCTION_EXPRESSION
                 || leftmost == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION)
+                || (self.ctx.target_es5 && expr_node.kind == syntax_kind_ext::ARROW_FUNCTION);
+            leftmost_needs_parens && !self.outer_paren_will_survive_emit(expr_stmt.expression)
         } else {
             false
         };
@@ -1297,6 +1304,75 @@ impl<'a> Printer<'a> {
         };
         callee_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
             || callee_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+    }
+
+    /// Returns `true` when the given expression node is a `ParenthesizedExpression`
+    /// whose outer `(...)` will survive emit — that is, the inner expression is a
+    /// type assertion whose unwrapped target is *not* in the can-strip set used by
+    /// `emit_parenthesized`.
+    ///
+    /// Used by `emit_expression_statement` to avoid double-wrapping when the source
+    /// already has parens that disambiguate the leading `{` / `function` token:
+    /// `(<any>{a:0});` should emit `({ a: 0 });`, not `(({ a: 0 }));`.
+    ///
+    /// The check is intentionally conservative: it only returns `true` for the
+    /// specific shape `(<TypeAssertion or as/satisfies>{ObjectLiteral|FunctionExpression|...})`
+    /// where the surviving paren wraps a leading-token-ambiguous primary. Other
+    /// `ParenthesizedExpression`s (e.g., wrapping an assignment, comma, or arrow)
+    /// are not considered, because their wrapping behavior is different and
+    /// already covered by other rules.
+    fn outer_paren_will_survive_emit(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return false;
+        }
+        let Some(paren) = self.arena.get_parenthesized(node) else {
+            return false;
+        };
+        let Some(inner) = self.arena.get(paren.expression) else {
+            return false;
+        };
+        // Only handle the type-assertion-erasure shape: `(<T>x)` / `(x as T)` /
+        // `(x satisfies T)`. Without an erased assertion, the outer paren is
+        // either redundant in source or already handled by other rules.
+        let is_type_erasure = inner.kind == syntax_kind_ext::TYPE_ASSERTION
+            || inner.kind == syntax_kind_ext::AS_EXPRESSION
+            || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            || inner.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS;
+        if !is_type_erasure {
+            return false;
+        }
+        let unwrapped = self.unwrap_type_assertion_kind(paren.expression);
+        // Mirror the `can_strip` set in `emit_parenthesized`. If the unwrapped kind
+        // is NOT strippable, the outer paren survives emit and provides leading-
+        // token disambiguation, so the statement-level wrap is redundant.
+        let can_strip = matches!(
+            unwrapped,
+            Some(k) if k == SyntaxKind::Identifier as u16
+                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || k == SyntaxKind::ThisKeyword as u16
+                || k == SyntaxKind::SuperKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::RegularExpressionLiteral as u16
+                || k == syntax_kind_ext::TEMPLATE_EXPRESSION
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::NON_NULL_EXPRESSION
+                || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || k == syntax_kind_ext::CALL_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+        );
+        !can_strip
     }
 
     /// Emit trailing comments after a semicolon. Scans backward through the

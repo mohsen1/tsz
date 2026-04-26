@@ -44,5 +44,9 @@ path = "tests/computed_property_es5_tests.rs"
 name = "jsx_spread_tests"
 path = "tests/jsx_spread_tests.rs"
 
+[[test]]
+name = "parenthesized_iife_tests"
+path = "tests/parenthesized_iife_tests.rs"
+
 [lints]
 workspace = true
