@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/solver-bivariant-params-only-method-compat`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1381
+- **Status**: ready
 - **Workstream**: 1 — Diagnostic Conformance / TS2416 false positives (foundation work)
 
 ## Intent
