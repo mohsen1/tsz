@@ -557,11 +557,14 @@ impl ParserState {
             }
         }
 
-        // Check if this numeric literal has an invalid separator (for TS1351 check)
+        // Check if this numeric literal has an invalid separator (for TS1351 check).
+        // The scanner has already pushed per-occurrence TS6188/TS6189 diagnostics
+        // into `scanner_diagnostics`; the parser consults the flag and the first-pos
+        // accessor only for the recovery path below (e.g. TS1351/TS2304 emission
+        // when a recoverable identifier follows the literal).
         let has_invalid_separator =
             (token_flags & TokenFlags::ContainsInvalidSeparator as u32) != 0;
 
-        self.report_invalid_numeric_separator();
         let invalid_separator_pos = if has_invalid_separator {
             self.scanner.get_invalid_separator_pos()
         } else {
@@ -619,7 +622,8 @@ impl ParserState {
         let start_pos = self.token_pos();
         let end_pos = self.token_end();
         let text = self.scanner.get_token_value_ref().to_string();
-        self.report_invalid_numeric_separator();
+        // Per-occurrence TS6188/TS6189 diagnostics for invalid separators are
+        // emitted by the scanner during numeric scanning.
         self.next_token();
 
         self.arena.add_literal(
@@ -633,30 +637,6 @@ impl ParserState {
                 has_invalid_escape: false,
             },
         )
-    }
-
-    pub(crate) fn report_invalid_numeric_separator(&mut self) {
-        if (self.scanner.get_token_flags() & TokenFlags::ContainsInvalidSeparator as u32) == 0 {
-            return;
-        }
-
-        let (message, code) = if self.scanner.invalid_separator_is_consecutive() {
-            (
-                diagnostic_messages::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
-                diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED,
-            )
-        } else {
-            (
-                diagnostic_messages::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
-                diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
-            )
-        };
-
-        if let Some(pos) = self.scanner.get_invalid_separator_pos() {
-            self.parse_error_at(self.u32_from_usize(pos), 1, message, code);
-        } else {
-            self.parse_error_at_current_token(message, code);
-        }
     }
 
     /// Parse boolean literal
