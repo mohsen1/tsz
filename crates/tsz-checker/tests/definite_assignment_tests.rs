@@ -2006,3 +2006,48 @@ fn test_ts2454_still_emitted_for_tdz_with_non_circular_annotation() {
         "TS2454 must still fire for normal TDZ companion, got: {diags:?}"
     );
 }
+
+/// Regression for `unionAndIntersectionInference1.ts`. When a property access
+/// receiver is a composite expression (e.g. a `CallExpression`) whose
+/// sub-expression is an uninitialized variable that fires TS2454, tsc
+/// suppresses TS2532 on the outer property access. The cascade is meaningless
+/// once the underlying variable has been reported as un-assigned.
+///
+/// Before the fix, the checker only recognised the receiver as DAA-flagged
+/// when the receiver node itself was the failing identifier, or when a
+/// TS2454 diagnostic started exactly at the receiver's start position. For
+/// `get(foo).toUpperCase()`, the receiver is `get(foo)` which starts before
+/// `foo`, so the heuristic missed it and TS2532 leaked through.
+#[test]
+fn test_ts2532_suppressed_when_ts2454_fires_in_call_receiver() {
+    let source = r"
+        type Maybe<T> = T | void;
+        function get<U>(x: U | void): U {
+            return null as any;
+        }
+        let foo: Maybe<string>;
+        get(foo).toUpperCase();
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        1,
+        "TS2454 must fire on uninitialized `foo`, got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(&diags, diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED),
+        0,
+        "TS2532 must be suppressed when TS2454 fires inside the receiver \
+         expression of a property access; tsc only reports the underlying \
+         use-before-assigned. Got: {diags:?}"
+    );
+}
