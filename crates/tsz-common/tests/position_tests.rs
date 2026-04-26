@@ -249,3 +249,155 @@ fn position_4byte_utf8_after_newline_keeps_line_alignment() {
         Some(11)
     );
 }
+
+// =============================================================================
+// span_to_range / range_to_span: matrix tests
+// =============================================================================
+//
+// Lock down the canonical `Span <-> Range` helpers across the same UTF-8 / UTF-16
+// dimensions covered by `position_to_offset` / `offset_to_position` so callers
+// can rely on a single behaviour contract.
+
+use crate::span::Span;
+
+#[test]
+fn span_to_range_ascii_roundtrip() {
+    let source = "let x = 1;\nlet y = 2;";
+    let map = LineMap::build(source);
+
+    let span = Span::new(4, 5); // 'x' on line 0
+    let range = map.span_to_range(span, source);
+    assert_eq!(range.start, Position::new(0, 4));
+    assert_eq!(range.end, Position::new(0, 5));
+
+    // Round-trip back to span.
+    assert_eq!(map.range_to_span(range, source), Some(span));
+}
+
+#[test]
+fn span_to_range_two_byte_utf8_roundtrip() {
+    // 2-byte UTF-8 ('é' is U+00E9 = 0xC3 0xA9, 1 UTF-16 code unit).
+    let source = "café";
+    let map = LineMap::build(source);
+
+    // Byte span covering 'é' (2 bytes).
+    let span = Span::new(3, 5);
+    let range = map.span_to_range(span, source);
+    assert_eq!(range.start, Position::new(0, 3));
+    assert_eq!(range.end, Position::new(0, 4));
+
+    assert_eq!(map.range_to_span(range, source), Some(span));
+}
+
+#[test]
+fn span_to_range_three_byte_utf8_roundtrip() {
+    // 3-byte UTF-8 ('中' is U+4E2D = 0xE4 0xB8 0xAD, 1 UTF-16 code unit).
+    let source = "a中b";
+    let map = LineMap::build(source);
+
+    // Byte span covering '中' (3 bytes).
+    let span = Span::new(1, 4);
+    let range = map.span_to_range(span, source);
+    assert_eq!(range.start, Position::new(0, 1));
+    assert_eq!(range.end, Position::new(0, 2));
+
+    assert_eq!(map.range_to_span(range, source), Some(span));
+}
+
+#[test]
+fn span_to_range_surrogate_pair_roundtrip() {
+    // 4-byte UTF-8 ('🚀' is U+1F680 = surrogate pair, 2 UTF-16 code units).
+    let source = "x🚀y";
+    let map = LineMap::build(source);
+
+    // Byte span covering '🚀' (4 bytes).
+    let span = Span::new(1, 5);
+    let range = map.span_to_range(span, source);
+    assert_eq!(range.start, Position::new(0, 1));
+    assert_eq!(range.end, Position::new(0, 3));
+
+    assert_eq!(map.range_to_span(range, source), Some(span));
+}
+
+#[test]
+fn span_to_range_dummy_span_clamps_to_end_of_source() {
+    // A dummy span has start == end == u32::MAX. `offset_to_position`
+    // clamps to the end of source, so the resulting Range collapses to
+    // the last valid Position.
+    let source = "abc";
+    let map = LineMap::build(source);
+
+    let span = Span::dummy();
+    let range = map.span_to_range(span, source);
+    // Both endpoints clamp to (line=0, character=3) — end of source.
+    assert_eq!(range.start, Position::new(0, 3));
+    assert_eq!(range.end, Position::new(0, 3));
+}
+
+#[test]
+fn span_to_range_empty_span_yields_empty_range() {
+    // An empty span (start == end) yields an empty range at the same Position.
+    let source = "hello";
+    let map = LineMap::build(source);
+
+    let span = Span::new(2, 2);
+    let range = map.span_to_range(span, source);
+    assert_eq!(range.start, range.end);
+    assert_eq!(range.start, Position::new(0, 2));
+}
+
+#[test]
+fn span_to_range_multiline_span() {
+    // Span covering content on different lines.
+    let source = "line1\nline2\nline3";
+    let map = LineMap::build(source);
+
+    // Byte 2 ('n' on line 0) to byte 14 ('n' on line 2).
+    let span = Span::new(2, 14);
+    let range = map.span_to_range(span, source);
+    assert_eq!(range.start, Position::new(0, 2));
+    assert_eq!(range.end, Position::new(2, 2));
+
+    assert_eq!(map.range_to_span(range, source), Some(span));
+}
+
+#[test]
+fn span_to_range_preserves_inverted_endpoints() {
+    // `offset_to_position` clamps each offset independently; the helper
+    // does not re-order. Callers that need normalization must do it
+    // themselves. This locks the behaviour rather than recommending it.
+    let source = "abcdef";
+    let map = LineMap::build(source);
+
+    let span = Span::new(4, 1); // start > end
+    let range = map.span_to_range(span, source);
+    assert_eq!(range.start, Position::new(0, 4));
+    assert_eq!(range.end, Position::new(0, 1));
+}
+
+#[test]
+fn range_to_span_returns_none_for_line_past_eof() {
+    let source = "one\ntwo";
+    let map = LineMap::build(source);
+
+    let range = Range::new(Position::new(0, 0), Position::new(5, 0));
+    assert_eq!(map.range_to_span(range, source), None);
+
+    let range = Range::new(Position::new(5, 0), Position::new(0, 0));
+    assert_eq!(map.range_to_span(range, source), None);
+}
+
+#[test]
+fn range_to_span_clamps_character_past_line_end() {
+    // `position_to_offset` already clamps the character index to the
+    // end of the line; `range_to_span` simply propagates that. Locks
+    // the behaviour so future callers don't open-code their own
+    // clamping pre-step.
+    let source = "abc\ndef";
+    let map = LineMap::build(source);
+
+    let range = Range::new(Position::new(0, 0), Position::new(0, 999));
+    let span = map.range_to_span(range, source).unwrap();
+    assert_eq!(span.start, 0);
+    assert_eq!(span.end, 3); // clamped to end of line 0
+}
