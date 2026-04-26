@@ -1030,6 +1030,49 @@ var a9e: {};
     );
 }
 
+/// Mixed-arity generic overloads on a tagged template tag must select the
+/// matching overload by arity for contextual typing of substitution
+/// expressions, the same way regular call expressions do. Previously the
+/// tagged-template path called `get_contextual_signature` without an arity,
+/// which returned `None` for mixed-arity overload sets and forced a
+/// signature-less single-pass that left the type parameter `T` un-inferred,
+/// producing a spurious TS2345 on later substitutions.
+///
+/// From: parenthesizedContexualTyping3.ts
+#[test]
+fn test_tagged_template_overload_arity_selects_signature_for_inference() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T;
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, h: (y: T) => T, x: T): T;
+function tempFun<T>(tempStrs: TemplateStringsArray, g: (x: T) => T, x: T): T {
+    return g(x);
+}
+
+var a = tempFun `${ x => x }  ${ 10 }`;
+var b = tempFun `${ (x => x) }  ${ 10 }`;
+var c = tempFun `${ ((x => x)) } ${ 10 }`;
+var d = tempFun `${ x => x } ${ x => x } ${ 10 }`;
+var e = tempFun `${ x => x } ${ (x => x) } ${ 10 }`;
+var f = tempFun `${ x => x } ${ ((x => x)) } ${ 10 }`;
+var g = tempFun `${ (x => x) } ${ (((x => x))) } ${ 10 }`;
+var h = tempFun `${ (x => x) } ${ (((x => x))) } ${ undefined }`;
+        "#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "Tagged template against mixed-arity generic overloads should select \
+         the correct overload by arity and infer T from later substitutions, \
+         producing no TS2345.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Substitution arrow parameters should be contextually typed from the \
+         arity-matched overload, so no TS7006 should fire.\nActual errors: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_tagged_template_generic_unresolved_type_params_display_as_unknown() {
     let diagnostics = compile_and_get_diagnostics_with_lib(
