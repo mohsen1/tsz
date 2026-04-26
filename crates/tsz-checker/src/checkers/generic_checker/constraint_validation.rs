@@ -1112,9 +1112,20 @@ impl<'a> CheckerState<'a> {
         if base != type_id {
             let base = self.evaluate_type_for_assignability(base);
             if let Some(keyof_operand) = query::keyof_operand(db, base) {
-                let normalized = self.get_keyof_type(keyof_operand);
-                if normalized != self.ctx.types.keyof(keyof_operand) {
-                    return normalized;
+                // Only normalize `keyof X` when X is a fully concrete type. When
+                // X is itself a (free) type parameter, `get_keyof_type` would
+                // resolve through X's constraint and return a concrete union of
+                // the constraint's keys (e.g., `keyof T` for `T extends unknown[]`
+                // becomes `number | "length" | "concat" | ...`). That breaks the
+                // upstream `contains_free_type_parameters(base)` deferral, causing
+                // false TS2344 on patterns like `{ [K in keyof T]: F<K> }`.
+                // Keeping `keyof X` deferred lets the caller defer the constraint
+                // check to instantiation time, matching tsc.
+                if !query::contains_free_type_parameters(self.ctx.types, keyof_operand) {
+                    let normalized = self.get_keyof_type(keyof_operand);
+                    if normalized != self.ctx.types.keyof(keyof_operand) {
+                        return normalized;
+                    }
                 }
             }
             return base;
