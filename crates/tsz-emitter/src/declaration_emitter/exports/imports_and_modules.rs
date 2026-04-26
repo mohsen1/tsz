@@ -882,8 +882,16 @@ impl<'a> DeclarationEmitter<'a> {
                 let elem_node = self.arena.get(elem_idx)?;
                 let elem = self.arena.get_binding_element(elem_node)?;
                 if elem.dot_dot_dot_token {
-                    // Rest in object pattern is `...rest: any` in tsc.
-                    out.push_str("...rest: any;");
+                    // Rest in object pattern is `...<name>: any` in tsc; preserve
+                    // the source binding name so the synthesized shape matches
+                    // the user's destructuring (e.g. `{ ...remaining }`).
+                    let rest_name = self
+                        .arena
+                        .get(elem.name)
+                        .and_then(|n| self.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.as_str())
+                        .unwrap_or("rest");
+                    out.push_str(&format!("...{rest_name}: any;"));
                     continue;
                 }
                 // Property name: prefer the explicit `property_name` (`{ a: b }`),
