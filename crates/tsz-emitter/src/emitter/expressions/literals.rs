@@ -623,6 +623,18 @@ impl<'a> Printer<'a> {
                 let Some(prop_node) = self.arena.get(prop) else {
                     continue;
                 };
+                // Skip error-recovery shorthand placeholders synthesized when the parser
+                // encounters an unexpected non-name token (e.g. extra commas: `{ x: 0,, }`).
+                // The synthesized Identifier name has zero width (pos == end) and an empty
+                // text — emitting it would produce stray commas in the output.
+                if prop_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                    && let Some(shorthand) = self.arena.get_shorthand_property(prop_node)
+                    && let Some(name_node) = self.arena.get(shorthand.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && name_node.pos == name_node.end
+                {
+                    continue;
+                }
                 // Emit leading comments before the first property (e.g. /** own x*/)
                 if i == 0 {
                     self.emit_unemitted_comments_between(open_brace_end, prop_node.pos);
