@@ -1018,3 +1018,418 @@ impl<'a> TypeLowering<'a> {
         TypeId::ERROR
     }
 }
+
+#[cfg(test)]
+mod numeric_helper_tests {
+    //! Unit tests for the pure numeric/bigint normalization helpers used by
+    //! `lower_literal_type`. Existing end-to-end tests in `tests/lower_tests.rs`
+    //! exercise the common paths through real AST parsing; these tests focus
+    //! on edge cases (empty input, separators, leading zeros, invalid digits,
+    //! arbitrarily large bigints) that are awkward to set up via parser tests.
+    use super::*;
+    use std::borrow::Cow;
+    use tsz_parser::parser::NodeArena;
+    use tsz_solver::TypeInterner;
+
+    // ---- strip_numeric_separators ----
+
+    #[test]
+    fn strip_separators_returns_borrowed_when_no_underscores() {
+        let result = TypeLowering::strip_numeric_separators("123");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "123");
+    }
+
+    #[test]
+    fn strip_separators_empty_string_is_borrowed() {
+        let result = TypeLowering::strip_numeric_separators("");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn strip_separators_removes_single_underscore() {
+        let result = TypeLowering::strip_numeric_separators("1_000");
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "1000");
+    }
+
+    #[test]
+    fn strip_separators_removes_multiple_underscores() {
+        let result = TypeLowering::strip_numeric_separators("1_000_000");
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "1000000");
+    }
+
+    #[test]
+    fn strip_separators_handles_leading_underscore() {
+        // The helper just removes underscores, validity is the parser's concern.
+        let result = TypeLowering::strip_numeric_separators("_123");
+        assert_eq!(result, "123");
+    }
+
+    #[test]
+    fn strip_separators_handles_trailing_underscore() {
+        let result = TypeLowering::strip_numeric_separators("123_");
+        assert_eq!(result, "123");
+    }
+
+    #[test]
+    fn strip_separators_handles_only_underscores() {
+        let result = TypeLowering::strip_numeric_separators("___");
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn strip_separators_handles_hex_digits() {
+        // The helper is base-agnostic — it preserves all non-underscore bytes.
+        let result = TypeLowering::strip_numeric_separators("F_F_AB");
+        assert_eq!(result, "FFAB");
+    }
+
+    // ---- bigint_base_to_decimal ----
+
+    #[test]
+    fn bigint_base_empty_returns_none() {
+        assert_eq!(TypeLowering::bigint_base_to_decimal("", 16), None);
+        assert_eq!(TypeLowering::bigint_base_to_decimal("", 2), None);
+        assert_eq!(TypeLowering::bigint_base_to_decimal("", 8), None);
+    }
+
+    #[test]
+    fn bigint_base_only_separators_returns_none() {
+        // No actual digits seen — saw_digit stays false → None.
+        assert_eq!(TypeLowering::bigint_base_to_decimal("_", 16), None);
+        assert_eq!(TypeLowering::bigint_base_to_decimal("__", 10), None);
+    }
+
+    #[test]
+    fn bigint_base_zero_returns_zero() {
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("0", 16).as_deref(),
+            Some("0"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("0", 2).as_deref(),
+            Some("0"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("0", 10).as_deref(),
+            Some("0"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_hex_basic_values() {
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("FF", 16).as_deref(),
+            Some("255"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("ff", 16).as_deref(),
+            Some("255"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("100", 16).as_deref(),
+            Some("256"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_binary_basic_values() {
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("1010", 2).as_deref(),
+            Some("10"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("11111111", 2).as_deref(),
+            Some("255"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_octal_basic_values() {
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("77", 8).as_deref(),
+            Some("63"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("10", 8).as_deref(),
+            Some("8"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_strips_leading_zeros() {
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("00FF", 16).as_deref(),
+            Some("255"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("0001010", 2).as_deref(),
+            Some("10"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_accepts_underscore_separators() {
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("F_F", 16).as_deref(),
+            Some("255"),
+        );
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("1010_1010", 2).as_deref(),
+            Some("170"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_rejects_invalid_digit_for_base() {
+        // 8 is not a valid octal digit.
+        assert_eq!(TypeLowering::bigint_base_to_decimal("8", 8), None);
+        // 2 is not a valid binary digit.
+        assert_eq!(TypeLowering::bigint_base_to_decimal("2", 2), None);
+        // G is not a valid hex digit.
+        assert_eq!(TypeLowering::bigint_base_to_decimal("G", 16), None);
+    }
+
+    #[test]
+    fn bigint_base_rejects_non_digit_byte() {
+        // Non-alphanumeric bytes (other than '_') are rejected outright.
+        assert_eq!(TypeLowering::bigint_base_to_decimal("1.5", 10), None);
+        assert_eq!(TypeLowering::bigint_base_to_decimal("1+1", 10), None);
+        assert_eq!(TypeLowering::bigint_base_to_decimal("a!", 16), None);
+    }
+
+    #[test]
+    fn bigint_base_handles_max_u64_in_hex() {
+        // u64::MAX = 18446744073709551615; this must not lose precision.
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("FFFFFFFFFFFFFFFF", 16).as_deref(),
+            Some("18446744073709551615"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_handles_value_beyond_u64() {
+        // 2^64 = 18446744073709551616 — beyond u64::MAX, still must be exact.
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("10000000000000000", 16).as_deref(),
+            Some("18446744073709551616"),
+        );
+        // 2^128 — well past u64::MAX.
+        let two_to_128 = "100000000000000000000000000000000";
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal(two_to_128, 16).as_deref(),
+            Some("340282366920938463463374607431768211456"),
+        );
+    }
+
+    #[test]
+    fn bigint_base_decimal_uses_base_10() {
+        // Base 10 with leading zero is also handled.
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("0123", 10).as_deref(),
+            Some("123"),
+        );
+        // 9 is valid in base 10 but not in base 8.
+        assert_eq!(
+            TypeLowering::bigint_base_to_decimal("9", 10).as_deref(),
+            Some("9"),
+        );
+        assert_eq!(TypeLowering::bigint_base_to_decimal("9", 8), None);
+    }
+
+    // ---- normalize_bigint_literal ----
+
+    fn make_lowering<'a>(arena: &'a NodeArena, interner: &'a TypeInterner) -> TypeLowering<'a> {
+        TypeLowering::new(arena, interner)
+    }
+
+    #[test]
+    fn normalize_bigint_decimal_no_separators() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        let result = lowering.normalize_bigint_literal("1234");
+        assert!(matches!(result, Some(Cow::Borrowed("1234"))));
+    }
+
+    #[test]
+    fn normalize_bigint_decimal_with_separators() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        let result = lowering.normalize_bigint_literal("1_000_000");
+        // Underscores cause owned allocation, then no leading zeros to trim.
+        assert!(matches!(result.as_deref(), Some("1000000")));
+    }
+
+    #[test]
+    fn normalize_bigint_zero_decimal() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        // Several variants of "zero" all normalize to "0".
+        assert_eq!(lowering.normalize_bigint_literal("0").as_deref(), Some("0"));
+        assert_eq!(
+            lowering.normalize_bigint_literal("000").as_deref(),
+            Some("0"),
+        );
+        assert_eq!(
+            lowering.normalize_bigint_literal("0_0_0").as_deref(),
+            Some("0"),
+        );
+    }
+
+    #[test]
+    fn normalize_bigint_strips_leading_zeros_decimal() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        assert_eq!(
+            lowering.normalize_bigint_literal("0001").as_deref(),
+            Some("1"),
+        );
+        assert_eq!(
+            lowering.normalize_bigint_literal("0_001").as_deref(),
+            Some("1"),
+        );
+    }
+
+    #[test]
+    fn normalize_bigint_hex_lowercase_prefix() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        assert_eq!(
+            lowering.normalize_bigint_literal("0xFF").as_deref(),
+            Some("255"),
+        );
+        assert_eq!(
+            lowering.normalize_bigint_literal("0xff").as_deref(),
+            Some("255"),
+        );
+    }
+
+    #[test]
+    fn normalize_bigint_hex_uppercase_prefix() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        assert_eq!(
+            lowering.normalize_bigint_literal("0XFF").as_deref(),
+            Some("255"),
+        );
+    }
+
+    #[test]
+    fn normalize_bigint_binary_prefix() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        assert_eq!(
+            lowering.normalize_bigint_literal("0b1010").as_deref(),
+            Some("10"),
+        );
+        assert_eq!(
+            lowering.normalize_bigint_literal("0B1010").as_deref(),
+            Some("10"),
+        );
+    }
+
+    #[test]
+    fn normalize_bigint_octal_prefix() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        assert_eq!(
+            lowering.normalize_bigint_literal("0o77").as_deref(),
+            Some("63"),
+        );
+        assert_eq!(
+            lowering.normalize_bigint_literal("0O77").as_deref(),
+            Some("63"),
+        );
+    }
+
+    #[test]
+    fn normalize_bigint_prefixed_with_separators() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        assert_eq!(
+            lowering.normalize_bigint_literal("0xFF_FF").as_deref(),
+            Some("65535"),
+        );
+        assert_eq!(
+            lowering.normalize_bigint_literal("0b1010_1010").as_deref(),
+            Some("170"),
+        );
+        assert_eq!(
+            lowering.normalize_bigint_literal("0o7_7").as_deref(),
+            Some("63"),
+        );
+    }
+
+    #[test]
+    fn normalize_bigint_empty_after_prefix_returns_none() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        assert!(lowering.normalize_bigint_literal("0x").is_none());
+        assert!(lowering.normalize_bigint_literal("0b").is_none());
+        assert!(lowering.normalize_bigint_literal("0o").is_none());
+    }
+
+    #[test]
+    fn normalize_bigint_invalid_digit_after_prefix_returns_none() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        // 'g' is not a valid hex digit.
+        assert!(lowering.normalize_bigint_literal("0xG").is_none());
+        // '2' is not a valid binary digit.
+        assert!(lowering.normalize_bigint_literal("0b2").is_none());
+        // '8' is not a valid octal digit.
+        assert!(lowering.normalize_bigint_literal("0o8").is_none());
+    }
+
+    #[test]
+    fn normalize_bigint_borrowed_decimal_when_no_change_needed() {
+        // No prefix, no separators, no leading zeros → can stay borrowed.
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        let result = lowering.normalize_bigint_literal("42");
+        assert!(matches!(result, Some(Cow::Borrowed("42"))));
+    }
+
+    #[test]
+    fn normalize_bigint_handles_very_large_hex() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = make_lowering(&arena, &interner);
+
+        // u128::MAX = 340282366920938463463374607431768211455
+        assert_eq!(
+            lowering
+                .normalize_bigint_literal("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF")
+                .as_deref(),
+            Some("340282366920938463463374607431768211455"),
+        );
+    }
+}
