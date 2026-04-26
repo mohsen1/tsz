@@ -14,28 +14,13 @@
 use tsz_binder::BinderState;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::check_source_diagnostics;
 use tsz_parser::parser::ParserState;
 use tsz_solver::type_queries::get_callable_shape;
 use tsz_solver::{TypeId, TypeInterner};
 
 fn check_source(source: &str) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        tsz_checker::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
+    check_source_diagnostics(source)
 }
 
 fn error_codes(diags: &[Diagnostic]) -> Vec<u32> {

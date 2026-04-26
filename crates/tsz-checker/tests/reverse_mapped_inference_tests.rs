@@ -7,31 +7,14 @@
 //! Similarly, when the source object has index signatures (dictionary types),
 //! the reverse inference must reverse through the index signature value type.
 
-use crate::CheckerState;
+use crate::test_utils::check_source_codes;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 /// Helper: parse, bind, check; return diagnostic codes.
 fn check_and_get_codes(code: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), code.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        crate::context::CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
+    check_source_codes(code)
 }
 
 #[test]
