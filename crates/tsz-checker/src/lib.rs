@@ -14,7 +14,6 @@
 //! is an alias to the thin checker.
 
 #![allow(dead_code)]
-#![allow(clippy::doc_markdown)]
 
 extern crate self as tsz_checker;
 

@@ -8,7 +8,7 @@
 //! assertion overlap purposes it is comparable to any of those primitives
 //! (or their literals). tsc's `isTypeComparableTo` walks the `keyof` to its
 //! key-space union; without this case, an assertion like
-//! `(k as string)` falls through to the property-overlap check (KeyOf has
+//! `(k as string)` falls through to the property-overlap check (`KeyOf` has
 //! no extractable properties) and emits a false-positive TS2352.
 
 use crate::context::CheckerOptions;

@@ -1334,7 +1334,7 @@ impl<'a> CheckerState<'a> {
 
     /// Extract inference from an object literal whose target type is a mapped type.
     ///
-    /// For patterns like VuexStoreOptions where `modules` has type
+    /// For patterns like `VuexStoreOptions` where `modules` has type
     /// `{ [k in keyof Modules]: VuexStoreOptions<Modules[k], never> }` and the initializer is
     /// `{ foo: { state() {...}, mutations: {...} } }`, we need to:
     /// 1. For each property key (e.g., `foo`), extract the partial type from the property value

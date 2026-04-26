@@ -9,14 +9,14 @@
 //! returned false when both sides had no extractable properties:
 //! `types_have_common_properties_relaxed` short-circuits on the
 //! "both empty" branch. tsc treats the `object` primitive as overlapping
-//! with any object-like type, and walks a TypeParameter's constraint
+//! with any object-like type, and walks a `TypeParameter`'s constraint
 //! when the source is the empty object type `{}`.
 //!
 //! Two narrow rules added in `types_are_comparable_for_assertion_inner`:
 //!   1. `object` primitive ↔ Object/Array/Tuple/Callable/Function/Intersection
 //!      → comparable.
 //!   2. `{}` (empty object: no required props, no index sigs) ↔
-//!      TypeParameter with constraint → recurse against the constraint.
+//!      `TypeParameter` with constraint → recurse against the constraint.
 //!
 //! The "narrow to {}" gating is important: fully unwrapping any source's
 //! type-parameter constraint would over-permit assertions like

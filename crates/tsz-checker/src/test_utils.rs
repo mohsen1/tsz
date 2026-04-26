@@ -125,7 +125,7 @@ pub fn check_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnost
 
 #[cfg(test)]
 mod tests {
-    //! Self-tests for the test_utils helpers themselves.
+    //! Self-tests for the `test_utils` helpers themselves.
     //!
     //! These pin the contracts that 100s of checker tests rely on:
     //! - `check_source_diagnostics` ≡ `check_source(source, "test.ts", default)`.
