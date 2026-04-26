@@ -3,8 +3,8 @@
 - **Date**: 2026-04-26
 - **Time**: 2026-04-26 15:57:36
 - **Branch**: `fix/emit-js-recovery-3`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1408
+- **Status**: ready
 - **Workstream**: 2 (Emit pass rate)
 
 ## Intent
