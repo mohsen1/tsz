@@ -66,8 +66,9 @@ fn cleanup_ts2454_dedup(
 
 /// Snapshot of diagnostic state that speculative evaluation may corrupt.
 ///
-/// Created by `CheckerContext::begin_speculation` and consumed by the
-/// `SpeculationGuard` on drop/commit.
+/// Created by `CheckerContext::snapshot_diagnostics` and consumed by the
+/// `DiagnosticSpeculationSnapshot` holder via explicit `commit()` /
+/// `rollback()` (no `Drop` impl — see module preamble for rationale).
 pub(crate) struct DiagnosticSnapshot {
     /// Length of `ctx.diagnostics` at snapshot time (truncation point).
     pub diagnostics_len: usize,

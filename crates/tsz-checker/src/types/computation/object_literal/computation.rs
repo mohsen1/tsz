@@ -1395,7 +1395,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let method_diag_guard = DiagnosticSpeculationSnapshot::new(&self.ctx);
+                    let method_diag_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
                     let pre_refresh_snap = self.ctx.snapshot_diagnostics();
                     let mut method_type = self.get_type_of_function_impl(elem_idx, &method_request);
                     let has_concrete_method_context =
@@ -1417,7 +1417,7 @@ impl<'a> CheckerState<'a> {
                         && !this_property_accesses.is_empty()
                         && self.ctx.arena.get(method.body).is_some_and(|body_node| {
                             self.ctx
-                                .speculative_diagnostics_since(method_diag_guard.snapshot())
+                                .speculative_diagnostics_since(method_diag_snap.snapshot())
                                 .iter()
                                 .any(|diag| {
                                     diag.start >= body_node.pos
@@ -1431,7 +1431,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if method_return_this_circularity {
-                        method_diag_guard.rollback(&mut self.ctx);
+                        method_diag_snap.rollback(&mut self.ctx);
                         self.invalidate_expression_for_contextual_retry(elem_idx);
                         let refined_method_type = crate::query_boundaries::assignability::get_function_return_type(
                             self.ctx.types,
@@ -1471,7 +1471,7 @@ impl<'a> CheckerState<'a> {
                             )),
                         );
                         self.ctx.this_type_stack.push(refined_this_type);
-                        let rerun_guard = DiagnosticSpeculationSnapshot::new(&self.ctx);
+                        let rerun_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
                         let rerun_pre_refresh_snap = self.ctx.snapshot_diagnostics();
                         let _ = self.get_type_of_function_impl(elem_idx, &method_request);
                         if has_concrete_method_context {
@@ -1489,7 +1489,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.arena.get(*idx).map(|node| node.pos)
                                 })
                                 .collect();
-                        rerun_guard.rollback_filtered(&mut self.ctx, |diag| {
+                        rerun_snap.rollback_filtered(&mut self.ctx, |diag| {
                             let is_replaced_this_property_error =
                                 diag.code == 2339 && this_property_positions.contains(&diag.start);
                             !is_replaced_this_property_error
