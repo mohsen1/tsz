@@ -1004,10 +1004,15 @@ impl<'a> CheckerContext<'a> {
         sorted_entries.sort_by_key(|(_, entry)| entry.span_start);
 
         let mut count = 0;
+        // Hold s2d/d2s borrows across the whole loop. Both register_def_kind_in_envs
+        // and definition_store.register only touch type_env/type_environment and the
+        // shared DashMap, never s2d/d2s. Saves 2 RefCell ops per inserted entry.
+        let mut s2d = self.symbol_to_def.borrow_mut();
+        let mut d2s = self.def_to_symbol.borrow_mut();
         for (&sym_id, entry) in sorted_entries {
             // Skip if already mapped (e.g., from a previous lib merge pass
             // or the primary binder's pre-population).
-            if self.symbol_to_def.borrow().contains_key(&sym_id) {
+            if s2d.contains_key(&sym_id) {
                 continue;
             }
 
@@ -1114,8 +1119,8 @@ impl<'a> CheckerContext<'a> {
             self.definition_store
                 .register_symbol_mapping(sym_id.0, entry.file_id, def_id);
 
-            self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-            self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+            s2d.insert(sym_id, def_id);
+            d2s.insert(def_id, sym_id);
 
             // Propagate DefKind to both TypeEnvironments (evaluator + flow-analyzer)
             self.register_def_kind_in_envs(def_id, kind);
@@ -1202,21 +1207,28 @@ impl<'a> CheckerContext<'a> {
         let mappings = self.definition_store.all_symbol_mappings();
         let mut count = 0;
 
-        // Pre-size the local caches to avoid rehashing during bulk insertion.
-        {
-            let current_len = self.symbol_to_def.borrow().len();
-            if mappings.len() > current_len {
-                let additional = mappings.len() - current_len;
-                self.symbol_to_def.borrow_mut().reserve(additional);
-                self.def_to_symbol.borrow_mut().reserve(additional);
-            }
+        // Hold both RefCell borrows for the entire loop. The previous
+        // implementation re-borrowed `symbol_to_def` and `def_to_symbol`
+        // on every iteration (one borrow + two borrow_mut per mapping),
+        // which adds ~3 RefCell ops per entry. With 10k+ mappings on
+        // large repos this is measurable. The body never recurses into
+        // these RefCells, so a single mut borrow is safe.
+        let symbols = self.binder.get_symbols();
+        let mut s2d = self.symbol_to_def.borrow_mut();
+        let mut d2s = self.def_to_symbol.borrow_mut();
+
+        // Pre-size to avoid rehashing during bulk insertion.
+        if mappings.len() > s2d.len() {
+            let additional = mappings.len() - s2d.len();
+            s2d.reserve(additional);
+            d2s.reserve(additional);
         }
 
         for (raw_sym_id, def_id) in &mappings {
             let sym_id = tsz_binder::SymbolId(*raw_sym_id);
 
             // Skip if already in local cache (e.g., from a prior warm pass).
-            if self.symbol_to_def.borrow().contains_key(&sym_id) {
+            if s2d.contains_key(&sym_id) {
                 continue;
             }
 
@@ -1230,12 +1242,12 @@ impl<'a> CheckerContext<'a> {
             // narrowing.  Skipping here is safe: when the local symbol is
             // actually referenced, `get_or_create_def_id` will resolve it
             // correctly through the file-aware `symbol_def_index`.
-            if self.binder.get_symbols().get(sym_id).is_some() {
+            if symbols.get(sym_id).is_some() {
                 continue;
             }
 
-            self.symbol_to_def.borrow_mut().insert(sym_id, *def_id);
-            self.def_to_symbol.borrow_mut().insert(*def_id, sym_id);
+            s2d.insert(sym_id, *def_id);
+            d2s.insert(*def_id, sym_id);
 
             // NOTE: DefKind registration is intentionally skipped here.
             // The TypeEnvironment is rebuilt from scratch in build_type_environment()
@@ -1246,6 +1258,8 @@ impl<'a> CheckerContext<'a> {
 
             count += 1;
         }
+        drop(s2d);
+        drop(d2s);
 
         trace!(
             count,
