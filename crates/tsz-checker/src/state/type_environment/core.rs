@@ -1125,6 +1125,16 @@ impl<'a> CheckerState<'a> {
         // seeding step lets files skip expensive re-resolution by reusing bodies
         // already computed and cached in the shared DefinitionStore.
         if !self.ctx.definition_store.is_empty() {
+            // Hold s2d / d2s / type_env borrows for the whole loop. The body only
+            // touches DashMap-backed `definition_store` queries and the inline
+            // `symbol_types` field, none of which can re-borrow these RefCells.
+            // try_borrow_mut on type_env may legitimately fail if a recursive
+            // resolution is in flight; in that case skip env seeding for the
+            // whole loop (matches the prior per-iter `if let Ok` semantics that
+            // would skip every iteration anyway).
+            let mut s2d = self.ctx.symbol_to_def.borrow_mut();
+            let mut d2s = self.ctx.def_to_symbol.borrow_mut();
+            let mut env_opt = self.ctx.type_env.try_borrow_mut().ok();
             for &(sym_id, flags) in &symbols_with_flags {
                 // Only seed type-defining symbols that would go through the
                 // expensive compute_type_of_symbol path below.
@@ -1156,10 +1166,10 @@ impl<'a> CheckerState<'a> {
                 // Seed symbol_types so get_type_of_symbol hits the cache.
                 self.ctx.symbol_types.insert(sym_id, body);
                 // Populate local DefId caches.
-                self.ctx.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-                self.ctx.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+                s2d.insert(sym_id, def_id);
+                d2s.insert(def_id, sym_id);
                 // Seed type_env with the DefId -> body mapping.
-                if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                if let Some(env) = env_opt.as_deref_mut() {
                     let type_params = self
                         .ctx
                         .definition_store
@@ -1172,6 +1182,9 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            drop(s2d);
+            drop(d2s);
+            drop(env_opt);
         }
 
         // Resolve each symbol and add to the environment.
