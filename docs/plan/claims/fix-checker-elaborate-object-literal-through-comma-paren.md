@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-elaborate-object-literal-through-comma-paren`
-- **PR**: TBD
+- **PR**: #1474
 - **Status**: ready
 - **Workstream**: 1 (conformance fingerprint parity)
 
