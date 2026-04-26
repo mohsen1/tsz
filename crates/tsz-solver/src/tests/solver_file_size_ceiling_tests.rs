@@ -356,10 +356,10 @@ fn test_scanner_file_size_ceiling() {
         oversized.join("\n")
     );
 
-    // scanner_impl.rs is currently the largest at 3912 lines after #1282
-    // (one diagnostic per invalid numeric separator). Splitting it out remains
-    // an open follow-up; this ceiling tracks the post-#1282 size.
-    const MAX_LOC_CEILING: usize = 3920;
+    // scanner_impl.rs is currently the largest at 3988 lines after #1458
+    // (TS1125 hexadecimal-digit-expected emission for invalid `\x` escapes).
+    // Splitting it out remains an open follow-up.
+    const MAX_LOC_CEILING: usize = 4000;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest scanner source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
