@@ -242,3 +242,139 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
          Object is exempt from weak type checks because all types implicitly inherit its members."
     );
 }
+
+/// Regression test reproducing the failing case via `CompatChecker`
+/// (the Lawyer entry point used by `query_relation`).
+///
+/// `{ __typename?: 'TypeTwo' } & string` must NOT be assignable to
+/// `{ __typename?: 'TypeOne' }` (or to itself with `& string`). The literal
+/// property mismatch needs to be detected even though the source intersection
+/// has a primitive member.
+#[test]
+fn test_compat_intersection_literal_property_mismatch() {
+    use crate::relations::compat::CompatChecker;
+
+    let interner = TypeInterner::new();
+
+    let one = interner.literal_string("TypeOne");
+    let two = interner.literal_string("TypeTwo");
+
+    // Source object: { __typename?: 'TypeTwo' }
+    let source_object = make_optional_object(&interner, "__typename", two);
+    // Source intersection: { __typename?: 'TypeTwo' } & string
+    let source_intersection = interner.intersection2(source_object, TypeId::STRING);
+
+    // Target object: { __typename?: 'TypeOne' }
+    let target_object = make_optional_object(&interner, "__typename", one);
+    // Target intersection: { __typename?: 'TypeOne' } & string
+    let target_intersection = interner.intersection2(target_object, TypeId::STRING);
+
+    // Sanity: bare-object → bare-object mismatch must be rejected via CompatChecker.
+    {
+        let mut checker = CompatChecker::new(&interner);
+        assert!(
+            !checker.is_assignable(source_object, target_object),
+            "Direct object assignability check must reject literal property mismatch"
+        );
+    }
+
+    // Bug case: the intersection-to-bare-object check should fail because the
+    // primitive member doesn't grant the source the right `__typename` literal.
+    {
+        let mut checker = CompatChecker::new(&interner);
+        assert!(
+            !checker.is_assignable(source_intersection, target_object),
+            "Intersection `{{ __typename?: 'TypeTwo' }} & string` must NOT be \
+             assignable to `{{ __typename?: 'TypeOne' }}` — primitive member \
+             must not silence the literal property mismatch"
+        );
+    }
+
+    // Same property mismatch when target is also `{...} & string`
+    // (the original conformance case in `commonTypeIntersection.ts`).
+    {
+        let mut checker = CompatChecker::new(&interner);
+        assert!(
+            !checker.is_assignable(source_intersection, target_intersection),
+            "Two `{{ literal }} & string` intersections with disjoint literals \
+             must remain non-assignable"
+        );
+    }
+}
+
+/// Regression test for `commonTypeIntersection.ts` (conformance/types/intersection):
+/// when source and target are both intersections that share a primitive member but
+/// differ in their object literal members, the property-merging path in
+/// `visit_intersection` should still detect the literal property mismatch.
+///
+/// Example failing case:
+///   `{ __typename?: 'TypeTwo' } & string` is NOT assignable to
+///   `{ __typename?: 'TypeOne' } & string`
+///
+/// Reduced form (no enclosing string in target):
+///   `{ __typename?: 'TypeTwo' } & string` is NOT assignable to
+///   `{ __typename?: 'TypeOne' }`
+///
+/// In tsc, the merged source `{ __typename?: 'TypeTwo' }` (after dropping the
+/// primitive) is checked against the target object, and the literal property
+/// types must mismatch. tsz used to spuriously accept these because:
+///   * the per-member `string <: { __typename?: 'TypeOne' }` shortcut was
+///     incorrectly returning true (the boxed-primitive structural fallback
+///     went through `apparent_primitive_shape_for_type` which reports lots
+///     of properties, but no `__typename`), AND
+///   * the merged-source path failed to enforce property type compatibility.
+///
+/// This test pins down the literal-mismatch behaviour with the minimal
+/// shape: a primitive-bearing intersection source must not pass the structural
+/// check against an object whose property is a different literal.
+#[test]
+fn test_intersection_literal_property_mismatch_with_primitive_member() {
+    use crate::relations::subtype::core::SubtypeChecker;
+
+    let interner = TypeInterner::new();
+
+    let one = interner.literal_string("TypeOne");
+    let two = interner.literal_string("TypeTwo");
+
+    // Source object: { __typename?: 'TypeTwo' }
+    let source_object = make_optional_object(&interner, "__typename", two);
+    // Source intersection: { __typename?: 'TypeTwo' } & string
+    let source_intersection = interner.intersection2(source_object, TypeId::STRING);
+
+    // Target object: { __typename?: 'TypeOne' }
+    let target_object = make_optional_object(&interner, "__typename", one);
+
+    // Sanity: direct object-to-object check correctly rejects the mismatch.
+    {
+        let mut checker = SubtypeChecker::new(&interner);
+        checker.enforce_weak_types = true;
+        assert!(
+            !checker.is_subtype_of(source_object, target_object),
+            "Direct object subtype check must reject literal property mismatch"
+        );
+    }
+
+    // The bug: the intersection source incorrectly slipped past the
+    // property-type check because the primitive member short-circuited the
+    // structural comparison.
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.enforce_weak_types = true;
+    assert!(
+        !checker.is_subtype_of(source_intersection, target_object),
+        "Intersection `{{ __typename?: 'TypeTwo' }} & string` must NOT be a \
+         subtype of `{{ __typename?: 'TypeOne' }}` — the property literal \
+         types are disjoint, regardless of the bare `string` member."
+    );
+
+    // Same property mismatch must also be caught when the target itself is an
+    // intersection containing the same primitive member (the original conformance
+    // failure: `{...&string} <: {...&string}` with mismatched literals).
+    let target_intersection = interner.intersection2(target_object, TypeId::STRING);
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.enforce_weak_types = true;
+    assert!(
+        !checker.is_subtype_of(source_intersection, target_intersection),
+        "Two `{{ literal }} & string` intersections with disjoint literals \
+         must remain non-assignable in either direction."
+    );
+}
