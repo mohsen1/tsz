@@ -15,7 +15,6 @@
 
 #![allow(dead_code)]
 #![allow(clippy::collapsible_if)]
-#![allow(clippy::collapsible_match)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::needless_return)]
 #![allow(clippy::redundant_clone)]
