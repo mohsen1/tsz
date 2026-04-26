@@ -1446,15 +1446,15 @@ function f() {
     );
 }
 
-/// Regression: TS2322 must fire when a bare type parameter is assigned to a
-/// template-literal pattern referencing the same type parameter.
-///
-/// `tsc` reports TS2322 here because the template-literal pattern is opaque;
-/// `T`'s instantiation could be a literal subtype that does not structurally
-/// match the template, so the assignment is not statically sound. Without the
-/// template-literal carve-out in `should_suppress_assignability_diagnostic`,
-/// the generic "complex type" suppression would silently accept it because the
-/// template-literal "contains" T but is not itself a type parameter.
+// Regression: TS2322 must fire when a bare type parameter is assigned to a
+// template-literal pattern referencing the same type parameter.
+//
+// `tsc` reports TS2322 here because ``${T}`` is an opaque pattern type;
+// `T`'s instantiation could be a literal subtype that does not structurally
+// match the template, so the assignment is not statically sound. Without the
+// template-literal carve-out in `should_suppress_assignability_diagnostic`,
+// the generic "complex type" suppression would silently accept it because
+// ``${T}`` "contains" T but is not itself a type parameter.
 ///
 /// Repros the missing fingerprint at
 /// `templateLiteralTypes5.ts(14,11)`.
@@ -1486,12 +1486,12 @@ function f<T extends "a" | "b">(x: T) {
     );
 }
 
-/// Companion check: template-literal vs template-literal assignments where
-/// both sides share a type parameter (e.g. an `Uppercase<T>` template) must
-/// keep their existing suppression. This locks in the narrowness of the
-/// template-literal carve-out so it does not regress
-/// `templateLiteralTypes3.ts` (where tsc accepts the spread of values typed
-/// as `Uppercase` of one template against an inferred `Uppercase` of another).
+// Companion check: template-literal vs template-literal assignments where
+// both sides share a type parameter (e.g. ``${Uppercase<T>}``) must keep
+// their existing suppression. This locks in the narrowness of the
+// template-literal carve-out so it does not regress
+// `templateLiteralTypes3.ts` (where tsc accepts the spread of values typed
+// `Uppercase<`1.${T}.4`>` against an inferred `Uppercase<`1.${T}.3`>`).
 #[test]
 fn template_literal_to_template_literal_with_generic_intrinsic_does_not_emit_ts2345() {
     let source = r#"

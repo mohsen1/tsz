@@ -1040,22 +1040,19 @@ impl<'a> CheckerState<'a> {
                                     );
                                     if checker.ctx.diagnostics.len() == diags_before {
                                         // to an index-signature type) instead of on the outer assignment.
-                                        // Only attempt elaboration when overall assignment fails and
-                                        // the initializer is an object literal (arrays/tuples are
-                                        // handled earlier by try_elaborate_initializer_elements).
-                                        let is_object_literal_initializer = checker
-                                            .ctx
-                                            .arena
-                                            .get(var_decl.initializer)
-                                            .is_some_and(|init_node| {
-                                                init_node.kind
-                                                    == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                            });
-                                        if is_object_literal_initializer
-                                            && !checker.is_assignable_to(
-                                                checked_init_type,
-                                                declared_type,
+                                        // Only attempt elaboration when overall assignment fails AND
+                                        // the initializer reaches an object literal through paren or
+                                        // comma-expression wrappers (e.g. `var x: T = (void 0, {...})`).
+                                        // The wrapper gate is required: calling `is_assignable_to`
+                                        // on unrelated initializers (`null as any`, identifiers, ...)
+                                        // has cache side-effects that perturb downstream JSX and
+                                        // contextual-typing decisions (`callsOnComplexSignatures`).
+                                        if checker
+                                            .initializer_reaches_object_literal_through_wrappers(
+                                                var_decl.initializer,
                                             )
+                                            && !checker
+                                                .is_assignable_to(checked_init_type, declared_type)
                                             && checker.try_elaborate_object_literal_properties_for_var_init(
                                                 var_decl.initializer,
                                                 declared_type,
