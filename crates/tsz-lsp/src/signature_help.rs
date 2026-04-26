@@ -1982,6 +1982,18 @@ impl<'a> SignatureHelpProvider<'a> {
         &self,
         cursor_offset: u32,
     ) -> Option<TextualTypeArgumentTrigger> {
+        // Robustness audit (PR #F, item 6 in
+        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): emit a
+        // structured trace at every invocation so the rate at which
+        // signature help depends on byte-level source-text scanning is
+        // visible. The audit's full solution extracts an
+        // `IncompleteCallContext` / `IncompleteCodeQuery` service; this
+        // is the visibility-first foothold.
+        tracing::trace!(
+            site = "signature_help::find_textual_type_argument_trigger",
+            cursor_offset = cursor_offset,
+            "LSP signature help fell back to text-scanning for type-argument trigger"
+        );
         let bytes = self.source_text.as_bytes();
         if bytes.is_empty() {
             return None;
@@ -2061,6 +2073,12 @@ impl<'a> SignatureHelpProvider<'a> {
         cursor_offset: u32,
         type_cache: &mut Option<tsz_checker::TypeCache>,
     ) -> Option<SignatureHelp> {
+        // Audit PR #F: see `find_textual_type_argument_trigger`.
+        tracing::trace!(
+            site = "signature_help::signature_help_for_textual_call",
+            cursor_offset = cursor_offset,
+            "LSP signature help fell back to text-scanning for incomplete call site"
+        );
         let trigger = self.find_textual_call_trigger(cursor_offset)?;
         let callee_expr =
             self.find_identifier_node_at_offset(trigger.callee_offset, &trigger.callee_name)?;
@@ -2202,6 +2220,12 @@ impl<'a> SignatureHelpProvider<'a> {
         cursor_offset: u32,
         type_cache: &mut Option<tsz_checker::TypeCache>,
     ) -> Option<SignatureHelp> {
+        // Audit PR #F: see `find_textual_type_argument_trigger`.
+        tracing::trace!(
+            site = "signature_help::signature_help_for_textual_type_arguments",
+            cursor_offset = cursor_offset,
+            "LSP signature help fell back to text-scanning for type-argument completion"
+        );
         let trigger = self.find_textual_type_argument_trigger(cursor_offset)?;
         let callee_expr =
             self.find_identifier_node_at_offset(trigger.callee_offset, &trigger.callee_name)?;
