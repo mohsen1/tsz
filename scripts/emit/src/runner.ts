@@ -70,6 +70,7 @@ interface TestCase {
   experimentalDecorators: boolean;
   emitDecoratorMetadata: boolean;
   strictNullChecks?: boolean;
+  exactOptionalPropertyTypes?: boolean;
   jsx?: string;
   jsxFactory?: string;
   jsxFragmentFactory?: string;
@@ -164,6 +165,7 @@ function getCacheKey(
   experimentalDecorators: boolean = false,
   emitDecoratorMetadata: boolean = false,
   strictNullChecks: string = '',
+  exactOptionalPropertyTypes: string = '',
   jsx: string = '',
   jsxFactory: string = '',
   jsxFragmentFactory: string = '',
@@ -215,6 +217,7 @@ function getCacheKey(
     experimentalDecorators,
     emitDecoratorMetadata,
     strictNullChecks,
+    exactOptionalPropertyTypes,
     jsx,
     jsxFactory,
     jsxFragmentFactory,
@@ -566,6 +569,13 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
         : directives.strict === false
           ? false
           : undefined;
+    const exactOptionalPropertyTypes = variant.exactoptionalpropertytypes !== undefined
+      ? variant.exactoptionalpropertytypes === 'true'
+      : typeof directives.exactoptionalpropertytypes === 'boolean'
+        ? directives.exactoptionalpropertytypes
+        : typeof tsconfigOptions.exactOptionalPropertyTypes === 'boolean'
+          ? (tsconfigOptions.exactOptionalPropertyTypes as boolean)
+          : undefined;
     const jsx = variant.jsx ?? (typeof directives.jsx === 'string' ? directives.jsx : undefined);
     const moduleDetection =
       variant.moduledetection ?? (typeof directives.moduledetection === 'string' ? directives.moduledetection : undefined);
@@ -640,6 +650,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       experimentalDecorators,
       emitDecoratorMetadata,
       strictNullChecks,
+      exactOptionalPropertyTypes,
       jsx,
       jsxFactory,
       jsxFragmentFactory,
@@ -749,6 +760,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
       testCase.experimentalDecorators,
       testCase.emitDecoratorMetadata,
       testCase.strictNullChecks === undefined ? '' : String(testCase.strictNullChecks),
+      testCase.exactOptionalPropertyTypes === undefined ? '' : String(testCase.exactOptionalPropertyTypes),
       testCase.jsx ?? '',
       testCase.jsxFactory ?? '',
       testCase.jsxFragmentFactory ?? '',
@@ -791,6 +803,7 @@ async function runTest(transpiler: CliTranspiler, testCase: TestCase, config: Co
         experimentalDecorators: testCase.experimentalDecorators,
         emitDecoratorMetadata: testCase.emitDecoratorMetadata,
         strictNullChecks: testCase.strictNullChecks,
+        exactOptionalPropertyTypes: testCase.exactOptionalPropertyTypes,
         jsx: testCase.jsx,
         jsxFactory: testCase.jsxFactory,
         jsxFragmentFactory: testCase.jsxFragmentFactory,

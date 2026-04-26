@@ -183,7 +183,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
             db,
             resolver: None,
             no_unchecked_indexed_access: false,
-            exact_optional_property_types: db.exact_optional_property_types(),
+            exact_optional_property_types:
+                crate::caches::db::QueryDatabase::exact_optional_property_types(db),
             guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::PropertyAccess,
             )),

@@ -1219,3 +1219,162 @@ fn test_contra_candidate_wins_when_only_unknown_covariant() {
         "Expected T = number (contra-candidate wins over filtered unknown), got {result:?}"
     );
 }
+
+// =============================================================================
+// exactOptionalPropertyTypes + index-signature inference (regression tests)
+// =============================================================================
+
+/// `function f<T>(x: { [k: string]: T }): T;` called with
+/// `{ a?: string, b?: number | undefined }` (with `exactOptionalPropertyTypes`)
+/// should infer `T = string | number | undefined` because `b`'s explicit
+/// `| undefined` is preserved. Without EOPT (or under tsc's pre-EOPT semantics)
+/// the synthetic optional `| undefined` is stripped and `T = string | number`.
+///
+/// Regression for declaration-emit baseline `inferenceOptionalProperties.d.ts`
+/// where `declare const y2: string | number | undefined;` was previously
+/// emitted as `declare const y2: string | number;`.
+#[test]
+fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
+    let interner = TypeInterner::new();
+    interner.set_exact_optional_property_types(true);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let param_obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: t_type,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param_obj,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let arg = interner.object(vec![
+        PropertyInfo::opt(a_name, TypeId::STRING),
+        PropertyInfo::opt(b_name, number_or_undefined),
+    ]);
+
+    let result = evaluator.resolve_call(func, &[arg]);
+    let ret = match result {
+        CallResult::Success(ret) => ret,
+        other => panic!("Expected success, got {other:?}"),
+    };
+
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    assert_eq!(
+        ret, expected,
+        "Under exactOptionalPropertyTypes, explicit `| undefined` from `b?: number | undefined` \
+         must be preserved in the inferred index-signature value type. \
+         Expected `string | number | undefined`, got TypeId({ret:?})"
+    );
+}
+
+/// Without `exactOptionalPropertyTypes`, the same call should infer
+/// `T = string | number` (the synthetic optional `| undefined` is stripped),
+/// matching tsc's behavior under default settings.
+#[test]
+fn test_no_eopt_strips_optional_undefined_in_index_signature_inference() {
+    let interner = TypeInterner::new();
+    interner.set_exact_optional_property_types(false);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_name = interner.intern_string("T");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let param_obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: t_type,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let func = interner.function(FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param_obj,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let arg = interner.object(vec![
+        PropertyInfo::opt(a_name, TypeId::STRING),
+        PropertyInfo::opt(b_name, number_or_undefined),
+    ]);
+
+    let result = evaluator.resolve_call(func, &[arg]);
+    let ret = match result {
+        CallResult::Success(ret) => ret,
+        other => panic!("Expected success, got {other:?}"),
+    };
+
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(
+        ret, expected,
+        "Without exactOptionalPropertyTypes, the synthetic optional `| undefined` is stripped. \
+         Expected `string | number`, got TypeId({ret:?})"
+    );
+}
