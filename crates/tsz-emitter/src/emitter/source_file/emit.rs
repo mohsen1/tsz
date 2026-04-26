@@ -1619,6 +1619,18 @@ impl<'a> Printer<'a> {
         }
 
         // Insert hoisted temp declarations (for-of iterator lowering + assignment destructuring).
+        // In CommonJS module mode, these `var` declarations belong BEFORE the
+        // `Object.defineProperty(exports, "__esModule", { value: true })` preamble and
+        // any `exports.X = void 0;` initializations to match tsc layout. The CJS preamble
+        // path captures the pre-preamble offset in `cjs_destr_hoist_byte_offset`; when set,
+        // route hoisted temps through that position instead of the post-preamble
+        // `hoisted_var_byte_offset`.
+        let (hoist_byte_offset, hoist_line) = if self.ctx.is_commonjs() {
+            (self.cjs_destr_hoist_byte_offset, self.cjs_destr_hoist_line)
+        } else {
+            (hoisted_var_byte_offset, hoisted_var_line)
+        };
+
         let mut ref_vars = Vec::new();
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
         ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
@@ -1626,13 +1638,13 @@ impl<'a> Printer<'a> {
         if !ref_vars.is_empty() {
             let var_decl = format!("var {};", ref_vars.join(", "));
             self.writer
-                .insert_line_at(hoisted_var_byte_offset, hoisted_var_line, &var_decl);
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
         }
 
         if !self.hoisted_assignment_value_temps.is_empty() {
             let var_decl = format!("var {};", self.hoisted_assignment_value_temps.join(", "));
             self.writer
-                .insert_line_at(hoisted_var_byte_offset, hoisted_var_line, &var_decl);
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
         }
 
         // Insert CJS destructuring export temps before the __esModule marker.
