@@ -79,6 +79,10 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
   --role="roles/iam.serviceAccountUser" >/dev/null
 
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/run.viewer" >/dev/null
+
 # Cache access for scripts/ci/gcp-cache.sh.
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
@@ -98,8 +102,11 @@ case "$BUILD_MODE" in
       --tag="$IMAGE_TAG" \
       --timeout=3600s
     ;;
+  skip)
+    echo "Skipping image build; reusing ${IMAGE_TAG}"
+    ;;
   *)
-    echo "unsupported BUILD_MODE=${BUILD_MODE}; use local or cloudbuild" >&2
+    echo "unsupported BUILD_MODE=${BUILD_MODE}; use local, cloudbuild, or skip" >&2
     exit 2
     ;;
 esac
@@ -150,6 +157,7 @@ spec:
               owner: ${owner}
               runnerScope: repo
               repos: ${repo_name}
+              labels: ${RUNNER_LABELS}
               targetWorkflowQueueLength: "${TARGET_QUEUE_LENGTH}"
             authenticationRef:
               name: github-trigger-auth
