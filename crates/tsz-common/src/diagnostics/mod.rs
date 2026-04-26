@@ -291,4 +291,198 @@ mod tests {
         assert_eq!(related.length, 5);
         assert_eq!(related.message_text, "see also");
     }
+
+    // =========================================================================
+    // is_parser_grammar_diagnostic / is_js_grammar_diagnostic
+    //
+    // Lock the half-open ranges (1000..2000) and (8000..9000) — these are the
+    // exact boundaries the CLI driver and LSP rely on to bucket parser/grammar
+    // diagnostics for emit policy and stderr formatting.
+    // =========================================================================
+
+    #[test]
+    fn is_parser_grammar_diagnostic_covers_inclusive_lower_bound() {
+        assert!(is_parser_grammar_diagnostic(1000));
+        assert!(is_parser_grammar_diagnostic(1001));
+    }
+
+    #[test]
+    fn is_parser_grammar_diagnostic_covers_typical_codes() {
+        // TS1005 ("X expected"), TS1109 ("Expression expected"), TS1128, TS1434.
+        assert!(is_parser_grammar_diagnostic(1005));
+        assert!(is_parser_grammar_diagnostic(1109));
+        assert!(is_parser_grammar_diagnostic(1128));
+        assert!(is_parser_grammar_diagnostic(1434));
+        assert!(is_parser_grammar_diagnostic(1999));
+    }
+
+    #[test]
+    fn is_parser_grammar_diagnostic_excludes_exclusive_upper_bound() {
+        assert!(!is_parser_grammar_diagnostic(2000));
+        assert!(!is_parser_grammar_diagnostic(2001));
+    }
+
+    #[test]
+    fn is_parser_grammar_diagnostic_excludes_codes_below_range() {
+        assert!(!is_parser_grammar_diagnostic(0));
+        assert!(!is_parser_grammar_diagnostic(999));
+    }
+
+    #[test]
+    fn is_parser_grammar_diagnostic_excludes_semantic_and_js_grammar_codes() {
+        // Semantic (TS2xxx-TS7xxx) and JS-grammar (TS8xxx) codes are out of range.
+        assert!(!is_parser_grammar_diagnostic(2322)); // assignability
+        assert!(!is_parser_grammar_diagnostic(2345)); // call argument mismatch
+        assert!(!is_parser_grammar_diagnostic(7053)); // implicit any index
+        assert!(!is_parser_grammar_diagnostic(8000));
+        assert!(!is_parser_grammar_diagnostic(9000));
+        assert!(!is_parser_grammar_diagnostic(u32::MAX));
+    }
+
+    #[test]
+    fn is_js_grammar_diagnostic_covers_inclusive_lower_bound() {
+        assert!(is_js_grammar_diagnostic(8000));
+        assert!(is_js_grammar_diagnostic(8001));
+    }
+
+    #[test]
+    fn is_js_grammar_diagnostic_covers_typical_codes() {
+        // TS8002, TS8005, TS8006 are emitted for JS-only syntactic constructs.
+        assert!(is_js_grammar_diagnostic(8002));
+        assert!(is_js_grammar_diagnostic(8005));
+        assert!(is_js_grammar_diagnostic(8500));
+        assert!(is_js_grammar_diagnostic(8999));
+    }
+
+    #[test]
+    fn is_js_grammar_diagnostic_excludes_exclusive_upper_bound() {
+        assert!(!is_js_grammar_diagnostic(9000));
+        assert!(!is_js_grammar_diagnostic(9001));
+    }
+
+    #[test]
+    fn is_js_grammar_diagnostic_excludes_codes_below_range() {
+        assert!(!is_js_grammar_diagnostic(0));
+        assert!(!is_js_grammar_diagnostic(7999));
+    }
+
+    #[test]
+    fn is_js_grammar_diagnostic_excludes_parser_and_semantic_codes() {
+        // The two helpers MUST be disjoint — a parser-grammar code is never a
+        // JS-grammar code (and vice versa). Lock that contract.
+        assert!(!is_js_grammar_diagnostic(1005));
+        assert!(!is_js_grammar_diagnostic(1999));
+        assert!(!is_js_grammar_diagnostic(2322));
+        assert!(!is_js_grammar_diagnostic(u32::MAX));
+        assert!(!is_parser_grammar_diagnostic(8005));
+    }
+
+    // =========================================================================
+    // Diagnostic::error simple constructor
+    //
+    // Locks the basic field initialization for the convenience constructor.
+    // =========================================================================
+
+    #[test]
+    fn diagnostic_error_constructor_sets_fields_and_empty_related() {
+        let diagnostic = Diagnostic::error("file.ts", 7, 4, "boom", 9001);
+        assert_eq!(diagnostic.category, DiagnosticCategory::Error);
+        assert_eq!(diagnostic.code, 9001);
+        assert_eq!(diagnostic.file, "file.ts");
+        assert_eq!(diagnostic.start, 7);
+        assert_eq!(diagnostic.length, 4);
+        assert_eq!(diagnostic.message_text, "boom");
+        assert!(diagnostic.related_information.is_empty());
+    }
+
+    #[test]
+    fn diagnostic_error_constructor_accepts_string_and_str_via_into() {
+        // The `impl Into<String>` arms accept both `&str` and `String` callers
+        // — verify both work without surprises.
+        let from_str = Diagnostic::error("file.ts", 0, 1, "literal", 1);
+        assert_eq!(from_str.message_text, "literal");
+
+        let from_string = Diagnostic::error(
+            String::from("owned.ts"),
+            0,
+            1,
+            String::from("owned message"),
+            2,
+        );
+        assert_eq!(from_string.file, "owned.ts");
+        assert_eq!(from_string.message_text, "owned message");
+    }
+
+    // =========================================================================
+    // format_message: ${...} placeholder normalization
+    //
+    // Lock the inner `normalize_template_placeholder_spacing` behaviour: when
+    // an arg contains a TS-style template-literal placeholder `${ ... }`,
+    // surrounding whitespace inside the braces is stripped so the substituted
+    // type display matches tsc's compact rendering. Args without `${` are
+    // pass-through; nested braces are tracked by depth.
+    // =========================================================================
+
+    #[test]
+    fn format_message_passes_through_arg_without_template_placeholder() {
+        // No `${` -> arg is substituted byte-for-byte (including its own braces).
+        let formatted = format_message("got {0}", &["plain {value}"]);
+        assert_eq!(formatted, "got plain {value}");
+    }
+
+    #[test]
+    fn format_message_strips_whitespace_inside_template_placeholder() {
+        let formatted = format_message("got {0}", &["${  number  }"]);
+        assert_eq!(formatted, "got ${number}");
+    }
+
+    #[test]
+    fn format_message_strips_only_outer_whitespace_in_template_placeholder() {
+        // Internal whitespace between tokens is preserved; only leading after
+        // `${` and trailing before `}` are stripped.
+        let formatted = format_message("got {0}", &["${  string | number  }"]);
+        assert_eq!(formatted, "got ${string | number}");
+    }
+
+    #[test]
+    fn format_message_preserves_nested_braces_in_template_placeholder() {
+        // `${ {a: number} }` should yield `${{a: number}}` — the inner `{...}`
+        // is balanced by depth counting and not mistaken for the placeholder
+        // close.
+        let formatted = format_message("got {0}", &["${ {a: number} }"]);
+        assert_eq!(formatted, "got ${{a: number}}");
+    }
+
+    #[test]
+    fn format_message_handles_multiple_template_placeholders_in_one_arg() {
+        let formatted = format_message("x: {0}", &["before ${ first } middle ${  second  } after"]);
+        assert_eq!(formatted, "x: before ${first} middle ${second} after");
+    }
+
+    #[test]
+    fn format_message_normalizes_each_arg_independently() {
+        let formatted = format_message("{0} -> {1}", &["${  source  }", "plain {x}"]);
+        assert_eq!(formatted, "${source} -> plain {x}");
+    }
+
+    #[test]
+    fn format_message_handles_unterminated_template_placeholder_gracefully() {
+        // No closing `}` — function consumes to end without panicking and
+        // emits the (trimmed) inner content followed by a synthesized `}`.
+        let formatted = format_message("got {0}", &["prefix ${ unterminated"]);
+        assert_eq!(formatted, "got prefix ${unterminated}");
+    }
+
+    #[test]
+    fn format_message_handles_empty_template_placeholder() {
+        let formatted = format_message("got {0}", &["${}"]);
+        assert_eq!(formatted, "got ${}");
+    }
+
+    #[test]
+    fn format_message_dollar_without_brace_is_literal() {
+        // A bare `$` not followed by `{` is passed through as-is.
+        let formatted = format_message("got {0}", &["price: $5"]);
+        assert_eq!(formatted, "got price: $5");
+    }
 }
