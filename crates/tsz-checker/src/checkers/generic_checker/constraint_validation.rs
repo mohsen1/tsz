@@ -76,6 +76,27 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Failed instantiation expressions (`typeof fn<TArgs>` where `TArgs`
+                // do not match any signature's type-parameter arity) are treated by
+                // tsc as `errorType`, which then fails the surrounding type-parameter
+                // constraint check and triggers TS2344 — in addition to the TS2635
+                // emitted at the instantiation site. Match that behavior.
+                //
+                // The Application path further down would otherwise defer constraint
+                // checking for any `Application(TypeQuery, args)` whose constraint is
+                // not generic-indexed-access shaped, dropping TS2344 in this case.
+                if self.is_failed_typeof_instantiation_arg(type_arg) {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            constraint_resolved,
+                            arg_idx,
+                        );
+                    }
+                    continue;
+                }
+
                 // When the type argument contains type parameters, we generally skip
                 // constraint checking (deferred to instantiation time). However, when
                 // the type arg IS a bare type parameter, check its base constraint
@@ -1722,5 +1743,58 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Return `true` when `type_arg` is the type of an instantiation expression
+    /// `typeof fn<TArgs>` whose `TArgs` do not match the type-parameter arity
+    /// of any call/construct signature on the underlying function. Such
+    /// expressions also raise TS2635 at the instantiation site; tsc treats the
+    /// resulting type as `errorType`, which then fails any non-trivial
+    /// type-parameter constraint check (TS2344).
+    ///
+    /// Implementation note: the Application produced by the typeof-instantiation
+    /// path (`type_node_advanced.rs`) wraps a `TypeQuery(SymbolRef)` as the
+    /// base, which only yields callable signatures after evaluation through
+    /// `TypeEnvironment`. Generic-type-alias / class / interface references use
+    /// a `Lazy(DefId)` base instead, so we filter those out before evaluating.
+    fn is_failed_typeof_instantiation_arg(&mut self, type_arg: TypeId) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some((base, args)) = query::application_base_and_args(db, type_arg) else {
+            return false;
+        };
+
+        // Generic-type-reference Applications (`Foo<X>` for a type alias /
+        // class / interface) use a `Lazy(DefId)` / `Recursive` / `BoundParameter`
+        // base. Their arity mismatches are reported elsewhere (TS2305 / TS2558)
+        // — not the typeof-instantiation flow.
+        if query::is_named_type_reference(db, base) {
+            return false;
+        }
+
+        let num_args = args.len();
+        // Evaluate the base through the type environment so `TypeQuery(sym)`
+        // resolves to the underlying function/constructor type. The evaluation
+        // path is necessary — `get_callable_shape_for_type` does not look
+        // through `TypeQuery` itself — but we limit it to typeof-instantiation
+        // shapes (filtered above) so unrelated assignability checks are not
+        // disturbed.
+        let resolved = self.resolve_lazy_type(base);
+        let resolved = self.evaluate_type_for_assignability(resolved);
+        let db = self.ctx.types.as_type_database();
+        let Some(shape) =
+            crate::query_boundaries::common::get_callable_shape_for_type(db, resolved)
+        else {
+            return false;
+        };
+
+        let call_match = shape
+            .call_signatures
+            .iter()
+            .any(|s| s.type_params.len() == num_args);
+        let construct_match = shape
+            .construct_signatures
+            .iter()
+            .any(|s| s.type_params.len() == num_args);
+        !(call_match || construct_match)
     }
 }

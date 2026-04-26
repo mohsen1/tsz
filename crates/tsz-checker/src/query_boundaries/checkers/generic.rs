@@ -348,3 +348,20 @@ pub(crate) fn typeof_instantiation_arg_count(
     tsz_solver::visitor::type_query_symbol(db, base)?;
     Some(args.len())
 }
+
+/// Get `(base, args)` for a generic-type application, or `None` if `type_id`
+/// is not an `Application` type.
+pub(crate) fn application_base_and_args(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(TypeId, Vec<TypeId>)> {
+    tsz_solver::type_queries::extended::get_application_info(db, type_id)
+}
+
+/// Returns `true` for named-type references (`Lazy(DefId)`, `Recursive`, or
+/// `BoundParameter`). These appear as the base of `Application` types when the
+/// application is a generic-type instantiation (`Foo<X>`) rather than an
+/// instantiation expression (`typeof fn<X>`).
+pub(crate) fn is_named_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_type_reference(db, type_id)
+}

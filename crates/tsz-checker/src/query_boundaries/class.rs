@@ -256,9 +256,16 @@ pub(crate) fn should_report_own_member_type_mismatch(
 /// Check if a TS2416 incompatibility is caused solely by a missing type predicate
 /// that tsc would infer from the method body.
 ///
-/// tsc infers type predicates for methods without explicit return type annotations.
-/// Since we don't support type predicate inference, suppress the diagnostic when the
-/// only difference between the source and target signatures is the type predicate.
+/// tsc infers type predicates for methods without explicit return type annotations
+/// (TS 5.5+ inferred type predicates). That inference only ever produces a
+/// parameter predicate (`x is T`) — `this is T` predicates are never inferred
+/// from a method body. So the suppression below is restricted to parameter
+/// predicates: a `this is T` mismatch must always be reported as TS2416 because
+/// tsc would also report it.
+///
+/// Since we don't implement type predicate inference, suppress the diagnostic
+/// when the only difference between the source and target signatures is a
+/// parameter type predicate that tsc would have inferred.
 fn is_type_predicate_inference_suppressed(
     checker: &CheckerState<'_>,
     source: TypeId,
@@ -266,8 +273,16 @@ fn is_type_predicate_inference_suppressed(
     node_idx: NodeIndex,
 ) -> bool {
     // Get target function shape and check for type predicate
-    let target_has_predicate = get_type_predicate_from_signature(checker, target).is_some();
-    if !target_has_predicate {
+    let Some(target_predicate) = get_type_predicate_from_signature(checker, target) else {
+        return false;
+    };
+
+    // tsc never infers `this is T` predicates from method bodies, so a `this`
+    // predicate target must always emit TS2416.
+    if matches!(
+        target_predicate.target,
+        tsz_solver::types::TypePredicateTarget::This
+    ) {
         return false;
     }
 

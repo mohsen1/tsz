@@ -154,6 +154,60 @@ e as ErrAlias<string>;
 }
 
 #[test]
+fn ts2344_failed_typeof_instantiation_emits_constraint_diagnostic() {
+    // `typeof fn<TArgs>` is an instantiation expression. When TArgs do not
+    // match any signature's type-parameter arity, tsc emits TS2635 at the
+    // instantiation site AND TS2344 at the surrounding type-argument position
+    // because the instantiation result is treated as errorType which does
+    // not satisfy the declared type-parameter constraint.
+    //
+    // Mirrors `compiler/instantiationExpressionErrorNoCrash.ts` without
+    // depending on lib.d.ts (which the unit-test pipeline disables).
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = T;
+declare const createCacheReducer: <N extends string, QR>(q: QR) => QR;
+type Cache<QR> = {
+    queries: {
+        [QK in keyof QR]: RT<typeof createCacheReducer<QR>>;
+    };
+};
+"#,
+    );
+
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let ts2635 = codes.iter().filter(|&&c| c == 2635).count();
+    let ts2344 = codes.iter().filter(|&&c| c == 2344).count();
+    assert_eq!(
+        ts2635, 1,
+        "Expected one TS2635 at the instantiation expression, got diags: {diags:?}"
+    );
+    assert_eq!(
+        ts2344, 1,
+        "Expected one TS2344 against the callable type-parameter constraint, got diags: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2344_valid_typeof_instantiation_does_not_emit_constraint_diagnostic() {
+    // Sanity check: a *successful* typeof-instantiation expression must not
+    // trigger TS2344 against a callable constraint. Use a concrete type arg
+    // to keep the assertion focused on the new arity check.
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = T;
+declare const createReducer: <S>(s: S) => S;
+type R = RT<typeof createReducer<string>>;
+"#,
+    );
+    let ts2344 = diags.iter().filter(|d| d.code == 2344).count();
+    assert_eq!(
+        ts2344, 0,
+        "Successful typeof-instantiation must not emit TS2344, got diags: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2352_array_assertion_anchors_first_excess_property() {
     let source = r#"
 <{ id: number; }[]>[{ foo: "s" }];
@@ -1695,6 +1749,52 @@ class Bar extends Foo {
         "Expected no TS2416 for compatible override, got: {:?}",
         ts2416.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn ts2416_this_predicate_inheritance_not_suppressed() {
+    // Regression for typePredicateInherit.ts: tsc never infers `this is T`
+    // predicates from a method body, so a class method without an explicit
+    // return type annotation that happens to return `boolean` must NOT be
+    // suppressed when the interface (or base class) it satisfies declares a
+    // `this is X` predicate. tsc reports TS2416 for each such mismatch.
+    let diags = check_source_diagnostics(
+        r#"
+interface A {
+  method1(): this is { a: 1 };
+  method2(): boolean;
+  method3(): this is { a: 1 };
+}
+class B implements A {
+  method1() { }
+  method2() { }
+  method3() { return true; }
+}
+class C {
+  method1(): this is { a: 1 } { return true; }
+  method3(): this is { a: 1 } { return true; }
+}
+class D extends C {
+  method1(): void { }
+  method3(): boolean { return true; }
+}
+"#,
+    );
+    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    let messages: Vec<_> = ts2416.iter().map(|d| &d.message_text).collect();
+    assert_eq!(
+        ts2416.len(),
+        5,
+        "Expected 5 TS2416 (B.method1/2/3 + D.method1/3), got: {messages:?}"
+    );
+    for name in ["method1", "method2", "method3"] {
+        assert!(
+            ts2416
+                .iter()
+                .any(|d| d.message_text.contains(&format!("Property '{name}'"))),
+            "Expected TS2416 mentioning Property '{name}', got: {messages:?}"
+        );
+    }
 }
 
 #[test]

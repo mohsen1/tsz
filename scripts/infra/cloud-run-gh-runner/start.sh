@@ -7,10 +7,12 @@ set -Eeuo pipefail
 RUNNER_LABELS="${RUNNER_LABELS:-tsz-cloud-run}"
 RUNNER_GROUP="${RUNNER_GROUP:-Default}"
 RUNNER_PREFIX="${RUNNER_PREFIX:-cloud-run}"
-RUNNER_SUFFIX="${K_REVISION:-rev}-${HOSTNAME:-host}"
+RUNNER_UUID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null | tr -d '-' | cut -c1-12 || date +%s%N)"
+RUNNER_SUFFIX="${RUNNER_UUID}"
 RUNNER_NAME="${RUNNER_NAME:-${RUNNER_PREFIX}-${RUNNER_SUFFIX}}"
 GITHUB_REPO_URL="https://github.com/${GITHUB_REPO}"
 RUNNER_DIR="${RUNNER_DIR:-/home/runner}"
+export DISABLE_RUNNER_UPDATE="${DISABLE_RUNNER_UPDATE:-1}"
 
 cd "$RUNNER_DIR"
 
@@ -20,7 +22,6 @@ cleanup() {
 }
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
-trap 'cleanup; exit 0' EXIT
 
 if [[ -f .runner ]]; then
   ./config.sh remove --unattended --pat "${GITHUB_TOKEN}" || true
@@ -35,8 +36,7 @@ echo "Registering GitHub runner ${RUNNER_NAME} for ${GITHUB_REPO_URL} labels=${R
   --runnergroup "${RUNNER_GROUP}" \
   --labels "${RUNNER_LABELS}" \
   --work /home/runner/_work \
-  --ephemeral \
-  --replace
+  --ephemeral
 
 ./run.sh &
 wait $!
