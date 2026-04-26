@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-tagged-template-overload-arity-contextual`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1326
+- **Status**: ready
 - **Workstream**: Conformance / TS2345 false positive
 
 ## Intent
