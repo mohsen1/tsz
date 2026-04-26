@@ -16,7 +16,6 @@
 #![allow(dead_code)]
 #![allow(clippy::collapsible_if)]
 #![allow(clippy::doc_markdown)]
-#![allow(clippy::needless_return)]
 #![allow(clippy::uninlined_format_args)]
 
 extern crate self as tsz_checker;
