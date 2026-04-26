@@ -1752,3 +1752,83 @@ var k = fun((coin < 0.5 ? (x => { x<number>(undefined); return x; }) : (x => und
         "Conditional callback retry should not degrade into outer TS2769, got diagnostics={diagnostics:?}"
     );
 }
+
+/// Mirrors `compiler/discriminantPropertyInference.ts`: when an object literal
+/// completely OMITS a discriminator property, narrowing must eliminate union
+/// members that *require* the property, leaving only members where the
+/// property is optional. Without this, the callback `n` falls back to implicit
+/// any (TS7006) under `noImplicitAny`.
+#[test]
+fn test_discriminant_property_inference_omitted_discriminator_narrows_to_optional_arm() {
+    let source = r#"
+type DiscriminatorTrue = {
+    disc: true;
+    cb: (x: string) => void;
+};
+
+type DiscriminatorFalse = {
+    disc?: false;
+    cb: (x: number) => void;
+};
+
+declare function f(options: DiscriminatorTrue | DiscriminatorFalse): any;
+
+f({
+    cb: n => n.toFixed()
+});
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&7006),
+        "Omitted-discriminator narrowing should give `n` a contextual `number` type \
+         from DiscriminatorFalse; got TS7006: {diagnostics:?}"
+    );
+}
+
+/// Mirrors `compiler/indirectDiscriminantAndExcessProperty.ts`: when the literal
+/// supplies a discriminator slot with a NON-unit value (e.g. `type: foo1` where
+/// `foo1: string`), narrowing must NOT collapse to a single arm. The TS2322
+/// diagnostic must still report the full union (`"foo" | "bar"`) rather than
+/// an arbitrarily-picked arm.
+#[test]
+fn test_dynamic_discriminator_value_does_not_narrow_union() {
+    let source = r#"
+type Blah =
+    | { type: "foo", abc: string }
+    | { type: "bar", xyz: number, extra: any };
+
+declare function thing(blah: Blah): void;
+
+let foo1 = "foo";
+thing({
+    type: foo1,
+    abc: "hello!"
+});
+"#;
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    // The diagnostic should mention the full union target type, not the
+    // single narrowed arm. We don't depend on exact code (TS2322 vs TS2353):
+    // we only require that no diagnostic mentions a single narrowed arm.
+    for d in &diagnostics {
+        assert!(
+            !d.message_text.contains("type '\"foo\"'")
+                && !d.message_text.contains("type '\"bar\"'"),
+            "Dynamic discriminator (`type: foo1`) must not collapse the union to a \
+             single arm in diagnostics; got: {d:?}"
+        );
+    }
+}
