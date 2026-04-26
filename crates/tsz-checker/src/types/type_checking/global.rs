@@ -140,20 +140,13 @@ impl<'a> CheckerState<'a> {
         // Pre-compute type parameters for commonly-used generic lib types.
         // To reduce startup overhead, only prewarm symbols referenced by this file.
         // Unreferenced symbols are still resolved lazily through normal lookup paths.
-        let mut referenced_type_names = FxHashSet::default();
-        for idx in 0..self.ctx.arena.len() {
-            let node_idx = NodeIndex(idx as u32);
-            let Some(node) = self.ctx.arena.get(node_idx) else {
-                continue;
-            };
-            if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                && let Some(identifier) = self.ctx.arena.get_identifier(node)
-            {
-                referenced_type_names.insert(identifier.escaped_text.clone());
-            }
-        }
-
-        for type_name in &[
+        //
+        // PERF: Scan once, comparing each identifier against the small target set.
+        // Avoids cloning every identifier's escaped_text into a HashSet just to
+        // intersect with ~33 lib names. For files with thousands of identifiers
+        // (lib.d.ts, large user code), this saves a per-identifier String allocation
+        // on the file-checker startup path.
+        const PRIME_LIB_TYPE_NAMES: &[&str] = &[
             "ReadonlyArray",
             "Promise",
             "PromiseLike",
@@ -187,10 +180,29 @@ impl<'a> CheckerState<'a> {
             "InstanceType",
             "ThisParameterType",
             "OmitThisParameter",
-        ] {
-            if referenced_type_names.contains(*type_name) {
-                self.prime_lib_type_params(type_name);
+        ];
+        let target_names: FxHashSet<&'static str> = PRIME_LIB_TYPE_NAMES.iter().copied().collect();
+        let mut referenced_targets: smallvec::SmallVec<[&'static str; 8]> =
+            smallvec::SmallVec::new();
+        let arena_len = self.ctx.arena.len();
+        for idx in 0..arena_len {
+            if referenced_targets.len() == PRIME_LIB_TYPE_NAMES.len() {
+                break;
             }
+            let node_idx = NodeIndex(idx as u32);
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(identifier) = self.ctx.arena.get_identifier(node)
+                && let Some(&name) = target_names.get(identifier.escaped_text.as_str())
+                && !referenced_targets.contains(&name)
+            {
+                referenced_targets.push(name);
+            }
+        }
+        for &name in &referenced_targets {
+            self.prime_lib_type_params(name);
         }
 
         // The Array type from lib.d.ts is a Callable with instance methods as properties
