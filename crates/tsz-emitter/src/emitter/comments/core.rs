@@ -229,3 +229,7 @@ pub fn get_leading_comment_ranges(text: &str, pos: usize) -> Vec<CommentRange> {
 
     comments
 }
+
+#[cfg(test)]
+#[path = "../../../tests/comments_core.rs"]
+mod tests;
