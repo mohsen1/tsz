@@ -468,15 +468,48 @@ impl<'a> CheckerContext<'a> {
     // These helpers eliminate the duplicated `try_borrow_mut` blocks that were
     // scattered across lib resolution, symbol-type resolution, and augmentation
     // merge paths.
+    //
+    // **Visibility on borrow failure.** The two environments are owned through
+    // `RefCell`s, so registration can race with another mutable borrow elsewhere
+    // in the checker. The `borrow_envs_for_register` helper unifies the
+    // try_borrow_mut pattern across registration sites and traces every failed
+    // borrow with the registration `name`, so silent disappearance of a
+    // registration becomes observable in logs / structured-error output.
+    // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
+    fn with_envs_for_register(
+        &self,
+        name: &'static str,
+        mut f: impl FnMut(&mut crate::query_boundaries::common::TypeEnvironment),
+    ) {
+        match self.type_env.try_borrow_mut() {
+            Ok(mut env) => f(&mut env),
+            Err(e) => {
+                tracing::warn!(
+                    register = name,
+                    target_env = "type_env",
+                    error = ?e,
+                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                );
+            }
+        }
+        match self.type_environment.try_borrow_mut() {
+            Ok(mut env) => f(&mut env),
+            Err(e) => {
+                tracing::warn!(
+                    register = name,
+                    target_env = "type_environment",
+                    error = ?e,
+                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                );
+            }
+        }
+    }
 
     /// Register a non-generic definition body in **both** type environments.
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+        self.with_envs_for_register("insert_def", |env| {
             env.insert_def(def_id, body);
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.insert_def(def_id, body);
-        }
+        });
     }
 
     /// Register a generic definition body (with type parameters) in **both**
@@ -487,12 +520,9 @@ impl<'a> CheckerContext<'a> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+        self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.insert_def_with_params(def_id, body, params);
-        }
+        });
     }
 
     /// Register a definition body in **both** type environments, choosing
@@ -513,12 +543,9 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a class instance type in **both** type environments.
     pub fn register_class_instance_in_envs(&self, def_id: DefId, instance_type: TypeId) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+        self.with_envs_for_register("insert_class_instance_type", |env| {
             env.insert_class_instance_type(def_id, instance_type);
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.insert_class_instance_type(def_id, instance_type);
-        }
+        });
     }
 
     /// Register a class `extends` relationship in **both** type environments.
@@ -529,12 +556,9 @@ impl<'a> CheckerContext<'a> {
     /// returns `false` for user-defined class hierarchies during narrowing, causing
     /// `D1 & C1` intersections instead of the correct `D1` narrowed type.
     pub fn register_class_extends_in_envs(&self, def_id: DefId, parent_def_id: DefId) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+        self.with_envs_for_register("register_class_extends", |env| {
             env.register_class_extends(def_id, parent_def_id);
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.register_class_extends(def_id, parent_def_id);
-        }
+        });
     }
 
     /// Register an augmented definition body in **both** type environments.
@@ -560,12 +584,9 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
-            apply(&mut env, def_id, augmented, is_class);
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            apply(&mut env, def_id, augmented, is_class);
-        }
+        self.with_envs_for_register("register_augmented_def", |env| {
+            apply(env, def_id, augmented, is_class);
+        });
     }
 
     /// Register a `DefKind` for a `DefId` in **both** type environments.
@@ -578,12 +599,9 @@ impl<'a> CheckerContext<'a> {
     /// `DefKind` to `type_env`, leaving `type_environment` without the mapping
     /// until the full checker walk populated it incidentally.
     fn register_def_kind_in_envs(&self, def_id: DefId, kind: tsz_solver::def::DefKind) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+        self.with_envs_for_register("insert_def_kind", |env| {
             env.insert_def_kind(def_id, kind);
-        }
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            env.insert_def_kind(def_id, kind);
-        }
+        });
     }
 
     /// Create a Lazy type reference from a symbol.
