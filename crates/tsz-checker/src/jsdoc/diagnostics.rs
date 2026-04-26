@@ -1939,6 +1939,21 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::diagnostics::diagnostic_codes;
 
+        // Suppress TS2304 when `name` matches an `@template` declaration on
+        // any JSDoc comment in the source file. tsc accepts class/function/
+        // typedef-level `@template T` as an in-scope type-parameter name for
+        // any JSDoc reference within the file, so we cannot flag a class
+        // method's `@param {T}` as "Cannot find name 'T'" when an earlier
+        // class-level `/** @template T */` declares it. This guard centralizes
+        // the cross-comment scope at the diagnostic emitter rather than
+        // threading template-name sets through every caller.
+        if self.is_js_file()
+            && Self::is_simple_type_name(name)
+            && self.source_file_declares_jsdoc_template_at(name, comment_pos)
+        {
+            return;
+        }
+
         let end = (comment_end as usize).min(source_text.len());
         let comment_range = &source_text[comment_pos as usize..end];
         let (start, length) = if let Some(offset) = comment_range.find(name) {
@@ -1966,6 +1981,109 @@ impl<'a> CheckerState<'a> {
         }
 
         self.error_cannot_find_name_at_position(name, start, length);
+    }
+
+    /// Return `true` if `name` matches an `@template` declaration whose
+    /// scope contains the reference at `ref_pos`.
+    ///
+    /// "Scope contains" means: the JSDoc comment carrying the `@template`
+    /// declaration is the leading comment of an AST node whose source
+    /// range covers `ref_pos`. This narrows the cross-comment lookup so a
+    /// class-level `@template T` covers references in its members'
+    /// JSDoc, but a standalone function's `@template T` does NOT cover
+    /// references in an unrelated standalone typedef elsewhere in the
+    /// file (which the conformance test
+    /// `jsdocTemplateConstructorFunction2.ts` legitimately expects to
+    /// emit TS2304 for).
+    ///
+    /// Implementation: walk all JSDoc comments and, for each one with an
+    /// `@template <name>` matching `name`, find the AST statement whose
+    /// `pos` is at or after the comment's `end` (the node the comment
+    /// leads). If `ref_pos` falls within that statement's source range,
+    /// the template is in scope.
+    pub(crate) fn source_file_declares_jsdoc_template_at(&self, name: &str, ref_pos: u32) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let source_text: &str = &sf.text;
+
+        // Strategy: find any top-level CLASS declaration whose source range
+        // contains `ref_pos`. If the class's leading JSDoc has
+        // `@template <name>`, that name is in scope for any reference
+        // within the class body (matching tsc's "class @template T is
+        // in scope for class member JSDoc" rule).
+        //
+        // Function- and typedef-level @template declarations are NOT
+        // file-wide: they only apply to their own JSDoc comment, which is
+        // already handled by the existing local-comment skip in
+        // `check_jsdoc_typedef_base_types` (lines 1605/1627). Suppressing
+        // those file-wide regresses tests like `jsdocTemplateConstructor
+        // Function2.ts` and `typedefTagTypeResolution.ts` where a
+        // standalone typedef legitimately fails to find a name declared
+        // by an unrelated function's `@template`.
+        for &stmt_idx in &sf.statements.nodes {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && stmt_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            {
+                continue;
+            }
+            // ref_pos must be inside the class's source range.
+            if !(ref_pos >= stmt_node.pos && ref_pos < stmt_node.end) {
+                continue;
+            }
+            // Find the class's leading JSDoc and check for @template <name>.
+            for comment in &sf.comments {
+                if !is_jsdoc_comment(comment, source_text) {
+                    continue;
+                }
+                if comment.end > stmt_node.pos {
+                    continue;
+                }
+                // Use the closest comment that immediately precedes the
+                // class — heuristic, but matches the leading-JSDoc convention.
+                // We accept any comment with `end <= stmt.pos` whose
+                // `@template <name>` matches.
+                let content = get_jsdoc_content(comment, source_text);
+                if Self::jsdoc_template_type_params(&content)
+                    .into_iter()
+                    .any(|(decl_name, _)| decl_name == name)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Backwards-compatible wrapper: when no `ref_pos` is available
+    /// (callers haven't been threaded through), use the legacy
+    /// file-wide check. This is intentionally narrower than the
+    /// fully-scoped `_at` variant — call sites should prefer the `_at`
+    /// version where the reference's source position is known.
+    pub(crate) fn source_file_declares_jsdoc_template(&self, name: &str) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let source_text: &str = &sf.text;
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, source_text);
+            for (decl_name, _is_const) in Self::jsdoc_template_type_params(&content) {
+                if decl_name == name {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Check whether a JSDoc type expression is a simple identifier name
