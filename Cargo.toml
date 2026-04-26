@@ -141,6 +141,7 @@ lto = "thin"
 # Used by cargo nextest in CI unit suite to cap peak LLVM memory.
 # debug=2 (inherited from dev) × codegen-units × concurrent jobs = OOM on 8-CPU runners.
 # Disabling debug info is the single largest memory win (~3-4× reduction in LLVM backend RSS).
+# CARGO_BUILD_JOBS is also memory-capped via scripts/ci/gcp-full-ci.sh.
 inherits = "dev"
 debug = false
 codegen-units = 8
