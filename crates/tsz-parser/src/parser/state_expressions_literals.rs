@@ -3849,6 +3849,31 @@ impl ParserState {
                         "Property assignment expected.",
                         diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
                     );
+                    // For object-literal terminators/separators (`,`, `}`, `;`, EOF), do NOT
+                    // consume the token. Consuming a `,` here causes us to synthesize a
+                    // SHORTHAND_PROPERTY_ASSIGNMENT with an empty name, which then prints
+                    // the source-text comma in the emitted output (e.g. `{ x: 0,, }` →
+                    // `{ x: 0,\n    ,, }`). Returning an empty Identifier without consuming
+                    // lets the outer object-literal loop see the separator and recover.
+                    if matches!(
+                        self.token(),
+                        SyntaxKind::CommaToken
+                            | SyntaxKind::CloseBraceToken
+                            | SyntaxKind::SemicolonToken
+                            | SyntaxKind::EndOfFileToken
+                    ) {
+                        return self.arena.add_identifier(
+                            SyntaxKind::Identifier as u16,
+                            start_pos,
+                            start_pos,
+                            IdentifierData {
+                                atom: self.scanner.interner_mut().intern(""),
+                                escaped_text: String::new(),
+                                original_text: None,
+                                type_arguments: None,
+                            },
+                        );
+                    }
                 }
 
                 // OPTIMIZATION: Capture atom for O(1) comparison
