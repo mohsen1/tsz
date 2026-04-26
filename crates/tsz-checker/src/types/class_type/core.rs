@@ -626,7 +626,12 @@ impl<'a> CheckerState<'a> {
                             .get(prop.initializer)
                             .is_some_and(|n| n.kind == SyntaxKind::ThisKeyword as u16);
                         let prev = self.ctx.preserve_literal_types;
+                        let prev_decl = self.ctx.use_declared_type_for_identifier;
                         self.ctx.preserve_literal_types = true;
+                        // Use the symbol's declared type for identifier initializers
+                        // so `class C { D = DEFAULT; }` (with `const DEFAULT: AB`)
+                        // inherits `AB`, not the flow-narrowed literal value 'A'.
+                        self.ctx.use_declared_type_for_identifier = true;
                         let init_type = if is_this_init {
                             self.ctx.types.this_type()
                         } else {
@@ -636,6 +641,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx.this_type_stack.pop();
                         }
                         self.ctx.preserve_literal_types = prev;
+                        self.ctx.use_declared_type_for_identifier = prev_decl;
                         let init_type = if init_type == TypeId::ANY
                             && self.has_accessor_modifier(&prop.modifiers)
                         {
@@ -655,7 +661,13 @@ impl<'a> CheckerState<'a> {
                         // `class Foo { name = "" }` → `name: string`.
                         // Readonly properties keep literal types:
                         // `class Foo { readonly tag = "x" }` → `tag: "x"`.
-                        if is_readonly {
+                        // Skip widening when the initializer is not a fresh
+                        // literal expression (e.g. `D = DEFAULT` where DEFAULT
+                        // is a typed identifier reference) — its type already
+                        // came from a declared annotation that should not be
+                        // widened, matching tsc's
+                        // getWidenedLiteralLikeTypeForContextualType.
+                        if is_readonly || !self.is_fresh_literal_expression(prop.initializer) {
                             init_type
                         } else {
                             self.widen_literal_type(init_type)

@@ -15,6 +15,30 @@ impl<'a> CheckerState<'a> {
         common_query::contains_lazy_or_recursive(self.ctx.types.as_type_database(), type_id)
     }
 
+    /// Returns true when the symbol's value declaration is a variable
+    /// declaration with an explicit type annotation (e.g. `const x: AB = ...`).
+    /// Used by class-property-initializer evaluation to decide whether the
+    /// declared type should override flow narrowing.
+    fn symbol_value_decl_has_explicit_type_annotation(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl = symbol.value_declaration;
+        if decl.is_none() {
+            return false;
+        }
+        let Some(decl_node) = self.ctx.arena.get(decl) else {
+            return false;
+        };
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_variable_declaration(decl_node)
+            .is_some_and(|var| var.type_annotation.is_some())
+    }
+
     /// Get the type of an identifier expression.
     ///
     /// This function resolves the type of an identifier by:
@@ -1206,6 +1230,19 @@ impl<'a> CheckerState<'a> {
                     preferred_cross_file_type,
                     request,
                 );
+            }
+
+            // Class property initializer context: when the symbol is a const
+            // (or other variable) with an explicit type annotation, return the
+            // declared type rather than the flow-narrowed type so the property
+            // inherits the const's annotation (e.g. `const X: AB = 'A'` → `AB`,
+            // not narrowed `'A'`). Matches tsc behavior.
+            if self.ctx.use_declared_type_for_identifier
+                && declared_type != TypeId::ANY
+                && declared_type != TypeId::ERROR
+                && self.symbol_value_decl_has_explicit_type_annotation(sym_id)
+            {
+                return declared_type;
             }
             // FIX: Preserve readonly and other type modifiers from declared_type.
             // When declared_type has modifiers like ReadonlyType, we must preserve them
