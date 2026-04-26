@@ -202,7 +202,12 @@ function loadBenchmarks() {
     } catch { return []; }
   })();
 
-  for (const loc of locations) {
+  // Fall back to the committed snapshot so the site always shows real data
+  // even when the CI GCS download hasn't run yet.
+  const snapshot = path.join(WEBSITE, "bench-snapshot.json");
+  const searchPaths = [...locations, snapshot];
+
+  for (const loc of searchPaths) {
     const data = readJsonIfExists(loc);
     if (data?.results) {
       console.log(`  Loaded benchmarks from ${path.relative(ROOT, loc)}`);
