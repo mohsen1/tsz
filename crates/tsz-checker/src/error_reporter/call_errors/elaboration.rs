@@ -43,7 +43,12 @@ impl<'a> CheckerState<'a> {
                         && self.is_assignable_to(candidate_keyof, param_type))
                         || self.format_type_for_assignability_message(param_type)
                             == self.format_type_for_assignability_message(candidate_keyof);
-                    if same_key_space {
+                    if same_key_space
+                        && query_common::type_has_displayable_name(
+                            self.ctx.types.as_type_database(),
+                            candidate_type,
+                        )
+                    {
                         let base = self.format_type_for_assignability_message(candidate_type);
                         return Some(format!("keyof {base}"));
                     }

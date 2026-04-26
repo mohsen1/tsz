@@ -1338,6 +1338,33 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::KeyOf(operand) => {
+                // For anonymous concrete object operands, evaluate `keyof` eagerly
+                // so diagnostics show the literal key union (e.g. `"x"`) instead
+                // of `keyof { x: number; }`. tsc only writes back `keyof <Name>`
+                // when the operand has a user-visible name; anonymous shapes are
+                // displayed as their evaluated `keyof` result.
+                //
+                // Skip:
+                //   - named objects (preserve `keyof Foo`),
+                //   - generic operands (a type parameter must remain visible),
+                //   - arrays/tuples (`keyof T[]` widens to `number | "length" | ...`
+                //     which is rarely useful in error text),
+                //   - intrinsics (same reason).
+                if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+                    self.interner.lookup(*operand)
+                {
+                    let shape = self.interner.object_shape(shape_id);
+                    if shape.symbol.is_none() {
+                        let evaluated =
+                            crate::evaluation::evaluate::evaluate_keyof(self.interner, *operand);
+                        // Guard against the evaluator returning the same KeyOf node
+                        // (e.g. when the operand cannot be reduced) — that would
+                        // recurse infinitely through `format`.
+                        if !matches!(self.interner.lookup(evaluated), Some(TypeData::KeyOf(_))) {
+                            return self.format(evaluated);
+                        }
+                    }
+                }
                 // tsc distributes `keyof` over union and intersection of non-structural types:
                 //   keyof (A | B)  →  keyof A & keyof B
                 //   keyof (A & B)  →  keyof A | keyof B

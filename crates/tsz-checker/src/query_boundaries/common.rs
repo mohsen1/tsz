@@ -393,6 +393,21 @@ pub(crate) fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bo
     tsz_solver::is_empty_object_type(db, type_id)
 }
 
+/// True when a type would render with a user-visible name (interface, class,
+/// type alias, type parameter, application, lazy ref, intrinsic, etc.). False
+/// for anonymous structural shapes like `{ p: number; q: string; }`. Used by
+/// diagnostic display to decide whether to keep `keyof <name>` form or fall
+/// back to the evaluated key union.
+pub(crate) fn type_has_displayable_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if let Some(shape) = object_shape_for_type(db, type_id) {
+        if shape.symbol.is_some() {
+            return true;
+        }
+        return db.get_display_alias(type_id).is_some();
+    }
+    db.lookup(type_id).is_some()
+}
+
 pub(crate) fn is_symbol_or_unique_symbol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_symbol_or_unique_symbol(db, type_id)
 }

@@ -460,6 +460,11 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
             # Pre-existing: checker context module aggregates project-wide state.
             "crates/tsz-checker/src/context/mod.rs",
+            # Bumped by the LiteralKeyof inference fix: the keyof-display
+            # branch in `contextual_keyof_parameter_display` now consults
+            # `query_common::type_has_displayable_name` so anonymous shapes
+            # fall through to the printer's eager `keyof { ... }` evaluation.
+            "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
         },
     ),
 ]
