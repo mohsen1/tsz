@@ -740,6 +740,25 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // Stop descending at AST kinds that break the "directly depends on"
+            // chain per the TypeScript spec. Type literals, function/constructor
+            // types, and mapped types wrap their inner type references inside
+            // structural members — references inside them are deferred and do
+            // NOT form a direct cycle with the surrounding alias.
+            //
+            // Mirrors `compiler/unionTypeWithRecursiveSubtypeReduction3.ts` and
+            // the legal cases in
+            // `conformance/types/typeAliases/directDependenceBetweenTypeAliases.ts`
+            // (e.g. `type T10 = { x: T10 } | { new(v: T10): string }`).
+            if matches!(
+                node.kind,
+                k if k == syntax_kind_ext::TYPE_LITERAL
+                    || k == syntax_kind_ext::FUNCTION_TYPE
+                    || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+                    || k == syntax_kind_ext::MAPPED_TYPE
+            ) {
+                continue;
+            }
             // A TYPE_REFERENCE with type arguments creates a generic
             // instantiation boundary — descend into its children only if the
             // ref itself isn't the chain target.

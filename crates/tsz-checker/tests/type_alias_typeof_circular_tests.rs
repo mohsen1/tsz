@@ -76,3 +76,28 @@ fn test_no_ts2456_when_typeof_self_referencing_var_is_value() {
         "Expected no TS2456 for merged value+type with typeof self, got: {codes:?}"
     );
 }
+
+/// Mirrors `compiler/unionTypeWithRecursiveSubtypeReduction3.ts`. When a
+/// `typeof X` alias's target variable has a UNION annotation whose recursive
+/// reference to the alias only appears in structurally-wrapped positions
+/// (e.g. `{ prop: T27 }`), tsc resolves the alias as an ordinary deferred
+/// recursive type and does NOT emit TS2456. The follow-up `var s: string = b`
+/// produces only TS2322. We must mirror this — emitting an extra TS2456 here
+/// turns a single-error test into a two-error failure.
+#[test]
+fn test_no_ts2456_when_typeof_target_has_union_with_structurally_wrapped_self_ref() {
+    let src = r#"
+        declare var a27: { prop: number } | { prop: T27 };
+        type T27 = typeof a27;
+
+        declare var b: T27;
+        var s: string = b;
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        !codes.contains(&2456),
+        "tsc emits no TS2456 when `typeof <var>` references a variable whose \
+         union annotation only references the alias inside structurally-wrapped \
+         union members (e.g. `{{ prop: T27 }}`); got: {codes:?}"
+    );
+}
