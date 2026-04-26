@@ -735,6 +735,12 @@ run_project_benchmark() {
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
         tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
     fi
+    local -a hyperfine_prepare_args=()
+    if [[ "${BENCH_COLD:-0}" == "1" ]]; then
+        local tsconfig_dir
+        tsconfig_dir="$(dirname "$tsconfig")"
+        hyperfine_prepare_args=(--prepare "find '${tsconfig_dir}' -name '*.tsbuildinfo' -delete 2>/dev/null; true")
+    fi
     if ! hyperfine \
         --warmup "$proj_warmup" \
         --min-runs "$proj_min" \
@@ -742,6 +748,7 @@ run_project_benchmark() {
         --style full \
         --ignore-failure \
         --export-json "$json_file" \
+        "${hyperfine_prepare_args[@]}" \
         -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
         -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null"; then
         local status="hyperfine error"
