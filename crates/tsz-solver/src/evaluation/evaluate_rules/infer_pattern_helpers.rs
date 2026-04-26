@@ -169,11 +169,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
+        // Cases (left side is the source signature, right side is the pattern
+        // `(...args: infer R)`):
+        //
+        // 1. `(...args: T)` — single rest param. Bind R = T directly.
+        // 2. `(a: A, b: B)` — only fixed params. Bind R = [A, B] (a tuple).
+        // 3. `(head: V, ...args: T)` — mixed fixed+rest. Build a variadic
+        //    tuple `[V, ...T]` (preserving each param's `rest` flag) and
+        //    recurse so `Length<R>` and tuple-traversal queries correctly
+        //    walk into the rest element.
         let source_tuple_or_array = if source_params.len() == 1 && source_params[0].rest {
             source_params[0].type_id
-        } else if source_params.iter().any(|param| param.rest) {
-            return false;
         } else {
+            // Build a tuple preserving each param's `rest` flag so variadic
+            // elements remain spreadable and `fixed_length()` traverses into
+            // them. This handles both the all-fixed case and the mixed
+            // fixed+rest case in one branch.
             let tuple_elems: Vec<TupleElement> = source_params
                 .iter()
                 .map(|p| TupleElement {

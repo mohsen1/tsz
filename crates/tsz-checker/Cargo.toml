@@ -240,6 +240,10 @@ name = "commonjs_module_export_alias_tests"
 path = "tests/commonjs_module_export_alias_tests.rs"
 
 [[test]]
+name = "conditional_infer_tests"
+path = "tests/conditional_infer_tests.rs"
+
+[[test]]
 name = "conformance_issues"
 path = "tests/conformance_issues.rs"
 
