@@ -32,6 +32,26 @@ impl<'a> CheckerState<'a> {
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
+        // PERF: when an earlier checker has already resolved this lib type,
+        // the merged TypeId is in `shared_lib_type_cache` and the canonical
+        // type params are in the project-shared `definition_store` (written
+        // via `cache_canonical_lib_type_params`). Short-circuit the entire
+        // multi-context interface merge in that case.
+        if let Some(ref shared) = self.ctx.shared_lib_type_cache
+            && let Some(entry) = shared.get(name)
+            && let Some(ty) = *entry
+        {
+            for lib_ctx in self.ctx.lib_contexts.iter() {
+                if let Some(per_lib_sym) = lib_ctx.binder.file_locals.get(name) {
+                    let def_id = self.ctx.get_canonical_lib_def_id(name, per_lib_sym);
+                    if let Some(params) = self.ctx.get_def_type_params(def_id) {
+                        return (Some(ty), params);
+                    }
+                    break;
+                }
+            }
+        }
+
         let factory = self.ctx.types.factory();
         let lib_contexts = &*self.ctx.lib_contexts;
 
@@ -203,6 +223,11 @@ impl<'a> CheckerState<'a> {
         // Merge global augmentations (declare global { interface X { ... } }).
         if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, lib_contexts) {
             lib_type_id = Some(merged);
+        }
+
+        // Mirror into the project-wide cache so other checkers can short-circuit.
+        if let Some(ref shared) = self.ctx.shared_lib_type_cache {
+            shared.insert(name.to_string(), lib_type_id);
         }
 
         (lib_type_id, first_params.unwrap_or_default())
