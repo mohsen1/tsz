@@ -53,6 +53,10 @@ mod tests;
 mod flags_tests;
 
 #[cfg(test)]
+#[path = "../../tests/base_tests.rs"]
+mod base_tests;
+
+#[cfg(test)]
 #[path = "../../tests/trailing_comma_tests.rs"]
 mod trailing_comma_tests;
 
