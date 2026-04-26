@@ -274,13 +274,22 @@ impl<'a> Printer<'a> {
         let prev_optional = self.ctx.flags.optional_chain_needs_parens;
         let prev_nullish = self.ctx.flags.nullish_coalescing_needs_parens;
         let prev_in_binary = self.ctx.flags.in_binary_operand;
+        // Likewise, clear the "self-parenthesize Function/Object literal"
+        // flag: the explicit source paren already disambiguates the IIFE
+        // (`(function(){})()`), so the inner FunctionExpression /
+        // ObjectLiteralExpression must not add another wrapping pair.
+        // Without this, `(<any>function foo() {})()` emits as
+        // `((function foo() {}))()` instead of `(function foo() {})()`.
+        let prev_paren_leftmost = self.ctx.flags.paren_leftmost_function_or_object;
         self.ctx.flags.optional_chain_needs_parens = false;
         self.ctx.flags.nullish_coalescing_needs_parens = false;
         self.ctx.flags.in_binary_operand = false;
+        self.ctx.flags.paren_leftmost_function_or_object = false;
         self.emit(paren.expression);
         self.ctx.flags.in_binary_operand = prev_in_binary;
         self.ctx.flags.optional_chain_needs_parens = prev_optional;
         self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+        self.ctx.flags.paren_leftmost_function_or_object = prev_paren_leftmost;
         self.write(")");
     }
 
