@@ -549,8 +549,100 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // If the current file references this target file via a JSDoc
+        // `typeof import(<spec>)` whose `<spec>` is rejected by tsc as
+        // unresolvable (e.g. an absolute `/...` path that has no matching
+        // ambient module), the program-level error is the resolution failure
+        // (TS2307/TS2792). Stacking a TS9006 about a "private name from
+        // <module>" on top of that just contradicts the prior error — tsc
+        // does not emit it. Detect this case by re-running the same
+        // unresolvable-specifier predicate the JSDoc diagnostic check uses.
+        if self.current_file_jsdoc_typeof_import_unresolvable_for_target(file_idx) {
+            return None;
+        }
+
         let module_specifier = self.module_specifier_for_file(file_idx)?;
         Some((referenced_name, module_specifier))
+    }
+
+    /// Returns true if the current file contains a JSDoc `@type {typeof
+    /// import("<spec>")}` whose `<spec>` is rejected by tsc as unresolvable
+    /// (rooted/absolute paths with no ambient module fallback) and that
+    /// specifier — via our resolver's basename probing — still happens to
+    /// land on `target_file_idx`. tsc emits TS2307/TS2792 for such
+    /// specifiers and intentionally suppresses follow-on diagnostics that
+    /// walk the (technically resolved) target file's private symbols.
+    fn current_file_jsdoc_typeof_import_unresolvable_for_target(
+        &self,
+        target_file_idx: u32,
+    ) -> bool {
+        let arena = self.ctx.arena;
+        let Some(sf) = arena.source_files.first() else {
+            return false;
+        };
+        let source_text = sf.text.as_ref();
+        // Cheap text scan first — most files have no JSDoc `import(` at all.
+        if !source_text.contains("import(") {
+            return false;
+        }
+
+        let mut search_start = 0usize;
+        while let Some(rel) = source_text[search_start..].find("import(") {
+            let abs = search_start + rel + "import(".len();
+            // Skip optional whitespace
+            let bytes = source_text.as_bytes();
+            let mut cursor = abs;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            // Expect a quoted specifier; skip non-string forms (unsupported here).
+            if cursor >= bytes.len() {
+                break;
+            }
+            let quote = bytes[cursor];
+            if quote != b'"' && quote != b'\'' {
+                search_start = abs;
+                continue;
+            }
+            cursor += 1;
+            let start = cursor;
+            while cursor < bytes.len() && bytes[cursor] != quote {
+                cursor += 1;
+            }
+            if cursor >= bytes.len() {
+                break;
+            }
+            let specifier = &source_text[start..cursor];
+            search_start = cursor + 1;
+
+            // Match the JSDoc TS2307 check: rooted specifiers (starting with
+            // `/`) are unresolvable per tsc unless an ambient module declares
+            // them. Plain relative/non-rooted forms are out of scope here —
+            // they go through the standard resolution-error pipeline.
+            if !specifier.starts_with('/') {
+                continue;
+            }
+            let has_ambient_module = self
+                .ctx
+                .declared_modules_contains(self.ctx.binder, specifier)
+                || self
+                    .ctx
+                    .binder
+                    .shorthand_ambient_modules
+                    .contains(specifier);
+            if has_ambient_module {
+                continue;
+            }
+            let resolved = self
+                .ctx
+                .resolve_import_target_from_file(self.ctx.current_file_idx, specifier)
+                .or_else(|| self.ctx.resolve_import_target(specifier));
+            if resolved.map(|idx| idx as u32) == Some(target_file_idx) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn find_external_private_symbol_owner_file(&self, symbol_name: &str) -> Option<u32> {
