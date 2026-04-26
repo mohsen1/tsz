@@ -1179,23 +1179,15 @@ impl ParserState {
             }
 
             // tsc reports TS1109 at the `*` when it immediately follows invalid
-            // junk in `if (cond) *...` bodies.
+            // junk in `if (cond) *...` bodies. Do NOT consume the `*` — leave it
+            // for the outer parser to reparse `* expr;` as a separate statement,
+            // matching tsc's emit (e.g. `if (a) ¬ * bar;` -> `if (a) ;\n * bar;`).
             if self.is_token(SyntaxKind::AsteriskToken) {
                 self.parse_error_at_current_token(
                     diagnostic_messages::EXPRESSION_EXPECTED,
                     diagnostic_codes::EXPRESSION_EXPECTED,
                 );
-                self.next_token();
             }
-            NodeIndex::NONE
-        } else if self.is_token(SyntaxKind::AsteriskToken) {
-            // Recovery for malformed `if (a) * expr;` cases: report the missing
-            // expression (TS1109) at the asterisk and continue with the tail.
-            self.parse_error_at_current_token(
-                diagnostic_messages::EXPRESSION_EXPECTED,
-                diagnostic_codes::EXPRESSION_EXPECTED,
-            );
-            self.next_token();
             NodeIndex::NONE
         } else if self.is_token(SyntaxKind::CloseBraceToken) {
             // TS1109: `if (cond) }` — missing then-clause. Emit "Expression expected"
