@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `chore/parser-tests-node-modifiers`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1313
+- **Status**: ready
 - **Workstream**: 8 (DRY/test coverage)
 
 ## Intent
@@ -24,4 +24,5 @@ keyword detection, and the `_ref` parity variants.
 
 ## Verification
 
-- `cargo nextest run -p tsz-parser`
+- `cargo nextest run -p tsz-parser` (607 tests pass)
+- `cargo nextest run -p tsz-parser -E 'test(node_modifiers)'` (29/29 new tests pass)
