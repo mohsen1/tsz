@@ -52,5 +52,9 @@ path = "tests/parenthesized_iife_tests.rs"
 name = "export_equals_type_only_namespace"
 path = "tests/export_equals_type_only_namespace.rs"
 
+[[test]]
+name = "cjs_hoisted_var_position_tests"
+path = "tests/cjs_hoisted_var_position_tests.rs"
+
 [lints]
 workspace = true
