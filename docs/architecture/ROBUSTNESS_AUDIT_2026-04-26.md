@@ -46,7 +46,7 @@ status emoji at the start of the title:
 - ✅ landed
 - ❌ abandoned
 
-### 1. ⏳ Silent `try_borrow_mut` failures during semantic registration
+### 1. 🚧 Silent `try_borrow_mut` failures during semantic registration
 
 **Files**
 
@@ -137,7 +137,7 @@ breaking `resolve_lazy(DefId)`.
 
 ---
 
-### 4. ⏳ "Largest `SymbolId` wins" for lib symbol canonicalization
+### 4. ✅ "Largest `SymbolId` wins" for lib symbol canonicalization
 
 **Files**
 
@@ -166,7 +166,7 @@ tests (`enumAssignmentCompat`, `arrayToLocaleString*`, etc.).
 
 ---
 
-### 5. ⏳ Speculation guard says rollback-on-drop, actually implicit-commits
+### 5. ✅ Speculation guard says rollback-on-drop, actually implicit-commits
 
 **Files**
 
@@ -353,7 +353,7 @@ distinction.
 
 ---
 
-### 13. ⏳ Identifier/interner fallback leaks into LSP/navigation
+### 13. 🚧 Identifier/interner fallback leaks into LSP/navigation
 
 **Files**
 
@@ -418,7 +418,7 @@ or target-specific lib differences could be masked.
 
 ---
 
-### 16. ⏳ Public editor actions advertise unimplemented behavior
+### 16. ✅ Public editor actions advertise unimplemented behavior
 
 **Files**
 
@@ -509,3 +509,17 @@ invariant.
    PR ready/merge.
 5. If a fix invalidates the audit's hypothesis, update this document with
    the corrected analysis instead of leaving stale notes.
+
+## Landing log
+
+- ✅ #5 (#E) speculation guard doc coherence — PR #1364 (merged 2026-04-26)
+- ✅ #4 (#D) canonical_lib_sym_id heuristic instrumentation — PR #1371
+  (merged 2026-04-26). Behavior preserved; structured trace event surfaces the
+  rare case where the heuristic chooses a non-input SymbolId. Full
+  redesign with stable key tracked under follow-up.
+- ✅ #16 (#P) "Add Missing Imports" stub no longer advertised — PR #1375
+  (merged 2026-04-26).
+- 🚧 #1 (#A) silent `try_borrow_mut` failures — PR #1369 [WIP], tracing-only
+  variant landing first; redesign to transactional dual-env writes follows.
+- 🚧 #13 (#M) LSP identifier text bypass — PR #1378 (open) delegates to a
+  total `resolve_identifier_text` on `NodeArena`.
