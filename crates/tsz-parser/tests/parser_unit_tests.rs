@@ -375,6 +375,98 @@ fn precedence_type_assertion_angle_bracket() {
     );
 }
 
+/// Regression: `<number> yield 0` inside a generator must NOT consume `yield`
+/// into the type assertion's expression. tsc's `parseSimpleUnaryExpression`
+/// does not handle `YieldKeyword`, so the type assertion ends with a missing
+/// expression, TS1109 is reported at `yield`, and `yield 0` becomes a
+/// separate yield expression statement.
+///
+/// Conformance test `castOfYield` (`tests/cases/compiler/castOfYield.ts`)
+/// pinned this shape: tsc emits `;` (empty stmt) followed by `yield 0;`.
+#[test]
+fn type_assertion_does_not_consume_yield_in_generator() {
+    let (parser, root) = parse_source("function* f() { <number> (yield 0); <number> yield 0; }");
+    let arena = parser.get_arena();
+
+    // Locate the generator function body.
+    let func_idx = get_first_statement(arena, root);
+    let func_node = arena.get(func_idx).expect("function decl");
+    let func = arena
+        .get_function(func_node)
+        .expect("function declaration data");
+    let body_node = arena.get(func.body).expect("function body");
+    let block = arena.get_block(body_node).expect("block data");
+    let body_stmts = &block.statements.nodes;
+
+    // After the fix, the body has 3 statements:
+    //   1) ExpressionStatement: `<number> (yield 0)` — well-formed type assertion
+    //   2) ExpressionStatement: `<number>` with a missing expression (recovery)
+    //   3) ExpressionStatement: `yield 0` as a separate yield expression
+    assert_eq!(
+        body_stmts.len(),
+        3,
+        "expected 3 statements, got {}: {:?}",
+        body_stmts.len(),
+        body_stmts
+            .iter()
+            .map(|&i| arena.get(i).map(|n| n.kind))
+            .collect::<Vec<_>>()
+    );
+
+    // First statement: type assertion wrapping parenthesized yield (valid).
+    let s1_node = arena.get(body_stmts[0]).expect("stmt 1");
+    let s1_expr_stmt = arena.get_expression_statement(s1_node).expect("expr stmt");
+    let s1_inner = arena
+        .get(s1_expr_stmt.expression)
+        .expect("type assertion node");
+    assert_eq!(
+        s1_inner.kind,
+        syntax_kind_ext::TYPE_ASSERTION,
+        "first stmt should be a TypeAssertion"
+    );
+
+    // Second statement: type assertion with NO inner expression (recovery).
+    let s2_node = arena.get(body_stmts[1]).expect("stmt 2");
+    let s2_expr_stmt = arena.get_expression_statement(s2_node).expect("expr stmt");
+    let s2_inner = arena
+        .get(s2_expr_stmt.expression)
+        .expect("type assertion node");
+    assert_eq!(
+        s2_inner.kind,
+        syntax_kind_ext::TYPE_ASSERTION,
+        "second stmt should be a TypeAssertion"
+    );
+    let s2_assert = arena
+        .get_type_assertion(s2_inner)
+        .expect("type assertion data");
+    assert!(
+        s2_assert.expression.is_none(),
+        "type assertion before bare `yield` must have no inner expression"
+    );
+
+    // Third statement: yield expression statement.
+    let s3_node = arena.get(body_stmts[2]).expect("stmt 3");
+    let s3_expr_stmt = arena.get_expression_statement(s3_node).expect("expr stmt");
+    let s3_inner = arena.get(s3_expr_stmt.expression).expect("yield expr node");
+    assert_eq!(
+        s3_inner.kind,
+        syntax_kind_ext::YIELD_EXPRESSION,
+        "third stmt should be a YieldExpression"
+    );
+
+    // The recovery must report exactly one TS1109 (Expression expected) at `yield`,
+    // not two diagnostics at the same site.
+    let ts1109_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
+        .count();
+    assert_eq!(
+        ts1109_count, 1,
+        "expected exactly one TS1109 for `<number> yield 0`, got {ts1109_count}"
+    );
+}
+
 #[test]
 fn precedence_instanceof_and_in() {
     // `a instanceof B` and `a in b` should parse without errors

@@ -593,11 +593,13 @@ impl ParserState {
         // (right after `>`), matching tsc behavior.
         let after_gt_full_start = self.token_full_start();
 
-        // TypeScript doesn't allow bare 'yield' after type assertion
-        // Unlike 'await', 'yield' is not allowed as a simple unary expression in this context
-        // Example: <number> yield 0 → TS1109 "Expression expected"
-        // But:     <number> (yield 0) → valid (parens make it a primary expression)
-        if self.is_token(SyntaxKind::YieldKeyword) {
+        // `<number> yield 0` inside a generator: tsc's parseSimpleUnaryExpression
+        // does not handle YieldKeyword, so it leaves the assertion expression
+        // missing and re-parses `yield 0` as a separate yield statement. Mirror
+        // that — report TS1109 and use NodeIndex::NONE for the inner expression.
+        // (`<number> (yield 0)` is fine: parens make it a primary expression.)
+        let yield_after_gt = self.in_generator_context() && self.is_token(SyntaxKind::YieldKeyword);
+        if yield_after_gt {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Expression expected.",
@@ -605,7 +607,11 @@ impl ParserState {
             );
         }
 
-        let expression = self.parse_unary_expression();
+        let expression = if yield_after_gt {
+            NodeIndex::NONE
+        } else {
+            self.parse_unary_expression()
+        };
         if expression.is_none() {
             use tsz_common::diagnostics::diagnostic_codes;
             if self.should_report_error() {
