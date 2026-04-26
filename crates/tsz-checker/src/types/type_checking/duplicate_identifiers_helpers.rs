@@ -2031,6 +2031,147 @@ impl<'a> CheckerState<'a> {
             )
         })
     }
+
+    /// Emit duplicate-identifier diagnostics, defaulting to local-anchored
+    /// errors but redirecting to a remote anchor when tsc's plain-JS
+    /// `addDuplicateLocations` filter (checker.ts ~L2782-L2783) applies.
+    pub(super) fn emit_duplicate_identifier_diagnostics(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        declarations: &[(
+            NodeIndex,
+            u32,
+            bool,
+            bool,
+            super::duplicate_identifiers::DuplicateDeclarationOrigin,
+        )],
+        conflicts: &FxHashSet<NodeIndex>,
+        code: u32,
+        message: &str,
+    ) {
+        if self.try_redirect_dup_id_to_non_plain_js_remote(
+            sym_id,
+            declarations,
+            conflicts,
+            code,
+            message,
+        ) {
+            return;
+        }
+        for (decl_idx, _decl_flags, is_local, _, _) in declarations {
+            if *is_local && conflicts.contains(decl_idx) {
+                let error_node = self
+                    .get_declaration_name_node(*decl_idx)
+                    .unwrap_or(*decl_idx);
+                self.error_at_node(error_node, message, code);
+            }
+        }
+    }
+
+    /// Mirror tsc's `addDuplicateLocations` plain-JS suppression for
+    /// cross-file duplicate-identifier conflicts. Returns `true` when the
+    /// local plain-JS site was suppressed and a remote anchor emitted.
+    fn try_redirect_dup_id_to_non_plain_js_remote(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        declarations: &[(
+            NodeIndex,
+            u32,
+            bool,
+            bool,
+            super::duplicate_identifiers::DuplicateDeclarationOrigin,
+        )],
+        conflicts: &FxHashSet<NodeIndex>,
+        code: u32,
+        message: &str,
+    ) -> bool {
+        use crate::context::should_resolve_jsdoc_for_file;
+        use crate::diagnostics::diagnostic_codes;
+
+        if code != diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE {
+            return false;
+        }
+        let local_is_plain_js = self.is_js_file() && !self.ctx.should_resolve_jsdoc();
+        if !local_is_plain_js {
+            return false;
+        }
+        let has_local_conflict = declarations
+            .iter()
+            .any(|(decl_idx, _, is_local, _, _)| *is_local && conflicts.contains(decl_idx));
+        if !has_local_conflict {
+            return false;
+        }
+
+        let mut emitted_at: FxHashSet<(String, u32)> = FxHashSet::default();
+        let mut emitted = false;
+        for (decl_idx, _, is_local, _, _) in declarations {
+            if *is_local {
+                continue;
+            }
+            let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, *decl_idx)) else {
+                continue;
+            };
+            for arena_arc in arenas {
+                let arena: &tsz_parser::parser::NodeArena = arena_arc;
+                if std::ptr::eq(arena, self.ctx.arena) {
+                    continue;
+                }
+                let Some(sf) = arena.source_files.first() else {
+                    continue;
+                };
+                if !should_resolve_jsdoc_for_file(
+                    &sf.file_name,
+                    sf.text.as_ref(),
+                    &self.ctx.compiler_options,
+                ) {
+                    continue;
+                }
+                let Some(remote_node) = arena.get(*decl_idx) else {
+                    continue;
+                };
+                let name_idx = remote_declaration_name_node(arena, remote_node, *decl_idx);
+                let Some(name_node) = arena.get(name_idx) else {
+                    continue;
+                };
+                let start = name_node.pos;
+                let length = name_node.end.saturating_sub(start);
+                if !emitted_at.insert((sf.file_name.clone(), start)) {
+                    continue;
+                }
+                self.error_at_position_in_file(sf.file_name.clone(), start, length, message, code);
+                emitted = true;
+            }
+        }
+        emitted
+    }
+}
+
+/// Resolve `decl_idx` to its declaration name node within `arena`. Mirrors
+/// `CheckerState::get_declaration_name_node` but operates on an arbitrary
+/// arena. Falls back to `decl_idx` itself when the declaration kind is not
+/// recognized.
+fn remote_declaration_name_node(
+    arena: &tsz_parser::parser::NodeArena,
+    remote_node: &tsz_parser::parser::node::Node,
+    decl_idx: NodeIndex,
+) -> NodeIndex {
+    use tsz_scanner::SyntaxKind;
+    match remote_node.kind {
+        syntax_kind_ext::FUNCTION_DECLARATION => arena.get_function(remote_node).map(|d| d.name),
+        syntax_kind_ext::VARIABLE_DECLARATION => {
+            arena.get_variable_declaration(remote_node).map(|d| d.name)
+        }
+        syntax_kind_ext::CLASS_DECLARATION => arena.get_class(remote_node).map(|d| d.name),
+        syntax_kind_ext::INTERFACE_DECLARATION => arena.get_interface(remote_node).map(|d| d.name),
+        syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+            arena.get_type_alias(remote_node).map(|d| d.name)
+        }
+        syntax_kind_ext::ENUM_DECLARATION => arena.get_enum(remote_node).map(|d| d.name),
+        syntax_kind_ext::MODULE_DECLARATION => arena.get_module(remote_node).map(|d| d.name),
+        k if k == SyntaxKind::Identifier as u16 => Some(decl_idx),
+        _ => None,
+    }
+    .unwrap_or(decl_idx)
 }
 
 #[cfg(test)]

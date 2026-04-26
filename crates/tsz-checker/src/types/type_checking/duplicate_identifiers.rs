@@ -1863,12 +1863,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            for (decl_idx, _decl_flags, is_local, _, _) in declarations {
-                if is_local && conflicts.contains(&decl_idx) {
-                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    self.error_at_node(error_node, &message, code);
-                }
-            }
+            self.emit_duplicate_identifier_diagnostics(
+                sym_id,
+                &declarations,
+                &conflicts,
+                code,
+                &message,
+            );
         }
 
         self.check_block_scoped_function_outer_conflicts();
