@@ -1500,16 +1500,23 @@ impl ParserState {
     ) -> usize {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        // tsc accepts `_` in regex `\x` escape positions (numericSeparators
+        // proposal extended into regex contexts) and defers strict validation
+        // to the regex runtime. Mirror that: `_` does not trigger TS1125 here.
+        // See `parser.numericSeparators.unicodeEscape.ts` regex files (8, 12,
+        // 20, …) where tsc emits no diagnostic for `\xf_f`/`\u_ffff`/etc.
+        let is_hex_or_separator = |b: u8| Self::is_hex_digit(b) || b == b'_';
+
         let first = j + 2;
         let second = j + 3;
-        if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+        if first >= raw.len() || !is_hex_or_separator(raw[first]) {
             self.parse_error_at(
                 self.u32_from_usize(body_start + first),
                 u32::from(first < raw.len()),
                 diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                 diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
             );
-        } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+        } else if second >= raw.len() || !is_hex_or_separator(raw[second]) {
             self.parse_error_at(
                 self.u32_from_usize(body_start + second),
                 u32::from(second < raw.len()),
@@ -1538,32 +1545,38 @@ impl ParserState {
             }
             Some(close + 1)
         } else {
+            // tsc accepts `_` as a numeric separator inside regex `\u` escapes
+            // (see `parser.numericSeparators.unicodeEscape.ts` regex files); the
+            // strict hex grammar is enforced by the regex runtime, not the
+            // parser. Treat `_` as a valid char in any of the four positions.
+            let is_hex_or_separator = |b: u8| Self::is_hex_digit(b) || b == b'_';
+
             let first = j + 2;
             let second = j + 3;
             let third = j + 4;
             let fourth = j + 5;
-            if first >= raw.len() || !Self::is_hex_digit(raw[first]) {
+            if first >= raw.len() || !is_hex_or_separator(raw[first]) {
                 self.parse_error_at(
                     self.u32_from_usize(body_start + first),
                     u32::from(first < raw.len()),
                     diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                     diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                 );
-            } else if second >= raw.len() || !Self::is_hex_digit(raw[second]) {
+            } else if second >= raw.len() || !is_hex_or_separator(raw[second]) {
                 self.parse_error_at(
                     self.u32_from_usize(body_start + second),
                     u32::from(second < raw.len()),
                     diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                     diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                 );
-            } else if third >= raw.len() || !Self::is_hex_digit(raw[third]) {
+            } else if third >= raw.len() || !is_hex_or_separator(raw[third]) {
                 self.parse_error_at(
                     self.u32_from_usize(body_start + third),
                     u32::from(third < raw.len()),
                     diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                     diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                 );
-            } else if fourth >= raw.len() || !Self::is_hex_digit(raw[fourth]) {
+            } else if fourth >= raw.len() || !is_hex_or_separator(raw[fourth]) {
                 self.parse_error_at(
                     self.u32_from_usize(body_start + fourth),
                     u32::from(fourth < raw.len()),
