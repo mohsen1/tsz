@@ -553,6 +553,18 @@ fn insert(
 /// No quoted / backslash / chain / dot-chain-variant / index / bare fan-out
 /// is produced.
 pub fn module_specifier_candidates(specifier: &str) -> Vec<String> {
+    // Robustness audit (PR #N, item 14 in
+    // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): emit a structured
+    // trace at every invocation so the rate at which callers depend on this
+    // compatibility shim — and the specifiers that drive it — are visible.
+    // The audit's full solution collapses the legacy map and canonical-spec
+    // resolver into one entrypoint with one normalized key model; this
+    // visibility hook prepares the migration by exposing call sites.
+    tracing::trace!(
+        site = "module_resolution::module_specifier_candidates",
+        specifier = specifier,
+        "module-specifier compatibility-shim lookup"
+    );
     let Some(canonical) = normalize_import_specifier(specifier) else {
         // Quotes-only or empty input: the raw string is the only key the
         // caller could realistically match on.
