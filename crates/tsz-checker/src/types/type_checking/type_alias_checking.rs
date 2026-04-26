@@ -247,8 +247,16 @@ impl<'a> CheckerState<'a> {
                 let depth_exceeded = self.evaluate_type_for_ts2589_check(body_type, def_id);
                 if depth_exceeded {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    // tsc anchors TS2589 at `currentNode` (the inner self-reference
+                    // being instantiated when `instantiationDepth === 100` fires).
+                    // Conditional-type children are visited in
+                    // check→extends→true→false order, so the last self-referential
+                    // type reference in source order matches tsc's anchor.
+                    let anchor = self
+                        .find_last_recursive_alias_ref(alias.type_node, alias_sid)
+                        .unwrap_or(alias.type_node);
                     self.error_at_node(
-                        alias.type_node,
+                        anchor,
                         diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                         diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
                     );
@@ -370,6 +378,55 @@ impl<'a> CheckerState<'a> {
             crate::diagnostics::diagnostic_messages::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
             crate::diagnostics::diagnostic_codes::VARIANCE_ANNOTATIONS_ARE_ONLY_SUPPORTED_IN_TYPE_ALIASES_FOR_OBJECT_FUNCTION_CONS,
         );
+    }
+
+    /// Walk the alias body AST and return the AST node of the last
+    /// `TypeReference` (in source order) whose name resolves to `alias_sid`.
+    ///
+    /// Used as the anchor for TS2589 at type-alias definition sites: tsc emits
+    /// at `currentNode`, which is the inner self-reference being instantiated
+    /// at the time the depth limit fires. `forEachChild` visits conditional
+    /// children in check→extends→true→false order, so the last self-reference
+    /// in source order is the one tsc reports against.
+    fn find_last_recursive_alias_ref(
+        &self,
+        body_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> Option<NodeIndex> {
+        let mut best: Option<(u32, NodeIndex)> = None;
+        self.collect_recursive_alias_refs(body_idx, alias_sid, &mut best);
+        best.map(|(_, idx)| idx)
+    }
+
+    fn collect_recursive_alias_refs(
+        &self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+        best: &mut Option<(u32, NodeIndex)>,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(tr) = self.ctx.arena.get_type_ref(node)
+        {
+            let resolved = self
+                .resolve_type_symbol_for_lowering(tr.type_name)
+                .map(tsz_binder::SymbolId);
+            if resolved == Some(alias_sid) {
+                let pos = node.pos;
+                if best.map_or(true, |(p, _)| pos >= p) {
+                    *best = Some((pos, node_idx));
+                }
+            }
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.collect_recursive_alias_refs(child_idx, alias_sid, best);
+        }
     }
 
     /// Walk a type argument AST node and return true if it contains a reference
