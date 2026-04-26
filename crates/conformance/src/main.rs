@@ -6,6 +6,7 @@ mod batch_pool;
 mod cache;
 mod cli;
 mod options_convert;
+mod process_rss;
 mod runner;
 mod server_pool;
 mod test_parser;

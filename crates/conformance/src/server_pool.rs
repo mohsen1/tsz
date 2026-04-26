@@ -16,6 +16,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
 use crate::options_convert::directives_to_check_options;
+use crate::process_rss::get_process_rss;
 
 /// A single long-lived `tsz-server --protocol legacy` worker process.
 struct ServerWorker {
@@ -306,35 +307,4 @@ async fn read_response_line(
             format!("invalid server response JSON: {e}"),
         )),
     }
-}
-
-/// Get the RSS (Resident Set Size) of a process in bytes.
-/// Returns `None` if the RSS cannot be determined.
-fn get_process_rss(pid: u32) -> Option<usize> {
-    // On Linux, read /proc/{pid}/statm (page counts, space-separated).
-    // Field 1 (index 1) is resident pages.
-    #[cfg(target_os = "linux")]
-    {
-        let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
-        let resident_pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
-        let page_size = 4096; // standard on x86_64 Linux
-        return Some(resident_pages * page_size);
-    }
-
-    // On macOS, use `ps -o rss= -p {pid}` (returns RSS in KB).
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("ps")
-            .args(["-o", "rss=", "-p", &pid.to_string()])
-            .output()
-            .ok()?;
-        let rss_kb: usize = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse()
-            .ok()?;
-        return Some(rss_kb * 1024);
-    }
-
-    #[allow(unreachable_code)]
-    None
 }
