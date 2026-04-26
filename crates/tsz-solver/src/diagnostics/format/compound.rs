@@ -1172,6 +1172,19 @@ impl<'a> TypeFormatter<'a> {
     /// Format an intersection member, parenthesizing union types.
     /// `(A | B) & (C | D)` is semantically different from `A | B & C | D`.
     fn format_intersection_member(&mut self, id: TypeId) -> String {
+        // tsc displays primitive members of intersection types using their apparent
+        // (boxed) names: `number` → `Number`, `string` → `String`, `boolean` → `Boolean`.
+        if self.capitalize_primitive_intersection_members {
+            if id == TypeId::NUMBER {
+                return "Number".to_string();
+            }
+            if id == TypeId::STRING {
+                return "String".to_string();
+            }
+            if id == TypeId::BOOLEAN {
+                return "Boolean".to_string();
+            }
+        }
         let formatted = self.format(id);
         // Only parenthesize if the type is a union AND the formatted result
         // actually contains `|` (i.e., wasn't collapsed to a named alias).

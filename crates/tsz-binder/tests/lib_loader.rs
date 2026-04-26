@@ -239,7 +239,7 @@ fn get_suggested_lib_default_es2015() {
     assert_eq!(get_suggested_lib_for_type(""), "es2015");
 }
 
-/// SharedArrayBuffer family is es2017.
+/// `SharedArrayBuffer` family is es2017.
 #[test]
 fn get_suggested_lib_shared_array_buffer_is_es2017() {
     assert_eq!(get_suggested_lib_for_type("SharedArrayBuffer"), "es2017");
@@ -250,7 +250,7 @@ fn get_suggested_lib_shared_array_buffer_is_es2017() {
     assert_eq!(get_suggested_lib_for_type("Atomics"), "es2017");
 }
 
-/// AsyncGenerator family is es2018.
+/// `AsyncGenerator` family is es2018.
 #[test]
 fn get_suggested_lib_async_generator_is_es2018() {
     assert_eq!(get_suggested_lib_for_type("AsyncGenerator"), "es2018");
@@ -264,7 +264,7 @@ fn get_suggested_lib_async_generator_is_es2018() {
     );
 }
 
-/// BigInt family is es2020.
+/// `BigInt` family is es2020.
 #[test]
 fn get_suggested_lib_bigint_is_es2020() {
     assert_eq!(get_suggested_lib_for_type("BigInt"), "es2020");
@@ -281,7 +281,7 @@ fn get_suggested_lib_bigint_is_es2020() {
     );
 }
 
-/// FinalizationRegistry / WeakRef / AggregateError / ErrorOptions are es2021.
+/// `FinalizationRegistry` / `WeakRef` / `AggregateError` / `ErrorOptions` are es2021.
 #[test]
 fn get_suggested_lib_finalization_family_is_es2021() {
     assert_eq!(get_suggested_lib_for_type("FinalizationRegistry"), "es2021");
@@ -299,7 +299,7 @@ fn get_suggested_lib_finalization_family_is_es2021() {
     assert_eq!(get_suggested_lib_for_type("ErrorOptions"), "es2021");
 }
 
-/// Disposable / AsyncDisposable suggest `esnext`.
+/// `Disposable` / `AsyncDisposable` suggest `esnext`.
 #[test]
 fn get_suggested_lib_disposable_is_esnext() {
     assert_eq!(get_suggested_lib_for_type("Disposable"), "esnext");
