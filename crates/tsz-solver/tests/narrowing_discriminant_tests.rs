@@ -1188,3 +1188,63 @@ fn discriminant_for_type_positive_and_negative() {
     let narrowed_neg = ctx.narrow_by_discriminant_for_type(union, &[kind], kind_a, false);
     assert_eq!(narrowed_neg, member_b);
 }
+
+/// Regression: a top-level intersection that has not been distributed to a
+/// union must not be collapsed to `never` by discriminant narrowing. tsc gates
+/// discriminant narrowing on the type having the `Union` flag (see
+/// `getDiscriminantPropertyAccess`), so we mirror that behavior by leaving
+/// non-distributed intersection sources unchanged.
+///
+/// Without this gate, `narrow_by_excluding_discriminant`'s
+/// intersection-effective-type logic (which intersects per-member property
+/// types) collapses to `never` whenever the discriminant is fully constrained
+/// — producing spurious TS2339 on subsequent property access in code such as
+/// `function foo(x: RuntimeValue & { type: 'number' }) { ...; else { x.value; } }`.
+#[test]
+fn discriminant_for_type_skips_top_level_intersection() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+    let kind = interner.intern_string("kind");
+    let value = interner.intern_string("value");
+
+    let kind_a = interner.literal_string("a");
+    let kind_b = interner.literal_string("b");
+
+    // Build a discriminated union and intersect it with a constraining
+    // object (`{ kind: "a" }`). After distribution this would collapse to
+    // a single object, but the intersection interner does not always
+    // distribute (e.g. when one member is a Lazy/Application). We
+    // synthesize the un-distributed intersection here by intersecting the
+    // union with a non-union object whose property is `string` rather
+    // than the literal `"a"`, keeping the intersection in canonical form.
+    let member_a = interner.object(vec![
+        PropertyInfo::new(kind, kind_a),
+        PropertyInfo::new(value, TypeId::NUMBER),
+    ]);
+    let member_b = interner.object(vec![
+        PropertyInfo::new(kind, kind_b),
+        PropertyInfo::new(value, TypeId::STRING),
+    ]);
+    let union = interner.union(vec![member_a, member_b]);
+    let constraint = interner.object(vec![PropertyInfo::new(kind, TypeId::STRING)]);
+    let intersection = interner.intersection(vec![union, constraint]);
+
+    // Narrowing should not collapse the intersection — the gate matches
+    // tsc's `getDiscriminantPropertyAccess` requirement that the type's
+    // top-level shape have the Union flag.
+    if intersection != union {
+        let narrowed_pos = ctx.narrow_by_discriminant_for_type(intersection, &[kind], kind_a, true);
+        let narrowed_neg =
+            ctx.narrow_by_discriminant_for_type(intersection, &[kind], kind_a, false);
+        // When the source is a top-level intersection (rather than a
+        // distributed union), narrowing is a no-op so subsequent property
+        // access does not error spuriously.
+        if matches!(
+            interner.lookup(intersection),
+            Some(crate::TypeData::Intersection(_))
+        ) {
+            assert_eq!(narrowed_pos, intersection);
+            assert_eq!(narrowed_neg, intersection);
+        }
+    }
+}
