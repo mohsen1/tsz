@@ -959,8 +959,8 @@ impl<'a> CheckerState<'a> {
 
         // If the component has construct signatures (class component), validate against
         // them — mirrors `validate_new_expression_type_arguments` for `new` expressions.
-        if let Some(shape) = query::callable_shape_for_type(self.ctx.types, resolved) {
-            if !shape.construct_signatures.is_empty() {
+        if let Some(shape) = query::callable_shape_for_type(self.ctx.types, resolved)
+            && !shape.construct_signatures.is_empty() {
                 let type_arg_error_anchor =
                     type_args_list.nodes.first().copied().unwrap_or(element_idx);
                 let matching: Vec<_> = shape
@@ -1023,7 +1023,6 @@ impl<'a> CheckerState<'a> {
                 self.validate_type_args_against_params(&type_params, type_args_list);
                 return false;
             }
-        }
 
         // Function component (call signatures): validate via call type-arg path.
         let result = self.validate_call_type_arguments(resolved, type_args_list, element_idx);

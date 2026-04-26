@@ -840,8 +840,8 @@ impl<'a> CheckerState<'a> {
         //     effective = boolean → NOT assignable to number ✗
         //   `({ x = undefined } = a)` where `a.x` is `number | undefined`:
         //     effective = number | undefined → NOT assignable to number ✗
-        if has_default && self.ctx.compiler_options.strict_null_checks {
-            if crate::query_boundaries::common::type_contains_undefined(self.ctx.types, prop_type) {
+        if has_default && self.ctx.compiler_options.strict_null_checks
+            && crate::query_boundaries::common::type_contains_undefined(self.ctx.types, prop_type) {
                 let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
                     self.ctx.types,
                     prop_type,
@@ -854,7 +854,6 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
-        }
         let target_type = self.get_type_of_assignment_target(target_idx);
         if target_type == TypeId::ANY || target_type == TypeId::ERROR {
             return;

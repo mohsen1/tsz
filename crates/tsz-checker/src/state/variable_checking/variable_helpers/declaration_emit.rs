@@ -318,19 +318,15 @@ impl<'a> CheckerState<'a> {
 
             if let Some(shape) = query::object_shape(self.ctx.types, type_id)
                 && let Some(sym_id) = shape.symbol
-            {
-                if let Some(info) = self.private_external_module_nameability_info(sym_id, None) {
+                && let Some(info) = self.private_external_module_nameability_info(sym_id, None) {
                     return Some(info);
                 }
-            }
 
             if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
                 && let Some(sym_id) = shape.symbol
-            {
-                if let Some(info) = self.private_external_module_nameability_info(sym_id, None) {
+                && let Some(info) = self.private_external_module_nameability_info(sym_id, None) {
                     return Some(info);
                 }
-            }
         }
 
         None
