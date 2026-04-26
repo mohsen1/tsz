@@ -1134,5 +1134,92 @@ class ArchGuardLspFeatureMethodCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardSpeculationGuardNameTests(unittest.TestCase):
+    """Pin architecture health metric 6 ("Speculation APIs with surprising
+    non-RAII behavior"). Verifies `scan_speculation_guard_struct_count`."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write(self, tmp: pathlib.Path, name: str, contents: str) -> pathlib.Path:
+        path = tmp / name
+        path.write_text(contents, encoding="utf-8")
+        return path
+
+    def test_no_guard_struct_passes_at_cap_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            path = self._write(
+                tmp,
+                "speculation.rs",
+                "pub(crate) struct DiagnosticSpeculationSnapshot { snapshot: u32 }\n",
+            )
+            self.assertEqual(
+                self.arch_guard.scan_speculation_guard_struct_count(path, 0),
+                [],
+            )
+
+    def test_one_guard_struct_fires_at_cap_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            path = self._write(
+                tmp,
+                "speculation.rs",
+                "pub(crate) struct DiagnosticSpeculationGuard { snapshot: u32 }\n",
+            )
+            hits = self.arch_guard.scan_speculation_guard_struct_count(path, 0)
+            self.assertEqual(len(hits), 2)
+            self.assertIn("DiagnosticSpeculationGuard", hits[0])
+
+    def test_doc_comment_guard_reference_does_not_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            path = self._write(
+                tmp,
+                "speculation.rs",
+                "/// Replaces the legacy `SpeculationGuard` struct.\n"
+                "pub(crate) struct DiagnosticSpeculationSnapshot {}\n",
+            )
+            self.assertEqual(
+                self.arch_guard.scan_speculation_guard_struct_count(path, 0),
+                [],
+            )
+
+    def test_pub_struct_guard_matches_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            path = self._write(
+                tmp,
+                "speculation.rs",
+                "pub struct OuterGuard { inner: u32 }\n",
+            )
+            hits = self.arch_guard.scan_speculation_guard_struct_count(path, 0)
+            self.assertTrue(any("OuterGuard" in h for h in hits))
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0] for entry in self.arch_guard.SPECULATION_GUARD_NAME_CHECKS
+        ]
+        self.assertTrue(
+            any("metric 6" in name for name in names),
+            "Speculation guard-name check missing from "
+            "SPECULATION_GUARD_NAME_CHECKS",
+        )
+
+    def test_real_speculation_file_passes_at_pinned_cap(self):
+        """The live speculation.rs must satisfy the pinned cap of 0
+        `…Guard` structs (PR #1213 already renamed the only offender)."""
+        for entry in self.arch_guard.SPECULATION_GUARD_NAME_CHECKS:
+            name, file_path, max_guard_count = entry
+            hits = self.arch_guard.scan_speculation_guard_struct_count(
+                file_path, max_guard_count
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
