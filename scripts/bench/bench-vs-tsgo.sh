@@ -1648,10 +1648,23 @@ ensure_large_ts_repo_fixture() {
     # `tsc/tsgo/tsz --noEmit -p tsconfig.json` exits almost immediately
     # without type-checking anything. Use a flat tsconfig that directly
     # includes all source files for an apples-to-apples measurement.
+    #
+    # Prefer tsconfig.flat.bench.json if the repo ships it: it already
+    # extends tsconfig.base.json which contains the 200+ `paths` mappings
+    # for cross-package @scope/pkg imports. Without those paths, tsc itself
+    # emits resolution errors and the benchmark is skipped.
+    if [ -f "$LARGE_TS_DIR/tsconfig.flat.bench.json" ]; then
+        return
+    fi
     local flat_tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
     if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << 'FLATEOF'
+        local extends_base=""
+        if [ -f "$LARGE_TS_DIR/tsconfig.base.json" ]; then
+            extends_base='"extends": "./tsconfig.base.json",'
+        fi
+        cat > "$flat_tsconfig" << FLATEOF
 {
+  ${extends_base}
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2024", "esnext.disposable"],
@@ -1684,13 +1697,18 @@ run_large_ts_repo_benchmarks() {
     # Use the flat tsconfig so all source files are included in a single
     # compilation pass. The root tsconfig.json uses project references and
     # completes in milliseconds without actually checking any files.
-    local tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
-    local src_dir="$LARGE_TS_DIR/packages"
-
-    if [ ! -f "$tsconfig" ]; then
-        echo -e "${RED}✗ tsconfig.flat.json not found (ensure_large_ts_repo_fixture should have created it)${NC}"
+    # Prefer tsconfig.flat.bench.json (ships with the repo, extends base
+    # with full path mappings) over our generated tsconfig.flat.json.
+    local tsconfig
+    if [ -f "$LARGE_TS_DIR/tsconfig.flat.bench.json" ]; then
+        tsconfig="$LARGE_TS_DIR/tsconfig.flat.bench.json"
+    elif [ -f "$LARGE_TS_DIR/tsconfig.flat.json" ]; then
+        tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
+    else
+        echo -e "${RED}✗ No flat tsconfig found (ensure_large_ts_repo_fixture should have created one)${NC}"
         return
     fi
+    local src_dir="$LARGE_TS_DIR/packages"
 
     run_project_benchmark "large-ts-repo" "$tsconfig" "$src_dir"
     echo
