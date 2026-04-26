@@ -1321,7 +1321,39 @@ impl ScannerState {
     ) {
         self.pos += 2;
         self.token_flags |= specifier_flag as u32;
-        self.scan_digits_with_separators(is_valid_digit);
+        let saw_digit = self.scan_digits_with_separators(is_valid_digit);
+
+        // tsc parity: if the prefixed integer literal has no valid digits
+        // (e.g. `0xn`, `0bn`, `0on`, `0x`, `0x_`), emit a zero-width
+        // "<base> digit expected" diagnostic at the position right after the
+        // base prefix. Mirrors `scanner.ts`'s `if (!tokenValue) error(...)`
+        // ladder in `scanIntegerBaseLiteral`/`case CharacterCodes._0`.
+        if !saw_digit {
+            let flag = specifier_flag as u32;
+            let (message, code) = if flag == TokenFlags::HexSpecifier as u32 {
+                (
+                    diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                )
+            } else if flag == TokenFlags::BinarySpecifier as u32 {
+                (
+                    diagnostic_messages::BINARY_DIGIT_EXPECTED,
+                    diagnostic_codes::BINARY_DIGIT_EXPECTED,
+                )
+            } else {
+                (
+                    diagnostic_messages::OCTAL_DIGIT_EXPECTED,
+                    diagnostic_codes::OCTAL_DIGIT_EXPECTED,
+                )
+            };
+            self.scanner_diagnostics.push(ScannerDiagnostic {
+                pos: self.pos,
+                length: 0,
+                args: Vec::new(),
+                message,
+                code,
+            });
+        }
 
         if self.pos < self.end && self.char_code_unchecked(self.pos) == CharacterCodes::LOWER_N {
             self.pos += 1;
@@ -1516,7 +1548,11 @@ impl ScannerState {
         }
     }
 
-    fn scan_digits_with_separators(&mut self, is_valid_digit: fn(u32) -> bool) {
+    /// Returns `true` if at least one valid digit was consumed. Mirrors tsc's
+    /// `scanHexDigits`/`scanBinaryOrOctalDigits` "did we read anything" signal,
+    /// so callers like `scan_integer_base_literal` can emit
+    /// `Hexadecimal/Binary/Octal digit expected` for empty prefixed literals.
+    fn scan_digits_with_separators(&mut self, is_valid_digit: fn(u32) -> bool) -> bool {
         let mut saw_digit = false;
         let mut prev_separator = false;
 
@@ -1551,6 +1587,8 @@ impl ScannerState {
                 self.token_invalid_separator_is_consecutive = false;
             }
         }
+
+        saw_digit
     }
 
     /// Scan an identifier.
