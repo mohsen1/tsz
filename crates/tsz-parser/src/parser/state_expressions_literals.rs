@@ -2943,9 +2943,14 @@ impl ParserState {
                 {
                     break;
                 } else {
-                    // Unexpected token (e.g., `.` in `{ m.x }`). Emit ',' expected
-                    // and skip to resync, matching tsc's delimited list recovery.
-                    self.error_comma_expected();
+                    // Bypass `error_comma_expected`'s 3-byte distance gate so the
+                    // recovery emits even when the separator sits 3 cols after a
+                    // prior emission (e.g. `{` after `:' expected.` at 3 cols out
+                    // in `{ class C4 {} }`). tsc's parseErrorAtPosition only
+                    // dedups exact same-position duplicates; `parse_error_at`'s
+                    // dedup mirrors that.
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
                     self.next_token();
                 }
             }

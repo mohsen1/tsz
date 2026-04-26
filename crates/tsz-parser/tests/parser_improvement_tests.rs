@@ -3986,3 +3986,43 @@ fn test_array_terminated_by_close_bracket_keeps_clean_close() {
         "well-formed array literal must not emit diagnostics, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_object_literal_comma_recovery_after_short_distance_colon_error() {
+    // Regression for conformance test
+    // `conformance/classes/nestedClassDeclaration.ts`:
+    //   `var x = {\n    class C4 {\n    }\n}`
+    // tsc emits TWO TS1005 errors here:
+    //   - `':' expected.` at column 11 (the `C` of `C4`)
+    //   - `',' expected.` at column 14 (the `{`)
+    // We previously emitted only the first because our `error_comma_expected`
+    // applies a 3-byte distance suppression that swallows the legitimate comma
+    // diagnostic when the gap is exactly 3 columns. tsc's `parseErrorAtPosition`
+    // dedups only on exact same position; the unexpected-token recovery path in
+    // `parse_object_literal` now bypasses the distance gate so it emits.
+    let source = "var x = {\n    class C4 {\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let line2_offset = source.find("    class C4").expect("C4 line is in source") as u32;
+    let c4_pos = line2_offset + "    class ".len() as u32; // position of `C` in `C4`
+    let open_brace_pos = source.find("C4 {").expect("C4 { is in source") as u32 + 3; // position of `{`
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.start == c4_pos
+                && d.message == "':' expected."),
+        "expected TS1005 `':' expected.` at `C4`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.start == open_brace_pos
+                && d.message == "',' expected."),
+        "expected TS1005 `',' expected.` at `{{` after `C4`, got {diagnostics:?}"
+    );
+}
