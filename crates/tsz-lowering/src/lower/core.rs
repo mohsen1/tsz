@@ -276,26 +276,54 @@ impl InterfaceParts {
     }
 }
 
+/// Resolver bundle threaded into the various `TypeLowering` constructors.
+///
+/// Only the resolver fields differ across the public entry points (`new`,
+/// `with_resolver`, `with_resolvers`, `with_def_id_resolver`,
+/// `with_hybrid_resolver`); every other field is initialized identically.
+/// This bundle lets the public constructors share the single private
+/// `from_resolvers` builder below, eliminating five copies of the same
+/// 17-field literal.
+#[derive(Default)]
+pub(super) struct LoweringResolvers<'a> {
+    pub(super) type_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
+    pub(super) def_id_resolver: Option<&'a NodeIndexResolver<'a, DefId>>,
+    pub(super) value_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
+}
+
 impl<'a> TypeLowering<'a> {
-    pub fn new(arena: &'a NodeArena, interner: &'a dyn QueryDatabase) -> Self {
+    /// Single private builder used by all public constructors. The five
+    /// `pub fn` entry points only differ in which resolver fields they
+    /// populate; everything else (interning, scope stack, operation
+    /// counter, limit flag, `None`/`false` defaults) is initialized here
+    /// once.
+    fn from_resolvers(
+        arena: &'a NodeArena,
+        interner: &'a dyn QueryDatabase,
+        resolvers: LoweringResolvers<'a>,
+    ) -> Self {
         TypeLowering {
             arena,
             interner: interner.as_type_database(),
-            type_resolver: None,
-            def_id_resolver: None,
-            value_resolver: None,
+            type_resolver: resolvers.type_resolver,
+            def_id_resolver: resolvers.def_id_resolver,
+            value_resolver: resolvers.value_resolver,
             computed_name_resolver: None,
             lazy_type_params_resolver: None,
             prefer_name_def_id_resolution: false,
             preferred_self_name: None,
             preferred_self_def_id: None,
+            name_def_id_resolver: None,
+            strict_null_checks: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
-            name_def_id_resolver: None,
-            strict_null_checks: false,
             type_query_override: None,
         }
+    }
+
+    pub fn new(arena: &'a NodeArena, interner: &'a dyn QueryDatabase) -> Self {
+        Self::from_resolvers(arena, interner, LoweringResolvers::default())
     }
 
     /// Create a `TypeLowering` with a symbol resolver.
@@ -305,24 +333,15 @@ impl<'a> TypeLowering<'a> {
         interner: &'a dyn QueryDatabase,
         resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
     ) -> Self {
-        TypeLowering {
+        Self::from_resolvers(
             arena,
-            interner: interner.as_type_database(),
-            type_resolver: Some(resolver),
-            def_id_resolver: None,
-            value_resolver: Some(resolver),
-            computed_name_resolver: None,
-            lazy_type_params_resolver: None,
-            prefer_name_def_id_resolution: false,
-            preferred_self_name: None,
-            preferred_self_def_id: None,
-            name_def_id_resolver: None,
-            strict_null_checks: false,
-            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
-            operations: Rc::new(RefCell::new(0)),
-            limit_exceeded: Rc::new(RefCell::new(false)),
-            type_query_override: None,
-        }
+            interner,
+            LoweringResolvers {
+                type_resolver: Some(resolver),
+                def_id_resolver: None,
+                value_resolver: Some(resolver),
+            },
+        )
     }
 
     /// Create a `TypeLowering` with separate type/value resolvers.
@@ -332,24 +351,15 @@ impl<'a> TypeLowering<'a> {
         type_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
         value_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
     ) -> Self {
-        TypeLowering {
+        Self::from_resolvers(
             arena,
-            interner: interner.as_type_database(),
-            type_resolver: Some(type_resolver),
-            def_id_resolver: None,
-            value_resolver: Some(value_resolver),
-            computed_name_resolver: None,
-            lazy_type_params_resolver: None,
-            prefer_name_def_id_resolution: false,
-            preferred_self_name: None,
-            preferred_self_def_id: None,
-            name_def_id_resolver: None,
-            strict_null_checks: false,
-            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
-            operations: Rc::new(RefCell::new(0)),
-            limit_exceeded: Rc::new(RefCell::new(false)),
-            type_query_override: None,
-        }
+            interner,
+            LoweringResolvers {
+                type_resolver: Some(type_resolver),
+                def_id_resolver: None,
+                value_resolver: Some(value_resolver),
+            },
+        )
     }
 
     /// Create a `TypeLowering` with a `DefId` resolver (Phase 1 migration).
@@ -363,24 +373,15 @@ impl<'a> TypeLowering<'a> {
         def_id_resolver: &'a dyn Fn(NodeIndex) -> Option<DefId>,
         value_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
     ) -> Self {
-        TypeLowering {
+        Self::from_resolvers(
             arena,
-            interner: interner.as_type_database(),
-            type_resolver: None,
-            def_id_resolver: Some(def_id_resolver),
-            value_resolver: Some(value_resolver),
-            computed_name_resolver: None,
-            lazy_type_params_resolver: None,
-            prefer_name_def_id_resolution: false,
-            preferred_self_name: None,
-            preferred_self_def_id: None,
-            name_def_id_resolver: None,
-            strict_null_checks: false,
-            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
-            operations: Rc::new(RefCell::new(0)),
-            limit_exceeded: Rc::new(RefCell::new(false)),
-            type_query_override: None,
-        }
+            interner,
+            LoweringResolvers {
+                type_resolver: None,
+                def_id_resolver: Some(def_id_resolver),
+                value_resolver: Some(value_resolver),
+            },
+        )
     }
 
     /// Create a `TypeLowering` with both type and `DefId` resolvers (Phase 2 migration).
@@ -394,24 +395,15 @@ impl<'a> TypeLowering<'a> {
         def_id_resolver: &'a dyn Fn(NodeIndex) -> Option<DefId>,
         value_resolver: &'a dyn Fn(NodeIndex) -> Option<u32>,
     ) -> Self {
-        TypeLowering {
+        Self::from_resolvers(
             arena,
-            interner: interner.as_type_database(),
-            type_resolver: Some(type_resolver),
-            def_id_resolver: Some(def_id_resolver),
-            value_resolver: Some(value_resolver),
-            computed_name_resolver: None,
-            lazy_type_params_resolver: None,
-            prefer_name_def_id_resolution: false,
-            preferred_self_name: None,
-            preferred_self_def_id: None,
-            name_def_id_resolver: None,
-            strict_null_checks: false,
-            type_param_scopes: Rc::new(RefCell::new(Vec::new())),
-            operations: Rc::new(RefCell::new(0)),
-            limit_exceeded: Rc::new(RefCell::new(false)),
-            type_query_override: None,
-        }
+            interner,
+            LoweringResolvers {
+                type_resolver: Some(type_resolver),
+                def_id_resolver: Some(def_id_resolver),
+                value_resolver: Some(value_resolver),
+            },
+        )
     }
 
     /// Create a new `TypeLowering` sharing the same context/state but using a different arena.
@@ -2254,5 +2246,109 @@ impl<'a> TypeLowering<'a> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod constructor_parity_tests {
+    //! Regression locks for the `TypeLowering::from_resolvers` consolidation.
+    //!
+    //! All five public constructors (`new`, `with_resolver`, `with_resolvers`,
+    //! `with_def_id_resolver`, `with_hybrid_resolver`) must agree on every
+    //! field that is not a resolver. These tests fail the build if a future
+    //! change drifts one constructor's defaults away from the rest.
+    use super::*;
+    use tsz_solver::TypeInterner;
+
+    fn assert_invariant_defaults(lowering: &TypeLowering<'_>) {
+        // Caches/shared state must always start fresh.
+        assert!(lowering.type_param_scopes.borrow().is_empty());
+        assert_eq!(*lowering.operations.borrow(), 0);
+        assert!(!*lowering.limit_exceeded.borrow());
+        // Optional knobs default to disabled.
+        assert!(lowering.computed_name_resolver.is_none());
+        assert!(lowering.lazy_type_params_resolver.is_none());
+        assert!(!lowering.prefer_name_def_id_resolution);
+        assert!(lowering.preferred_self_name.is_none());
+        assert!(lowering.preferred_self_def_id.is_none());
+        assert!(lowering.name_def_id_resolver.is_none());
+        assert!(!lowering.strict_null_checks);
+        assert!(lowering.type_query_override.is_none());
+    }
+
+    #[test]
+    fn new_initializes_invariant_defaults() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let lowering = TypeLowering::new(&arena, &interner);
+        assert_invariant_defaults(&lowering);
+        assert!(lowering.type_resolver.is_none());
+        assert!(lowering.def_id_resolver.is_none());
+        assert!(lowering.value_resolver.is_none());
+    }
+
+    #[test]
+    fn with_resolver_initializes_invariant_defaults() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let resolver = |_: NodeIndex| -> Option<u32> { None };
+        let lowering = TypeLowering::with_resolver(&arena, &interner, &resolver);
+        assert_invariant_defaults(&lowering);
+        // `with_resolver` wires the same closure into both type and value slots.
+        assert!(lowering.type_resolver.is_some());
+        assert!(lowering.def_id_resolver.is_none());
+        assert!(lowering.value_resolver.is_some());
+    }
+
+    #[test]
+    fn with_resolvers_initializes_invariant_defaults() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let type_resolver = |_: NodeIndex| -> Option<u32> { None };
+        let value_resolver = |_: NodeIndex| -> Option<u32> { None };
+        let lowering =
+            TypeLowering::with_resolvers(&arena, &interner, &type_resolver, &value_resolver);
+        assert_invariant_defaults(&lowering);
+        assert!(lowering.type_resolver.is_some());
+        assert!(lowering.def_id_resolver.is_none());
+        assert!(lowering.value_resolver.is_some());
+    }
+
+    #[test]
+    fn with_def_id_resolver_initializes_invariant_defaults() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let def_id_resolver = |_: NodeIndex| -> Option<DefId> { None };
+        let value_resolver = |_: NodeIndex| -> Option<u32> { None };
+        let lowering = TypeLowering::with_def_id_resolver(
+            &arena,
+            &interner,
+            &def_id_resolver,
+            &value_resolver,
+        );
+        assert_invariant_defaults(&lowering);
+        assert!(lowering.type_resolver.is_none());
+        assert!(lowering.def_id_resolver.is_some());
+        assert!(lowering.value_resolver.is_some());
+    }
+
+    #[test]
+    fn with_hybrid_resolver_initializes_invariant_defaults() {
+        let arena = NodeArena::new();
+        let interner = TypeInterner::new();
+        let type_resolver = |_: NodeIndex| -> Option<u32> { None };
+        let def_id_resolver = |_: NodeIndex| -> Option<DefId> { None };
+        let value_resolver = |_: NodeIndex| -> Option<u32> { None };
+        let lowering = TypeLowering::with_hybrid_resolver(
+            &arena,
+            &interner,
+            &type_resolver,
+            &def_id_resolver,
+            &value_resolver,
+        );
+        assert_invariant_defaults(&lowering);
+        assert!(lowering.type_resolver.is_some());
+        assert!(lowering.def_id_resolver.is_some());
+        assert!(lowering.value_resolver.is_some());
     }
 }
