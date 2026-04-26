@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `chore/emitter-emit-utils-tests`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1316
+- **Status**: ready
 - **Workstream**: 8.4 (Test coverage / DRY emitter helpers)
 
 ## Intent
@@ -34,4 +34,7 @@ removes a 50-line dead-test maintenance hazard.
 
 ## Verification
 
-- `cargo nextest run -p tsz-emitter` (suite passes including new tests)
+- `cargo nextest run -p tsz-emitter` — 1557 tests pass (28 new tests in
+  `transforms::emit_utils::tests` covering `is_valid_identifier_name`
+  (8 tests), `next_temp_var_name` (4 tests), `skip_trivia_forward`
+  (15 tests)).
