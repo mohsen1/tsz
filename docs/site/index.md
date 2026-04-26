@@ -17,6 +17,10 @@ permalink: /index.html
 
 {{ benchmark_mean_chart | safe }}
 
+<div class="benchmark-links-block">
+  <p class="bench-category-title"><a href="/benchmarks/">Explore all benchmarks</a></p>
+</div>
+
 ## Progress
 
 We run TypeScript's own test suite to ensure tsz can serve as a drop-in replacement - comparing diagnostics, JavaScript emit, declaration emit, and language service behavior against `tsc`.
