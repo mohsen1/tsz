@@ -445,8 +445,7 @@ const make = () => {
     let ts18004_count = diags.iter().filter(|d| d.code == 18004).count();
     assert!(
         ts18004_count >= 1,
-        "Expected TS18004 for missing shorthand property value, got diagnostics: {:?}",
-        diags
+        "Expected TS18004 for missing shorthand property value, got diagnostics: {diags:?}"
     );
 }
 
@@ -471,13 +470,11 @@ Test(({ b = '5' } = {}));
 
     assert_eq!(
         ts18004_count, 1,
-        "Expected exactly one TS18004 for missing shorthand property value, got diagnostics: {:?}",
-        diags
+        "Expected exactly one TS18004 for missing shorthand property value, got diagnostics: {diags:?}"
     );
     assert_eq!(
         ts2304_count, 0,
-        "Expected no duplicate TS2304 alongside TS18004 for shorthand assignment in JS, got diagnostics: {:?}",
-        diags
+        "Expected no duplicate TS2304 alongside TS18004 for shorthand assignment in JS, got diagnostics: {diags:?}"
     );
 }
 
@@ -494,8 +491,7 @@ function f(x: unknown) {
     let ts18046_count = diags.iter().filter(|d| d.code == 18046).count();
     assert!(
         ts18046_count >= 2,
-        "Expected at least 2 TS18046 for property/element access on unknown, got {ts18046_count}. Diagnostics: {:?}",
-        diags
+        "Expected at least 2 TS18046 for property/element access on unknown, got {ts18046_count}. Diagnostics: {diags:?}"
     );
     // Should NOT emit TS2339 for unknown type accesses
     let ts2339_count = diags.iter().filter(|d| d.code == 2339).count();
@@ -516,8 +512,7 @@ ns.foo.bar();
     let ts18046_count = diags.iter().filter(|d| d.code == 18046).count();
     assert_eq!(
         ts18046_count, 0,
-        "Expected no TS18046 for namespace import access fallback, got diagnostics: {:?}",
-        diags
+        "Expected no TS18046 for namespace import access fallback, got diagnostics: {diags:?}"
     );
 }
 
@@ -613,15 +608,13 @@ let r = x < 1;
     let ts18048_count = diags.iter().filter(|d| d.code == 18048).count();
     assert!(
         ts18048_count >= 1,
-        "Expected TS18048 for `number | undefined` operand, got diagnostics: {:?}",
-        diags
+        "Expected TS18048 for `number | undefined` operand, got diagnostics: {diags:?}"
     );
 
     let ts2365_count = diags.iter().filter(|d| d.code == 2365).count();
     assert_eq!(
         ts2365_count, 0,
-        "Should suppress TS2365 when TS18048 is emitted, got diagnostics: {:?}",
-        diags
+        "Should suppress TS2365 when TS18048 is emitted, got diagnostics: {diags:?}"
     );
 }
 
@@ -636,8 +629,7 @@ let r = item.id < 5;
     let ts18048 = diags.iter().find(|d| d.code == 18048);
     assert!(
         ts18048.is_some(),
-        "Expected TS18048 for optional property comparison, got diagnostics: {:?}",
-        diags
+        "Expected TS18048 for optional property comparison, got diagnostics: {diags:?}"
     );
 
     let has_item_dot_id_message = diags.iter().any(|d| {
@@ -647,15 +639,13 @@ let r = item.id < 5;
     });
     assert!(
         has_item_dot_id_message,
-        "Expected TS18048 message for 'item.id', got diagnostics: {:?}",
-        diags
+        "Expected TS18048 message for 'item.id', got diagnostics: {diags:?}"
     );
 
     let ts2365_count = diags.iter().filter(|d| d.code == 2365).count();
     assert_eq!(
         ts2365_count, 0,
-        "Should suppress TS2365 for optional property nullish check, got diagnostics: {:?}",
-        diags
+        "Should suppress TS2365 for optional property nullish check, got diagnostics: {diags:?}"
     );
 }
 
@@ -693,7 +683,6 @@ type Cps = MyParams<typeof C>;
     let ts2344_count = diags.iter().filter(|d| d.code == 2344).count();
     assert!(
         ts2344_count >= 1,
-        "Expected TS2344 for MyParams<typeof C> (class has no call signatures), got {ts2344_count}. Diagnostics: {:?}",
-        diags
+        "Expected TS2344 for MyParams<typeof C> (class has no call signatures), got {ts2344_count}. Diagnostics: {diags:?}"
     );
 }
