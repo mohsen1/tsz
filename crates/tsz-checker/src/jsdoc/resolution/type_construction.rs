@@ -568,6 +568,7 @@ impl<'a> CheckerState<'a> {
             use crate::query_boundaries::common::instantiate_generic;
             let instantiated =
                 instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+            self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
             return Some(instantiated);
         }
 
@@ -614,7 +615,33 @@ impl<'a> CheckerState<'a> {
         // Lazy(DefId) references in value positions for correct type name display.
         use crate::query_boundaries::common::instantiate_generic;
         let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, &type_args);
+        // Register a display def `Name<Args>` so diagnostics format the
+        // instantiated type with its original alias plus the supplied args
+        // (`ClassComponent<any>`), matching tsc behavior. The typedef path
+        // (`resolve_jsdoc_generic_typedef_type`) does the same registration.
+        self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
         Some(instantiated)
+    }
+
+    /// Register a display def `BaseName<Arg1, Arg2, ...>` for an instantiated
+    /// generic JSDoc type reference so diagnostics preserve the original
+    /// alias plus the supplied type arguments.
+    fn register_jsdoc_generic_display_name(
+        &mut self,
+        base_name: &str,
+        type_args: &[TypeId],
+        instantiated: TypeId,
+    ) {
+        if instantiated == TypeId::ERROR || instantiated == TypeId::UNKNOWN {
+            return;
+        }
+        let args_display = type_args
+            .iter()
+            .map(|&arg| self.format_type_diagnostic(arg))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let display_name = format!("{base_name}<{args_display}>");
+        let _ = self.ensure_jsdoc_instantiated_display_def(&display_name, instantiated);
     }
     pub(in crate::jsdoc::resolution) fn parse_jsdoc_tuple_type(
         &mut self,
@@ -1595,13 +1622,7 @@ impl<'a> CheckerState<'a> {
 
         use crate::query_boundaries::common::instantiate_generic;
         let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, type_args);
-        let args_display = type_args
-            .iter()
-            .map(|&arg| self.format_type_diagnostic(arg))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let display_name = format!("{base_name}<{args_display}>");
-        let _ = self.ensure_jsdoc_instantiated_display_def(&display_name, instantiated);
+        self.register_jsdoc_generic_display_name(base_name, type_args, instantiated);
         Some(instantiated)
     }
     // NOTE: jsdoc_has_readonly_tag, jsdoc_access_level, find_orphaned_extends_tags_for_statements,
