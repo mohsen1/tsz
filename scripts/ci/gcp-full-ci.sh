@@ -508,7 +508,7 @@ run_unit_shard() {
   bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
   run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
   shard_index="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_INDEX:-0}")"
-  shard_count="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_COUNT:-4}")"
+  shard_count="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_COUNT:-8}")"
 
   echo "Unit shard $((shard_index + 1))/${shard_count}"
 
