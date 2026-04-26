@@ -1002,7 +1002,11 @@ impl Server {
         }
     }
 
-    // Stub handlers for protocol commands - return success with empty/minimal responses
+    // Stub handlers for protocol commands — return `success: true` with
+    // empty/minimal responses for commands whose semantics ARE "no result yet"
+    // (`compileOnSaveAffectedFileList` → `[]`, `compileOnSaveEmitFile` →
+    // `false`, async-acknowledged ones like `geterr`). This is the right
+    // shape when the empty body is a valid answer to the protocol question.
     pub(crate) fn stub_response(
         &self,
         seq: u64,
@@ -1017,6 +1021,37 @@ impl Server {
             success: true,
             message: None,
             body,
+        }
+    }
+
+    /// Return `success: false` with an explicit "not implemented" reason for
+    /// protocol commands that this server has not implemented yet.
+    ///
+    /// Distinguishes "feature unimplemented" from "feature produced an empty
+    /// result" — the prior `stub_response` collapsed both into `success: true`,
+    /// leaving clients no way to tell why a command returned nothing. New
+    /// unimplemented handlers should call this instead of `stub_response`.
+    ///
+    /// Robustness audit (PR #H, item 8 in
+    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`).
+    #[allow(dead_code)]
+    pub(crate) fn unimplemented_response(
+        &self,
+        seq: u64,
+        request: &TsServerRequest,
+        reason: &str,
+    ) -> TsServerResponse {
+        TsServerResponse {
+            seq,
+            msg_type: "response".to_string(),
+            command: request.command.clone(),
+            request_seq: request.seq,
+            success: false,
+            message: Some(format!(
+                "Command '{}' is not implemented: {reason}",
+                request.command
+            )),
+            body: None,
         }
     }
 }
