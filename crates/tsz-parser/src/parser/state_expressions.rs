@@ -2548,6 +2548,30 @@ impl ParserState {
                     self.error_comma_expected();
                     self.next_token();
 
+                    // After consuming the spurious `:`, if the next token is a
+                    // statement-only recovery boundary (e.g. `var`, `let`,
+                    // `return`), don't try to parse it as a type — emit TS1135
+                    // at the keyword and break out of the argument list so the
+                    // outer statement parser can recover. This matches tsc's
+                    // behaviour where `f(x: var ...)` produces TS1005 at `:`,
+                    // TS1135 at `var`, then re-parses `var ...` as a top-level
+                    // variable declaration.
+                    if self.is_argument_list_recovery_boundary() {
+                        if !self.is_token(SyntaxKind::EndOfFileToken) {
+                            // Bypass the distance-based suppression heuristic in
+                            // `should_report_error` because the previous TS1005
+                            // ',' expected emitted on the spurious `:` is only
+                            // a couple of columns away — we still want to flag
+                            // the keyword position with TS1135.
+                            use tsz_common::diagnostics::diagnostic_codes;
+                            self.parse_error_at_current_token(
+                                "Argument expression expected.",
+                                diagnostic_codes::ARGUMENT_EXPRESSION_EXPECTED,
+                            );
+                        }
+                        break;
+                    }
+
                     let recover_start = self.token_pos();
                     let _ = self.parse_type();
                     if self.token_pos() == recover_start
