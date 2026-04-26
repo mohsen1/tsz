@@ -1604,7 +1604,11 @@ fn compile_inner(
             emit_ms: emit_duration.as_secs_f64() * 1000.0,
             total_ms: compile_start.elapsed().as_secs_f64() * 1000.0,
         },
-        residency_stats: Some(program.residency_stats()),
+        // PERF: residency_stats walks every unique arena (estimated_size_bytes
+        // per arena), every bound file, the skeleton index, and the dep graph
+        // — only worth paying for when --extendedDiagnostics actually prints
+        // the numbers. See iter 4's collect_compile_stats gating for parity.
+        residency_stats: collect_compile_stats.then(|| program.residency_stats()),
         module_dep_stats: collected.module_dep_stats,
         invalidation_summaries: Vec::new(),
     })

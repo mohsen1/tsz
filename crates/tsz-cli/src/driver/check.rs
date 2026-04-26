@@ -1557,7 +1557,10 @@ pub(super) fn collect_diagnostics(
     let query_cache_stats = aggregated_qc_stats.or_else(|| Some(query_cache.statistics()));
 
     // Compute module dependency graph statistics for --extendedDiagnostics.
-    let module_dep_stats = {
+    // PERF: Skip the SCC computation entirely when the CLI won't print stats.
+    // tarjan_scc + adjacency dedup is O(V+E) and adj allocates a Vec<Vec<usize>>
+    // of file_count.
+    let module_dep_stats = if collect_compile_stats {
         let file_count = program.files.len();
         // Build a deduplicated adjacency list from resolved_module_paths.
         let mut adj: Vec<Vec<usize>> = vec![Vec::new(); file_count];
@@ -1578,6 +1581,8 @@ pub(super) fn collect_diagnostics(
             import_cycles,
             largest_cycle_size,
         })
+    } else {
+        None
     };
 
     CollectDiagnosticsResult {
