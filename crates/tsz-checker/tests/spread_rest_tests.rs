@@ -1330,6 +1330,7 @@ var z = { ...x };
 /// We use a hand-rolled iterable instead of `new SymbolIterator` so the
 /// test does not depend on the lib-loaded `Symbol.iterator` machinery
 /// (the test harness intentionally skips lib contexts).
+#[allow(clippy::doc_markdown)]
 #[test]
 fn test_array_spread_iterator_element_mismatch_elaborates_to_spread() {
     let source = r#"
