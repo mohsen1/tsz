@@ -154,6 +154,60 @@ e as ErrAlias<string>;
 }
 
 #[test]
+fn ts2344_failed_typeof_instantiation_emits_constraint_diagnostic() {
+    // `typeof fn<TArgs>` is an instantiation expression. When TArgs do not
+    // match any signature's type-parameter arity, tsc emits TS2635 at the
+    // instantiation site AND TS2344 at the surrounding type-argument position
+    // because the instantiation result is treated as errorType which does
+    // not satisfy the declared type-parameter constraint.
+    //
+    // Mirrors `compiler/instantiationExpressionErrorNoCrash.ts` without
+    // depending on lib.d.ts (which the unit-test pipeline disables).
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = T;
+declare const createCacheReducer: <N extends string, QR>(q: QR) => QR;
+type Cache<QR> = {
+    queries: {
+        [QK in keyof QR]: RT<typeof createCacheReducer<QR>>;
+    };
+};
+"#,
+    );
+
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    let ts2635 = codes.iter().filter(|&&c| c == 2635).count();
+    let ts2344 = codes.iter().filter(|&&c| c == 2344).count();
+    assert_eq!(
+        ts2635, 1,
+        "Expected one TS2635 at the instantiation expression, got diags: {diags:?}"
+    );
+    assert_eq!(
+        ts2344, 1,
+        "Expected one TS2344 against the callable type-parameter constraint, got diags: {diags:?}"
+    );
+}
+
+#[test]
+fn ts2344_valid_typeof_instantiation_does_not_emit_constraint_diagnostic() {
+    // Sanity check: a *successful* typeof-instantiation expression must not
+    // trigger TS2344 against a callable constraint. Use a concrete type arg
+    // to keep the assertion focused on the new arity check.
+    let diags = check_source_diagnostics(
+        r#"
+type RT<T extends (...args: any) => any> = T;
+declare const createReducer: <S>(s: S) => S;
+type R = RT<typeof createReducer<string>>;
+"#,
+    );
+    let ts2344 = diags.iter().filter(|d| d.code == 2344).count();
+    assert_eq!(
+        ts2344, 0,
+        "Successful typeof-instantiation must not emit TS2344, got diags: {diags:?}"
+    );
+}
+
+#[test]
 fn ts2352_array_assertion_anchors_first_excess_property() {
     let source = r#"
 <{ id: number; }[]>[{ foo: "s" }];
