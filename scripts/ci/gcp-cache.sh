@@ -249,6 +249,20 @@ restore_caches() {
       fi
     else
       echo "Cache miss: cargo-target-${cargo_target_hash}"
+      # Restore most recent available cargo-target as a warm fallback. With
+      # a warm (stale) cache Cargo only recompiles changed crates rather than
+      # the full dependency tree. Does not mark cache-hit so we still save
+      # the exact-hash entry at the end of the job.
+      local fallback_uri
+      fallback_uri="$(gsutil ls "$(cache_uri "cargo-target/*.tar.gz")" 2>/dev/null \
+        | sort | tail -1 || true)"
+      if [[ -n "$fallback_uri" ]]; then
+        echo "Cache warm-fallback: cargo-target from ${fallback_uri}"
+        restore_archive "cargo-target-warm-fallback" "$fallback_uri" "." .target
+        if [[ -d .target ]]; then
+          normalize_rust_source_mtimes
+        fi
+      fi
     fi
   else
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
