@@ -220,7 +220,7 @@ suite_needs_group() {
       [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* ]]
       ;;
     rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" ]]
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" ]]
       ;;
     *)
       return 1
@@ -1219,6 +1219,15 @@ run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
   timed build_unit_test_archive build_unit_test_archive
+  # Seed scripts/node_modules so save_caches can cache it for all parallel shard jobs.
+  # Shards all start simultaneously after build completes, so if build doesn't seed it,
+  # every shard misses the cache and reinstalls npm packages independently.
+  ci_section "Seed scripts node_modules for parallel job cache"
+  if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
+    (cd scripts && npm install --silent)
+  else
+    echo "scripts/node_modules already present (cache hit)"
+  fi
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
   fi
