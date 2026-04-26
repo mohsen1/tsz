@@ -343,10 +343,9 @@ impl<'a> CheckerState<'a> {
         // For deferred conditional types, check if the conditional is ambiguous
         // (tsc shows the branch union rather than the alias form).
         let is_cond = crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty);
-        if is_cond
-            && let Some(branch_union) = self.compute_ambiguous_conditional_display(ty) {
-                return self.format_type_for_assignability_message(branch_union);
-            }
+        if is_cond && let Some(branch_union) = self.compute_ambiguous_conditional_display(ty) {
+            return self.format_type_for_assignability_message(branch_union);
+        }
 
         let evaluated = self.evaluate_type_for_assignability(ty);
         let use_eval = self.should_use_evaluated_assignability_display(ty, evaluated);

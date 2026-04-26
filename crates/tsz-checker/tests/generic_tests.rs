@@ -516,9 +516,7 @@ interface Lifecycle<Attrs, State> { x: number }
     let eq_pos = source.find('=').expect("default `=` present");
     let after_eq = &source[eq_pos..];
     // First `State` after `=` is inside `Lifecycle<Attrs, State>`.
-    let rel = after_eq
-        .find("State")
-        .expect("State identifier after `=`");
+    let rel = after_eq.find("State").expect("State identifier after `=`");
     let expected_pos = (eq_pos + rel) as u32;
     assert_eq!(
         diag.start, expected_pos,

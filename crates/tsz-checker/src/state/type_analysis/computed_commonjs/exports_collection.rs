@@ -269,39 +269,41 @@ impl<'a> CheckerState<'a> {
 
         // exports.<name> / exports["<name>"]
         if let Some(ident) = arena.get_identifier_at(expr_idx)
-            && ident.escaped_text == "exports" {
-                return Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
-                    .map(|name| (name, None));
-            }
+            && ident.escaped_text == "exports"
+        {
+            return Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
+                .map(|name| (name, None));
+        }
 
         // module.exports.<name> / module["exports"].<name>
         if let Some(container_node) = arena.get(expr_idx)
             && (container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || container_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                && let Some(container_access) = arena.get_access_expr(container_node) {
-                    let is_module_exports =
-                        if container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                            arena
-                                .get_identifier_at(container_access.expression)
-                                .is_some_and(|i| i.escaped_text == "module")
-                                && arena
-                                    .get_identifier_at(container_access.name_or_argument)
-                                    .is_some_and(|i| i.escaped_text == "exports")
-                        } else {
-                            arena
-                                .get_identifier_at(container_access.expression)
-                                .is_some_and(|i| i.escaped_text == "module")
-                                && Self::commonjs_static_member_name_in_arena(
-                                    arena,
-                                    container_access.name_or_argument,
-                                )
-                                .is_some_and(|n| n == "exports")
-                        };
-                    if is_module_exports {
-                        return Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
-                            .map(|n| (n, None));
-                    }
-                }
+            && let Some(container_access) = arena.get_access_expr(container_node)
+        {
+            let is_module_exports =
+                if container_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    arena
+                        .get_identifier_at(container_access.expression)
+                        .is_some_and(|i| i.escaped_text == "module")
+                        && arena
+                            .get_identifier_at(container_access.name_or_argument)
+                            .is_some_and(|i| i.escaped_text == "exports")
+                } else {
+                    arena
+                        .get_identifier_at(container_access.expression)
+                        .is_some_and(|i| i.escaped_text == "module")
+                        && Self::commonjs_static_member_name_in_arena(
+                            arena,
+                            container_access.name_or_argument,
+                        )
+                        .is_some_and(|n| n == "exports")
+                };
+            if is_module_exports {
+                return Self::commonjs_static_member_name_in_arena(arena, name_or_arg)
+                    .map(|n| (n, None));
+            }
+        }
 
         // <alias>.<name> where alias is in export_aliases
         arena

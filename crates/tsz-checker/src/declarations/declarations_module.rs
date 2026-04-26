@@ -829,18 +829,19 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                     };
 
                                     if let Some((allowed, span)) = existing_info
-                                        && !allowed {
-                                            // tsc reports TS2567 at BOTH the new enum in
-                                            // the augmentation AND at the original
-                                            // declaration's name. Emit both for parity.
-                                            self.ctx.error(
+                                        && !allowed
+                                    {
+                                        // tsc reports TS2567 at BOTH the new enum in
+                                        // the augmentation AND at the original
+                                        // declaration's name. Emit both for parity.
+                                        self.ctx.error(
                                                 name_node.pos,
                                                 name_node.end - name_node.pos,
                                                 diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS.to_string(),
                                                 diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
                                             );
-                                            if let Some((file, pos, len)) = span {
-                                                self.ctx.diagnostics.push(
+                                        if let Some((file, pos, len)) = span {
+                                            self.ctx.diagnostics.push(
                                                     tsz_common::diagnostics::Diagnostic::error(
                                                         file,
                                                         pos,
@@ -849,8 +850,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                                         diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
                                                     ),
                                                 );
-                                            }
                                         }
+                                    }
                                     if register_value_name(&ident.escaped_text, enm.name)
                                         && let Some(node) = self.ctx.arena.get(enm.name)
                                     {
