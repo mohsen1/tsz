@@ -81,31 +81,52 @@ jobs:
         with:
           submodules: true
 
+      # Try to reuse the web WASM artifact already built by the CI wasm job
+      # for the same commit. Falls back to the local cache, then a full build.
+      - name: Download web WASM from CI
+        id: wasm-ci-download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CI_RUN=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=main&per_page=5" \
+            --jq "[.workflow_runs[] | select(.head_sha == \"${{ github.sha }}\")][0].id" 2>/dev/null || echo "")
+          if [[ -n "$CI_RUN" && "$CI_RUN" != "null" ]]; then
+            echo "Found CI run $CI_RUN for this SHA, downloading wasm-web artifact..."
+            gh run download "$CI_RUN" -n wasm-web -D pkg/web/ 2>/dev/null \
+              && echo "downloaded=true" >> "$GITHUB_OUTPUT" \
+              || echo "Artifact download failed, will build locally."
+          else
+            echo "No matching CI run found for ${{ github.sha }}, will build locally."
+          fi
+        continue-on-error: true
+
       - name: Cache built WASM output
         id: wasm-cache
+        if: steps.wasm-ci-download.outputs.downloaded != 'true'
         uses: actions/cache@v4
         with:
           path: pkg/web/
           key: wasm-web-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'crates/*/src/**', 'crates/*/build.rs') }}
 
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: steps.wasm-ci-download.outputs.downloaded != 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
 
       - uses: Swatinem/rust-cache@v2
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: steps.wasm-ci-download.outputs.downloaded != 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
         with:
           cache-on-failure: true
 
       - name: Install wasm-pack
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: steps.wasm-ci-download.outputs.downloaded != 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install wasm-opt (via binaryen)
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: steps.wasm-ci-download.outputs.downloaded != 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
         run: sudo apt-get install -y binaryen
 
       - name: Build WASM (web target)
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        if: steps.wasm-ci-download.outputs.downloaded != 'true' && steps.wasm-cache.outputs.cache-hit != 'true'
         run: |
           cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
           # wasm-opt currently produces a web build that fails during
