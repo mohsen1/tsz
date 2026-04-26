@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/ts2551-property-receiver-preserves-keyof-arg-display`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1469
+- **Status**: ready
 - **Workstream**: 1 (conformance fingerprint parity)
 
 ## Intent
