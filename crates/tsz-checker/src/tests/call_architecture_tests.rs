@@ -1244,6 +1244,61 @@ nums(...strs);
     );
 }
 
+/// Spread of an array literal into a non-rest signature must NOT emit TS2556.
+/// The literal is statically expanded into individual arguments at the call
+/// site, so each element is checked against the matching parameter (this can
+/// produce TS2345 per element, but never TS2556 — the literal's length is
+/// known). See conformance/keyofAndIndexedAccess.ts: `path(thing, ...['a','x'])`.
+#[test]
+fn call_with_spread_array_literal_into_overload_does_not_emit_ts2556() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function path<T, K1 extends keyof T>(obj: T, key1: K1): T[K1];
+declare function path(obj: any, ...keys: (string | number)[]): any;
+
+function f1() {
+    let x = path({a: 1}, ...['a']);
+}
+"#,
+    );
+
+    let ts2556: Vec<_> = diags.iter().filter(|d| d.code == 2556).collect();
+    assert!(
+        ts2556.is_empty(),
+        "Expected no TS2556 for array literal spread (length is statically \
+         known and elements are checked individually), got: {:?}",
+        ts2556
+            .iter()
+            .map(|d| &d.message_text)
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Spread of an opaque (non-literal) array into a non-rest-only signature
+/// MUST still emit TS2556 — the runtime length is unknown so the spread
+/// cannot be statically expanded.
+#[test]
+fn call_with_spread_opaque_array_into_non_rest_emits_ts2556() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function path<T, K1 extends keyof T>(obj: T, key1: K1): T[K1];
+
+function f1() {
+    const arr: string[] = ['a'];
+    let x = path({a: 1}, ...arr);
+}
+"#,
+    );
+
+    let ts2556: Vec<_> = diags.iter().filter(|d| d.code == 2556).collect();
+    assert!(
+        !ts2556.is_empty(),
+        "Expected TS2556 for opaque (non-literal) array spread into a \
+         signature with no rest parameter, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 // === Property call regression tests ===
 // Tests for method invocation through property access expressions.
 

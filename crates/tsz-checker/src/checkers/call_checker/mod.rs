@@ -1623,6 +1623,22 @@ impl<'a> CheckerState<'a> {
                 effective_index += elems.len();
                 continue;
             }
+            // An array literal spread (e.g. `...['a', 'x']`) is expanded element-by-element
+            // during argument collection, so each element is checked individually against
+            // the corresponding parameter. Treat it like a tuple-like spread here: advance
+            // by the literal's element count and skip the TS2556 emission. tsc behaves the
+            // same way — TS2556 is only reported for spreads of opaque arrays/iterables
+            // whose runtime length is unknown at the call site.
+            if array_element_type_for_type(self.ctx.types, spread_type).is_some()
+                && let Some(expr_node) = self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(spread_data.expression))
+                && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+            {
+                effective_index += literal.elements.nodes.len();
+                continue;
+            }
             if is_type_parameter_type(self.ctx.types, spread_type)
                 && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
@@ -1680,6 +1696,24 @@ impl<'a> CheckerState<'a> {
                     return prior_non_tuple_spread;
                 }
                 effective_index += elems.len();
+                continue;
+            }
+            // An array literal spread (e.g. `...['a', 'x']`) is expanded element-by-element
+            // during argument collection. A mismatch at one of those expanded indices is a
+            // per-element type error (TS2345/TS2322), not a TS2556. Skip past the literal's
+            // elements without setting `prior_non_tuple_spread`.
+            if array_element_type_for_type(self.ctx.types, spread_type).is_some()
+                && let Some(expr_node) = self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(spread_data.expression))
+                && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
+            {
+                let count = literal.elements.nodes.len();
+                if mismatch_index < effective_index + count {
+                    return prior_non_tuple_spread;
+                }
+                effective_index += count;
                 continue;
             }
             let is_non_tuple_spread = array_element_type_for_type(self.ctx.types, spread_type)
