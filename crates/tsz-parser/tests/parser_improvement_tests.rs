@@ -4026,3 +4026,42 @@ fn test_object_literal_comma_recovery_after_short_distance_colon_error() {
         "expected TS1005 `',' expected.` at `{{` after `C4`, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_regex_hex_escape_with_numeric_separator_no_ts1125() {
+    // Regression for conformance test
+    // `conformance/parser/ecmascript2021/numericSeparators/parser.numericSeparators.unicodeEscape.ts`:
+    // tsc accepts `_` as a numeric-separator placeholder inside regex `\x` and
+    // `\u` escapes (deferring strict hex grammar to the regex runtime), and
+    // emits NO TS1125 for `/\xf_f/u` or `/\u_ffff/u`. We previously rejected
+    // `_` at every hex-digit slot in the parser-level regex escape validator.
+    let source = "/\\xf_f/u\n/\\uff_ff/u\n/\\u_ffff/u\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+        "regex `\\x`/`\\u` escapes with `_` separator must not emit TS1125, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_regex_hex_escape_keeps_real_hex_digit_validation() {
+    // Sanity guard: `_` relaxation must not silence genuine non-hex chars.
+    // For `/\u\i\c/` the `\u` is followed by `\` (not hex, not `_`), so TS1125
+    // must still fire — matching tsc's `regularExpressionAnnexB.ts`.
+    let source = "/\\u\\i\\c/\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+        "regex `\\u\\i...` must still emit TS1125 for non-hex non-separator chars, got {diagnostics:?}"
+    );
+}

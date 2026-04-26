@@ -177,7 +177,8 @@ declare let c: any;
     );
     let ts2493_count = diagnostics.iter().filter(|d| d.code == 2493).count();
     assert_eq!(
-        ts2493_count, 2,
+        ts2493_count,
+        2,
         "Expected TS2493 once per out-of-bounds element (indexes 1 and 2), got {}: {:?}",
         ts2493_count,
         diagnostics
@@ -219,7 +220,8 @@ declare let c: any;
     );
     let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
     assert_eq!(
-        ts2339_count, 2,
+        ts2339_count,
+        2,
         "Expected TS2339 once per out-of-bounds element (indexes 1 and 2), got {}: {:?}",
         ts2339_count,
         diagnostics
