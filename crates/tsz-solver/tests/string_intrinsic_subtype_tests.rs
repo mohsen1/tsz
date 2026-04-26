@@ -302,7 +302,7 @@ fn uppercase_over_number_template_accepts_digit_literal() {
     let mut checker = SubtypeChecker::new(&interner);
     assert!(
         checker.is_subtype_of(one_literal, uppercase_number_template),
-        r#""1" should be assignable to Uppercase<`${number}`> (uppercase of "1" is "1", and "1" matches `${number}`)"#
+        "\"1\" should be assignable to Uppercase<`${{number}}`> (uppercase of \"1\" is \"1\", and \"1\" matches `${{number}}`)"
     );
 }
 
@@ -318,7 +318,7 @@ fn lowercase_over_number_template_accepts_digit_literal() {
     let mut checker = SubtypeChecker::new(&interner);
     assert!(
         checker.is_subtype_of(one_literal, lowercase_number_template),
-        r#""1" should be assignable to Lowercase<`${number}`>"#
+        "\"1\" should be assignable to Lowercase<`${{number}}`>"
     );
 }
 
@@ -338,11 +338,11 @@ fn uppercase_over_number_template_rejects_non_digit_literal() {
     let mut checker = SubtypeChecker::new(&interner);
     assert!(
         !checker.is_subtype_of(abc_literal, uppercase_number_template),
-        r#""ABC" should NOT be assignable to Uppercase<`${number}`>"#
+        "\"ABC\" should NOT be assignable to Uppercase<`${{number}}`>"
     );
     assert!(
         !checker.is_subtype_of(abc_lower, uppercase_number_template),
-        r#""abc" should NOT be assignable to Uppercase<`${number}`>"#
+        "\"abc\" should NOT be assignable to Uppercase<`${{number}}`>"
     );
 }
 
@@ -361,7 +361,7 @@ fn nested_uppercase_lowercase_over_number_template_accepts_digit_literal() {
     let mut checker = SubtypeChecker::new(&interner);
     assert!(
         checker.is_subtype_of(one_literal, upper_lower_number),
-        r#""1" should be assignable to Uppercase<Lowercase<`${number}`>>"#
+        "\"1\" should be assignable to Uppercase<Lowercase<`${{number}}`>>"
     );
 }
 
