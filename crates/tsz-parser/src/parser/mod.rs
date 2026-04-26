@@ -79,6 +79,10 @@ mod jsx_unclosed_tag_tests;
 mod jsx_namespace_recovery_tests;
 
 #[cfg(test)]
+#[path = "../../tests/numeric_literal_exponent_tests.rs"]
+mod numeric_literal_exponent_tests;
+
+#[cfg(test)]
 #[path = "../../tests/state_expression_tests.rs"]
 mod state_expression_tests;
 

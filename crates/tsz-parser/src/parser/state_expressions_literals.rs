@@ -478,25 +478,27 @@ impl ParserState {
         }
 
         // Check for missing exponent digits (e.g., 1e+, 1e-, 1e) - TS1124
-        // If there's a Scientific flag but the text ends without valid digits after e/E
+        // If there's a Scientific flag but the exponent has no actual digits.
+        //
+        // Note: a misplaced separator like `0e_0` or `0e_` is NOT a missing
+        // digit — the scanner emits TS6188 for the underscore, and tsc does
+        // not also emit TS1124 when at least one digit is present in the
+        // exponent. We only emit TS1124 when the exponent is genuinely empty
+        // of digits (e.g. `1e+`, `1e_`, `1e+_`).
         if (token_flags & TokenFlags::Scientific as u32) != 0 {
             let bytes = text.as_bytes();
-            let len = bytes.len();
             let missing_digit = if let Some(exp_offset) = bytes
                 .iter()
                 .rposition(|byte| *byte == b'e' || *byte == b'E')
             {
-                if exp_offset + 1 >= len {
-                    true
-                } else {
-                    let after = &bytes[exp_offset + 1..];
-                    let first = after[0];
-                    if first == b'+' || first == b'-' {
-                        after.len() == 1 || after[1] == b'_'
-                    } else {
-                        first == b'_'
-                    }
+                let mut after_idx = exp_offset + 1;
+                if after_idx < bytes.len() && (bytes[after_idx] == b'+' || bytes[after_idx] == b'-')
+                {
+                    after_idx += 1;
                 }
+                // Genuine missing-digit only when no digit appears after the
+                // exponent prefix (`e`/`E` and an optional sign).
+                !bytes[after_idx..].iter().any(|b| b.is_ascii_digit())
             } else {
                 false
             };
