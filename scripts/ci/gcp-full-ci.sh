@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
 export CARGO_HOME="${TSZ_CI_CARGO_HOME:-$ROOT_DIR/.ci-cache/cargo-home}"
+SCCACHE_VERSION="${SCCACHE_VERSION:-0.9.1}"
 export CARGO_PROFILE_DIST_FAST_LTO="${CARGO_PROFILE_DIST_FAST_LTO:-false}"
 export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
 export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
@@ -178,6 +179,9 @@ suite_needs_group() {
     node)
       [[ "$suite" == "conformance" || "$suite" == "emit" || "$suite" == "fourslash" ]]
       ;;
+    rust_compile)
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" ]]
+      ;;
     *)
       return 1
       ;;
@@ -229,6 +233,10 @@ ensure_host_tools() {
     curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
   fi
 
+  if suite_needs_group "$suite" rust_compile; then
+    setup_sccache
+  fi
+
   rustc -V
   cargo -V
   if command -v node >/dev/null 2>&1; then
@@ -238,6 +246,73 @@ ensure_host_tools() {
     npm -v
   fi
   nproc
+}
+
+setup_sccache() {
+  if command -v sccache >/dev/null 2>&1; then
+    echo "sccache $(sccache --version 2>&1 | head -1) already available"
+    return 0
+  fi
+
+  local arch platform
+  arch="$(uname -m)"
+  if [[ "$arch" == "aarch64" ]]; then
+    platform="aarch64-unknown-linux-musl"
+  else
+    platform="x86_64-unknown-linux-musl"
+  fi
+
+  local url="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-${platform}.tar.gz"
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  echo "Downloading sccache v${SCCACHE_VERSION}..."
+  if curl -fsSL "$url" -o "$tmp_dir/sccache.tar.gz" 2>/dev/null; then
+    tar -xzf "$tmp_dir/sccache.tar.gz" -C "$tmp_dir" 2>/dev/null
+    local bin="$tmp_dir/sccache-v${SCCACHE_VERSION}-${platform}/sccache"
+    if [[ -f "$bin" ]]; then
+      install -m 755 "$bin" /usr/local/bin/sccache
+    fi
+  fi
+  rm -rf "$tmp_dir"
+
+  if command -v sccache >/dev/null 2>&1; then
+    echo "sccache installed: $(sccache --version 2>&1 | head -1)"
+  else
+    echo "warning: sccache install failed; builds will proceed without it" >&2
+  fi
+}
+
+configure_sccache() {
+  if ! command -v sccache >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local bucket_uri="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  if [[ -z "$bucket_uri" ]]; then
+    echo "sccache: no GCS bucket configured, skipping"
+    return 0
+  fi
+
+  # Parse gs://bucket-name/key/prefix → bucket + prefix
+  local no_scheme="${bucket_uri#gs://}"
+  local gcs_bucket="${no_scheme%%/*}"
+  local gcs_prefix="${no_scheme#*/}/sccache"
+
+  export SCCACHE_GCS_BUCKET="$gcs_bucket"
+  export SCCACHE_GCS_KEY_PREFIX="$gcs_prefix"
+  export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_WRITE}"
+  export RUSTC_WRAPPER="sccache"
+  export CARGO_INCREMENTAL="0"  # incompatible with sccache
+  export SCCACHE_LOG="${SCCACHE_LOG:-warn}"
+
+  echo "sccache: GCS bucket=${gcs_bucket} prefix=${gcs_prefix} mode=${SCCACHE_GCS_RW_MODE}"
+  sccache --stop-server 2>/dev/null || true
+  if sccache --start-server 2>/dev/null; then
+    echo "sccache server started"
+  else
+    echo "warning: sccache server failed to start; unsetting RUSTC_WRAPPER" >&2
+    unset RUSTC_WRAPPER
+  fi
 }
 
 ensure_source_git_context() {
@@ -730,6 +805,9 @@ aggregate_fourslash() {
 run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
+  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+    sccache --show-stats 2>/dev/null || true
+  fi
   if command -v gsutil >/dev/null 2>&1; then
     scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
   fi
@@ -740,6 +818,9 @@ run_common_setup() {
   timed ensure_host_tools ensure_host_tools "$suite"
   timed ensure_source_git_context ensure_source_git_context
   timed init_typescript_submodule init_typescript_submodule
+  if suite_needs_group "$suite" rust_compile; then
+    configure_sccache
+  fi
 }
 
 run_all_suites() {
