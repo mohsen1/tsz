@@ -218,11 +218,33 @@ impl<'a> Printer<'a> {
             self.map_token_after(expr_node.end, node.end, b'.');
         }
         self.write_dot_token(access.expression);
-        // When the property name is missing (error recovery, e.g. `bar.\n}`),
-        // tsc emits the dot followed by a newline so the expression statement's
-        // semicolon ends up on its own line: `bar.\n    ;`
+        // When the property name is missing (error recovery), the source layout
+        // determines whether tsc breaks to a new line:
+        // - `bar.\n}` -> emit `bar.\n    ;` (newline preserved when source had a
+        //   line break between the dot and the next significant token)
+        // - `window. ` (EOF, no newline) -> emit `window.;` on a single line
+        // We detect a newline by inspecting the source text between the
+        // expression end (just before the dot) and the property access end
+        // (where the missing name would have been emitted).
         if access.name_or_argument.is_none() {
-            self.write_line();
+            let mut emit_newline = false;
+            if let Some(text) = self.source_text
+                && let Some(expr_node) = self.arena.get(access.expression)
+            {
+                // Iterate over raw bytes — the only character we look for is
+                // ASCII `\n` (0x0A), which never appears inside a multibyte
+                // UTF-8 sequence, so byte iteration is safe regardless of
+                // node-end / character boundary alignment.
+                let bytes = text.as_bytes();
+                let start = std::cmp::min(expr_node.end as usize, bytes.len());
+                let end = std::cmp::min(node.end as usize, bytes.len());
+                if start <= end && bytes[start..end].contains(&b'\n') {
+                    emit_newline = true;
+                }
+            }
+            if emit_newline {
+                self.write_line();
+            }
             return;
         }
         self.emit_property_name_without_import_substitution(access.name_or_argument);
