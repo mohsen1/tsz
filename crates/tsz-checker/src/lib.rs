@@ -100,6 +100,9 @@ pub mod test_utils;
 
 // Tests that don't depend on root crate's test_fixtures
 #[cfg(test)]
+#[path = "../tests/assertion_overlap_object_primitive_tests.rs"]
+mod assertion_overlap_object_primitive_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
