@@ -1752,6 +1752,52 @@ class Bar extends Foo {
 }
 
 #[test]
+fn ts2416_this_predicate_inheritance_not_suppressed() {
+    // Regression for typePredicateInherit.ts: tsc never infers `this is T`
+    // predicates from a method body, so a class method without an explicit
+    // return type annotation that happens to return `boolean` must NOT be
+    // suppressed when the interface (or base class) it satisfies declares a
+    // `this is X` predicate. tsc reports TS2416 for each such mismatch.
+    let diags = check_source_diagnostics(
+        r#"
+interface A {
+  method1(): this is { a: 1 };
+  method2(): boolean;
+  method3(): this is { a: 1 };
+}
+class B implements A {
+  method1() { }
+  method2() { }
+  method3() { return true; }
+}
+class C {
+  method1(): this is { a: 1 } { return true; }
+  method3(): this is { a: 1 } { return true; }
+}
+class D extends C {
+  method1(): void { }
+  method3(): boolean { return true; }
+}
+"#,
+    );
+    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    let messages: Vec<_> = ts2416.iter().map(|d| &d.message_text).collect();
+    assert_eq!(
+        ts2416.len(),
+        5,
+        "Expected 5 TS2416 (B.method1/2/3 + D.method1/3), got: {messages:?}"
+    );
+    for name in ["method1", "method2", "method3"] {
+        assert!(
+            ts2416
+                .iter()
+                .any(|d| d.message_text.contains(&format!("Property '{name}'"))),
+            "Expected TS2416 mentioning Property '{name}', got: {messages:?}"
+        );
+    }
+}
+
+#[test]
 fn ts2352_string_enum_comparable_in_nested_assertion() {
     // Repro from comparableRelationBidirectional.ts:
     // When asserting an object literal `as UserSettings` where a nested property
