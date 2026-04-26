@@ -3,115 +3,158 @@ title: Sound Mode
 layout: layouts/base.njk
 page_class: sound-mode
 permalink: /sound-mode/index.html
-extra_scripts: <script src="/sound-mode-editors.js"></script>
+extra_scripts: <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js"></script><script src="/sound-mode-editors.js"></script>
 ---
 
 # Sound Mode
 
 <div class="alert alert-warning">
-  <strong>Experimental</strong> - Sound Mode is still in exploration. It stays behind explicit flags, its coverage is intentionally narrow, and its behavior may change as we validate the rollout.
+  <strong>Experimental</strong> - Sound Mode is an opt-in rollout plan, focused on a safer default for user-authored TypeScript code.
 </div>
 
-**tsz** has an experimental **Sound Mode** for teams that want stricter TypeScript compatibility checks than `tsc` provides by default.
+**tsz** is planning Sound Mode as a staged feature: stricter checks, intentionally introduced in small steps so teams can adopt safely.
 
-## Current Status
+## What Sound Mode will do
 
-Today, Sound Mode is deliberately small:
+At its core, Sound Mode is meant to make project source code safer without requiring the whole ecosystem to be perfect first.
 
-1. **Current entrypoints:** CLI `--sound` and `compilerOptions.sound`
-2. **Current target:** user-authored TypeScript implementation code first
-3. **Current behavior:** tighter checking in a few high-value areas such as method bivariance, `any` propagation, and sticky freshness
-4. **Current diagnostics:** standard TypeScript codes like `TS2322` / `TS2345`, not the final public TSZ diagnostic surface
+This starts as a narrow, practical profile for TypeScript users: stronger checks inside your own application source, shipped in small steps.
 
-```bash
-tsz check --sound src/
+## <span id="sound-mode-catch-examples">What it will catch</span>
+
+Sound Mode is aimed at teams already using `tsc --strict`. It catches a specific class of runtime bugs that `--strict` intentionally leaves behind, and it promotes three opt-in tsc flags — [`useUnknownInCatchVariables`](https://www.typescriptlang.org/tsconfig/#useUnknownInCatchVariables), [`noUncheckedIndexedAccess`](https://www.typescriptlang.org/tsconfig/#noUncheckedIndexedAccess), and [`exactOptionalPropertyTypes`](https://www.typescriptlang.org/tsconfig/#exactOptionalPropertyTypes) — to always-on defaults.
+
+Every example below compiles without error under `tsc --strict`. Lines marked 💥 are runtime crashes.
+
+### 1) Method parameters must be contravariant
+
+TypeScript's `strictFunctionTypes` enforces variance for function types written as `(x: T) => R`. It intentionally **exempts method syntax** — a known, documented gap that affects virtually every class-based interface and event-handler pattern. Sound Mode closes it.
+
+```ts
+interface Formatter {
+  format(value: unknown): string; // method syntax
+}
+
+class NumberFormatter implements Formatter {
+  // tsc --strict: OK — method params are checked bivariantly
+  format(value: number): string {
+    return value.toFixed(2);
+  }
+}
+
+const fmt: Formatter = new NumberFormatter();
+fmt.format("hello"); // 💥 "hello".toFixed is not a function
 ```
 
-```json
-{
-  "compilerOptions": {
-    "sound": true
+```ts
+// Fix: widen the parameter to match the interface
+class NumberFormatter implements Formatter {
+  format(value: unknown): string {
+    if (typeof value !== "number") throw new TypeError("expected number");
+    return value.toFixed(2);
+  }
+}
+
+// Alternatively, function-property syntax is already checked contravariantly by tsc:
+const fmt: Formatter = {
+  format: (value: unknown): string => String(value),
+};
+```
+
+### 2) Writing `any` in your source is an error
+
+Sound Mode bans explicit `any` annotations in user-authored TypeScript files. Use `unknown` and narrow to the shape you actually need. Declaration files (`.d.ts`) and `node_modules` are exempt — your dependencies do not need to be rewritten first.
+
+```ts
+// tsc --strict: no errors
+function parseRow(raw: any): any {
+  return { id: raw.id, name: raw.name };
+}
+```
+
+```ts
+// Sound Mode: both `any` annotations are errors
+// Fix: use unknown
+function parseRow(raw: unknown): { id: unknown; name: unknown } {
+  if (typeof raw !== "object" || raw === null) throw new TypeError("expected object");
+  const { id, name } = raw as Record<string, unknown>;
+  return { id, name };
+}
+```
+
+### 3) Catch variables must be narrowed before use
+
+Sound Mode behaves as if `useUnknownInCatchVariables` is always enabled. The `err` binding in every catch block is typed `unknown`, not `any`.
+
+```ts
+async function loadConfig(path: string) {
+  try {
+    return JSON.parse(await fs.readFile(path, "utf8"));
+  } catch (err) {
+    // tsc (default): err is any — no complaint
+    // Sound Mode: err is unknown — must narrow before accessing properties
+    console.error("Failed:", err.message); // 💥 err might be a string, number, or anything
   }
 }
 ```
 
-## What It Is Not
-
-Sound Mode is **not**:
-
-1. a formal proof of language soundness
-2. a promise that all `.d.ts` files are truthful
-3. a guarantee that third-party libraries are already purified
-4. a claim that every runtime bug is prevented
-
-TypeScript itself treats full soundness as a non-goal. tsz uses the word **sound** as a product direction for a stricter mode, not as a theorem.
-
-## First Rollout
-
-The base rollout is intentionally narrow:
-
-1. start with explicit opt-in via `--sound` or `compilerOptions.sound`
-2. focus on user source, not the whole ecosystem
-3. keep declaration files as trust boundaries instead of adoption blockers
-4. add migration tools before broadening semantics
-
-The first stable target is roughly:
-
-1. user-authored TypeScript source becomes `any`-less
-2. method bivariance stays rejected in sound-scoped code
-3. `useUnknownInCatchVariables`, `noUncheckedIndexedAccess`, and `exactOptionalPropertyTypes` become part of the default sound profile
-4. dedicated TSZ diagnostics and auditable suppressions land before the mode is treated as broadly user-facing
-
-## Planned Flags
-
-Only `compilerOptions.sound` is currently wired. The other names below reflect the intended rollout shape and are still planned:
-
-```json
-{
-  "compilerOptions": {
-    "sound": true,
-    "soundReportOnly": true,
-    "soundPedantic": false,
-    "soundCheckDeclarations": false
-  }
+```ts
+// Fix: narrow err before accessing it
+} catch (err) {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error("Failed:", msg);
 }
 ```
 
-Intended meaning:
+### 4) Index access may return `undefined`
 
-1. `sound`: enable the default sound profile
-2. `soundReportOnly`: surface sound diagnostics without failing the run yet
-3. `soundPedantic`: add stricter bug-finding checks that are useful but not core to the first rollout
-4. `soundCheckDeclarations`: later opt-in for checking first-party declaration files too
+Sound Mode behaves as if `noUncheckedIndexedAccess` is always enabled. Every bracket-index read — on arrays, tuples, and index-signature objects — is typed `T | undefined`.
 
-The public direction is a flat `sound*` family. We do **not** plan to expose a nested `sound: { ... }` config object as the main public shape.
+```ts
+function runFirst(queue: (() => void)[]) {
+  // tsc: queue[0] is `() => void`
+  // Sound Mode: queue[0] is `(() => void) | undefined`
+  queue[0](); // 💥 crashes on an empty queue
+}
 
-## Later Pilot Work
+const routes: Record<string, () => Response> = {};
+const handler = routes["/home"];
+handler(); // 💥 route may not be registered
+```
 
-Some of the most ambitious parts of Sound Mode are intentionally **not** part of the base guarantee yet.
+```ts
+// Fix: guard before calling
+function runFirst(queue: (() => void)[]) {
+  queue[0]?.();
+}
 
-These stay separate until they are proven:
+const handler = routes["/home"];
+if (handler) handler();
+```
 
-1. declaration-boundary projection for third-party and project-reference `.d.ts`
-2. curated sound declaration overlays
-3. broader ecosystem-facing migration features
+### 5) Optional properties cannot be explicitly assigned `undefined`
 
-The plan is to keep those behind a separate experimental track such as `soundBoundaryPilot`, instead of quietly folding them into base `sound` too early.
+Sound Mode behaves as if `exactOptionalPropertyTypes` is always enabled. A property typed `timeout?: number` means the key may be **absent** — not that it can be present with the value `undefined`. This distinction matters at runtime in `"key" in obj` checks and `Object.assign` merges.
 
-## Why This Rollout Shape
+```ts
+interface RequestConfig {
+  timeout?: number;
+}
 
-This approach keeps Sound Mode practical:
+// tsc: OK. Sound Mode: error — undefined is not assignable to number
+const config: RequestConfig = { timeout: undefined };
 
-1. teams can try it without first cleaning all of npm
-2. user-authored code gets stricter first
-3. declaration boundaries can be improved later without pretending they are solved today
-4. the product story stays honest while the implementation matures
+function applyDefaults(base: RequestConfig, overrides: Partial<RequestConfig>) {
+  // Without exactOptionalPropertyTypes, a Partial<T> can carry `{ timeout: undefined }`
+  // and silently overwrite a valid timeout with undefined.
+  return { ...base, ...overrides };
+}
+```
 
-## Playground
+## What this is and is not
 
-You can try the current demo in the [Playground](/playground/?example=sound_mode). The example is intentionally centered on the checks we are more comfortable advertising today, and the UI labels Sound Mode as experimental.
+Sound Mode is not a full theorem of language soundness, and it does not require every third-party declaration to be fully strict from day one. The direction is to give stronger checks where your team controls the source first and add stronger declaration-boundary work in later phases.
 
-## Read More
+## Further reading
 
-1. [Internal Roadmap](https://github.com/mohsen1/tsz/blob/main/docs/plan/ROADMAP.md)
-2. [Playground](/playground/)
+The detailed plan is tracked in [SOUND_MODE.md](https://github.com/mohsen1/tsz/blob/main/docs/plan/SOUND_MODE.md), and broader milestones are in the [Internal Roadmap](https://github.com/mohsen1/tsz/blob/main/docs/plan/ROADMAP.md).

@@ -1,79 +1,150 @@
-/**
- * Replace code blocks on the Sound Mode page with read-only Monaco editors.
- */
-
 (function () {
-  const langMap = {
-    "language-typescript": "typescript",
-    "language-bash": "shell",
-    "language-json": "json",
-  };
+  const sectionAnchor = document.getElementById("sound-mode-catch-examples");
+  if (!sectionAnchor) {
+    return;
+  }
 
-  const blocks = document.querySelectorAll(
-    Object.keys(langMap).map(c => `pre > code.${c}`).join(", ")
-  );
-  if (!blocks.length) return;
+  const sectionHeading = sectionAnchor.closest("h2");
+  if (!sectionHeading) {
+    return;
+  }
 
-  const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const sectionBlocks = [];
+  let node = sectionHeading.nextElementSibling;
+  while (node && node.tagName !== "H1" && node.tagName !== "H2") {
+    if (node.tagName === "PRE") {
+      sectionBlocks.push(node);
+    }
+    node = node.nextElementSibling;
+  }
 
-  const script = document.createElement("script");
-  script.src = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs/loader.js";
-  script.onload = () => {
-    window.require.config({
-      paths: { vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs" },
-    });
+  const containers = [];
+  const blocks = Array.from(sectionBlocks).flatMap((pre) => Array.from(pre.querySelectorAll("code")));
 
-    window.require(["vs/editor/editor.main"], () => {
-      monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: true,
-        noSyntaxValidation: true,
-      });
+  if (blocks.length === 0) {
+    return;
+  }
 
-      for (const code of blocks) {
-        const pre = code.parentElement;
-        const text = code.textContent;
-
-        // Detect language
-        let lang = "typescript";
-        for (const [cls, monacoLang] of Object.entries(langMap)) {
-          if (code.classList.contains(cls)) { lang = monacoLang; break; }
-        }
-
-        const lineCount = text.split("\n").length;
-        const height = Math.min(Math.max(lineCount * 20 + 16, 60), 500);
-
-        const container = document.createElement("div");
-        container.className = "monaco-code-block";
-        container.style.height = `${height}px`;
-        pre.replaceWith(container);
-
-        monaco.editor.create(container, {
-          value: text,
-          language: lang,
-          theme: isDark ? "vs-dark" : "vs",
-          readOnly: true,
-          minimap: { enabled: false },
-          fontSize: 13,
-          fontFamily: "'SF Mono', 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace",
-          lineNumbers: "off",
-          scrollBeyondLastLine: false,
-          automaticLayout: true,
-          renderLineHighlight: "none",
-          scrollbar: { vertical: "hidden", horizontal: "auto", handleMouseWheel: false },
-          overviewRulerLanes: 0,
-          hideCursorInOverviewRuler: true,
-          overviewRulerBorder: false,
-          guides: { indentation: false },
-          padding: { top: 8, bottom: 8 },
-          domReadOnly: true,
-          contextmenu: false,
-        });
+  function ensureContainerStyle() {
+    if (document.querySelector("style[data-sound-mode-editors]")) return;
+    const style = document.createElement("style");
+    style.setAttribute("data-sound-mode-editors", "1");
+    style.textContent = `
+      .sound-mode-monaco-editor {
+        width: 100%;
+        border: 0;
+        margin: 0 0 1rem 0;
       }
+    `;
+    document.head.appendChild(style);
+  }
 
-      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
-        monaco.editor.setTheme(e.matches ? "vs-dark" : "vs");
+  function detectLanguage(node) {
+    const match = /language-([\w+#-]+)/.exec(node.className || "");
+    const lang = match ? match[1].toLowerCase() : "";
+    if (lang === "ts" || lang === "typescript" || lang === "tsx") {
+      return "typescript";
+    }
+    if (lang === "js" || lang === "javascript") {
+      return "javascript";
+    }
+    return "typescript";
+  }
+
+  function replaceWithEditors() {
+    blocks.forEach((codeBlock) => {
+      const pre = codeBlock.parentElement;
+      if (!pre || !pre.parentElement) return;
+
+      const container = document.createElement("div");
+      container.className = "sound-mode-monaco-editor";
+      const lineHeight = 22;
+      const lineCount = Math.max(codeTextLineCount(codeBlock.textContent || ""), 1);
+      container.style.height = `${lineCount * lineHeight}px`;
+      pre.parentElement.replaceChild(container, pre);
+
+      const codeText = (codeBlock.textContent || "").replace(/\s+$/, "");
+      const language = detectLanguage(codeBlock);
+      containers.push({ container, codeText, language });
+    });
+  }
+
+  function codeTextLineCount(text) {
+    return text
+      .replace(/\s+$/, "")
+      .split("\n")
+      .length;
+  }
+
+  function isDarkTheme() {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  function mountEditors(monaco) {
+    ensureContainerStyle();
+    containers.forEach(({ container, codeText, language }) => {
+      monaco.editor.create(container, {
+        value: codeText,
+        language,
+        readOnly: true,
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineNumbers: "on",
+        scrollBeyondLastLine: false,
+        scrollbar: {
+          vertical: "auto",
+          horizontal: "auto",
+        },
+        overviewRulerLanes: 0,
+        folding: false,
+        automaticLayout: true,
+        contextmenu: false,
+        renderLineHighlight: "none",
+        suggestOnTriggerCharacters: false,
+        quickSuggestions: false,
+        glyphMargin: false,
+        theme: isDarkTheme() ? "vs-dark" : "vs",
       });
     });
-  };
-  document.head.appendChild(script);
+  }
+
+  function loadMonacoAndInit() {
+    if (window.monaco && window.monaco.editor) {
+      mountEditors(window.monaco);
+      return;
+    }
+
+    if (!window.require || typeof window.require.config !== "function") {
+      window.__tszSoundModeEditorError = "Monaco loader did not initialize";
+      return;
+    }
+
+    if (window.__tszSoundModeMonacoPromise) {
+      window.__tszSoundModeMonacoPromise
+        .then((monaco) => mountEditors(monaco))
+        .catch(() => {});
+      return;
+    }
+
+    window.require.config({
+      paths: {
+        vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min/vs",
+      },
+    });
+
+    window.__tszSoundModeMonacoPromise = new Promise((resolve, reject) => {
+      window.require(
+        ["vs/editor/editor.main"],
+        (monaco) => resolve(monaco),
+        (error) => reject(error),
+      );
+    });
+
+    window.__tszSoundModeMonacoPromise
+      .then((monaco) => mountEditors(monaco))
+      .catch(() => {});
+  }
+
+  replaceWithEditors();
+  loadMonacoAndInit();
 })();
