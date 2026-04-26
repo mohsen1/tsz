@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-ts2532-suppress-when-ts2454-in-receiver`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1439
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
@@ -25,10 +25,12 @@ whose span lies within the receiver's `[pos, end]` range.
 
 ## Files Touched
 
-- `crates/tsz-checker/src/types/property_access_type/resolve.rs`
-- `crates/tsz-checker/tests/conformance_issues/...` (new regression test)
+- `crates/tsz-checker/src/types/property_access_type/resolve.rs` (~20 LOC)
+- `crates/tsz-checker/tests/definite_assignment_tests.rs` (+45 LOC test)
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker --lib`
-- `./scripts/conformance/conformance.sh run --filter "unionAndIntersectionInference1" --verbose`
+- `cargo nextest run -p tsz-checker --lib` — 2893 / 2893 pass.
+- `cargo nextest run -p tsz-checker -E 'test(definite_assignment) | test(ts2454) | test(ts2532)'` — 81 / 81 pass.
+- `./scripts/conformance/conformance.sh run --filter "unionAndIntersectionInference1" --verbose` — TS2532 false positive eliminated.
+- Pre-commit (cargo fmt, clippy, wasm32 rustc, architecture guardrails, full nextest 13777) all pass.
