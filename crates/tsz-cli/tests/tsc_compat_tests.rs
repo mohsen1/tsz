@@ -1750,3 +1750,92 @@ fn deprecated_module_amd_accepted() {
         "Deprecated --module amd should not produce TS6046: {output}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// TS2427: Interface name reserved-word handling.
+//
+// tsc only emits ONE TS2427 (for the hard-keyword interface name `void` or
+// `null`) when such an interface declaration is present in a file. Other
+// reserved-name interfaces (`any`, `number`, etc.) in the SAME file have
+// their TS2427 suppressed because tsc's parser produces a parse error for
+// the hard-keyword name, which cascade-suppresses the lazy diagnostics for
+// the other interface declarations.
+// Regression test for the conformance failure on
+// `interfacesWithPredefinedTypesAsNames.ts`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tsc_parity_ts2427_void_suppresses_other_predefined_names() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts2427_void_suppresses").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "interface any { }\n\
+         interface number { }\n\
+         interface string { }\n\
+         interface boolean { }\n\
+         interface void {}\n\
+         interface unknown {}\n\
+         interface never {}\n",
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--target", "es2015", "--noEmit", "--pretty", "false", "test.ts"],
+        "TS2427 void hard-keyword suppresses other predefined-name TS2427s",
+    );
+}
+
+#[test]
+fn tsc_parity_ts2427_null_suppresses_other_predefined_names() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts2427_null_suppresses").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "interface any { }\n\
+         interface null {}\n",
+    );
+    // We don't currently emit the TS1005 (";" expected) parse error that tsc
+    // produces for `interface null {}`, so a strict tsc-tsz match isn't
+    // possible here yet. Instead, pin the behavioral invariant we DO care
+    // about: the TS2427 for `null` is kept while the TS2427 for `any` is
+    // suppressed in the same file.
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--target", "es2015", "--noEmit", "--pretty", "false", "test.ts"],
+    )
+    .expect("tsz binary not found");
+    assert!(
+        output.contains("Interface name cannot be 'null'."),
+        "Expected TS2427 for `null`. Output:\n{output}"
+    );
+    assert!(
+        !output.contains("Interface name cannot be 'any'."),
+        "TS2427 for `any` should be suppressed when `null` is present. \
+         Output:\n{output}"
+    );
+}
+
+#[test]
+fn tsc_parity_ts2427_any_alone_still_reported() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("ts2427_any_only").expect("temp dir");
+    write_file(
+        &temp.path.join("test.ts"),
+        "interface any { }\n\
+         interface number { }\n",
+    );
+    // Without `void`/`null`, tsc reports TS2427 for both interfaces. This
+    // test pins that the suppression only kicks in when a hard-keyword
+    // interface name is present.
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["--target", "es2015", "--noEmit", "--pretty", "false", "test.ts"],
+        "TS2427 still reported for predefined names when no hard keyword present",
+    );
+}
