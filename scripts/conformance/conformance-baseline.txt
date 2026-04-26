@@ -55,7 +55,6 @@ FAIL TypeScript/tests/cases/compiler/inferenceFromIncompleteSource.ts | expected
 FAIL TypeScript/tests/cases/compiler/infiniteConstraints.ts | expected:[TS2322,TS2536] actual:[TS2322,TS2536]
 FAIL TypeScript/tests/cases/compiler/interfaceExtendsClassWithPrivate2.ts | expected:[TS2415,TS2416,TS2420] actual:[TS2415,TS2416,TS2420]
 FAIL TypeScript/tests/cases/compiler/intersectionsAndOptionalProperties.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/isolatedModulesExportDeclarationType.ts | expected:[TS1292,TS2307,TS2440,TS2865] actual:[TS2307]
 FAIL TypeScript/tests/cases/compiler/iterableTReturnTNext.ts | expected:[TS2322,TS2416,TS5024] actual:[TS2322,TS2416,TS5024]
 FAIL TypeScript/tests/cases/compiler/jsElementAccessNoContextualTypeCrash.ts | expected:[TS2741] actual:[TS2741]
 FAIL TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation.ts | expected:[TS2564,TS2741] actual:[TS2300,TS2564,TS2741]
@@ -3926,6 +3925,7 @@ PASS TypeScript/tests/cases/compiler/isolatedModulesConstEnum.ts
 PASS TypeScript/tests/cases/compiler/isolatedModulesDeclaration.ts
 PASS TypeScript/tests/cases/compiler/isolatedModulesDontElideReExportStar.ts
 PASS TypeScript/tests/cases/compiler/isolatedModulesES6.ts
+PASS TypeScript/tests/cases/compiler/isolatedModulesExportDeclarationType.ts
 PASS TypeScript/tests/cases/compiler/isolatedModulesExportImportUninstantiatedNamespace.ts
 PASS TypeScript/tests/cases/compiler/isolatedModulesExternalModuleForced.ts
 PASS TypeScript/tests/cases/compiler/isolatedModulesGlobalNamespacesAndEnums.ts
