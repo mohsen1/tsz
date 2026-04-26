@@ -1935,3 +1935,74 @@ fn test_ts1264_emitted_when_no_initializer_and_no_type() {
         "TS1263 should NOT fire (no initializer), got: {diags:?}"
     );
 }
+
+/// Regression: when a TDZ-violating use precedes a `const` declaration whose
+/// type annotation is a self-referential `typeof` (e.g. `const fn: typeof fn`),
+/// tsc emits TS2448 + TS2502 only — it does NOT emit TS2454 as a TDZ companion
+/// because the variable's declared type cannot be evaluated. The companion
+/// suppression here mirrors that behaviour and is exercised by the
+/// `controlFlowFunctionLikeCircular_3.ts` block of the upstream
+/// `controlFlowFunctionLikeCircular1` conformance fixture.
+#[test]
+fn test_ts2454_suppressed_for_tdz_with_self_circular_typeof_annotation() {
+    let source = r"
+        function test(arg: () => string) {
+          fn();
+          const fn: typeof fn = arg;
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c
+            == diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION),
+        "Expected TS2448 (block-scoped used before declaration), got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "TS2454 should be suppressed when declared type self-references via typeof, got: {diags:?}"
+    );
+}
+
+/// Sanity guard: a regular TDZ use of a `const` with no self-circular `typeof`
+/// in its annotation must still emit the TS2454 companion alongside TS2448.
+/// This confirms the new self-circular suppression is narrowly targeted and
+/// does not regress the standard companion path.
+#[test]
+fn test_ts2454_still_emitted_for_tdz_with_non_circular_annotation() {
+    let source = r"
+        function test() {
+          fn();
+          const fn: () => void = () => {};
+        }
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c
+            == diagnostic_codes::BLOCK_SCOPED_VARIABLE_USED_BEFORE_ITS_DECLARATION),
+        "Expected TS2448 (block-scoped used before declaration), got: {diags:?}"
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        1,
+        "TS2454 must still fire for normal TDZ companion, got: {diags:?}"
+    );
+}
