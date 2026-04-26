@@ -36,7 +36,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from lib.query_snapshot import load_snapshot, print_top_counter
+from lib.query_snapshot import load_snapshot, print_top_counter, print_truncated_more
 
 DETAIL_FILE = Path(__file__).parent / "fourslash-detail.json"
 
@@ -141,8 +141,7 @@ def show_failures(data, top=40, paths_only=False):
         bucket = r.get("bucket", "")
         err = r.get("firstFailure", "")[:60]
         print(f"  [{status:>7s}] {r['name']:40s}  [{bucket}]  {err}")
-    if len(fails) > top:
-        print(f"  ... and {len(fails) - top} more")
+    print_truncated_more(fails, top)
 
 
 def show_bucket(data, bucket, top=40, paths_only=False):
@@ -168,8 +167,7 @@ def show_bucket(data, bucket, top=40, paths_only=False):
         for r in fails[:top]:
             err = r.get("firstFailure", "")[:60]
             print(f"  {r['name']:40s}  {err}")
-        if len(fails) > top:
-            print(f"  ... and {len(fails) - top} more")
+        print_truncated_more(fails, top)
 
 
 def show_timeouts(data, top=40):
@@ -179,8 +177,7 @@ def show_timeouts(data, top=40):
     for r in timeouts[:top]:
         bucket = r.get("bucket", "")
         print(f"  {r['name']:40s}  [{bucket}]")
-    if len(timeouts) > top:
-        print(f"  ... and {len(timeouts) - top} more")
+    print_truncated_more(timeouts, top)
 
 
 def show_filter(data, pattern, top=40, paths_only=False):
@@ -199,8 +196,7 @@ def show_filter(data, pattern, top=40, paths_only=False):
         bucket = r.get("bucket", "")
         err = r.get("firstFailure", "")[:50] if r["status"] != "pass" else ""
         print(f"  [{r['status']:>7s}] {r['name']:40s}  [{bucket}]  {err}")
-    if len(matches) > top:
-        print(f"  ... and {len(matches) - top} more")
+    print_truncated_more(matches, top)
 
 
 def main():

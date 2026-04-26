@@ -10,7 +10,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from lib.query_snapshot import filter_by_name, load_snapshot, print_top_counter
+from lib.query_snapshot import (
+    filter_by_name,
+    load_snapshot,
+    print_top_counter,
+    print_truncated_more,
+)
 
 
 class TestLoadSnapshot(unittest.TestCase):
@@ -114,6 +119,56 @@ class TestFilterByName(unittest.TestCase):
         items = [{"other": "foo"}, {"name": "foo"}]
         result = filter_by_name(items, "foo")
         self.assertEqual(len(result), 1)
+
+
+class TestPrintTruncatedMore(unittest.TestCase):
+    def _capture(self, items, top, **kwargs):
+        buf = io.StringIO()
+        orig, sys.stdout = sys.stdout, buf
+        try:
+            print_truncated_more(items, top, **kwargs)
+        finally:
+            sys.stdout = orig
+        return buf.getvalue()
+
+    def test_prints_tail_when_items_exceed_top(self):
+        items = list(range(100))
+        out = self._capture(items, 40)
+        self.assertEqual(out, "  ... and 60 more\n")
+
+    def test_no_output_when_items_equal_top(self):
+        items = list(range(40))
+        out = self._capture(items, 40)
+        self.assertEqual(out, "")
+
+    def test_no_output_when_items_below_top(self):
+        items = list(range(10))
+        out = self._capture(items, 40)
+        self.assertEqual(out, "")
+
+    def test_no_output_when_items_empty(self):
+        out = self._capture([], 40)
+        self.assertEqual(out, "")
+
+    def test_custom_indent(self):
+        items = list(range(50))
+        out = self._capture(items, 30, indent="     ")
+        self.assertEqual(out, "     ... and 20 more\n")
+
+    def test_zero_indent(self):
+        items = list(range(5))
+        out = self._capture(items, 2, indent="")
+        self.assertEqual(out, "... and 3 more\n")
+
+    def test_off_by_one_just_over(self):
+        items = list(range(41))
+        out = self._capture(items, 40)
+        self.assertEqual(out, "  ... and 1 more\n")
+
+    def test_works_with_tuples(self):
+        items = tuple(range(50))
+        out = self._capture(items, 30)
+        self.assertEqual(out, "  ... and 20 more\n")
 
 
 if __name__ == "__main__":

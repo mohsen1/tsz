@@ -29,3 +29,16 @@ def filter_by_name(items: list, pattern: str, name_key: str = "name") -> list:
     """Return items whose name_key contains pattern (case-insensitive)."""
     lower = pattern.lower()
     return [r for r in items if lower in r.get(name_key, "").lower()]
+
+
+def print_truncated_more(items, top: int, indent: str = "  ") -> None:
+    """Print the standard ``... and N more`` truncation tail.
+
+    Emits ``{indent}... and {len(items) - top} more`` when ``len(items) > top``,
+    otherwise no output. ``items`` may be any sized iterable (list, tuple, etc.).
+    Centralizes the truncation pattern repeated across the offline query scripts
+    in ``scripts/fourslash/query-fourslash.py`` and ``scripts/emit/query-emit.py``.
+    """
+    remaining = len(items) - top
+    if remaining > 0:
+        print(f"{indent}... and {remaining} more")
