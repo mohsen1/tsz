@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-ts7031-array-default-shorter-pattern`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1357
+- **Status**: ready
 - **Workstream**: 1 (Conformance fingerprint parity)
 
 ## Intent
@@ -45,3 +45,11 @@ Target conformance test:
   `no_ts7031_for_array_pattern_with_spread_default`).
 - Targeted CLI run on `destructuringWithLiteralInitializers2.ts`-shaped input
   now emits 8 TS7031 fingerprints matching tsc.
+- `./scripts/conformance/conformance.sh run --filter destructuringWithLiteralInitializers2`
+  reports 1/1 passed (was failing fingerprint-only).
+- `./scripts/conformance/conformance.sh run --filter destructuring`
+  reports 161/174 passed (baseline was 159/174 in this filter; +2 net,
+  one is the targeted test, the other is `destructuringParameterProperties5`
+  improved by an unrelated parent-branch change).
+- `./scripts/conformance/conformance.sh run --max 1500` shows 4 net
+  improvements, 0 regressions.
