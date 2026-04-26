@@ -296,6 +296,23 @@ impl ProjectFile {
         self.parser.get_source_text()
     }
 
+    /// Borrowed view of the inputs binder-tier LSP providers consume.
+    ///
+    /// Combines [`Self::arena`], [`Self::binder`], [`Self::line_map`],
+    /// [`Self::file_name`], and [`Self::source_text`] into a single
+    /// [`super::LspProviderContext`] so feature dispatch can build providers
+    /// via `Provider::from_context(file.provider_context())` instead of
+    /// repeating the five accessors at every call site.
+    pub fn provider_context(&self) -> super::LspProviderContext<'_> {
+        super::LspProviderContext {
+            arena: self.arena(),
+            binder: self.binder(),
+            line_map: self.line_map(),
+            file_name: self.file_name(),
+            source_text: self.source_text(),
+        }
+    }
+
     /// Content hash of the source text.
     ///
     /// This is a fast (non-cryptographic) hash used to detect whether the source

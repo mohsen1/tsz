@@ -87,6 +87,23 @@ macro_rules! define_lsp_provider {
                     source_text,
                 }
             }
+
+            /// Build the provider from a borrowed [`crate::project::LspProviderContext`].
+            ///
+            /// Convenience constructor for LSP feature dispatch in
+            /// `crate::project::features` and `crate::project::operations`,
+            /// which already have a `ProjectFile` in scope and can call
+            /// `file.provider_context()`. The `file_name` field is cloned
+            /// into the owned `String` the provider stores internally.
+            pub fn from_context(ctx: crate::project::LspProviderContext<'a>) -> Self {
+                Self {
+                    arena: ctx.arena,
+                    binder: ctx.binder,
+                    line_map: ctx.line_map,
+                    file_name: ctx.file_name.to_string(),
+                    source_text: ctx.source_text,
+                }
+            }
         }
     };
 
