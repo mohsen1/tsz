@@ -3,27 +3,36 @@
 # All steps share the /workspace volume.  Steps that don't depend on each other
 # run concurrently on the same worker machine (tsz-ci-c3-88, 88 vCPU).
 #
+# Important: each Cloud Build step runs in a fresh container — only /workspace
+# survives between steps.  Container-installed tools (apt packages, sccache,
+# nextest, wasm-pack) and process state (sccache server, env vars) do NOT
+# persist.  Each Rust step therefore runs its own `run_common_setup` via
+# `gcp-full-ci.sh`; common setup is fast on the second invocation thanks to
+# idempotent guards (apt is a no-op when packages are present, the TypeScript
+# submodule init returns early once `restore-cache` has populated /workspace).
+#
 # Pipeline shape:
 #
-#   restore-cache
-#       └── setup  (host tools + TypeScript submodule)
-#               ├── build  ──────────────────────────────┐
-#               ├── lint   (concurrent with build)       │  (binaries in /workspace)
-#               ├── unit   (concurrent with build)       │
-#               └── wasm   (concurrent with build)       │
-#                                                        ▼
-#                                   conformance  (waitFor: build, 50 workers)
-#                                   emit         (waitFor: build, 16 workers)
-#                                   fourslash    (waitFor: build, 12 workers)
-#                                        │
-#                               conformance-aggregate
-#                                        │
-#                                    save-cache
-#                                        │
-#                                    finish-ci
+#   restore-cache  (also seeds /workspace/TypeScript via restore_typescript)
+#       ├── build  ──────────────────────────────┐
+#       ├── lint   (concurrent with build)       │  (binaries in /workspace)
+#       ├── unit   (concurrent with build)       │
+#       └── wasm   (concurrent with build)       │
+#                                                ▼
+#                           conformance  (waitFor: build, 50 workers)
+#                           emit         (waitFor: build, 16 workers)
+#                           fourslash    (waitFor: build, 12 workers)
+#                                │
+#                       conformance-aggregate
+#                                │
+#                            save-cache
+#                                │
+#                            finish-ci
 
 steps:
   # ── 1. Restore caches from GCS ─────────────────────────────────────────────
+  # restore_caches also calls restore_typescript, so /workspace/TypeScript is
+  # populated before any Rust step starts.
   - id: restore-cache
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     script: |
@@ -40,26 +49,13 @@ steps:
       fi
       scripts/ci/gcp-cache.sh restore
 
-  # ── 2. Setup: host tools + TypeScript submodule ────────────────────────────
-  - id: setup
+  # ── 2a. Build dist-fast binaries ───────────────────────────────────────────
+  - id: build
     name: rust:1.90-bookworm
     waitFor: [restore-cache]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
-      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
-      mkdir -p .ci-status .ci-logs .ci-metrics
-      scripts/ci/gcp-full-ci.sh setup
-
-  # ── 3a. Build dist-fast binaries ───────────────────────────────────────────
-  - id: build
-    name: rust:1.90-bookworm
-    waitFor: [setup]
-    script: |
-      #!/usr/bin/env bash
-      set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
       export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
       export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
       export SCCACHE_GCS_KEY_JSON="${SCCACHE_GCS_KEY_JSON:-}"
@@ -75,14 +71,13 @@ steps:
         --out .ci-status/build-summary.md || true
       exit 0
 
-  # ── 3b. Lint (concurrent with build) ───────────────────────────────────────
+  # ── 2b. Lint (concurrent with build) ───────────────────────────────────────
   - id: lint
     name: rust:1.90-bookworm
-    waitFor: [setup]
+    waitFor: [restore-cache]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
       export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
       export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
       mkdir -p .ci-status .ci-logs .ci-metrics
@@ -97,14 +92,13 @@ steps:
         --out .ci-status/lint-summary.md || true
       exit 0
 
-  # ── 3c. Unit tests (concurrent with build) ─────────────────────────────────
+  # ── 2c. Unit tests (concurrent with build) ─────────────────────────────────
   - id: unit
     name: rust:1.90-bookworm
-    waitFor: [setup]
+    waitFor: [restore-cache]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
       export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
       export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
       mkdir -p .ci-status .ci-logs .ci-metrics
@@ -119,14 +113,13 @@ steps:
         --out .ci-status/unit-summary.md || true
       exit 0
 
-  # ── 3d. WASM build (concurrent with build) ─────────────────────────────────
+  # ── 2d. WASM build (concurrent with build) ─────────────────────────────────
   - id: wasm
     name: rust:1.90-bookworm
-    waitFor: [setup]
+    waitFor: [restore-cache]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
       export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
       export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
       mkdir -p .ci-status .ci-logs .ci-metrics
@@ -141,14 +134,13 @@ steps:
         --out .ci-status/wasm-summary.md || true
       exit 0
 
-  # ── 4a. Conformance (after build, 50 workers on 88-core machine) ────────────
+  # ── 3a. Conformance (after build, 50 workers on 88-core machine) ────────────
   - id: conformance
     name: rust:1.90-bookworm
     waitFor: [build]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
       export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
       export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
       # 50 workers: conformance is CPU+memory-heavy; with emit+fourslash concurrent
@@ -166,14 +158,13 @@ steps:
         --out .ci-status/conformance-summary.md || true
       exit 0
 
-  # ── 4b. Emit shards (after build, 16 workers across 4 shards) ──────────────
+  # ── 3b. Emit shards (after build, 16 workers across 4 shards) ──────────────
   - id: emit
     name: rust:1.90-bookworm
     waitFor: [build]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
       export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
       export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
       export TSZ_CI_SHARDS="${TSZ_CI_SHARDS:-4}"
@@ -191,14 +182,13 @@ steps:
         --out .ci-status/emit-summary.md || true
       exit 0
 
-  # ── 4c. Fourslash (after build, 12 workers across 2 shards) ────────────────
+  # ── 3c. Fourslash (after build, 12 workers across 2 shards) ────────────────
   - id: fourslash
     name: rust:1.90-bookworm
     waitFor: [build]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
       export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
       export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
       export TSZ_CI_SHARDS="${TSZ_CI_SHARDS:-2}"
@@ -215,24 +205,18 @@ steps:
         --out .ci-status/fourslash-summary.md || true
       exit 0
 
-  # ── 5. Conformance aggregate (after all conformance shards) ─────────────────
+  # ── 4. Conformance aggregate (after conformance) ──────────────────────────
+  # Single-machine path: conformance ran without sharding, so the aggregate is
+  # just the conformance step's own exit code.  Use the cloud-sdk image (no Rust
+  # needed) to avoid a redundant rust:1.90 cold-start for a one-line copy.
   - id: conformance-aggregate
-    name: rust:1.90-bookworm
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     waitFor: [conformance]
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
-      export TSZ_CI_SKIP_COMMON_SETUP=1
-      export CARGO_HOME="${TSZ_CI_CARGO_HOME:-/workspace/.ci-cache/cargo-home}"
-      export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
-      # No shards in the single-machine path — the conformance step ran without
-      # sharding, so skip the GCS aggregate and just validate the local result.
-      mkdir -p .ci-status .ci-logs .ci-metrics
-      set +e
-      # Re-read the conformance exit code; the aggregate is the same result
-      # since all tests ran in one step on this machine.
+      mkdir -p .ci-status
       rc="$(cat .ci-status/conformance.exit 2>/dev/null || echo 1)"
-      set -e
       printf '%s\n' "$rc" > .ci-status/conformance-aggregate.exit
       exit 0
 
