@@ -1577,7 +1577,20 @@ impl<'a> Completions<'a> {
     /// Extract a method signature string (e.g. `(): void`) from the source text
     /// of a method declaration node. Used by the `this.` AST fallback to provide
     /// type detail when the checker cannot resolve the type.
+    ///
+    /// Robustness audit (PR #G, item 7 in
+    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): emit a
+    /// structured trace at every invocation so the rate at which
+    /// completion display depends on text-slicing — and the specific
+    /// methods that drive it — are visible. The audit's full solution
+    /// migrates this caller to a semantic `display_signature_for_declaration_node`
+    /// service; this is the visibility-first foothold.
     fn extract_method_signature_from_source(&self, method_idx: NodeIndex) -> Option<String> {
+        tracing::trace!(
+            site = "completions::extract_method_signature_from_source",
+            method_idx = method_idx.0,
+            "LSP completion fell back to text-sliced method signature"
+        );
         let node = self.arena.get(method_idx)?;
         let start = node.pos as usize;
         let end = node.end.min(self.source_text.len() as u32) as usize;
@@ -1622,7 +1635,14 @@ impl<'a> Completions<'a> {
 
     /// Extract a property type string (e.g. `number`) from the source text of a
     /// property declaration node. Used by the `this.` AST fallback.
+    ///
+    /// See `extract_method_signature_from_source` for the audit context.
     fn extract_property_type_from_source(&self, prop_idx: NodeIndex) -> Option<String> {
+        tracing::trace!(
+            site = "completions::extract_property_type_from_source",
+            prop_idx = prop_idx.0,
+            "LSP completion fell back to text-sliced property type"
+        );
         let node = self.arena.get(prop_idx)?;
         let prop = self.arena.get_property_decl(node)?;
         if prop.type_annotation.is_some() {
