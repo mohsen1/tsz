@@ -662,8 +662,17 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     // canonical finite numeric-property form; `"13e-1"` and `"-Infinity"`
                     // should not trigger TS2452.
                     self.ctx.arena.get_literal(name_node).is_some_and(|lit| {
-                        tsz_solver::utils::canonicalize_numeric_name(&lit.text)
-                            .is_some_and(|canonical| canonical == "NaN" || canonical == lit.text)
+                        // tsc only treats canonical FINITE numeric forms as numeric for TS2452.
+                        // `NaN`, `Infinity`, `-Infinity` are canonical numeric names but are
+                        // legal enum member names per tsc.
+                        tsz_solver::utils::canonicalize_numeric_name(&lit.text).is_some_and(
+                            |canonical| {
+                                canonical == lit.text
+                                    && canonical != "NaN"
+                                    && canonical != "Infinity"
+                                    && canonical != "-Infinity"
+                            },
+                        )
                     })
                 } else if name_node.kind
                     == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME

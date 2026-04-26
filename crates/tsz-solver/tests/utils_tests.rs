@@ -156,11 +156,48 @@ fn canonicalize_numeric_name_rejects_non_numeric() {
 }
 
 #[test]
-fn canonicalize_numeric_name_rejects_infinity_via_finite_guard() {
-    // `parse_numeric_literal_value` parses Infinity as a finite-ish float,
-    // but the `is_finite` guard filters it out. Returns None.
-    assert_eq!(canonicalize_numeric_name("Infinity"), None);
-    assert_eq!(canonicalize_numeric_name("-Infinity"), None);
+fn canonicalize_numeric_name_returns_infinity_for_overflow_and_special_values() {
+    // `Infinity` and `-Infinity` parse to f64 infinities and round-trip
+    // through `Number.prototype.toString()` as the literal strings
+    // `"Infinity"`/`"-Infinity"`. This keeps parity with JS where
+    // `({[0o7777_overflow]: 1})` produces a property keyed by `"Infinity"`.
+    assert_eq!(
+        canonicalize_numeric_name("Infinity"),
+        Some("Infinity".to_string())
+    );
+    assert_eq!(
+        canonicalize_numeric_name("-Infinity"),
+        Some("-Infinity".to_string())
+    );
+    // A numeric-literal source text whose value overflows to f64 infinity
+    // (e.g. an enormous octal) canonicalizes to `"Infinity"` so the rest
+    // of the pipeline treats it like an `Infinity`-keyed property name.
+    let huge_octal = format!("0o{}", "7".repeat(800));
+    assert_eq!(
+        canonicalize_numeric_name(&huge_octal),
+        Some("Infinity".to_string())
+    );
+}
+
+#[test]
+fn canonicalize_numeric_name_uses_scientific_notation_for_large_finite_values() {
+    // Below 1e21 the canonical form is the decimal expansion.
+    assert_eq!(
+        canonicalize_numeric_name("1e20"),
+        Some("100000000000000000000".to_string())
+    );
+    // At/above 1e21 the canonical form is scientific notation matching
+    // `Number.prototype.toString()` (lowercase `e`, signed exponent with no
+    // leading zeros). A finite octal that lands in this range — for
+    // example, the 271-digit octal in conformance test
+    // `octalIntegerLiteralES6.ts` — must canonicalize to its scientific
+    // form, not the integer expansion that Rust's default `f64` Display
+    // produces.
+    let octal_271 = format!("0o{}", "7".repeat(271));
+    assert_eq!(
+        canonicalize_numeric_name(&octal_271),
+        Some("5.462437423415177e+244".to_string())
+    );
 }
 
 // =========================================================================

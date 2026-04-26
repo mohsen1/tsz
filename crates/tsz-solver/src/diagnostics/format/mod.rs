@@ -33,8 +33,12 @@ fn needs_property_name_quotes(name: &str) -> bool {
     if name.starts_with('[') && name.ends_with(']') {
         return false;
     }
-    // Numeric property names don't need quotes
-    if name.chars().all(|ch| ch.is_ascii_digit()) {
+    // Numeric property names don't need quotes. This includes integer-only
+    // forms (`19230`) as well as canonical JS-numeric forms with decimals
+    // (`3.14`), exponents (`5.462437423415177e+244`), or signs (`-1`), all
+    // of which match `Number.prototype.toString()` round-trip and are
+    // displayed unquoted by tsc in object type literals.
+    if crate::utils::is_numeric_literal_name(name) {
         return false;
     }
     let mut chars = name.chars();
