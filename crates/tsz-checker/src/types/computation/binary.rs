@@ -1848,7 +1848,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the string representation of unary operators that are not allowed
     /// on the left-hand side of exponentiation (`**`).
-    fn unary_operator_name(op: u16) -> Option<&'static str> {
+    const fn unary_operator_name(op: u16) -> Option<&'static str> {
         match op {
             k if k == SyntaxKind::MinusToken as u16 => Some("-"),
             k if k == SyntaxKind::PlusToken as u16 => Some("+"),

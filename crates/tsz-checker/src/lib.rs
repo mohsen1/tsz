@@ -18,7 +18,6 @@
 #![allow(clippy::collapsible_match)]
 #![allow(clippy::doc_markdown)]
 #![allow(clippy::let_and_return)]
-#![allow(clippy::missing_const_for_fn)]
 #![allow(clippy::needless_return)]
 #![allow(clippy::question_mark)]
 #![allow(clippy::redundant_clone)]
