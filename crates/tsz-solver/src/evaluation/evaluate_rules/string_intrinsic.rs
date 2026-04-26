@@ -153,13 +153,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Apply a string intrinsic to a template literal type
     ///
-    /// This handles cases like `Uppercase<hello-${string}>`, which should produce
-    /// a template literal with uppercase text spans: `HELLO-${string}`
+    /// This handles cases like an `Uppercase` over a template literal with
+    /// `${string}` placeholders: text spans are uppercased and the type
+    /// placeholders are wrapped in `Uppercase<...>`.
     ///
     /// For template literals with type interpolations:
     /// - Text spans are transformed (uppercased, lowercased, etc.)
     /// - Type spans are wrapped in the same string intrinsic
     /// - For Capitalize/Uncapitalize, special handling for the first span
+    /// - Non-string primitive type spans (`number`, `bigint`, `boolean`) are
+    ///   first stringified by wrapping in a single-placeholder template
+    ///   literal to mirror tsc's `getStringMappingType` canonicalization.
+    ///   This keeps templates produced by applying the intrinsic structurally
+    ///   aligned with the hand-written equivalents tsc uses, and prevents
+    ///   spurious TS2322 between equivalent pattern-literal forms.
     pub(crate) fn apply_string_intrinsic_to_template_literal(
         &self,
         kind: StringIntrinsicKind,
@@ -217,17 +224,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 TemplateSpan::Type(type_id) => {
+                    // Canonicalize non-string primitive type spans (number, bigint,
+                    // boolean) into the `${T}` template-literal form before applying
+                    // the intrinsic. tsc's `getStringMappingType` does this via
+                    // `isPatternLiteralPlaceholderType`: the placeholder is wrapped in
+                    // a single-span template literal, so `Uppercase<number>` and
+                    // `Uppercase<\`${number}\`>` collapse to the same canonical
+                    // representation. For boolean, this also triggers expansion to
+                    // `"true" | "false"` via the template-literal interner, matching
+                    // tsc's `${boolean}` -> `"false" | "true"` behavior.
+                    let canonical_arg =
+                        canonicalize_string_intrinsic_arg(self.interner(), *type_id);
                     // For type interpolations, wrap in the appropriate string intrinsic
                     // For Capitalize/Uncapitalize on non-first position, we don't wrap
                     // since those only affect the first character
                     let wrapped_type = if is_first_span {
                         // First position type: apply the intrinsic
-                        self.interner().string_intrinsic(kind, *type_id)
+                        self.interner().string_intrinsic(kind, canonical_arg)
                     } else {
                         // Non-first position: only Uppercase/Lowercase apply
                         match kind {
                             StringIntrinsicKind::Uppercase | StringIntrinsicKind::Lowercase => {
-                                self.interner().string_intrinsic(kind, *type_id)
+                                self.interner().string_intrinsic(kind, canonical_arg)
                             }
                             StringIntrinsicKind::Capitalize | StringIntrinsicKind::Uncapitalize => {
                                 // Capitalize/Uncapitalize don't affect non-first positions
@@ -279,5 +297,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
         }
+    }
+}
+
+/// Canonicalize a `StringIntrinsic` type argument so that non-string primitive
+/// placeholders (`number`, `bigint`, `boolean`) are wrapped in template
+/// literal form, mirroring tsc's `getStringMappingType` /
+/// `isPatternLiteralPlaceholderType` normalization.
+///
+/// Without this, the result of applying a string mapping to a template such
+/// as `Uppercase<aA-then-number>` would keep the bare `number` placeholder,
+/// while a hand-written `Uppercase<just-number>` produced via the
+/// template-literal canonical form keeps the `${number}` wrapping, leaving
+/// the two equivalent pattern-literal types structurally different and
+/// emitting spurious TS2322 mismatches between them.
+///
+/// For boolean specifically, wrapping in a template literal triggers the
+/// template-literal interner expansion to `"false" | "true"`, matching tsc's
+/// `${boolean}` cross-product behaviour.
+pub(crate) fn canonicalize_string_intrinsic_arg(
+    interner: &dyn crate::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    use crate::types::{IntrinsicKind, TemplateSpan};
+    match interner.lookup(type_id) {
+        Some(TypeData::Intrinsic(IntrinsicKind::Number))
+        | Some(TypeData::Intrinsic(IntrinsicKind::Bigint))
+        | Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => {
+            let empty_atom = interner.intern_string("");
+            interner.template_literal(vec![
+                TemplateSpan::Text(empty_atom),
+                TemplateSpan::Type(type_id),
+                TemplateSpan::Text(empty_atom),
+            ])
+        }
+        _ => type_id,
     }
 }
