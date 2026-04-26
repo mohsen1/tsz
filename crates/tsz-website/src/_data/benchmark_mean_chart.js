@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const WEBSITE = path.resolve(import.meta.dirname, "..", "..");
-const ROOT = path.resolve(WEBSITE, "..", "..");
+const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
 function readJsonIfExists(p) {
   try {
@@ -26,8 +25,7 @@ function loadBenchmarks() {
     }
   })();
 
-  const snapshot = path.join(WEBSITE, "bench-snapshot.json");
-  for (const location of [...artifactFiles, snapshot]) {
+  for (const location of artifactFiles) {
     const data = readJsonIfExists(location);
     if (data?.results?.length) return data.results;
   }
@@ -105,15 +103,12 @@ function renderHighlightedBenchmark(results) {
 
 function renderMeanChart(results) {
   if (!results.length) {
-    return `<div class="bench-placeholder">
-  <p>No benchmark data available.</p>
-  <p>Run <code>./scripts/bench/bench-vs-tsgo.sh --json</code> to generate benchmarks.</p>
-</div>`;
+    return "";
   }
 
   const valid = results.filter((r) => Number.isFinite(r.tsz_ms) && r.tsz_ms > 0 && Number.isFinite(r.tsgo_ms) && r.tsgo_ms > 0);
   if (!valid.length) {
-    return `<div class="bench-placeholder">No valid benchmark rows found.</div>`;
+    return "";
   }
 
   const tszMean = valid.reduce((sum, r) => sum + r.tsz_ms, 0) / valid.length;
