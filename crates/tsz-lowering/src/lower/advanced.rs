@@ -712,7 +712,15 @@ impl<'a> TypeLowering<'a> {
                 }
             }
 
-            TypeId::ERROR
+            // Fallback: preserve the original syntactic name as `UnresolvedTypeName`
+            // so diagnostics print the user-written name (e.g. `ItemSet`) instead of
+            // the bare `error` token.  The checker emits TS2304 separately for the
+            // missing definition; this only affects display in subsequent
+            // structural-mismatch diagnostics like TS2345 / TS2322.
+            //
+            // Mirrors the qualified-name path in `lower_qualified_name_type`.
+            self.interner
+                .unresolved_type_name(self.interner.intern_string(name))
         } else {
             TypeId::ERROR
         }
