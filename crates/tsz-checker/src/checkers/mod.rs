@@ -103,3 +103,138 @@ pub struct JsxChildrenContext {
     /// Node indices of `JsxText` children (for TS2747 location reporting).
     pub text_child_indices: Vec<NodeIndex>,
 }
+
+#[cfg(test)]
+mod tests {
+    //! Stack-overflow breaker thread-local state tests.
+    //!
+    //! Each `#[test]` runs on its own thread under nextest, so the
+    //! `STACK_STATE` thread-local starts at 0 for every test. Tests that
+    //! mutate global thread-locals must still reset state at the end so
+    //! repeated invocations under `cargo test` (single-threaded harness)
+    //! don't pollute each other.
+    use super::*;
+
+    fn reset() {
+        STACK_STATE.set(0);
+    }
+
+    #[test]
+    fn stack_overflow_tripped_starts_false() {
+        reset();
+        assert!(!stack_overflow_tripped());
+    }
+
+    #[test]
+    fn trip_stack_overflow_flips_tripped_flag() {
+        reset();
+        assert!(!stack_overflow_tripped());
+        trip_stack_overflow();
+        assert!(stack_overflow_tripped());
+        reset();
+    }
+
+    #[test]
+    fn reset_stack_overflow_flag_clears_tripped_bit_only() {
+        reset();
+        // Increment the probe counter a few times.
+        for _ in 0..10 {
+            should_probe_stack();
+        }
+        let counter_before_reset = STACK_STATE.get() & 0xFF;
+        assert_ne!(counter_before_reset, 0, "counter should have advanced");
+
+        trip_stack_overflow();
+        assert!(stack_overflow_tripped());
+
+        reset_stack_overflow_flag();
+        // Tripped bit cleared but counter preserved (bit 15 != counter).
+        assert!(!stack_overflow_tripped());
+        assert_eq!(
+            STACK_STATE.get() & 0xFF,
+            counter_before_reset,
+            "reset must not clear the probe counter"
+        );
+        reset();
+    }
+
+    #[test]
+    fn should_probe_stack_returns_true_every_16th_call() {
+        reset();
+        // The counter increments on every call; the helper returns true
+        // when `counter & 0x0F == 0`. Starting from 0, the FIRST call
+        // increments to 1, returns false. The 16th call increments the
+        // counter to 16, which `& 0x0F == 0`, returns true.
+        let mut hits = 0usize;
+        for _ in 0..32 {
+            if should_probe_stack() {
+                hits += 1;
+            }
+        }
+        // Out of 32 increments (1..=32), exactly 2 of those values
+        // (16 and 32) have `(counter & 0x0F) == 0`.
+        assert_eq!(
+            hits, 2,
+            "should_probe_stack should return true exactly 2 times in 32 calls"
+        );
+        reset();
+    }
+
+    #[test]
+    fn should_probe_stack_first_call_is_false() {
+        reset();
+        // First call: counter goes 0 → 1. `1 & 0x0F == 1`, so returns false.
+        assert!(!should_probe_stack());
+        reset();
+    }
+
+    #[test]
+    fn should_probe_stack_preserves_tripped_bit() {
+        reset();
+        trip_stack_overflow();
+        assert!(stack_overflow_tripped());
+        // Run probe-stack many times — the tripped bit must survive.
+        for _ in 0..20 {
+            should_probe_stack();
+        }
+        assert!(
+            stack_overflow_tripped(),
+            "tripped bit must be preserved across should_probe_stack calls"
+        );
+        reset();
+    }
+
+    #[test]
+    fn counter_wraps_at_byte_boundary() {
+        reset();
+        // The counter masks with 0xFF, so it wraps after 256 calls back to
+        // 0 (whose `& 0x0F == 0` → returns true on call 256).
+        for _ in 0..255 {
+            should_probe_stack();
+        }
+        // After 255 calls, counter == 255. Call 256: 255 + 1 = 256, masked
+        // to 0. `0 & 0x0F == 0` → true.
+        assert!(should_probe_stack());
+        reset();
+    }
+
+    #[test]
+    fn clear_all_thread_local_state_zeros_stack_state() {
+        // Trip the breaker and advance the counter, then clear.
+        trip_stack_overflow();
+        for _ in 0..5 {
+            should_probe_stack();
+        }
+        assert!(stack_overflow_tripped());
+        clear_all_thread_local_state();
+        assert!(
+            !stack_overflow_tripped(),
+            "clear_all_thread_local_state must clear the tripped bit"
+        );
+        assert_eq!(
+            STACK_STATE.get(),
+            0,
+            "clear_all_thread_local_state must zero the entire STACK_STATE"
+        );
+    }
+}
