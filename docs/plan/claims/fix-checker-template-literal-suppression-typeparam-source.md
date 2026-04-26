@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-template-literal-suppression-typeparam-source`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1386
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
