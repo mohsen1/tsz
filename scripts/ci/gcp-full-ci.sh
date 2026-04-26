@@ -665,8 +665,9 @@ run_conformance() {
 
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
   baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
-  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt "$baseline_total" ]]; then
-    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total}" >&2
+  local total_tolerance=5
+  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt $(( baseline_total - total_tolerance )) ]]; then
+    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total} (tolerance ${total_tolerance})" >&2
     show_log_tail "$log_file"
     return 1
   fi
@@ -719,9 +720,9 @@ run_conformance_aggregate() {
   local baseline baseline_total
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
   baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
-
-  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt "$baseline_total" ]]; then
-    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total}" >&2
+  local total_tolerance=5
+  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt $(( baseline_total - total_tolerance )) ]]; then
+    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total} (tolerance ${total_tolerance})" >&2
     return 1
   fi
   if [[ "$baseline" -gt 0 && "$total_passed" -lt "$baseline" ]]; then

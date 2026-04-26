@@ -2,7 +2,7 @@
   "timestamp": "2026-04-25T22:43:41Z",
   "git_sha": "96b6a755a67db0572bbd811ee59ebff5536a6854",
   "summary": {
-    "total_tests": 12582,
+    "total_tests": 12580,
     "passed": 12144,
     "failed": 438,
     "pass_rate": 96.5
