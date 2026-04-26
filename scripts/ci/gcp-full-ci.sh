@@ -301,12 +301,21 @@ configure_sccache() {
   export SCCACHE_GCS_BUCKET="$gcs_bucket"
   export SCCACHE_GCS_KEY_PREFIX="$gcs_prefix"
   export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_WRITE}"
-  # Use GCE metadata server for OAuth2 tokens (works on Cloud Run workers)
-  export SCCACHE_GCS_CREDENTIALS_URL="${SCCACHE_GCS_CREDENTIALS_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
-  export SCCACHE_GCS_CREDENTIALS_URL_HEADERS="${SCCACHE_GCS_CREDENTIALS_URL_HEADERS:-Metadata-Flavor:Google}"
   export RUSTC_WRAPPER="sccache"
   export CARGO_INCREMENTAL="0"  # incompatible with sccache
   export SCCACHE_LOG="${SCCACHE_LOG:-warn}"
+
+  # Write SA key to disk if injected via secret; otherwise fall back to ADC metadata URL
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+    local key_file="/tmp/sccache-gcs-key.json"
+    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+    chmod 600 "$key_file"
+    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+    echo "sccache: using service account key from SCCACHE_GCS_KEY_JSON"
+  else
+    export SCCACHE_GCS_CREDENTIALS_URL="${SCCACHE_GCS_CREDENTIALS_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
+    echo "sccache: using metadata server credentials"
+  fi
 
   echo "sccache: GCS bucket=${gcs_bucket} prefix=${gcs_prefix} mode=${SCCACHE_GCS_RW_MODE}"
   sccache --stop-server 2>/dev/null || true

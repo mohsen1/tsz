@@ -51,6 +51,7 @@ jobs:
     timeout-minutes: 30
     env:
       GITHUB_SHA: ${{ github.sha }}
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
