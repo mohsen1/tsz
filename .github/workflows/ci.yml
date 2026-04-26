@@ -160,6 +160,7 @@ jobs:
     timeout-minutes: 90
     env:
       TSZ_CI_SHARDS: 4
+      TSZ_CI_FOURSLASH_WORKERS: 8
     steps:
       - uses: actions/checkout@v4
         with:
