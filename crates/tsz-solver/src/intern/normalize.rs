@@ -361,13 +361,23 @@ impl TypeInterner {
     /// - The `object` intrinsic
     /// - Structural object types, arrays, tuples, functions, callables
     /// - Literal types (string/number/boolean/bigint literals)
+    /// - Unions where every member is clearly non-nullable (e.g., `"A" | "B"`)
+    /// - Intersections containing at least one clearly non-nullable member
     ///
     /// Returns false for:
     /// - null, undefined, void, any, unknown, never
-    /// - Union types (might contain nullable members)
     /// - Type parameters (constraint may be nullable)
     /// - Lazy/Application/Mapped (unresolved, can't determine)
     fn is_clearly_non_nullable_constraint(&self, id: TypeId) -> bool {
+        self.is_clearly_non_nullable_constraint_with_depth(id, 0)
+    }
+
+    /// Recursive helper for `is_clearly_non_nullable_constraint`.
+    ///
+    /// `depth` guards against pathological/cyclic structures by capping recursion
+    /// at a small constant. Union/Intersection bodies are still typically shallow.
+    fn is_clearly_non_nullable_constraint_with_depth(&self, id: TypeId, depth: u32) -> bool {
+        const MAX_DEPTH: u32 = 4;
         match id {
             TypeId::STRING
             | TypeId::NUMBER
@@ -382,20 +392,37 @@ impl TypeInterner {
             | TypeId::UNKNOWN
             | TypeId::NEVER
             | TypeId::ERROR => false,
-            _ => matches!(
-                self.lookup(id),
+            _ => match self.lookup(id) {
                 Some(
                     TypeData::Literal(_)
-                        | TypeData::Object(_)
-                        | TypeData::ObjectWithIndex(_)
-                        | TypeData::Array(_)
-                        | TypeData::Tuple(_)
-                        | TypeData::Function(_)
-                        | TypeData::Callable(_)
-                        | TypeData::TemplateLiteral(_)
-                        | TypeData::UniqueSymbol(_)
-                )
-            ),
+                    | TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::TemplateLiteral(_)
+                    | TypeData::UniqueSymbol(_),
+                ) => true,
+                Some(TypeData::Union(list_id)) if depth < MAX_DEPTH => {
+                    // A union is clearly non-nullable iff every member is.
+                    // E.g., `"A" | "B"` is non-nullable; `string | undefined` is not.
+                    let members = self.type_list(list_id);
+                    !members.is_empty()
+                        && members.iter().all(|&m| {
+                            self.is_clearly_non_nullable_constraint_with_depth(m, depth + 1)
+                        })
+                }
+                Some(TypeData::Intersection(list_id)) if depth < MAX_DEPTH => {
+                    // An intersection is clearly non-nullable if ANY member is non-nullable
+                    // (the non-nullable member forces the result to exclude null/undefined).
+                    let members = self.type_list(list_id);
+                    members
+                        .iter()
+                        .any(|&m| self.is_clearly_non_nullable_constraint_with_depth(m, depth + 1))
+                }
+                _ => false,
+            },
         }
     }
 
