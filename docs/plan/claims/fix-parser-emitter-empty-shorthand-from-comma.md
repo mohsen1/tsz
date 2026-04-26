@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/parser-emitter-empty-shorthand-from-comma`
-- **PR**: (to be created)
-- **Status**: claim
+- **PR**: #1360
+- **Status**: ready
 - **Workstream**: 2 (JS Emit pass rate)
 
 ## Intent
