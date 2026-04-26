@@ -158,3 +158,74 @@ var t9 = <[A, I]>classCDTuple;
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
+
+/// Regression for `emitCapturingThisInTupleDestructuring1.ts`: when an array
+/// destructuring assignment has multiple targets that exceed the source tuple
+/// length, tsc emits TS2493 for **each** out-of-bounds element, not just the
+/// first. The previous implementation early-returned after the first
+/// diagnostic, dropping subsequent out-of-bounds errors.
+#[test]
+fn test_ts2493_destructuring_assignment_emits_for_each_out_of_bounds_element() {
+    let diagnostics = check_source_diagnostics(
+        r"
+declare let array: [any];
+declare let a: any;
+declare let b: any;
+declare let c: any;
+[a, b, c] = array;
+",
+    );
+    let ts2493_count = diagnostics.iter().filter(|d| d.code == 2493).count();
+    assert_eq!(
+        ts2493_count, 2,
+        "Expected TS2493 once per out-of-bounds element (indexes 1 and 2), got {}: {:?}",
+        ts2493_count,
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2493)
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+    // One diagnostic per out-of-bounds index — verify both messages mention
+    // the right index numbers.
+    let messages: Vec<String> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2493)
+        .map(|d| d.message_text.clone())
+        .collect();
+    assert!(
+        messages.iter().any(|m| m.contains("at index '1'")),
+        "Expected TS2493 message mentioning index '1', got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("at index '2'")),
+        "Expected TS2493 message mentioning index '2', got: {messages:?}"
+    );
+}
+
+/// Regression for the union-of-tuples branch of array destructuring
+/// assignment bounds checking: TS2339 must fire for **each** element where
+/// every union member is out of bounds, not just the first.
+#[test]
+fn test_ts2339_union_destructuring_assignment_emits_for_each_out_of_bounds_element() {
+    let diagnostics = check_source_diagnostics(
+        r"
+declare let u: [boolean] | [string];
+declare let a: any;
+declare let b: any;
+declare let c: any;
+[a, b, c] = u;
+",
+    );
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+    assert_eq!(
+        ts2339_count, 2,
+        "Expected TS2339 once per out-of-bounds element (indexes 1 and 2), got {}: {:?}",
+        ts2339_count,
+        diagnostics
+            .iter()
+            .filter(|d| d.code == 2339)
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
