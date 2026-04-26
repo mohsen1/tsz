@@ -58,6 +58,27 @@ pub struct LspProviderContext<'a> {
     pub source_text: &'a str,
 }
 
+/// Borrowed view of a `ProjectFile` shaped for minimal-tier LSP providers.
+///
+/// Minimal-tier providers (folding ranges, document symbols, document
+/// colors, document links, selection ranges) walk the AST without
+/// consulting the binder. They take exactly the three fields listed below;
+/// this view bundles them so the providers can be built via
+/// `Provider::from_context(ctx)` instead of repeating the three accessors
+/// at every dispatch site.
+///
+/// See [`super::ProjectFile::minimal_provider_context`] for the
+/// construction entry point.
+#[derive(Clone, Copy)]
+pub struct LspMinimalProviderContext<'a> {
+    /// Parser arena shared by all providers for the file.
+    pub arena: &'a NodeArena,
+    /// Line map for offset/position translation.
+    pub line_map: &'a LineMap,
+    /// Original source text for the file.
+    pub source_text: &'a str,
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{Project, ProjectFile};

@@ -764,11 +764,8 @@ impl Project {
         file_name: &str,
     ) -> Option<Vec<crate::symbols::DocumentSymbol>> {
         let file = self.files.get(file_name)?;
-        let provider = crate::symbols::DocumentSymbolProvider::new(
-            file.arena(),
-            file.line_map(),
-            file.source_text(),
-        );
+        let provider =
+            crate::symbols::DocumentSymbolProvider::from_context(file.minimal_provider_context());
         Some(provider.get_document_symbols(file.root()))
     }
 
@@ -778,10 +775,8 @@ impl Project {
         file_name: &str,
     ) -> Option<Vec<crate::editor_ranges::folding::FoldingRange>> {
         let file = self.files.get(file_name)?;
-        let provider = crate::editor_ranges::folding::FoldingRangeProvider::new(
-            file.arena(),
-            file.line_map(),
-            file.source_text(),
+        let provider = crate::editor_ranges::folding::FoldingRangeProvider::from_context(
+            file.minimal_provider_context(),
         );
         Some(provider.get_folding_ranges(file.root()))
     }
@@ -793,10 +788,8 @@ impl Project {
         positions: &[Position],
     ) -> Option<Vec<Option<crate::editor_ranges::selection_range::SelectionRange>>> {
         let file = self.files.get(file_name)?;
-        let provider = crate::editor_ranges::selection_range::SelectionRangeProvider::new(
-            file.arena(),
-            file.line_map(),
-            file.source_text(),
+        let provider = crate::editor_ranges::selection_range::SelectionRangeProvider::from_context(
+            file.minimal_provider_context(),
         );
         Some(provider.get_selection_ranges(positions))
     }
@@ -954,10 +947,8 @@ impl Project {
         file_name: &str,
     ) -> Option<Vec<crate::document_links::DocumentLink>> {
         let file = self.files.get(file_name)?;
-        let provider = crate::document_links::DocumentLinkProvider::new(
-            file.arena(),
-            file.line_map(),
-            file.source_text(),
+        let provider = crate::document_links::DocumentLinkProvider::from_context(
+            file.minimal_provider_context(),
         );
         Some(provider.provide_document_links(file.root()))
     }
@@ -969,10 +960,8 @@ impl Project {
         position: Position,
     ) -> Option<crate::rename::linked_editing::LinkedEditingRanges> {
         let file = self.files.get(file_name)?;
-        let provider = crate::rename::linked_editing::LinkedEditingProvider::new(
-            file.arena(),
-            file.line_map(),
-            file.source_text(),
+        let provider = crate::rename::linked_editing::LinkedEditingProvider::from_context(
+            file.minimal_provider_context(),
         );
         provider.provide_linked_editing_ranges(file.root(), position)
     }

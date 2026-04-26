@@ -57,6 +57,21 @@ macro_rules! define_lsp_provider {
                     source_text,
                 }
             }
+
+            /// Build the provider from a borrowed
+            /// [`crate::project::LspMinimalProviderContext`].
+            ///
+            /// Convenience constructor for LSP feature dispatch in
+            /// `crate::project::features` and `crate::project::operations`,
+            /// which already have a `ProjectFile` in scope and can call
+            /// `file.minimal_provider_context()`.
+            pub const fn from_context(ctx: crate::project::LspMinimalProviderContext<'a>) -> Self {
+                Self {
+                    arena: ctx.arena,
+                    line_map: ctx.line_map,
+                    source_text: ctx.source_text,
+                }
+            }
         }
     };
 

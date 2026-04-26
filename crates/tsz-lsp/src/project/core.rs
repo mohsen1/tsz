@@ -313,6 +313,22 @@ impl ProjectFile {
         }
     }
 
+    /// Build a minimal-tier [`super::LspMinimalProviderContext`] borrowed view.
+    ///
+    /// Combines [`Self::arena`], [`Self::line_map`], and
+    /// [`Self::source_text`] for AST-only providers (folding ranges,
+    /// document symbols, document colors, document links, selection
+    /// ranges) so feature dispatch can build them via
+    /// `Provider::from_context(file.minimal_provider_context())` instead
+    /// of repeating the three accessors at every call site.
+    pub fn minimal_provider_context(&self) -> super::LspMinimalProviderContext<'_> {
+        super::LspMinimalProviderContext {
+            arena: self.arena(),
+            line_map: self.line_map(),
+            source_text: self.source_text(),
+        }
+    }
+
     /// Content hash of the source text.
     ///
     /// This is a fast (non-cryptographic) hash used to detect whether the source

@@ -21,4 +21,4 @@ pub use self::core::{
     ProjectRequestTiming, ProjectResidencyStats, TsConfigSettings,
 };
 pub use self::eviction::{EvictedFile, EvictionResult};
-pub use self::file_context::LspProviderContext;
+pub use self::file_context::{LspMinimalProviderContext, LspProviderContext};
