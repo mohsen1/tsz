@@ -263,14 +263,24 @@ setup_sccache() {
   fi
 
   local url="https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-${platform}.tar.gz"
-  local tmp_dir
+  local tmp_dir install_dir
   tmp_dir="$(mktemp -d)"
-  echo "Downloading sccache v${SCCACHE_VERSION}..."
+  # Prefer system bin dirs with write access, fall back to CARGO_HOME/bin or ~/bin
+  if [[ -w /usr/local/bin ]]; then
+    install_dir=/usr/local/bin
+  elif [[ -d "$CARGO_HOME/bin" ]]; then
+    install_dir="$CARGO_HOME/bin"
+  else
+    install_dir="$HOME/.local/bin"
+    mkdir -p "$install_dir"
+    export PATH="$install_dir:$PATH"
+  fi
+  echo "Downloading sccache v${SCCACHE_VERSION} → ${install_dir}..."
   if curl -fsSL "$url" -o "$tmp_dir/sccache.tar.gz" 2>/dev/null; then
     tar -xzf "$tmp_dir/sccache.tar.gz" -C "$tmp_dir" 2>/dev/null
     local bin="$tmp_dir/sccache-v${SCCACHE_VERSION}-${platform}/sccache"
     if [[ -f "$bin" ]]; then
-      install -m 755 "$bin" /usr/local/bin/sccache
+      install -m 755 "$bin" "$install_dir/sccache"
     fi
   fi
   rm -rf "$tmp_dir"
