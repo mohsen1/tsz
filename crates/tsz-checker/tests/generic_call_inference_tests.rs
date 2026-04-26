@@ -242,14 +242,19 @@ declare function foo2(point: [number?]): boolean;
 foo2([match(y => y > 0)]);
 "#;
     let diags = relevant_diagnostics(source);
-    // When a property IS present in an object literal, tsc strips `undefined`
-    // from the optional property's contextual type. So `{ y: match(y => ...) }`
-    // gives `match` a contextual return type of `number`, not `number | undefined`.
-    // Only the tuple case `[match(y => ...)]` preserves `undefined` from `number?`.
+    // tsc's `getTypeOfPropertyOfContextualType` returns `T | undefined` for
+    // optional properties, so the contextual return type seen by `match<T>`
+    // when used as a property value is `number | undefined`. With T inferred
+    // to `number | undefined`, the callback parameter `y` is possibly
+    // undefined and TS18048 fires inside the body. The tuple `[number?]`
+    // exhibits the same behavior at element 0.
+    //
+    // See `contextuallyTypedOptionalProperty.ts` in the TypeScript conformance
+    // suite (issue #55164) for the canonical baseline expecting both errors.
     let ts18048_count = diags.iter().filter(|(code, _)| *code == 18048).count();
     assert_eq!(
-        ts18048_count, 1,
-        "Expected TS18048 only for tuple optional-wrapper site (object literal strips undefined). Diagnostics: {diags:#?}"
+        ts18048_count, 2,
+        "Expected TS18048 for both optional-wrapper callback sites. Diagnostics: {diags:#?}"
     );
 }
 

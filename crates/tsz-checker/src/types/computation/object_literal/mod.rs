@@ -184,4 +184,40 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_object_literal(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_object_literal_with_request(idx, &TypingRequest::NONE)
     }
+
+    /// Decide whether stripping `undefined` from an optional property's
+    /// contextual type is appropriate.
+    ///
+    /// We only strip when the post-strip type is callable (Function, Callable
+    /// with call signatures, an intersection containing call signatures, or a
+    /// union whose remaining members are callable). Non-callable property
+    /// types (e.g. `number | undefined` for `y?: number`) keep `undefined` so
+    /// inference into nested generic calls preserves tsc's behavior of seeing
+    /// the optional property as `T | undefined` from the read side.
+    pub(crate) fn stripped_property_context_is_callable(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::UNDEFINED || type_id == TypeId::NEVER {
+            return false;
+        }
+        if crate::query_boundaries::common::has_call_signatures(self.ctx.types, type_id) {
+            return true;
+        }
+        if crate::query_boundaries::common::is_callable_type(self.ctx.types, type_id) {
+            return true;
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .all(|&m| self.stripped_property_context_is_callable(m));
+        }
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&m| self.stripped_property_context_is_callable(m));
+        }
+        false
+    }
 }
