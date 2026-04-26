@@ -1247,16 +1247,12 @@ impl<'a> CheckerState<'a> {
         let nested_target = self.evaluate_type_with_env(nested_target);
         let nested_target = self.resolve_type_for_property_access(nested_target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(nested_target);
-        let Some(members) = query::union_members(self.ctx.types, resolved_target) else {
-            return None;
-        };
+        let members = query::union_members(self.ctx.types, resolved_target)?;
 
         let mut target_shapes = Vec::new();
         for &member in &members {
             let resolved_member = self.resolve_type_for_property_access(member);
-            let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
-                return None;
-            };
+            let shape = query::object_shape(self.ctx.types, resolved_member)?;
             target_shapes.push(shape);
         }
         if target_shapes.is_empty() {

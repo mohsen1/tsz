@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let Some(file_idx) = owner_file_hint
+        let file_idx = owner_file_hint
             .filter(|idx| *idx != u32::MAX)
             .or_else(|| {
                 self.ctx
@@ -384,10 +384,7 @@ impl<'a> CheckerState<'a> {
                     })
                 })
             })
-            .or_else(|| self.find_external_private_symbol_owner_file(&referenced_name))
-        else {
-            return None;
-        };
+            .or_else(|| self.find_external_private_symbol_owner_file(&referenced_name))?;
         if file_idx == self.ctx.current_file_idx as u32 {
             return None;
         }

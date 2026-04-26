@@ -203,23 +203,15 @@ impl<'a> CheckerState<'a> {
 
         for &member in &members {
             let (object_type, index_type) =
-                match crate::query_boundaries::common::index_access_types(self.ctx.types, member) {
-                    Some(parts) => parts,
-                    None => return None,
-                };
+                crate::query_boundaries::common::index_access_types(self.ctx.types, member)?;
             match shared_index {
                 Some(existing) if existing != index_type => return None,
                 Some(_) => {}
                 None => shared_index = Some(index_type),
             }
 
-            let prop_atom = match crate::query_boundaries::common::string_literal_value(
-                self.ctx.types,
-                index_type,
-            ) {
-                Some(atom) => atom,
-                None => return None,
-            };
+            let prop_atom =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)?;
             has_optional_property |= crate::query_boundaries::common::find_property_in_object(
                 self.ctx.types,
                 object_type,
