@@ -364,3 +364,7 @@ pub fn classify_for_base_instance_merge(
         _ => BaseInstanceMergeKind::Other,
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/extended_constructors_tests.rs"]
+mod tests;
