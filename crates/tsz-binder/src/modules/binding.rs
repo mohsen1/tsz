@@ -214,7 +214,7 @@ impl BinderState {
                         is_exported = true;
                     }
                 }
-                self.module_declaration_exports_publicly
+                std::sync::Arc::make_mut(&mut self.module_declaration_exports_publicly)
                     .insert(idx.0, is_exported);
 
                 if self.in_global_augmentation {

@@ -490,7 +490,7 @@ pub struct BindResult {
     /// `semantic_defs`; this is the same template applied to `node_symbols`.
     pub node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
-    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
+    pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
     pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup.
@@ -1436,7 +1436,7 @@ pub struct BoundFile {
     /// Per-file declaration-to-arena mapping captured during binding.
     pub declaration_arenas: DeclarationArenaMap,
     /// Export visibility of namespace/module declaration nodes after binder rules.
-    pub module_declaration_exports_publicly: FxHashMap<u32, bool>,
+    pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     /// Persistent scopes (symbol IDs are global after merge)
     pub scopes: Vec<Scope>,
     /// Map from AST node to scope ID
@@ -4116,7 +4116,7 @@ fn build_lib_bound_file_for_interface_checks(
         node_symbols: Arc::new(node_symbols),
         symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
-        module_declaration_exports_publicly: FxHashMap::default(),
+        module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
         scopes: Vec::new(),
         node_scope_ids: FxHashMap::default(),
         parse_diagnostics: Vec::new(),
