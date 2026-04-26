@@ -662,9 +662,19 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_type_diagnostic(source_type)
         };
-        let is_source_primitive = (source_type != tsz_solver::TypeId::OBJECT
-            && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type))
-            || is_primitive_type_name(&display_src_str);
+        // Distinguish "outer source is primitive" (e.g. `let y: Foo = 42`) from
+        // "inner source_type is primitive" (e.g. assigning `{ one: number }` to
+        // `{ [k: string]: Foo }`, where the solver reports `MissingProperty(foo,
+        // src_ty=number, tgt_ty=Foo)` describing the failed nested check). In
+        // the first case we want the primitive-vs-target message; in the second
+        // we want the OUTER source/target shown, not the inner property types.
+        let outer_source_is_primitive =
+            crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
+                || is_primitive_type_name(&display_src_str);
+        let inner_source_type_is_primitive = source_type != tsz_solver::TypeId::OBJECT
+            && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type);
+        let is_source_primitive =
+            outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
         if is_source_primitive {
             let tgt_str = self.format_type_diagnostic(target_type);
             let message = format_message(
