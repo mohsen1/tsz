@@ -1209,7 +1209,9 @@ pub(super) fn collect_diagnostics(
             .or(Some(parallel_ds_stats));
     } else {
         // --- SEQUENTIAL PATH: Cached build with dependency cascade ---
-        let mut sequential_ds_stats = tsz_solver::StoreStatistics::default();
+        // Fallback used only when no shared_definition_store exists (e.g.,
+        // tests). Production paths set the shared store unconditionally.
+        let sequential_ds_stats = tsz_solver::StoreStatistics::default();
 
         // Reorder work queue in topological (dependency-first) order so that
         // dependencies are checked before their dependents. This ensures that
@@ -1451,7 +1453,14 @@ pub(super) fn collect_diagnostics(
             // so body-only/comment-only/private-symbol edits produce the same
             // invalidation decisions in both CLI and LSP.
             let checker_counters = checker.ctx.request_cache_counters;
-            sequential_ds_stats.merge(&checker.ctx.definition_store.statistics());
+            // PERF: Skip per-file `definition_store.statistics()`. When
+            // `project_env.shared_definition_store` is set, every per-file
+            // checker.ctx.definition_store is `Arc::clone` of the SAME shared
+            // store — calling .statistics() per file iterates that shared
+            // store N times and produces N× inflated counts. The parallel
+            // path already documents this same issue at line ~1159 ("summing
+            // per-file was both wasted work and N× inflated"). Compute once
+            // after the loop instead.
 
             if let Some(c) = cache.as_deref_mut() {
                 let new_sig = compute_export_signature(program, file, file_idx);
@@ -1484,18 +1493,24 @@ pub(super) fn collect_diagnostics(
         }
         if !options.no_check {
             for lib_idx in 0..checker_libs.files.len() {
-                let (lib_diags, lib_counters, lib_ds_stats) =
+                let (lib_diags, lib_counters, _lib_ds_stats) =
                     check_checker_lib_file(&checker_lib_file_env, lib_idx, &query_cache, None);
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
                 diagnostics.extend(lib_diags);
                 request_cache_counters.merge(lib_counters);
-                sequential_ds_stats.merge(&lib_ds_stats);
             }
         }
         // Sequential path: single shared QueryCache — capture stats after all files.
         aggregated_qc_stats = Some(query_cache.statistics());
-        aggregated_ds_stats = Some(sequential_ds_stats);
+        // PERF: matching the parallel path, prefer the shared DefinitionStore
+        // (single .statistics() call) over summing per-file/per-lib stats from
+        // checkers that all Arc::clone the same shared store.
+        aggregated_ds_stats = project_env
+            .shared_definition_store
+            .as_ref()
+            .map(|store| store.statistics())
+            .or(Some(sequential_ds_stats));
     }
 
     // Collect diagnostics from cache for all files
@@ -2138,10 +2153,13 @@ fn check_checker_lib_file(
     diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
     diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
 
+    // PERF: All callers Arc::clone the same shared DefinitionStore; the
+    // aggregator computes stats once on the shared store after the loop.
+    // See `check_file_for_parallel` for the same rationale.
     (
         diagnostics,
         checker.ctx.request_cache_counters,
-        checker.ctx.definition_store.statistics(),
+        tsz_solver::StoreStatistics::default(),
     )
 }
 
@@ -2198,10 +2216,12 @@ fn check_checker_lib_file_baseline(
     diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
     diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
 
+    // PERF: Same as `check_checker_lib_file` — callers ignore stats and the
+    // aggregator computes them once on the shared store.
     (
         diagnostics,
         checker.ctx.request_cache_counters,
-        checker.ctx.definition_store.statistics(),
+        tsz_solver::StoreStatistics::default(),
     )
 }
 
