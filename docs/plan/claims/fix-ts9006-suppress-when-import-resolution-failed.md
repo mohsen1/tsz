@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/ts9006-suppress-when-import-resolution-failed`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1472
+- **Status**: ready
 - **Workstream**: 1 (conformance)
 
 ## Intent
