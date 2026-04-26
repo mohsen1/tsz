@@ -1872,6 +1872,20 @@ impl<'a> CheckerState<'a> {
                 // Skip statement-level return assignability and let the outer
                 // function-type assignability relation handle the ergonomics.
                 TypeId::ANY
+            } else if is_generator
+                && !has_type_annotation
+                && has_contextual_return
+                && let Some(early_t) = early_gen_return_type
+                && early_t != TypeId::ANY
+                && early_t != TypeId::UNKNOWN
+            {
+                // Contextually-typed sync generator (no annotation): use
+                // unwrapped contextual `TReturn` from outer
+                // `Generator<Y, TReturn, N>` for body return checks. Without
+                // this, `f1<0,0,1>(function* () { return 0 })` widens 0 → number
+                // and the call site reports a false TS2345. Mirrors the async
+                // and annotated-generator branches above.
+                early_t
             } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
             {
                 // When a sync function carries its own JSDoc `@type {function(...): T}`
@@ -2522,14 +2536,21 @@ impl<'a> CheckerState<'a> {
                     && return_type != TypeId::UNDEFINED
                     && !(return_type == TypeId::ANY && early_gen_return_type.is_some())
                 {
-                    // Widen literal body-inferred returns before assembling the
-                    // Generator<Y, R, N> type: `return 1;` produces TReturn =
-                    // number, not 1. Matches tsc's generator return-type
-                    // widening. Unique symbols are preserved.
-                    let widened = if crate::query_boundaries::common::is_unique_symbol_type(
-                        self.ctx.types,
-                        return_type,
-                    ) {
+                    // Widen literal body-inferred returns: `return 1;` →
+                    // TReturn = number. Preserve unique symbols. Also
+                    // preserve when contextual TReturn is a real type — tsc
+                    // pins T from the call-site type-arg, widening defeats
+                    // the pin. `void` is treated as no-constraint (matches
+                    // tsc's widening behavior for `() => Generator<_, void, _>`).
+                    let contextual_pins_return = early_gen_return_type.is_some_and(|t| {
+                        t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN
+                    });
+                    let preserve = contextual_pins_return
+                        || crate::query_boundaries::common::is_unique_symbol_type(
+                            self.ctx.types,
+                            return_type,
+                        );
+                    let widened = if preserve {
                         return_type
                     } else {
                         self.widen_literal_type(return_type)
