@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/lowering-unresolved-identifier-preserves-name-in-type-position`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1464
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance — fingerprint parity)
 
 ## Intent
