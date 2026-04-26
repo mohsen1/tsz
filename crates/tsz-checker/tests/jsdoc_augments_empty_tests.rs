@@ -1,30 +1,17 @@
 use tsz_checker::context::CheckerOptions;
 
 fn check_js_with_jsdoc(source: &str) -> Vec<(u32, String)> {
-    let mut parser = tsz_parser::parser::ParserState::new("a.js".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-    let mut binder = tsz_binder::BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-    let types = tsz_solver::TypeInterner::new();
-    let options = CheckerOptions {
-        check_js: true,
-        ..CheckerOptions::default()
-    };
-    let mut checker = tsz_checker::state::CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "a.js".to_string(),
-        options,
-    );
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(root);
-    checker
-        .ctx
-        .diagnostics
-        .into_iter()
-        .map(|d| (d.code, d.message_text))
-        .collect()
+    tsz_checker::test_utils::check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect()
 }
 
 #[test]
