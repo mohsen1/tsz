@@ -794,6 +794,13 @@ impl<'a> CheckerState<'a> {
 
         let mut current = expr_idx;
         loop {
+            // Skip JSDoc-derived source display when `current` is the name of a
+            // class property declaration whose leading JSDoc `@type` describes
+            // the declared (target) type, not an initializer/source expression.
+            // Without this guard the property name picks up the property's own
+            // `@type` annotation as the "source" string and produces tautological
+            // diagnostics like "Type 'boolean' is not assignable to type 'boolean'."
+            // for e.g. `/** @type {boolean} */ #foo = 3` where the source is `3`.
             if self
                 .ctx
                 .arena
@@ -807,6 +814,7 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::METHOD_DECLARATION
                             | syntax_kind_ext::GET_ACCESSOR
                             | syntax_kind_ext::SET_ACCESSOR
+                            | syntax_kind_ext::PROPERTY_DECLARATION
                     )
                 })
             {
