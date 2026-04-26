@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/checker-ts1100-destructuring-arguments`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1362
+- **Status**: ready
 - **Workstream**: Conformance fingerprint parity (TS1100 in strict mode)
 
 ## Intent
@@ -25,6 +25,9 @@ parity with tsc.
 
 ## Verification
 
-- `./scripts/conformance/conformance.sh run --filter "emitArrowFunctionWhenUsingArguments17_ES6" --verbose` → expected pass
-- `cargo nextest run -p tsz-checker --test ts1100_destructuring_arguments_tests`
-- Targeted no-regression: filter on `ts1100`, `arguments`, `destructuring`
+- `./scripts/conformance/conformance.sh run --filter "emitArrowFunctionWhenUsingArguments17_ES6" --verbose` → 1/1 PASS (was fingerprint-only fail)
+- `./scripts/conformance/conformance.sh run --filter "emitArrowFunctionWhenUsingArguments"` → 38/38 pass
+- `cargo nextest run -p tsz-checker --test ts1100_destructuring_arguments_tests` → 6/6 pass
+- `cargo nextest run -p tsz-checker` → 5346/5346 pass (no regressions)
+- `cargo nextest run -p tsz-core --lib` → 2987/2987 pass (no regressions)
+- `./scripts/conformance/conformance.sh run --filter "destructur"` → 168/182 pass (no new regressions vs baseline)
