@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/conformance-pick-1`
-- **PR**: TBD
+- **PR**: #1424
 - **Status**: ready
 - **Workstream**: conformance fingerprint parity
 
