@@ -6,6 +6,7 @@
 mod core;
 pub(crate) mod eviction;
 pub(crate) mod features;
+pub(crate) mod file_context;
 pub(crate) mod imports;
 pub(crate) mod module_specifiers;
 pub(crate) mod operations;
@@ -20,3 +21,4 @@ pub use self::core::{
     ProjectRequestTiming, ProjectResidencyStats, TsConfigSettings,
 };
 pub use self::eviction::{EvictedFile, EvictionResult};
+pub use self::file_context::LspProviderContext;

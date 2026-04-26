@@ -57,6 +57,19 @@ impl<'a> TypeHierarchyProvider<'a> {
         }
     }
 
+    /// Build the provider from a borrowed
+    /// [`crate::project::LspProviderContext`]. Mirrors the binder-tier
+    /// `define_lsp_provider!` macro convenience constructor; binder argument
+    /// is unused (and kept on `new` for symmetry with sibling providers).
+    pub fn from_context(ctx: crate::project::LspProviderContext<'a>) -> Self {
+        Self {
+            arena: ctx.arena,
+            line_map: ctx.line_map,
+            file_name: ctx.file_name.to_string(),
+            source_text: ctx.source_text,
+        }
+    }
+
     /// Prepare a type hierarchy item at the given position.
     ///
     /// Finds the class or interface at the cursor and returns a
