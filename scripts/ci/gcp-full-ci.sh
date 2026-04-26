@@ -191,7 +191,7 @@ suite_needs_group() {
       [[ "$suite" == "wasm" ]]
       ;;
     node)
-      [[ "$suite" == "conformance" || "$suite" == "emit" || "$suite" == "fourslash" ]]
+      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* ]]
       ;;
     rust_compile)
       [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" ]]
@@ -813,12 +813,13 @@ run_emit_aggregate() {
   fi
 
   local js_passed=0 js_total=0 js_skipped=0 js_timeouts=0
-  local dts_passed=0 dts_total=0 dts_skipped=0 shard_count=0
+  local dts_passed=0 dts_total=0 dts_skipped=0 files_count=0
   for f in "$tmp_dir"/shard-*.json; do
     [[ -f "$f" ]] || continue
+    files_count=$((files_count + 1))
     local t
     t="$(jq -r '.js_total // 0' "$f" 2>/dev/null || echo 0)"
-    [[ "$(num_or_zero "$t")" -eq 0 ]] && continue  # skip empty trailing shards
+    [[ "$(num_or_zero "$t")" -eq 0 ]] && continue  # skip empty trailing shards (count only for files_count)
     js_passed=$((js_passed + $(num_or_zero "$(jq -r '.js_passed'  "$f")")))
     js_total=$((js_total   + $(num_or_zero "$(jq -r '.js_total'   "$f")")))
     js_skipped=$((js_skipped + $(num_or_zero "$(jq -r '.js_skipped // 0' "$f")")))
@@ -826,13 +827,12 @@ run_emit_aggregate() {
     dts_passed=$((dts_passed + $(num_or_zero "$(jq -r '.dts_passed' "$f")")))
     dts_total=$((dts_total   + $(num_or_zero "$(jq -r '.dts_total'  "$f")")))
     dts_skipped=$((dts_skipped + $(num_or_zero "$(jq -r '.dts_skipped // 0' "$f")")))
-    shard_count=$((shard_count + 1))
   done
 
-  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${shard_count}/${expected_shards} non-empty shards"
+  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${files_count}/${expected_shards} shards"
 
-  if [[ "$shard_count" -lt "$expected_shards" ]]; then
-    echo "error: only ${shard_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
+  if [[ "$files_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${files_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
     return 1
   fi
   if [[ "$js_total" -eq 0 ]]; then
