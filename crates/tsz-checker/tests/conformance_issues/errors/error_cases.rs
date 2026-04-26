@@ -378,6 +378,71 @@ function f<T extends Dict, K extends keyof T>(
     );
 }
 
+/// Locks the invariant: `obj[key]` where `obj: T` (a type parameter) and
+/// `key: keyof T` must NOT trigger TS2862. The receiver's own keys are not
+/// a "broad" key space; tsc emits only TS2322 here.
+///
+/// Repro from `conformance/types/keyof/keyofAndIndexedAccessErrors.ts`
+/// (the inner `Test<T extends Record<string, number>>` case at line 165).
+#[test]
+fn test_keyof_self_write_on_generic_receiver_does_not_emit_ts2862() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+class Test<T extends Record<string, number>> {
+  testy: T;
+
+  constructor(t: T) {
+    this.testy = t;
+  }
+
+  public t(key: keyof T): number {
+    this.testy[key] += 1;
+    return this.testy[key];
+  }
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2862),
+        "Did not expect TS2862 for write through `keyof T` on generic receiver `T`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Locks the invariant: `obj[k]` where `obj: T` and `k: K extends keyof T`
+/// must NOT trigger TS2862. `K` is bounded by `keyof T`, so the index still
+/// references the receiver's own key space.
+///
+/// Repro from `conformance/types/keyof/keyofAndIndexedAccessErrors.ts`
+/// (`function test1<T extends Record<string, any>, K extends keyof T>` at line 140).
+#[test]
+fn test_constrained_keyof_param_write_does_not_emit_ts2862() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function test1<T extends Record<string, any>, K extends keyof T>(t: T, k: K) {
+    t[k] = 42;
+    t[k] = "hello";
+    t[k] = [10, 20];
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2862),
+        "Did not expect TS2862 for write through `K extends keyof T` on generic receiver `T`.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_mapped_tuple_value_index_access_does_not_emit_ts2536() {
     let diagnostics = compile_and_get_diagnostics_with_options(
