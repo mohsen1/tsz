@@ -530,11 +530,13 @@ impl<'a> CheckerState<'a> {
             let mut refs_in_default = Vec::new();
             self.collect_type_references_in_type(param.default, &all_names, &mut refs_in_default);
 
-            for (_ref_node, ref_name) in &refs_in_default {
+            for &(ref_node, ref ref_name) in &refs_in_default {
                 if !declared_before.contains(ref_name.as_str()) {
-                    // This is a forward reference — emit TS2744
+                    // This is a forward reference — emit TS2744 anchored at
+                    // the offending identifier (matches tsc), not at the
+                    // start of the entire default-type expression.
                     self.error_at_node_msg(
-                        param.default,
+                        ref_node,
                         crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_DEFAULTS_CAN_ONLY_REFERENCE_PREVIOUSLY_DECLARED_TYPE_PARAMETERS,
                         &[],
                     );
