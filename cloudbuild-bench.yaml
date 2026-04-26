@@ -1,0 +1,119 @@
+steps:
+  # Step 1: Acquire a GCS-backed mutex so only one benchmark runs at a time.
+  # If the lock is already held, we write nothing to /workspace and subsequent
+  # steps exit early — no duplicate benchmark runs ever overlap.
+  - id: acquire-lock
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      LOCK_URI="gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/.lock"
+      if gsutil -q stat "$LOCK_URI" 2>/dev/null; then
+        holder=$(gsutil cat "$LOCK_URI" 2>/dev/null || echo "unknown")
+        echo "Benchmark already in progress (lock holder: $holder). Skipping this run."
+      else
+        echo "$BUILD_ID" | gsutil cp -q - "$LOCK_URI"
+        echo "Lock acquired for BUILD_ID=$BUILD_ID"
+        touch /workspace/bench-enabled
+      fi
+
+  # Step 2: Run the full benchmark suite on the beefy c3-88 node.
+  - id: bench
+    name: rust:1.90-bookworm
+    timeout: 3000s
+    env:
+      - 'TSC_NPM_SPEC=6.0.2'
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      if [[ ! -f /workspace/bench-enabled ]]; then
+        echo "Benchmark skipped (another run is in progress)."
+        exit 0
+      fi
+
+      echo "=== Installing deps ==="
+      apt-get update -q
+      apt-get install -y -q hyperfine curl git jq
+      # Node.js 22
+      curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null
+      apt-get install -y -q nodejs
+
+      echo "=== Versions ==="
+      rustc --version && cargo --version && hyperfine --version && node --version
+
+      echo "=== Init TypeScript submodule (shallow — for benchmark fixtures) ==="
+      expected_ref="$(cat scripts/ci/typescript-submodule-ref | tr -d '[:space:]')"
+      echo "TypeScript ref: ${expected_ref}"
+      rm -rf TypeScript
+      git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
+      git -C TypeScript fetch --depth 1 origin "$expected_ref"
+      git -C TypeScript checkout --detach FETCH_HEAD
+      echo "TypeScript submodule ready"
+
+      echo "=== Running full benchmark ==="
+      ./scripts/bench/bench-vs-tsgo.sh \
+        --json \
+        --json-file /workspace/bench-results.json \
+        2>&1 | tee /workspace/bench-run.log
+
+  # Step 3: Publish results to GCS and trigger a website redeploy.
+  - id: publish
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      LOCK_URI="gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/.lock"
+      BENCH_BUCKET=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs
+
+      # Always release the lock when we exit (success or failure).
+      release_lock() {
+        if [[ -f /workspace/bench-enabled ]]; then
+          echo "Releasing benchmark lock..."
+          gsutil rm -f "$LOCK_URI" 2>/dev/null || true
+        fi
+      }
+      trap release_lock EXIT
+
+      if [[ ! -f /workspace/bench-enabled ]]; then
+        echo "Nothing to publish — benchmark was skipped."
+        exit 0
+      fi
+
+      if [[ ! -f /workspace/bench-results.json ]]; then
+        echo "No bench-results.json found — benchmark may have failed or timed out"
+        tail -100 /workspace/bench-run.log || true
+        exit 1
+      fi
+
+      echo "=== Publishing results ==="
+      TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+      gsutil cp /workspace/bench-results.json "${BENCH_BUCKET}/${TIMESTAMP}.json"
+      gsutil cp /workspace/bench-results.json "${BENCH_BUCKET}/latest.json"
+      echo "Saved to ${BENCH_BUCKET}/${TIMESTAMP}.json and latest.json"
+
+      echo "=== Triggering website redeploy ==="
+      GITHUB_TOKEN="$(gcloud secrets versions access latest \
+        --secret=github_runner_token --project=tsz-ci 2>/dev/null || true)"
+      if [[ -n "$GITHUB_TOKEN" ]]; then
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/mohsen1/tsz/actions/workflows/gh-pages.yml/dispatches \
+          -d '{"ref":"main"}')
+        if [[ "$http_code" == "204" ]]; then
+          echo "Website deploy triggered successfully."
+        else
+          echo "Warning: GitHub dispatch returned HTTP $http_code"
+        fi
+      else
+        echo "Warning: could not read github_runner_token — website not re-triggered"
+      fi
+
+options:
+  pool:
+    name: projects/thirdface-ai-oauth/locations/us-central1/workerPools/tsz-ci-c3-88
+  logging: CLOUD_LOGGING_ONLY
+  automapSubstitutions: true
+
+timeout: 3600s
