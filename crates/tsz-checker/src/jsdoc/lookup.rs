@@ -451,6 +451,24 @@ impl<'a> CheckerState<'a> {
                 break;
             }
             let parent_node = self.ctx.arena.get(parent)?;
+            // Stop before checking statement-level containers whose "leading
+            // JSDoc" belongs to their first child statement, not to the node
+            // we started the walk from. Without this guard, walking from a
+            // function expression up through its enclosing SourceFile/Block
+            // could pick up `@type {function(): T}` from an unrelated
+            // preceding declaration. Mirrors the guard in
+            // `try_jsdoc_with_ancestor_walk` (params.rs).
+            use tsz_parser::parser::syntax_kind_ext as sk;
+            if matches!(
+                parent_node.kind,
+                sk::SOURCE_FILE
+                    | sk::BLOCK
+                    | sk::MODULE_BLOCK
+                    | sk::CASE_CLAUSE
+                    | sk::DEFAULT_CLAUSE
+            ) {
+                break;
+            }
             for comment in comments.iter().rev() {
                 if comment.end <= parent_node.pos
                     && is_jsdoc_comment(comment, source_text)
@@ -460,6 +478,13 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     return Some(span);
+                }
+                // Stop at the first preceding comment to avoid scanning
+                // earlier (unrelated) JSDoc that may match the function
+                // shape but belong to a different declaration. Mirrors the
+                // early break in the loop at lines 430-443 above.
+                if comment.end <= parent_node.pos {
+                    break;
                 }
             }
             current = parent;
