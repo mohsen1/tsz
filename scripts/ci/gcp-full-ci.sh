@@ -350,7 +350,10 @@ build_test_binaries() {
   elif [[ -f .ci-cache/dist-fast-cache-hit ]]; then
     local cache_commit expected_commit
     cache_commit="$(tr -d '[:space:]' < .ci-cache/dist-fast-cache-hit)"
-    expected_commit="${COMMIT_SHA:-${REVISION_ID:-}}"
+    expected_commit="${COMMIT_SHA:-${REVISION_ID:-${GITHUB_SHA:-}}}"
+    if [[ -z "$expected_commit" ]]; then
+      expected_commit="$(git rev-parse HEAD 2>/dev/null || true)"
+    fi
     if [[ -n "$expected_commit" && "$cache_commit" == "$expected_commit" ]]; then
       trusted_cache=1
     fi
@@ -724,6 +727,14 @@ aggregate_fourslash() {
   fi
 }
 
+run_build() {
+  ci_section "Build dist-fast binaries (upload for parallel jobs)"
+  timed build_test_binaries build_test_binaries
+  if command -v gsutil >/dev/null 2>&1; then
+    scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+  fi
+}
+
 run_common_setup() {
   local suite="${1:-all}"
   timed ensure_host_tools ensure_host_tools "$suite"
@@ -753,6 +764,9 @@ main() {
     all|full)
       run_all_suites
       ;;
+    build)
+      run_build
+      ;;
     lint)
       timed run_lint run_lint
       ;;
@@ -780,7 +794,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, lint, unit, wasm, conformance, emit, fourslash" >&2
+      echo "valid suites: all, build, lint, unit, wasm, conformance, emit, fourslash" >&2
       return 2
       ;;
   esac
