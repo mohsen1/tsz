@@ -32,6 +32,10 @@ stacker = "0.1.23"
 web-time = { workspace = true }
 
 [[test]]
+name = "generic_alias_assignability_pollution_tests"
+path = "tests/generic_alias_assignability_pollution_tests.rs"
+
+[[test]]
 name = "generator_annotation_mismatch_display_tests"
 path = "tests/generator_annotation_mismatch_display_tests.rs"
 
