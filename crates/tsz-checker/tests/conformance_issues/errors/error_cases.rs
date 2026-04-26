@@ -304,6 +304,18 @@ function test<Shape extends Record<string, string>>(shape: Shape, key: keyof Sha
         "Expected TS2551 for unknown literal property on generic mapped type.\nActual diagnostics: {diagnostics:#?}"
     );
 
+    // Property-receiver display in TS2551 must preserve the original generic
+    // type-argument shape. Earlier behaviour eagerly evaluated `keyof Shape`
+    // through the type environment, expanding it to its constraint and
+    // collapsing the union to `string | number`, breaking conformance parity
+    // with tsc on tests like mappedTypeGenericWithKnownKeys.
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2551 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
+        }),
+        "Expected TS2551 to preserve `Record<keyof Shape | \"knownLiteralKey\", number>` in the property-receiver display.\nActual diagnostics: {diagnostics:#?}"
+    );
+
     assert!(
         diagnostics.iter().any(|(code, message)| {
             *code == 2862 && message.contains("Record<keyof Shape | \"knownLiteralKey\", number>")
