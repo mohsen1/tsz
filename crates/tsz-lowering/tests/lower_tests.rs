@@ -3063,3 +3063,80 @@ fn test_lower_parenthesized_type() {
         _ => panic!("Expected Union type, got {key:?}"),
     }
 }
+
+/// Regression test: `(x: ItemSet) => void` where `ItemSet` is undefined must
+/// preserve the syntactic name as `UnresolvedTypeName` instead of collapsing
+/// to `TypeId::ERROR`.  `TypeId::ERROR` formats as the bare `error` token,
+/// which leaks into TS2345/TS2322 messages (e.g. `Argument of type
+/// '(items: error) => void'`).  This mirrors the qualified-name behavior in
+/// `lower_qualified_name_type` so identifier and `A.B` paths agree.
+///
+/// Conformance regression: `lambdaArgCrash.ts` — TS2345 prints the parameter's
+/// declared name (`ItemSet`) inside the function-type display, not `error`.
+#[test]
+fn test_lower_unresolved_identifier_type_preserves_name() {
+    let (arena, type_idx) = parse_type_alias_type_node("type T = ItemSet;");
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+
+    let type_id = lowering.lower_type(type_idx);
+    assert_ne!(
+        type_id,
+        TypeId::ERROR,
+        "Unresolved identifier in type position should not collapse to TypeId::ERROR; it must \
+         preserve the original name via UnresolvedTypeName so display does not show `error`."
+    );
+
+    let key = interner
+        .lookup(type_id)
+        .expect("Lowered TypeId must intern to a TypeData entry");
+    match key {
+        TypeData::UnresolvedTypeName(atom) => {
+            let name = interner.resolve_atom(atom);
+            assert_eq!(
+                name, "ItemSet",
+                "UnresolvedTypeName should carry the syntactic name"
+            );
+        }
+        _ => panic!(
+            "Expected TypeData::UnresolvedTypeName('ItemSet'), got {key:?}. \
+             Without this fallback, the printer renders '(items: error) => void' \
+             in TS2345 / TS2322 instead of '(items: ItemSet) => void'."
+        ),
+    }
+}
+
+/// Regression: bare-identifier and qualified-name (`A.B`) unresolved-name paths
+/// must agree.  Both should preserve the rightmost text via `UnresolvedTypeName`,
+/// not return `TypeId::ERROR`, so that diagnostics print the user-written name.
+#[test]
+fn test_lower_unresolved_identifier_and_qualified_agree() {
+    let interner = TypeInterner::new();
+
+    // Bare identifier: `type T = MissingType;`
+    let (arena_id, idx_id) = parse_type_alias_type_node("type T = MissingType;");
+    let lowering_id = TypeLowering::new(&arena_id, &interner);
+    let id_kind = lowering_id.lower_type(idx_id);
+
+    // Qualified name: `type T = Missing.Member;`
+    let (arena_q, idx_q) = parse_type_alias_type_node("type T = Missing.Member;");
+    let lowering_q = TypeLowering::new(&arena_q, &interner);
+    let q_kind = lowering_q.lower_type(idx_q);
+
+    let id_data = interner
+        .lookup(id_kind)
+        .expect("identifier path should intern");
+    let q_data = interner
+        .lookup(q_kind)
+        .expect("qualified-name path should intern");
+
+    // Both must be UnresolvedTypeName variants — neither should be TypeId::ERROR.
+    assert!(
+        matches!(id_data, TypeData::UnresolvedTypeName(_)),
+        "Identifier-position unresolved name must lower to UnresolvedTypeName, got {id_data:?}"
+    );
+    assert!(
+        matches!(q_data, TypeData::UnresolvedTypeName(_)),
+        "Qualified-name unresolved name must lower to UnresolvedTypeName, got {q_data:?}"
+    );
+}
