@@ -989,7 +989,7 @@ var r5b = _.map<number, string, boolean>(c2, rf1);
     let diag = diagnostics
         .iter()
         .find(|d| d.code == 2345)
-        .unwrap_or_else(|| panic!("expected TS2345, got: {:?}", codes));
+        .unwrap_or_else(|| panic!("expected TS2345, got: {codes:?}"));
 
     assert!(
         diag.message_text
