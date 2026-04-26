@@ -441,7 +441,7 @@ impl<'a> CheckerState<'a> {
             .to_string();
 
         let mut export_keys = vec![
-            target_file_name.clone(),
+            target_file_name,
             normalized_file_name,
             normalized_without_dot,
             target_file_stem,

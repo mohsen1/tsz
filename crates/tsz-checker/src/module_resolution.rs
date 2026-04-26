@@ -702,7 +702,7 @@ pub fn resolve_specifier_via_file_index(
     // dot-chain specifiers (`.`, `./`, `..`, `../..`) fall through here
     // and resolve to src_dir (or an ancestor) + `/index.<ext>` below.
     let joined = if src_dir.is_empty() {
-        spec_norm.clone()
+        spec_norm
     } else {
         let mut s = String::with_capacity(src_dir.len() + 1 + spec_norm.len());
         s.push_str(src_dir);
