@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/parser-checker-emitter-rest-tuple-optional`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1356
+- **Status**: ready
 - **Workstream**: 2 (JS Emit And Declaration Emit Pass Rate)
 
 ## Intent
