@@ -135,8 +135,15 @@ jobs:
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcs-key.json
           LATEST=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache/bench-runs/latest.json
           if gsutil -q stat "$LATEST" 2>/dev/null; then
-            gsutil cp "$LATEST" crates/tsz-website/data/benchmarks.json
-            echo "Downloaded fresh benchmark data from GCS ($(date -u))"
+            gsutil cp "$LATEST" /tmp/bench-latest.json
+            # Reject data where bc was missing and all timings are zero.
+            nonzero=$(jq '[.results[]? | select(.tsz_ms > 0)] | length' /tmp/bench-latest.json 2>/dev/null || echo "0")
+            if [ "${nonzero}" -gt 0 ]; then
+              cp /tmp/bench-latest.json crates/tsz-website/data/benchmarks.json
+              echo "Downloaded fresh benchmark data from GCS (${nonzero} valid results, $(date -u))"
+            else
+              echo "GCS data has no valid timing results — keeping checked-in benchmark data"
+            fi
           else
             echo "No latest.json in GCS yet — using checked-in benchmark data"
           fi

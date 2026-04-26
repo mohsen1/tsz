@@ -113,7 +113,7 @@ function renderMeanChart(results) {
 </div>`;
   }
 
-  const valid = results.filter((r) => Number.isFinite(r.tsz_ms) && Number.isFinite(r.tsgo_ms));
+  const valid = results.filter((r) => Number.isFinite(r.tsz_ms) && r.tsz_ms > 0 && Number.isFinite(r.tsgo_ms) && r.tsgo_ms > 0);
   if (!valid.length) {
     return `<div class="bench-placeholder">No valid benchmark rows found.</div>`;
   }
