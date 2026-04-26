@@ -137,26 +137,27 @@ impl<'a> CheckerState<'a> {
         if !param.dot_dot_dot_token {
             if let Some(name_node) = self.ctx.arena.get(param.name)
                 && (name_node.this_node_has_error() || name_node.this_or_subtree_has_error())
-                    && !preserve_on_strict_mode_parse_error
-                {
-                    return;
-                }
+                && !preserve_on_strict_mode_parse_error
+            {
+                return;
+            }
             // Also check parent chain (parameter → function/arrow) for parse errors
             if let Some(ext) = self.ctx.arena.get_extended(param.name) {
                 // param.name's parent is ParameterDeclaration; its parent is the function/arrow
                 let param_decl = ext.parent;
                 if let Some(param_node) = self.ctx.arena.get(param_decl)
                     && param_node.this_or_subtree_has_error()
-                        && !preserve_on_strict_mode_parse_error
-                    {
-                        return;
-                    }
+                    && !preserve_on_strict_mode_parse_error
+                {
+                    return;
+                }
                 if let Some(param_ext) = self.ctx.arena.get_extended(param_decl)
                     && let Some(func_node) = self.ctx.arena.get(param_ext.parent)
-                    && func_node.this_or_subtree_has_error() && !preserve_on_strict_mode_parse_error
-                    {
-                        return;
-                    }
+                    && func_node.this_or_subtree_has_error()
+                    && !preserve_on_strict_mode_parse_error
+                {
+                    return;
+                }
             }
 
             // Suppress TS7006 when a scanner-level parse error (e.g. TS1127 invalid character)

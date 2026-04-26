@@ -1192,8 +1192,7 @@ impl<'a> CheckerState<'a> {
         // that case so the argument widens to its widened display type
         // (e.g. `string` instead of `'"hello"'`).
         if self.is_literal_sensitive_assignment_target(param_type)
-            && !self
-                .literal_sensitivity_is_only_synthetic_optional_undefined(param_type, arg_idx)
+            && !self.literal_sensitivity_is_only_synthetic_optional_undefined(param_type, arg_idx)
             && let Some(display) = self.literal_call_argument_display(arg_idx)
         {
             return display;

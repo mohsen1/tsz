@@ -1252,10 +1252,11 @@ impl<'a> CheckerState<'a> {
                 })
             {
                 if let Some(current_file_idx) = current_file_idx
-                    && !self.ctx.has_symbol_file_index(member_sym) {
-                        self.ctx
-                            .register_symbol_file_target(member_sym, current_file_idx);
-                    }
+                    && !self.ctx.has_symbol_file_index(member_sym)
+                {
+                    self.ctx
+                        .register_symbol_file_target(member_sym, current_file_idx);
+                }
                 current_sym = member_sym;
                 continue;
             }
@@ -1268,10 +1269,11 @@ impl<'a> CheckerState<'a> {
                     &mut visited_aliases,
                 ) {
                     if let Some(current_file_idx) = current_file_idx
-                        && !self.ctx.has_symbol_file_index(member_sym) {
-                            self.ctx
-                                .register_symbol_file_target(member_sym, current_file_idx);
-                        }
+                        && !self.ctx.has_symbol_file_index(member_sym)
+                    {
+                        self.ctx
+                            .register_symbol_file_target(member_sym, current_file_idx);
+                    }
                     current_sym = member_sym;
                     continue;
                 }

@@ -3171,8 +3171,7 @@ fn store_union_origin_overrides_canonical_anon_object_sort() {
     // `{} | { a: number }`. The interner re-sorts these by ShapeId.
     // Use diagnostic mode to skip the synthetic `?: undefined`
     // optionalization (only relevant for hover/quickinfo, not errors).
-    let union_id =
-        crate::utils::union_or_single_literal_reduce(&db, vec![empty_object, a_object]);
+    let union_id = crate::utils::union_or_single_literal_reduce(&db, vec![empty_object, a_object]);
     {
         let mut fmt = TypeFormatter::new(&db)
             .with_def_store(&def_store)
@@ -3206,8 +3205,7 @@ fn store_union_origin_skips_canonical_sort_for_non_anon_members() {
     let def_store = crate::def::DefinitionStore::new();
 
     let foo_name = db.intern_string("Foo");
-    let foo_def =
-        crate::def::DefinitionInfo::type_alias(foo_name, vec![], TypeId::NUMBER);
+    let foo_def = crate::def::DefinitionInfo::type_alias(foo_name, vec![], TypeId::NUMBER);
     let foo_def_id = def_store.register(foo_def);
     def_store.register_type_to_def(TypeId::NUMBER, foo_def_id);
     let foo_lazy = db.lazy(foo_def_id);

@@ -3406,15 +3406,40 @@ pub fn resolve_lib_files_with_options(
     lib_list: &[String],
     follow_references: bool,
 ) -> Result<Vec<PathBuf>> {
+    resolve_lib_files_with_options_inner(lib_list, follow_references, true)
+}
+
+/// Like `resolve_lib_files_with_options` but treats the input list as transitive:
+/// unknown lib names are silently skipped instead of erroring. Use this for libs
+/// pulled in from `/// <reference lib="..." />` directives in user source files,
+/// where the lib catalog may have drifted across TS versions (e.g. rxjs still
+/// references the long-renamed `esnext.asynciterable`).
+pub fn resolve_lib_files_with_options_transitive(
+    lib_list: &[String],
+    follow_references: bool,
+) -> Result<Vec<PathBuf>> {
+    resolve_lib_files_with_options_inner(lib_list, follow_references, false)
+}
+
+fn resolve_lib_files_with_options_inner(
+    lib_list: &[String],
+    follow_references: bool,
+    initial_is_required: bool,
+) -> Result<Vec<PathBuf>> {
     if lib_list.is_empty() {
         return Ok(Vec::new());
     }
 
     match default_lib_dir() {
-        Ok(lib_dir) => {
-            resolve_lib_files_from_dir_with_options(lib_list, follow_references, &lib_dir)
+        Ok(lib_dir) => resolve_lib_files_from_dir_inner(
+            lib_list,
+            follow_references,
+            initial_is_required,
+            &lib_dir,
+        ),
+        Err(_) => {
+            resolve_lib_files_from_embedded_inner(lib_list, follow_references, initial_is_required)
         }
-        Err(_) => resolve_lib_files_from_embedded(lib_list, follow_references),
     }
 }
 
@@ -3423,19 +3448,34 @@ pub fn resolve_lib_files_from_dir_with_options(
     follow_references: bool,
     lib_dir: &Path,
 ) -> Result<Vec<PathBuf>> {
+    resolve_lib_files_from_dir_inner(lib_list, follow_references, true, lib_dir)
+}
+
+fn resolve_lib_files_from_dir_inner(
+    lib_list: &[String],
+    follow_references: bool,
+    initial_is_required: bool,
+    lib_dir: &Path,
+) -> Result<Vec<PathBuf>> {
     if lib_list.is_empty() {
         return Ok(Vec::new());
     }
 
     let lib_map = build_lib_map(lib_dir)?;
     let mut resolved = Vec::new();
-    let mut pending: VecDeque<String> = lib_list
+    // (lib_name, is_initial) — initial entries come from user compilerOptions.lib
+    // and must resolve; transitive entries come from `/// <reference lib="..." />`
+    // directives inside lib files (or user sources) and are skipped silently when
+    // unknown, matching `tsc` behavior. This matters in practice: rxjs and other
+    // older libraries reference libs like `esnext.asynciterable` that have since
+    // been renamed/folded into newer lib names.
+    let mut pending: VecDeque<(String, bool)> = lib_list
         .iter()
-        .map(|value| normalize_lib_name(value))
+        .map(|value| (normalize_lib_name(value), initial_is_required))
         .collect();
     let mut visited = FxHashSet::default();
 
-    while let Some(lib_name) = pending.pop_front() {
+    while let Some((lib_name, is_required)) = pending.pop_front() {
         if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
             continue;
         }
@@ -3443,11 +3483,14 @@ pub fn resolve_lib_files_from_dir_with_options(
         let path = match lib_map.get(&lib_name) {
             Some(path) => path.clone(),
             None => {
-                return Err(anyhow!(
-                    "unsupported compilerOptions.lib '{}' (not found in {})",
-                    lib_name,
-                    lib_dir.display()
-                ));
+                if is_required {
+                    return Err(anyhow!(
+                        "unsupported compilerOptions.lib '{}' (not found in {})",
+                        lib_name,
+                        lib_dir.display()
+                    ));
+                }
+                continue;
             }
         };
         resolved.push(path.clone());
@@ -3457,7 +3500,7 @@ pub fn resolve_lib_files_from_dir_with_options(
             let contents = std::fs::read_to_string(&path)
                 .with_context(|| format!("failed to read lib file {}", path.display()))?;
             for reference in extract_lib_references(&contents) {
-                pending.push_back(reference);
+                pending.push_back((reference, false));
             }
         }
     }
@@ -3719,6 +3762,14 @@ fn resolve_lib_files_from_embedded(
     lib_list: &[String],
     follow_references: bool,
 ) -> Result<Vec<PathBuf>> {
+    resolve_lib_files_from_embedded_inner(lib_list, follow_references, true)
+}
+
+fn resolve_lib_files_from_embedded_inner(
+    lib_list: &[String],
+    follow_references: bool,
+    initial_is_required: bool,
+) -> Result<Vec<PathBuf>> {
     if lib_list.is_empty() {
         return Ok(Vec::new());
     }
@@ -3726,13 +3777,15 @@ fn resolve_lib_files_from_embedded(
     let lib_map = build_lib_map_from_embedded();
     let embedded_dir = Path::new(EMBEDDED_LIB_DIR);
     let mut resolved = Vec::new();
-    let mut pending: VecDeque<String> = lib_list
+    // See sibling `resolve_lib_files_from_dir_with_options` for why transitive
+    // references are skipped silently when unknown.
+    let mut pending: VecDeque<(String, bool)> = lib_list
         .iter()
-        .map(|value| normalize_lib_name(value))
+        .map(|value| (normalize_lib_name(value), initial_is_required))
         .collect();
     let mut visited = FxHashSet::default();
 
-    while let Some(lib_name) = pending.pop_front() {
+    while let Some((lib_name, is_required)) = pending.pop_front() {
         if lib_name.is_empty() || !visited.insert(lib_name.clone()) {
             continue;
         }
@@ -3740,9 +3793,12 @@ fn resolve_lib_files_from_embedded(
         let filename = match lib_map.get(lib_name.as_str()) {
             Some(f) => *f,
             None => {
-                return Err(anyhow!(
-                    "unsupported compilerOptions.lib '{lib_name}' (not found in embedded libs)",
-                ));
+                if is_required {
+                    return Err(anyhow!(
+                        "unsupported compilerOptions.lib '{lib_name}' (not found in embedded libs)",
+                    ));
+                }
+                continue;
             }
         };
         resolved.push(embedded_dir.join(filename));
@@ -3750,7 +3806,7 @@ fn resolve_lib_files_from_embedded(
         if follow_references && let Some(content) = crate::embedded_libs::get_lib_content(filename)
         {
             for reference in extract_lib_references(content) {
-                pending.push_back(reference);
+                pending.push_back((reference, false));
             }
         }
     }
@@ -3782,6 +3838,15 @@ fn build_lib_map_from_embedded() -> FxHashMap<&'static str, &'static str> {
         && let Some(&es2015_full) = map.get("es2015.full")
     {
         map.insert("es6", es2015_full);
+    }
+    // Apply tsc's backward-compatibility lib aliases (see `legacy_lib_aliases`
+    // and the file-based `build_lib_map_uncached` for the full rationale).
+    for (alias, target) in legacy_lib_aliases() {
+        if !map.contains_key(*alias)
+            && let Some(&filename) = map.get(*target)
+        {
+            map.insert(*alias, filename);
+        }
     }
     map
 }
@@ -3849,7 +3914,40 @@ fn build_lib_map_uncached(lib_dir: &Path) -> Result<FxHashMap<String, PathBuf>> 
         map.insert("es6".to_string(), path);
     }
 
+    // Apply tsc's backward-compatibility aliases for libs that were renamed
+    // when their feature stabilized out of esnext. Source: TypeScript's
+    // `libEntries` array in `compiler/commandLineParser.ts`. Old code that
+    // still says `/// <reference lib="esnext.asynciterable" />` (e.g. rxjs)
+    // must keep working.
+    for (alias, target) in legacy_lib_aliases() {
+        if !map.contains_key(*alias)
+            && let Some(path) = map.get(*target).cloned()
+        {
+            map.insert((*alias).to_string(), path);
+        }
+    }
+
     Ok(map)
+}
+
+/// Backward-compat lib name aliases applied at lookup time.
+/// Mirrors the tail of tsc's `libEntries` table (the "Fallback for backward
+/// compatibility" block).
+fn legacy_lib_aliases() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("es6", "es2015"),
+        ("es7", "es2016"),
+        ("esnext.asynciterable", "es2018.asynciterable"),
+        ("esnext.symbol", "es2019.symbol"),
+        ("esnext.bigint", "es2020.bigint"),
+        ("esnext.weakref", "es2021.weakref"),
+        ("esnext.object", "es2024.object"),
+        ("esnext.regexp", "es2024.regexp"),
+        ("esnext.string", "es2024.string"),
+        ("esnext.float16", "es2025.float16"),
+        ("esnext.iterator", "es2025.iterator"),
+        ("esnext.promise", "es2025.promise"),
+    ]
 }
 
 /// Extract /// <reference lib="..." /> directives from a source file.
@@ -6008,5 +6106,42 @@ mod tests {
         // Single value should still work
         assert_eq!(parse_script_target("ES5").unwrap(), ScriptTarget::ES5);
         assert_eq!(parse_script_target("es2020").unwrap(), ScriptTarget::ES2020);
+    }
+
+    #[test]
+    fn resolve_lib_files_strict_errors_on_unknown_user_lib() {
+        // User-supplied compilerOptions.lib must error on unknown names so users
+        // catch typos. Use a name that cannot exist as an alias.
+        let err = resolve_lib_files_with_options(&["definitely.not.a.real.lib".to_string()], false)
+            .expect_err("expected unknown user lib to error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("unsupported compilerOptions.lib"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_lib_files_lenient_skips_unknown_transitive_libs() {
+        // Source-file `/// <reference lib="..." />` directives should be
+        // tolerated when the lib name no longer exists. Mix a real lib with
+        // a long-renamed one to confirm the real one still resolves and the
+        // missing one is silently dropped instead of erroring.
+        let paths = resolve_lib_files_with_options_transitive(
+            &[
+                "es2018.asynciterable".to_string(),
+                "esnext.asynciterable".to_string(),
+            ],
+            false,
+        )
+        .expect("transitive resolver should not error on unknown names");
+        let names: Vec<String> = paths
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(String::from))
+            .collect();
+        assert!(
+            names.iter().any(|n| n.contains("es2018.asynciterable")),
+            "expected es2018.asynciterable in resolved set, got {names:?}"
+        );
     }
 }

@@ -1025,8 +1025,8 @@ fn jsdoc_type_tag_with_generic_interface_preserves_args_in_diagnostic() {
     // `/** @type {ClassComponent<any>} */ const test9 = new C();`
     // previously produced "...is not assignable to type 'ClassComponent'."
     // instead of "...is not assignable to type 'ClassComponent<any>'."
-    use crate::test_utils::check_source;
     use crate::CheckerOptions;
+    use crate::test_utils::check_source;
     let diags = check_source(
         r#"
 interface Box<T> { value: T }
@@ -1044,8 +1044,9 @@ const b = new C();
     // Must mention the instantiated alias name with type arguments.
     let assignability_codes = [2322u32, 2741];
     assert!(
-        diags.iter().any(|d| assignability_codes.contains(&d.code)
-            && d.message_text.contains("Box<string>")),
+        diags.iter().any(
+            |d| assignability_codes.contains(&d.code) && d.message_text.contains("Box<string>")
+        ),
         "Expected an assignability message to mention `Box<string>`, got: {diags:?}"
     );
     // Must NOT show the bare `Box` (without type arguments) in any

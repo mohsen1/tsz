@@ -840,20 +840,22 @@ impl<'a> CheckerState<'a> {
         //     effective = boolean → NOT assignable to number ✗
         //   `({ x = undefined } = a)` where `a.x` is `number | undefined`:
         //     effective = number | undefined → NOT assignable to number ✗
-        if has_default && self.ctx.compiler_options.strict_null_checks
-            && crate::query_boundaries::common::type_contains_undefined(self.ctx.types, prop_type) {
-                let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
-                    self.ctx.types,
-                    prop_type,
-                    true,
-                );
-                let default_type = self.get_type_of_node(default_expr);
-                let factory = self.ctx.types.factory();
-                prop_type = factory.union2(non_undefined, default_type);
-                if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
-                    return;
-                }
+        if has_default
+            && self.ctx.compiler_options.strict_null_checks
+            && crate::query_boundaries::common::type_contains_undefined(self.ctx.types, prop_type)
+        {
+            let non_undefined = crate::query_boundaries::flow::narrow_destructuring_default(
+                self.ctx.types,
+                prop_type,
+                true,
+            );
+            let default_type = self.get_type_of_node(default_expr);
+            let factory = self.ctx.types.factory();
+            prop_type = factory.union2(non_undefined, default_type);
+            if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
+                return;
             }
+        }
         let target_type = self.get_type_of_assignment_target(target_idx);
         if target_type == TypeId::ANY || target_type == TypeId::ERROR {
             return;

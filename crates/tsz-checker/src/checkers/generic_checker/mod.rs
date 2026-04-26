@@ -960,69 +960,70 @@ impl<'a> CheckerState<'a> {
         // If the component has construct signatures (class component), validate against
         // them — mirrors `validate_new_expression_type_arguments` for `new` expressions.
         if let Some(shape) = query::callable_shape_for_type(self.ctx.types, resolved)
-            && !shape.construct_signatures.is_empty() {
-                let type_arg_error_anchor =
-                    type_args_list.nodes.first().copied().unwrap_or(element_idx);
-                let matching: Vec<_> = shape
+            && !shape.construct_signatures.is_empty()
+        {
+            let type_arg_error_anchor =
+                type_args_list.nodes.first().copied().unwrap_or(element_idx);
+            let matching: Vec<_> = shape
+                .construct_signatures
+                .iter()
+                .filter(|sig| {
+                    let max = sig.type_params.len();
+                    let min = sig
+                        .type_params
+                        .iter()
+                        .filter(|tp| tp.default.is_none())
+                        .count();
+                    got >= min && got <= max
+                })
+                .collect();
+            // When multiple overloads match, skip validation (ambiguous).
+            if matching.len() > 1 {
+                return false;
+            }
+            let type_params = if let Some(sig) = matching.first() {
+                sig.type_params.clone()
+            } else {
+                shape
                     .construct_signatures
-                    .iter()
-                    .filter(|sig| {
-                        let max = sig.type_params.len();
-                        let min = sig
-                            .type_params
-                            .iter()
-                            .filter(|tp| tp.default.is_none())
-                            .count();
-                        got >= min && got <= max
-                    })
-                    .collect();
-                // When multiple overloads match, skip validation (ambiguous).
-                if matching.len() > 1 {
-                    return false;
-                }
-                let type_params = if let Some(sig) = matching.first() {
-                    sig.type_params.clone()
-                } else {
-                    shape
-                        .construct_signatures
-                        .first()
-                        .map(|sig| sig.type_params.clone())
-                        .unwrap_or_default()
-                };
+                    .first()
+                    .map(|sig| sig.type_params.clone())
+                    .unwrap_or_default()
+            };
 
-                let max_expected = type_params.len();
-                let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
+            let max_expected = type_params.len();
+            let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
 
-                if type_params.is_empty() {
-                    if got > 0 {
-                        self.error_at_node_msg(
-                            type_arg_error_anchor,
-                            crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-                            &["0", &got.to_string()],
-                        );
-                        return true;
-                    }
-                    return false;
-                }
-
-                if got < min_required || got > max_expected {
-                    let expected_str = if min_required == max_expected {
-                        max_expected.to_string()
-                    } else {
-                        format!("{min_required}-{max_expected}")
-                    };
+            if type_params.is_empty() {
+                if got > 0 {
                     self.error_at_node_msg(
                         type_arg_error_anchor,
                         crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-                        &[&expected_str, &got.to_string()],
+                        &["0", &got.to_string()],
                     );
                     return true;
                 }
-
-                // Count is correct — check constraints (TS2344).
-                self.validate_type_args_against_params(&type_params, type_args_list);
                 return false;
             }
+
+            if got < min_required || got > max_expected {
+                let expected_str = if min_required == max_expected {
+                    max_expected.to_string()
+                } else {
+                    format!("{min_required}-{max_expected}")
+                };
+                self.error_at_node_msg(
+                    type_arg_error_anchor,
+                    crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                    &[&expected_str, &got.to_string()],
+                );
+                return true;
+            }
+
+            // Count is correct — check constraints (TS2344).
+            self.validate_type_args_against_params(&type_params, type_args_list);
+            return false;
+        }
 
         // Function component (call signatures): validate via call type-arg path.
         let result = self.validate_call_type_arguments(resolved, type_args_list, element_idx);

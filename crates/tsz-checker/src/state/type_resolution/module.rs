@@ -248,14 +248,15 @@ impl<'a> CheckerState<'a> {
                 // correctly.
                 if let Some(shape) =
                     crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, result)
-                    && !shape.construct_signatures.is_empty() {
-                        let prototype_name = self.ctx.types.intern_string("prototype");
-                        if let Some(proto_prop) =
-                            shape.properties.iter().find(|p| p.name == prototype_name)
-                        {
-                            result = proto_prop.type_id;
-                        }
+                    && !shape.construct_signatures.is_empty()
+                {
+                    let prototype_name = self.ctx.types.intern_string("prototype");
+                    if let Some(proto_prop) =
+                        shape.properties.iter().find(|p| p.name == prototype_name)
+                    {
+                        result = proto_prop.type_id;
                     }
+                }
             }
             return Some(result);
         }
@@ -312,27 +313,30 @@ impl<'a> CheckerState<'a> {
                 if let Some(exports) = self
                     .ctx
                     .module_exports_for_module(self.ctx.binder, &candidate)
-                    && let Some(sym_id) = exports.get("export=") {
-                        found = Some(sym_id);
-                        break;
-                    }
+                    && let Some(sym_id) = exports.get("export=")
+                {
+                    found = Some(sym_id);
+                    break;
+                }
             }
             if found.is_none()
-                && let Some(all_binders) = &self.ctx.all_binders {
-                    for binder in all_binders.iter() {
-                        for candidate in module_specifier_candidates(module_name) {
-                            if let Some(exports) =
-                                self.ctx.module_exports_for_module(binder, &candidate)
-                                && let Some(sym_id) = exports.get("export=") {
-                                    found = Some(sym_id);
-                                    break;
-                                }
-                        }
-                        if found.is_some() {
+                && let Some(all_binders) = &self.ctx.all_binders
+            {
+                for binder in all_binders.iter() {
+                    for candidate in module_specifier_candidates(module_name) {
+                        if let Some(exports) =
+                            self.ctx.module_exports_for_module(binder, &candidate)
+                            && let Some(sym_id) = exports.get("export=")
+                        {
+                            found = Some(sym_id);
                             break;
                         }
                     }
+                    if found.is_some() {
+                        break;
+                    }
                 }
+            }
             found?
         };
 

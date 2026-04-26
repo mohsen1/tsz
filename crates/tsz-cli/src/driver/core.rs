@@ -11,7 +11,7 @@ use crate::args::{CliArgs, Module, ModuleDetection};
 use crate::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
     load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
-    resolve_lib_files, resolve_lib_files_with_options,
+    resolve_lib_files, resolve_lib_files_with_options, resolve_lib_files_with_options_transitive,
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
@@ -1890,8 +1890,12 @@ fn resolve_effective_lib_paths(
     if !resolved.checker.no_lib {
         let source_reference_libs = collect_source_reference_libs(sources);
         if !source_reference_libs.is_empty() {
+            // Source-file `/// <reference lib="..." />` directives may name libs
+            // that no longer exist in this TS version (e.g. rxjs references
+            // `esnext.asynciterable`, since folded into `es2018.asynciterable`).
+            // Match tsc's behavior and silently skip unknown ones.
             let expanded_source_paths =
-                resolve_lib_files_with_options(&source_reference_libs, true)?;
+                resolve_lib_files_with_options_transitive(&source_reference_libs, true)?;
             append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
         }
     }
