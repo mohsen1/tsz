@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/conformance-target`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1453
+- **Status**: ready
 - **Workstream**: Conformance — array literal element typing parity
 
 ## Intent
