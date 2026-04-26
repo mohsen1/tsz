@@ -432,6 +432,10 @@ name = "ts2451_cross_file_class_vs_const_tests"
 path = "tests/ts2451_cross_file_class_vs_const_tests.rs"
 
 [[test]]
+name = "ts2451_plain_js_lib_anchor_tests"
+path = "tests/ts2451_plain_js_lib_anchor_tests.rs"
+
+[[test]]
 name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
