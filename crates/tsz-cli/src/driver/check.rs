@@ -123,6 +123,20 @@ const fn is_reserved_type_name_declaration_diagnostic(code: u32) -> bool {
     matches!(code, 2427 | 2457)
 }
 
+/// Returns true if a TS2427 diagnostic message refers to a hard reserved
+/// keyword that triggers a parser error in tsc (`void` or `null`). When such
+/// an interface declaration is present in a source file, tsc only surfaces
+/// the TS2427 for that hard-keyword interface and suppresses TS2427 for any
+/// other reserved-name interfaces in the same file. This mirrors tsc's
+/// behavior in `interfacesWithPredefinedTypesAsNames.ts` and similar tests.
+fn is_hard_keyword_interface_name_2427(diag: &Diagnostic) -> bool {
+    if diag.code != 2427 {
+        return false;
+    }
+    diag.message_text == "Interface name cannot be 'void'."
+        || diag.message_text == "Interface name cannot be 'null'."
+}
+
 fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: u32) -> bool {
     // tsc suppresses type-level semantic diagnostics when any source file in the
     // program has a real syntax error, but it still reports declaration-name
@@ -196,6 +210,30 @@ fn post_process_checker_diagnostics(
     let has_ts2754 = file.parse_diagnostics.iter().any(|d| d.code == 2754);
     if has_ts2754 {
         checker_diagnostics.retain(|diag| diag.code < 2000);
+    }
+
+    // When the file contains an `interface void {}` or `interface null {}`
+    // declaration, tsc only emits TS2427 for that hard-keyword interface and
+    // suppresses TS2427 for ANY other interfaces in the same file (including
+    // ones with predefined-type names like `any`, `number`, etc.). This is
+    // because tsc's parser produces a parse error for hard-keyword names,
+    // which prevents the lazy diagnostic queue from running for the other
+    // interface declarations. We don't currently emit a parse error in our
+    // parser for `void`/`null` as interface names, so we model the same
+    // suppression by filtering out non-hard-keyword TS2427 when a
+    // hard-keyword TS2427 is present.
+    let has_hard_keyword_ts2427 = checker_diagnostics
+        .iter()
+        .any(is_hard_keyword_interface_name_2427);
+    if has_hard_keyword_ts2427 {
+        checker_diagnostics.retain(|diag| {
+            // Keep all non-TS2427 diagnostics untouched.
+            if diag.code != 2427 {
+                return true;
+            }
+            // Among TS2427, keep only the hard-keyword (`void`/`null`) ones.
+            is_hard_keyword_interface_name_2427(diag)
+        });
     }
 
     // When TS5107/TS5101 deprecation diagnostics are present, suppress the most
