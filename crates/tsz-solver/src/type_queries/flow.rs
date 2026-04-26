@@ -693,6 +693,19 @@ fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // `keyof T` (the `KeyOf` type operator) reduces to a subset of
+    // `string | number | symbol`, so for assertion overlap purposes it is
+    // comparable to any of those primitives or their literals. tsc's
+    // `isTypeComparableTo` walks `keyof T` to its key-space union; without
+    // this case, an assertion like `(k as string)` where `k: keyof T` falls
+    // through to the property-overlap check (KeyOf has no extractable
+    // properties) and emits a false-positive TS2352.
+    if is_keyof_to_string_number_symbol(db, source, target)
+        || is_keyof_to_string_number_symbol(db, target, source)
+    {
+        return true;
+    }
+
     // The empty object type `{}` is comparable to any type parameter whose
     // constraint contains an object-like or `object`-primitive member. tsc's
     // `isTypeComparableTo` walks the type parameter's constraint when the
@@ -749,6 +762,33 @@ fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     shape.properties.iter().all(|p| p.optional)
         && shape.string_index.is_none()
         && shape.number_index.is_none()
+}
+
+/// Returns true when `keyof_side` is `KeyOf(_)` and `prim_side` is one of
+/// the keyof key-space primitives (`string`, `number`, `symbol`) or a
+/// literal of those primitives. Used in assertion-overlap to recognize that
+/// `keyof T` is structurally a subset of `string | number | symbol`.
+fn is_keyof_to_string_number_symbol(
+    db: &dyn TypeDatabase,
+    keyof_side: TypeId,
+    prim_side: TypeId,
+) -> bool {
+    if !matches!(db.lookup(keyof_side), Some(TypeData::KeyOf(_))) {
+        return false;
+    }
+    if prim_side == TypeId::STRING || prim_side == TypeId::NUMBER || prim_side == TypeId::SYMBOL {
+        return true;
+    }
+    if let Some(TypeData::Literal(lit)) = db.lookup(prim_side) {
+        return matches!(
+            lit,
+            crate::types::LiteralValue::String(_) | crate::types::LiteralValue::Number(_)
+        );
+    }
+    if let Some(TypeData::UniqueSymbol(_)) = db.lookup(prim_side) {
+        return true;
+    }
+    false
 }
 
 /// Relaxed version of `types_have_common_properties` for TS2352.
