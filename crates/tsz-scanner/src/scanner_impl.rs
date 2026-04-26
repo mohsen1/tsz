@@ -1171,18 +1171,39 @@ impl ScannerState {
     }
 
     fn scan_string_escape_hex(&mut self, result: &mut String) {
-        if self.pos + 2 <= self.end {
-            let hex = self.substring(self.pos, self.pos + 2);
-            if let Ok(code) = u32::from_str_radix(&hex, 16) {
-                self.pos += 2;
-                if let Some(c) = char::from_u32(code) {
-                    result.push(c);
-                }
-                return;
-            }
+        // Mirror tsc's `scanHexDigits(/*minCount*/ 2)` loop: consume hex digits
+        // one at a time, stop at the first non-hex char, then if fewer than 2
+        // were consumed, emit "Hexadecimal digit expected." at the current
+        // position. tsc's error anchor is wherever the scan halted — the first
+        // non-hex char or the closing quote — not the start of the escape.
+        let mut digit_count = 0;
+        while digit_count < 2
+            && self.pos < self.end
+            && is_hex_digit(self.char_code_unchecked(self.pos))
+        {
+            self.pos += 1;
+            digit_count += 1;
         }
-        result.push('\\');
-        result.push('x');
+        if digit_count < 2 {
+            self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
+            self.scanner_diagnostics.push(ScannerDiagnostic {
+                pos: self.pos,
+                length: 0,
+                args: Vec::new(),
+                message: diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                code: diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+            });
+            result.push('\\');
+            result.push('x');
+            return;
+        }
+        let hex_start = self.pos - 2;
+        let hex = self.substring(hex_start, self.pos);
+        if let Ok(code) = u32::from_str_radix(&hex, 16)
+            && let Some(c) = char::from_u32(code)
+        {
+            result.push(c);
+        }
     }
 
     fn scan_string_escape_unicode(&mut self, result: &mut String) {
@@ -3479,6 +3500,61 @@ mod tests {
         assert_eq!(tokens[0].1, "hello");
         assert_eq!(tokens[1].0, SyntaxKind::StringLiteral);
         assert_eq!(tokens[1].1, "world");
+    }
+
+    #[test]
+    fn scan_invalid_hex_escape_emits_ts1125() {
+        // Regression for `compiler/stringLiteralsErrors.ts`: tsc emits
+        // TS1125 "Hexadecimal digit expected." for `\x` followed by fewer
+        // than two hex digits. Anchor is at the position the scan halted
+        // (the first non-hex char or the closing quote).
+        let mut scanner = ScannerState::new(r#""\x0""#.to_string(), true);
+        loop {
+            if scanner.scan() == SyntaxKind::EndOfFileToken {
+                break;
+            }
+        }
+        let diags = &scanner.scanner_diagnostics;
+        // `"` is at byte 0, `\` at 1, `x` at 2, `0` at 3, closing `"` at 4.
+        // After consuming the single hex digit `0`, scanner halts at the
+        // closing quote (byte 4). tsc emits the error there.
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED && d.pos == 4),
+            "expected TS1125 at the closing quote (byte 4), got: {diags:?}"
+        );
+
+        let mut scanner2 = ScannerState::new(r#""\xmm""#.to_string(), true);
+        loop {
+            if scanner2.scan() == SyntaxKind::EndOfFileToken {
+                break;
+            }
+        }
+        let diags2 = &scanner2.scanner_diagnostics;
+        // `\xmm`: scanner halts at the first `m` (byte 3) since it's not hex.
+        assert!(
+            diags2
+                .iter()
+                .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED && d.pos == 3),
+            "expected TS1125 at the first non-hex char (byte 3), got: {diags2:?}"
+        );
+
+        // Sanity guard: a well-formed `\x41` ('A') must not gain a diagnostic.
+        let mut scanner3 = ScannerState::new(r#""\x41""#.to_string(), true);
+        loop {
+            if scanner3.scan() == SyntaxKind::EndOfFileToken {
+                break;
+            }
+        }
+        assert!(
+            !scanner3
+                .scanner_diagnostics
+                .iter()
+                .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+            "well-formed `\\x41` must not emit TS1125, got: {:?}",
+            scanner3.scanner_diagnostics
+        );
     }
 
     // ── Template literals ─────────────────────────────────────────────
