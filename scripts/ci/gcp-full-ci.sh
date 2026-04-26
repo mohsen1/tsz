@@ -188,7 +188,9 @@ ensure_host_tools() {
   local suite="${1:-all}"
   ci_section "Install host tools"
 
-  if command -v apt-get >/dev/null 2>&1; then
+  if [[ "${TSZ_CI_SKIP_HOST_APT:-0}" == "1" ]]; then
+    echo "Skipping apt host tool installation (TSZ_CI_SKIP_HOST_APT=1)"
+  elif command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
     local apt_packages=(
       build-essential
