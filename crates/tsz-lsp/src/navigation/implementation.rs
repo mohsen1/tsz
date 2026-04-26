@@ -38,15 +38,20 @@ pub struct ImplementationResult {
 }
 
 impl<'a> GoToImplementationProvider<'a> {
-    /// Get the `escaped_text` for an identifier node, reading directly from `IdentifierData`.
+    /// Get the text for an identifier node.
     ///
-    /// This bypasses the interner-based `get_identifier_text` which requires the interner
-    /// to be transferred from the scanner to the arena (done by `into_arena()` but not
-    /// by `get_arena()`). The `escaped_text` field is always populated by the parser.
+    /// Delegates to the arena's `resolve_identifier_text`, which transparently
+    /// falls back to `IdentifierData::escaped_text` when the interner has not
+    /// resolved the atom (the case `get_arena()`-served arenas hit when the
+    /// scanner-side interner has not been transferred). Previously this was
+    /// a manual bypass; the bypass is no longer needed because
+    /// `resolve_identifier_text` is total. See robustness audit
+    /// `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 13 (PR #M).
     fn get_identifier_escaped_text(&self, node_idx: NodeIndex) -> Option<&str> {
         let node = self.arena.get(node_idx)?;
         let data = self.arena.get_identifier(node)?;
-        Some(&data.escaped_text)
+        let text = self.arena.resolve_identifier_text(data);
+        if text.is_empty() { None } else { Some(text) }
     }
 
     /// Resolve the symbol at a node index.
