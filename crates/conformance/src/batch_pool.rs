@@ -13,6 +13,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
+use crate::process_rss::get_process_rss;
+
 /// Sentinel line printed by `tsz --batch` after each compilation.
 const BATCH_SENTINEL: &str = "---TSZ-BATCH-DONE---";
 
@@ -294,37 +296,6 @@ impl ProcessPool {
     }
 }
 
-/// Get the RSS (Resident Set Size) of a process in bytes.
-/// Returns `None` if the RSS cannot be determined.
-fn get_process_rss(pid: u32) -> Option<usize> {
-    // On Linux, read /proc/{pid}/statm (page counts, space-separated).
-    // Field 1 (index 1) is resident pages.
-    #[cfg(target_os = "linux")]
-    {
-        let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
-        let resident_pages: usize = statm.split_whitespace().nth(1)?.parse().ok()?;
-        let page_size = 4096; // standard on x86_64 Linux
-        return Some(resident_pages * page_size);
-    }
-
-    // On macOS, use `ps -o rss= -p {pid}` (returns RSS in KB).
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("ps")
-            .args(["-o", "rss=", "-p", &pid.to_string()])
-            .output()
-            .ok()?;
-        let rss_kb: usize = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .parse()
-            .ok()?;
-        return Some(rss_kb * 1024);
-    }
-
-    #[allow(unreachable_code)]
-    None
-}
-
 /// Read lines from the worker's stdout until the sentinel line is found.
 /// Returns `Some(output)` on success, `None` on EOF (worker died).
 async fn read_until_sentinel(
@@ -353,13 +324,6 @@ async fn read_until_sentinel(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn get_process_rss_reports_current_process_memory_usage() {
-        let rss = get_process_rss(std::process::id())
-            .expect("current process RSS should be readable on supported platforms");
-        assert!(rss > 0, "RSS should be positive, got {rss}");
-    }
 
     #[tokio::test]
     async fn read_until_sentinel_collects_all_output_before_marker() {
