@@ -1330,11 +1330,91 @@ impl<'a> CheckerState<'a> {
                 if global_resolution_fuel_exhausted() {
                     break;
                 }
-                if let Some(result) = self.resolve_and_insert_def_type(def_id)
+                let resolved_opt = self.resolve_and_insert_def_type(def_id);
+                if let Some(result) = resolved_opt
                     && result != TypeId::ERROR
                     && result != TypeId::ANY
                 {
                     worklist.push(result);
+                } else if resolved_opt.is_none() || resolved_opt == Some(TypeId::ERROR) {
+                    // Fallback: resolve lib Interface DefIds that couldn't be resolved via
+                    // the normal symbol lookup path. Restricted to Interface (not TypeAlias)
+                    // to avoid expanding type aliases in error messages.
+                    //
+                    // Two failure modes land here:
+                    //   1. `resolved_opt.is_none()`: def_to_symbol_id_with_fallback returned
+                    //      None (no sym_id in the DefinitionStore).
+                    //   2. `resolved_opt == Some(ERROR)`: a sym_id was found but it belongs to
+                    //      a different binder context (e.g., a lib binder vs. the main binder),
+                    //      causing get_type_of_symbol to return ERROR. This is the cross-context
+                    //      DefId mismatch that arises for lib namespace members like
+                    //      Intl.NumberFormatOptions when two different DefIds exist for the same
+                    //      interface.
+                    //
+                    // Strategy: first try resolve_lib_type_by_name (fast, works for top-level
+                    // lib types); then fall back to scanning all DefIds registered under the
+                    // same name in the DefinitionStore, looking for one whose sym_id belongs
+                    // to the main binder context and resolves to a valid type.
+                    if self.ctx.has_lib_loaded()
+                        && let Some(def_info) = self.ctx.definition_store.get(def_id)
+                        && def_info.is_declare
+                        && matches!(def_info.kind, tsz_solver::def::DefKind::Interface)
+                    {
+                        let name_atom = def_info.name;
+                        let name = self.ctx.types.resolve_atom(name_atom);
+                        drop(def_info);
+
+                        // Try top-level name resolution first (fast path).
+                        let lib_type = self.resolve_lib_type_by_name(&name);
+
+                        let good_type = if lib_type
+                            .is_some_and(|t| t != TypeId::ERROR && t != TypeId::ANY)
+                        {
+                            lib_type
+                        } else {
+                            // Scan all known DefIds with the same name for one that resolves
+                            // correctly. This covers lib namespace members (e.g.,
+                            // Intl.NumberFormatOptions) where there can be multiple DefIds
+                            // for the same interface from different binder contexts; the
+                            // "canonical" one registered by the main checker context has the
+                            // right sym_id, while the one embedded in the lib parameter type
+                            // has a stale cross-context sym_id that resolves to ERROR.
+                            let alt_def_ids = self
+                                .ctx
+                                .definition_store
+                                .find_defs_by_name(name_atom)
+                                .unwrap_or_default();
+                            let mut found = None;
+                            for alt_def_id in alt_def_ids.into_iter().filter(|&d| d != def_id) {
+                                // Only consider alternative DefIds that are also from
+                                // ambient/lib context, to avoid picking up user types with
+                                // the same name as a lib interface.
+                                if self
+                                    .ctx
+                                    .definition_store
+                                    .get(alt_def_id)
+                                    .is_some_and(|d| d.is_declare)
+                                {
+                                    let alt = self.resolve_and_insert_def_type(alt_def_id);
+                                    if alt.is_some_and(|t| t != TypeId::ERROR && t != TypeId::ANY) {
+                                        found = alt;
+                                        break;
+                                    }
+                                }
+                            }
+                            found
+                        };
+
+                        if let Some(type_id) = good_type {
+                            // Register the resolved type under the original (stale) DefId so
+                            // the solver can resolve Lazy(def_id) during subsequent subtype /
+                            // assignability checks without needing another resolution pass.
+                            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                                env.insert_def(def_id, type_id);
+                            }
+                            worklist.push(type_id);
+                        }
+                    }
                 }
             }
         }
