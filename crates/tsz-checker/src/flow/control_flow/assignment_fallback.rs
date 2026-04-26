@@ -98,6 +98,18 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(super) fn fallback_expression_type_from_syntax(&self, expr: NodeIndex) -> Option<TypeId> {
+        // Robustness audit (PR #K, item 11 in
+        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): this is the
+        // entry point of the syntax-driven fallback type resolver used by
+        // flow-narrowing when the main checker pipeline hasn't yet typed
+        // an expression. Trace each invocation so the rate at which
+        // narrowing depends on the second resolver — and any divergence
+        // from main-checker results — becomes observable.
+        tracing::trace!(
+            site = "flow::fallback_expression_type_from_syntax",
+            expr_idx = expr.0,
+            "flow-fallback resolver entered"
+        );
         let expr = self.skip_parens_and_assertions(expr);
         if let Some(literal_type) = self.literal_type_from_node(expr) {
             return Some(widen_literal_to_primitive(self.interner, literal_type));
