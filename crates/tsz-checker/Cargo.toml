@@ -360,6 +360,10 @@ name = "contextual_typing_tests"
 path = "tests/contextual_typing_tests.rs"
 
 [[test]]
+name = "contextual_literal_keyof_lib_tests"
+path = "tests/contextual_literal_keyof_lib_tests.rs"
+
+[[test]]
 name = "infer_extends_constraint_substitution_tests"
 path = "tests/infer_extends_constraint_substitution_tests.rs"
 
