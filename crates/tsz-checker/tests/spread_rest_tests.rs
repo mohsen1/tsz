@@ -1322,15 +1322,14 @@ var z = { ...x };
 /// element-vs-element TS2322 anchored on the spread expression instead of
 /// the whole-array TS2322 at the assignment.
 ///
-/// Regression for `TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts`:
-///   `var array: number[] = [0, 1, ...new SymbolIterator];`
+/// Regression for TypeScript/tests/cases/conformance/es6/spread/iteratorSpreadInArray5.ts:
+///   var array: number[] = [0, 1, ...new `SymbolIterator`];
 /// Expected message at the spread expression:
 ///   `Type 'symbol' is not assignable to type 'number'`.
 ///
 /// We use a hand-rolled iterable instead of `new SymbolIterator` so the
 /// test does not depend on the lib-loaded `Symbol.iterator` machinery
 /// (the test harness intentionally skips lib contexts).
-#[allow(clippy::doc_markdown)]
 #[test]
 fn test_array_spread_iterator_element_mismatch_elaborates_to_spread() {
     let source = r#"
