@@ -68,7 +68,15 @@ NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
 LARGE_TS_REF="${LARGE_TS_REF:-}"
-LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
+LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
+if [ -n "${LARGE_TS_DIR:-}" ]; then
+    LARGE_TS_DIR="$LARGE_TS_DIR"
+elif [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
+    LARGE_TS_DIR="$LARGE_TS_LOCAL_DIR"
+else
+    LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
+fi
+LARGE_TS_NODE_OPTIONS="${LARGE_TS_NODE_OPTIONS:---max-old-space-size=8192}"
 
 # Parse arguments
 QUICK_MODE=false
@@ -602,23 +610,34 @@ run_project_benchmark() {
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB (project)"
 
-    # For project fixtures (except nextjs, which is currently tsgo-only, and
-    # large-ts-repo, which is a synthetic fixture we control), require a clean
-    # tsc pass before benchmarking.
-    #
-    # large-ts-repo is excluded because tsc on 6000+ files routinely takes
-    # several minutes and tripped the precheck timeout, causing the entire
-    # large-repo bench to be silently skipped from the website results. The
-    # fixture is generated and pinned, so a tsc precheck adds no value.
-    if [ "$name" != "nextjs" ] && [ "$name" != "large-ts-repo" ]; then
-        local project_tsc_timeout=$((BENCH_TIMEOUT * 2))
+    # Set project-level Node options for large-ts-repo so tsc/tsgo/tsz can
+    # run with a larger heap during compilation.
+    local -a project_node_prefix=()
+    if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
+        project_node_prefix=(env "NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS")
+    fi
+    local -a tsz_prefix=("${project_node_prefix[@]}")
+    if [ -n "${TSZ_LIB_DIR:-}" ]; then
+        tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
+    fi
+
+    # For project fixtures (except nextjs, which is currently tsgo-only), require
+    # a clean tsc pass before benchmarking.
+    if [ "$name" != "nextjs" ]; then
+        local project_tsc_timeout
+        if [ "$name" = "large-ts-repo" ]; then
+            project_tsc_timeout=$((BENCH_TIMEOUT * 6))
+        else
+            project_tsc_timeout=$((BENCH_TIMEOUT * 2))
+        fi
         local tsc_check=0
-        run_with_timeout "$project_tsc_timeout" $TSC --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
+        run_with_timeout "$project_tsc_timeout" "${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
         if [ "$tsc_check" -ne 0 ]; then
             if [ "$tsc_check" -eq 124 ]; then
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc timeout after ${project_tsc_timeout}s)"
             else
-                local tsc_error=$($TSC --noEmit -p "$tsconfig" 2>&1 | head -1)
+                local tsc_error
+                tsc_error="$("${project_node_prefix[@]}" "$TSC" --noEmit -p "$tsconfig" 2>&1 | head -1)"
                 echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
                 echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
             fi
@@ -636,9 +655,9 @@ run_project_benchmark() {
         project_timeout=$((BENCH_TIMEOUT * 2))
     fi
     local tsz_check=0
-    run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+    run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
     local tsgo_check=0
-    run_with_timeout "$project_timeout" $TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
+    run_with_timeout "$project_timeout" "${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
 
     if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
         local status=""
@@ -658,7 +677,8 @@ run_project_benchmark() {
         elif [ "$tsz_check" -ne 0 ]; then
             status="tsz error"
             tsz_ms="ERR"
-            local tsz_error=$(run_with_timeout "$project_timeout" ${TSZ_LIB_DIR:+env TSZ_LIB_DIR="$TSZ_LIB_DIR"} $TSZ --noEmit -p "$tsconfig" 2>&1 | head -1)
+            local tsz_error
+            tsz_error="$(run_with_timeout "$project_timeout" "${tsz_prefix[@]}" "$TSZ" --noEmit -p "$tsconfig" 2>&1 | head -1)"
             echo -e "  ${CYAN}tsz error:${NC} $tsz_error" >&2
         fi
 
@@ -669,7 +689,8 @@ run_project_benchmark() {
         elif [ "$tsgo_check" -ne 0 ]; then
             status="${status:+${status}; }tsgo error"
             tsgo_ms="ERR"
-            local tsgo_error=$($TSGO --noEmit -p "$tsconfig" 2>&1 | head -1)
+            local tsgo_error
+            tsgo_error="$("${project_node_prefix[@]}" "$TSGO" --noEmit -p "$tsconfig" 2>&1 | head -1)"
             echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
         fi
 
@@ -705,6 +726,15 @@ run_project_benchmark() {
         proj_max="$MAX_RUNS"
     fi
     local json_file=$(mktemp)
+    local tsz_cmd_prefix=""
+    local tsgo_cmd_prefix=""
+    if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
+        tsz_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
+        tsgo_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
+    fi
+    if [ -n "${TSZ_LIB_DIR:-}" ]; then
+        tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
+    fi
     if ! hyperfine \
         --warmup "$proj_warmup" \
         --min-runs "$proj_min" \
@@ -712,8 +742,8 @@ run_project_benchmark() {
         --style full \
         --ignore-failure \
         --export-json "$json_file" \
-        -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit -p $tsconfig 2>/dev/null" \
-        -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null"; then
+        -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+        -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null"; then
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
@@ -1276,6 +1306,21 @@ ensure_large_ts_repo_fixture() {
         fi
     fi
 
+    if ! command -v pnpm &>/dev/null; then
+        echo -e "${RED}✗ pnpm not found. Install pnpm to prepare large-ts-repo dependencies.${NC}"
+        return
+    fi
+
+    local deps_stamp="$LARGE_TS_DIR/.deps-installed"
+    if [ ! -f "$deps_stamp" ] || [ "$LARGE_TS_DIR/pnpm-lock.yaml" -nt "$deps_stamp" ] || [ "$LARGE_TS_DIR/package.json" -nt "$deps_stamp" ] || [ "$LARGE_TS_DIR/pnpm-workspace.yaml" -nt "$deps_stamp" ]; then
+        echo -e "${CYAN}Installing large-ts-repo dependencies...${NC}"
+        pnpm --dir "$LARGE_TS_DIR" install --frozen-lockfile --silent
+        touch "$deps_stamp"
+    fi
+    # Use the repository's real tsconfig.json for large-ts-repo; skip synthetic
+    # flat-config generation used by previous benchmark iterations.
+    return
+
     # Create flat tsconfig (includes all files directly) for consistent benchmarking.
     # Note: tsz supports --build mode, but we use flat config for apples-to-apples comparison.
     local flat_tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
@@ -1311,7 +1356,7 @@ run_large_ts_repo_benchmarks() {
     ensure_large_ts_repo_fixture
     echo -e "${GREEN}✓${NC} large-ts-repo pinned at $(git -C "$LARGE_TS_DIR" rev-parse --short HEAD)"
 
-    local tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
+    local tsconfig="$LARGE_TS_DIR/tsconfig.json"
     local src_dir="$LARGE_TS_DIR/packages"
 
     if [ ! -f "$tsconfig" ]; then

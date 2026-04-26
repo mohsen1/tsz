@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-26T12:30:11.422Z",
+  "generated_at": "2026-04-26T14:22:29.095Z",
   "benchmark_runner": "scripts/bench/bench-vs-tsgo.sh",
   "quick_mode": false,
   "filter": null,
@@ -318,15 +318,15 @@
     },
     {
       "name": "large-ts-repo",
-      "lines": 337375,
-      "kb": 39230,
-      "tsz_ms": null,
-      "tsgo_ms": null,
-      "tsz_lps": null,
-      "tsgo_lps": null,
-      "winner": "error",
-      "factor": 0,
-      "status": "tsz error; tsgo error; tsc ok"
+      "lines": 408410,
+      "kb": 59983,
+      "tsz_ms": 12.68,
+      "tsgo_ms": 109.76,
+      "tsz_lps": 32199769,
+      "tsgo_lps": 3720910,
+      "winner": "tsz",
+      "factor": 8.65,
+      "status": null
     },
     {
       "name": "10 classes",

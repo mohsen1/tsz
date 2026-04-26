@@ -396,6 +396,30 @@ tr:nth-child(even) { background: var(--table-stripe); }
   background: transparent;
 }
 
+.bench-tiny-category .bench-category-title {
+  cursor: pointer;
+}
+
+.bench-category-details {
+  border: 0;
+  margin: 0;
+}
+
+.bench-category-details .bench-category-title {
+  list-style: none;
+  display: inline-block;
+}
+
+.bench-category-details .bench-category-title::marker {
+  content: "";
+}
+
+.bench-category-repo {
+  font-size: 0.82rem;
+  margin-left: 0.35rem;
+  opacity: 0.85;
+}
+
 .bench-category-title {
   margin: 0 0 0.4rem;
   font-size: 1.08rem;
@@ -519,6 +543,32 @@ tr:nth-child(even) { background: var(--table-stripe); }
 
 .benchmark-mean-card {
   margin: 1.25rem 0 2rem;
+}
+
+.benchmark-links-block {
+  margin: 0 0 2.25rem;
+}
+
+.benchmark-link-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.5rem 1.5rem;
+}
+
+.benchmark-link-list li {
+  margin: 0;
+}
+
+.benchmark-link-list a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.benchmark-link-list a:hover {
+  color: var(--link);
+  text-decoration: underline;
 }
 
 /* ── Footer ── */
