@@ -76,3 +76,55 @@ fn test_no_ts2456_when_typeof_self_referencing_var_is_value() {
         "Expected no TS2456 for merged value+type with typeof self, got: {codes:?}"
     );
 }
+
+#[test]
+fn test_no_ts2456_when_typeof_target_references_alias_inside_type_literal() {
+    // Repro from `unionTypeWithRecursiveSubtypeReduction3.ts`:
+    //
+    //   declare var a27: { prop: number } | { prop: T27 };
+    //   type T27 = typeof a27;
+    //
+    // The reference to `T27` is wrapped inside a TYPE_LITERAL property type
+    // (`{ prop: T27 }`). tsc treats TYPE_LITERAL property types as lazily
+    // resolved during typeof-target type construction, so the cycle is
+    // structurally deferred and does NOT trigger TS2456.
+    let src = r#"
+        declare var a27: { prop: number } | { prop: T27 };
+        type T27 = typeof a27;
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        !codes.contains(&2456),
+        "Expected no TS2456 when alias reference is inside a TYPE_LITERAL property, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2456_when_typeof_target_references_alias_inside_function_type() {
+    // `() => T` is structurally deferred — tsc does not eagerly compute
+    // signature types when constructing the variable's typeof target.
+    let src = r#"
+        declare var f: () => T;
+        type T = typeof f;
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        !codes.contains(&2456),
+        "Expected no TS2456 when alias reference is inside a FUNCTION_TYPE, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_no_ts2456_when_typeof_target_references_alias_inside_constructor_type() {
+    // `new () => T` is structurally deferred for the same reason as
+    // FUNCTION_TYPE.
+    let src = r#"
+        declare var c: new () => T;
+        type T = typeof c;
+    "#;
+    let codes = get_error_codes(src);
+    assert!(
+        !codes.contains(&2456),
+        "Expected no TS2456 when alias reference is inside a CONSTRUCTOR_TYPE, got: {codes:?}"
+    );
+}

@@ -709,8 +709,13 @@ impl<'a> CheckerState<'a> {
     /// Walk the AST node tree under `root_idx` and return the SymbolId of any
     /// type-reference/identifier that resolves to a member of
     /// `ctx.symbol_resolution_set` and represents a type alias. Descends through
-    /// arrays, tuples, type literals, etc. so that `T5[]` is detected as
-    /// referencing `T5`.
+    /// arrays, tuples, unions, intersections, and parenthesized types so that
+    /// `T5[]` is detected as referencing `T5`. Stops at structural-deferral
+    /// wrappers (TYPE_LITERAL, MAPPED_TYPE, FUNCTION_TYPE, CONSTRUCTOR_TYPE),
+    /// because tsc creates those types lazily — property types and signature
+    /// types are not eagerly resolved during typeof-target type construction,
+    /// so a reference to a resolution-chain alias inside such a wrapper does
+    /// NOT make the chain directly circular.
     fn ast_finds_resolution_chain_alias(&self, root_idx: NodeIndex) -> Option<SymbolId> {
         let mut stack = vec![root_idx];
         while let Some(node_idx) = stack.pop() {
@@ -739,6 +744,21 @@ impl<'a> CheckerState<'a> {
                         return Some(sym_id);
                     }
                 }
+            }
+            // Skip descent into structural-deferral wrappers. tsc resolves
+            // property types and signature types lazily, so a chain-member
+            // reference inside `{ x: T }`, `() => T`, `new (...) => T`, or a
+            // mapped type is NOT eagerly resolved at typeof-target type
+            // construction time. Treating it as circular is a false positive.
+            // ARRAY_TYPE / TUPLE_TYPE intentionally still descend — tsc
+            // eagerly computes element types via getArrayType / getTupleType.
+            let k = node.kind;
+            if k == syntax_kind_ext::TYPE_LITERAL
+                || k == syntax_kind_ext::MAPPED_TYPE
+                || k == syntax_kind_ext::FUNCTION_TYPE
+                || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+            {
+                continue;
             }
             // A TYPE_REFERENCE with type arguments creates a generic
             // instantiation boundary — descend into its children only if the
