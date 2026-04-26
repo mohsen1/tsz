@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/jsdoc-ts2355-anchor`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1431
+- **Status**: ready
 - **Workstream**: Conformance fingerprint parity
 
 ## Intent
