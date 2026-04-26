@@ -18,7 +18,27 @@ export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
 mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE"
 
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
-export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$HOST_CPUS}"
+
+# Cap CARGO_BUILD_JOBS by memory to prevent rustc/linker SIGKILL during large
+# crate compiles (notably tsz-checker, ~5 GiB per parallel rustc with codegen-units=16).
+# 32 CPUs × 5 GiB = 160 GiB, exceeding the 128 GiB cloud-runner ceiling. We compute
+# `memory_mb / mb_per_compile_job`, default 6144 MiB/job, then take min(cpu, mem).
+default_cargo_build_jobs() {
+  local cpu_jobs mem_mb mem_per_job_mb mem_jobs
+  cpu_jobs="$HOST_CPUS"
+  mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
+  mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-6144}"
+  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_job_mb" -gt 0 ]]; then
+    mem_jobs=$((mem_mb / mem_per_job_mb))
+    if (( mem_jobs < 1 )); then mem_jobs=1; fi
+    if (( cpu_jobs > mem_jobs )); then
+      printf '%s\n' "$mem_jobs"
+      return
+    fi
+  fi
+  printf '%s\n' "$cpu_jobs"
+}
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(default_cargo_build_jobs)}"
 
 cap_workers() {
   local requested="$1"
