@@ -5,33 +5,8 @@
 //! the incorrectly-instantiated signature. This prevents spurious TS2345
 //! (argument not assignable) errors.
 
-use tsz_binder::BinderState;
-use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
-use tsz_checker::state::CheckerState;
-use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
-
-fn diagnostic_codes(source: &str) -> Vec<u32> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-
-    checker.ctx.diagnostics.iter().map(|d| d.code).collect()
-}
+use tsz_checker::test_utils::{check_source_codes, check_source_diagnostics};
 
 /// When calling a generic function with too few type arguments,
 /// only TS2558 should be emitted — no spurious TS2345.
@@ -47,7 +22,7 @@ function map<T, U>(xs: T[], f: (x: T) => U) {
 
 var r7b = map<number>([1, ""], (x) => x.toString());
 "#;
-    let codes = diagnostic_codes(source);
+    let codes = check_source_codes(source);
 
     assert!(
         codes.contains(&2558),
@@ -67,7 +42,7 @@ fn test_too_many_type_args_no_spurious_ts2345() {
 function identity<T>(x: T): T { return x; }
 var r = identity<number, string>(42);
 "#;
-    let codes = diagnostic_codes(source);
+    let codes = check_source_codes(source);
 
     assert!(
         codes.contains(&2558),
@@ -92,7 +67,7 @@ function map<T, U>(xs: T[], f: (x: T) => U) {
 
 var r7 = map<number, string>([1, ""], (x) => x.toString());
 "#;
-    let codes = diagnostic_codes(source);
+    let codes = check_source_codes(source);
 
     // Should emit TS2322 for the string element not assignable to number
     assert!(
@@ -113,7 +88,7 @@ fn test_type_args_with_defaults_too_few() {
 function create<T, U, V = string>(x: T): T { return x; }
 var r = create<number>(1);
 "#;
-    let codes = diagnostic_codes(source);
+    let codes = check_source_codes(source);
 
     // U has no default, so providing 1 of 2-3 is wrong
     assert!(
@@ -133,7 +108,7 @@ fn test_type_args_within_default_range_no_ts2558() {
 function create<T, U = string>(x: T, y: U): [T, U] { return [x, y]; }
 var r1 = create<number>(1, "hello");
 "#;
-    let codes = diagnostic_codes(source);
+    let codes = check_source_codes(source);
 
     assert!(
         !codes.contains(&2558),
@@ -149,7 +124,7 @@ fn test_non_generic_with_type_args_no_spurious_errors() {
 function add(a: number, b: number): number { return a + b; }
 var r = add<number>(1, 2);
 "#;
-    let codes = diagnostic_codes(source);
+    let codes = check_source_codes(source);
 
     assert!(
         codes.contains(&2558),
@@ -171,7 +146,7 @@ function foo<T, U>(f: (v: T) => U) {
    var r4 = f(null);
 }
 "#;
-    let diagnostics = check_diagnostics(source);
+    let diagnostics = check_source_diagnostics(source);
     let mut ts2558: Vec<_> = diagnostics.iter().filter(|d| d.code == 2558).collect();
     let mut ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
     ts2558.sort_by_key(|d| d.start);
@@ -219,7 +194,7 @@ fn test_type_arg_mismatch_suppresses_argument_count_errors() {
 function pair<T, U>(a: T, b: U): [T, U] { return [a, b]; }
 var r = pair<number>(1);
 "#;
-    let codes = diagnostic_codes(source);
+    let codes = check_source_codes(source);
 
     assert!(
         codes.contains(&2558),
@@ -250,26 +225,6 @@ var r = pair<number>(1);
 // returning the error type, matching the simple-identifier path that already
 // handled `var v2: D<T>` correctly.
 
-fn check_diagnostics(source: &str) -> Vec<Diagnostic> {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        CheckerOptions::default(),
-    );
-
-    checker.check_source_file(root);
-    checker.ctx.diagnostics.clone()
-}
-
 fn count_ts2304_for_name(diags: &[Diagnostic], name: &str) -> usize {
     let needle = format!("'{name}'");
     diags
@@ -282,7 +237,7 @@ fn count_ts2304_for_name(diags: &[Diagnostic], name: &str) -> usize {
 /// TS2304 for `T` inside the type arguments.
 #[test]
 fn unresolved_heritage_extends_walks_type_arguments() {
-    let diags = check_diagnostics("class C extends A<T> {}\n");
+    let diags = check_source_diagnostics("class C extends A<T> {}\n");
 
     assert_eq!(
         count_ts2304_for_name(&diags, "A"),
@@ -299,7 +254,7 @@ fn unresolved_heritage_extends_walks_type_arguments() {
 /// `class C implements B<T> {}` — `B` unresolved still reports `T`.
 #[test]
 fn unresolved_heritage_implements_walks_type_arguments() {
-    let diags = check_diagnostics("class C implements B<T> {}\n");
+    let diags = check_source_diagnostics("class C implements B<T> {}\n");
 
     assert_eq!(
         count_ts2304_for_name(&diags, "B"),
@@ -317,7 +272,7 @@ fn unresolved_heritage_implements_walks_type_arguments() {
 /// From `parserGenericsInTypeContexts1.ts`.
 #[test]
 fn unresolved_heritage_extends_and_implements_walk_type_arguments() {
-    let diags = check_diagnostics("class C extends A<T> implements B<T> {}\n");
+    let diags = check_source_diagnostics("class C extends A<T> implements B<T> {}\n");
 
     assert_eq!(
         count_ts2304_for_name(&diags, "A"),
@@ -340,7 +295,7 @@ fn unresolved_heritage_extends_and_implements_walk_type_arguments() {
 /// `E` AND TS2304 for `T`. Previously tsz only emitted TS2503 and dropped `T`.
 #[test]
 fn unresolved_qualified_name_type_reference_walks_type_arguments() {
-    let diags = check_diagnostics("var v: E.F<T>;\n");
+    let diags = check_source_diagnostics("var v: E.F<T>;\n");
 
     let ts2503_count = diags
         .iter()
@@ -360,7 +315,7 @@ fn unresolved_qualified_name_type_reference_walks_type_arguments() {
 /// Deeper qualified names are also covered (e.g., `G.H.I<T>`).
 #[test]
 fn unresolved_deeply_qualified_name_type_reference_walks_type_arguments() {
-    let diags = check_diagnostics("var v: G.H.I<T>;\n");
+    let diags = check_source_diagnostics("var v: G.H.I<T>;\n");
 
     assert_eq!(
         count_ts2304_for_name(&diags, "T"),
@@ -374,7 +329,7 @@ fn unresolved_deeply_qualified_name_type_reference_walks_type_arguments() {
 /// with the established behaviour.
 #[test]
 fn unresolved_simple_type_reference_walks_type_arguments() {
-    let diags = check_diagnostics("var v: D<T>;\n");
+    let diags = check_source_diagnostics("var v: D<T>;\n");
 
     assert_eq!(
         count_ts2304_for_name(&diags, "D"),
