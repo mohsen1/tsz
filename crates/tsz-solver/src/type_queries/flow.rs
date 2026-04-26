@@ -681,9 +681,74 @@ fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // The `object` primitive overlaps with any non-primitive type, including
+    // `{}` and arbitrary object/array shapes. tsc's `isTypeComparableTo`
+    // treats `object` as a supertype of all object-like values for assertion
+    // purposes. Without this special case, `{} as T` with `T extends object`
+    // falls through to the property-overlap check, which returns false
+    // because both sides have empty extractable property lists.
+    if (source == TypeId::OBJECT && is_object_like_for_assertion(db, target))
+        || (target == TypeId::OBJECT && is_object_like_for_assertion(db, source))
+    {
+        return true;
+    }
+
+    // The empty object type `{}` is comparable to any type parameter whose
+    // constraint contains an object-like or `object`-primitive member. tsc's
+    // `isTypeComparableTo` walks the type parameter's constraint when the
+    // source is a "wide" object type like `{}`. We narrow this to the empty-
+    // object case only — fully unwrapping for any source would over-permit
+    // assertions like `B as T extends A` (genericTypeAssertions4.ts).
+    if is_empty_object_type(db, source)
+        && let Some(TypeData::TypeParameter(info)) = db.lookup(target)
+        && let Some(constraint) = info.constraint
+    {
+        return types_are_comparable_for_assertion_inner(db, source, constraint, depth + 1);
+    }
+    if is_empty_object_type(db, target)
+        && let Some(TypeData::TypeParameter(info)) = db.lookup(source)
+        && let Some(constraint) = info.constraint
+    {
+        return types_are_comparable_for_assertion_inner(db, constraint, target, depth + 1);
+    }
+
     // For type assertions, only check that overlapping properties are comparable.
     // Do NOT require all target properties to exist in the source.
     types_have_common_properties_relaxed(db, source, target, depth)
+}
+
+/// Returns true when `type_id` represents an "object-like" type for the
+/// purposes of comparing against the `object` primitive in assertion overlap.
+/// Object/Array/Tuple/Callable/Intersection all qualify; primitives like
+/// `string`, `number`, `null`, `undefined` do not.
+fn is_object_like_for_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Array(_)
+                | TypeData::Tuple(_)
+                | TypeData::Callable(_)
+                | TypeData::Function(_)
+                | TypeData::Intersection(_)
+        )
+    )
+}
+
+/// Returns true when `type_id` is the empty object type `{}` — an Object
+/// type with no required properties, no callable signatures, and no index
+/// signatures. Used to narrow the type-parameter constraint-unwrap rule:
+/// only the "top" object type widely overlaps with any constraint that
+/// contains an object-like member.
+fn is_empty_object_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(TypeData::Object(shape_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    let shape = db.object_shape(shape_id);
+    shape.properties.iter().all(|p| p.optional)
+        && shape.string_index.is_none()
+        && shape.number_index.is_none()
 }
 
 /// Relaxed version of `types_have_common_properties` for TS2352.
