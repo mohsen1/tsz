@@ -102,3 +102,93 @@ pub(crate) fn relation_end(query_id: u64, op: &'static str, result: bool, cache_
         cache_hit
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enabled_returns_false_without_subscriber() {
+        // Without a `tracing::subscriber::set_default(...)` call, the
+        // `enabled!` macro returns false because no subscriber is
+        // listening for `tsz::query_json`. This pins the cheap-fast-path
+        // contract: in production, when no JSON-trace subscriber is
+        // installed, `enabled()` short-circuits before any trace emission.
+        assert!(!enabled());
+    }
+
+    #[test]
+    fn next_query_id_increments_monotonically() {
+        // NEXT_QUERY_ID is a process-level static AtomicU64 shared across the
+        // whole test binary. Other tests running in parallel can interleave
+        // increments between our calls, so we can only assert strict monotonic
+        // ordering here, not consecutive values (`b == a + 1` would be flaky).
+        let a = next_query_id();
+        let b = next_query_id();
+        let c = next_query_id();
+        assert!(a < b);
+        assert!(b < c);
+    }
+
+    #[test]
+    fn next_query_id_is_thread_safe() {
+        // Concurrent increments from N threads must produce N distinct
+        // values (Relaxed ordering on a single counter is sufficient for
+        // uniqueness, which is the contract callers rely on).
+        use std::collections::HashSet;
+        use std::sync::Arc;
+        use std::sync::Mutex;
+        use std::thread;
+
+        const THREADS: usize = 8;
+        const PER_THREAD: usize = 32;
+
+        let collected: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        for _ in 0..THREADS {
+            let collected = Arc::clone(&collected);
+            handles.push(thread::spawn(move || {
+                let mut local = Vec::with_capacity(PER_THREAD);
+                for _ in 0..PER_THREAD {
+                    local.push(next_query_id());
+                }
+                collected.lock().expect("lock poisoned").extend(local);
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        let all = collected.lock().expect("lock poisoned");
+        let unique: HashSet<u64> = all.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            all.len(),
+            "next_query_id produced duplicates across threads"
+        );
+    }
+
+    #[test]
+    fn next_query_id_starts_at_one_or_higher() {
+        // `NEXT_QUERY_ID` is initialized to 1 and never decrements.
+        let id = next_query_id();
+        assert!(
+            id >= 1,
+            "first non-fetched query id should be >= 1, got {id}"
+        );
+    }
+
+    #[test]
+    fn run_id_defaults_when_env_unset_or_default() {
+        // `run_id()` reads `TSZ_QUERY_RUN_ID` once via `OnceLock` (or
+        // hard-codes "default" on wasm). Whatever the test environment
+        // sets, the returned slice must be non-empty and stable across
+        // calls (cached in the OnceLock).
+        let r1 = run_id();
+        let r2 = run_id();
+        assert!(!r1.is_empty(), "run_id should never be empty");
+        assert_eq!(
+            r1, r2,
+            "run_id must be stable across calls (OnceLock cached)"
+        );
+    }
+}
