@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `fix/emitter-export-equals-type-only-namespace`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1346
+- **Status**: ready
 - **Workstream**: 2 (JS Emit pass rate)
 
 ## Intent
