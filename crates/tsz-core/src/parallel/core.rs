@@ -499,8 +499,12 @@ pub struct BindResult {
     pub declaration_arenas: Arc<DeclarationArenaMap>,
     /// Persistent scopes for stateless checking
     pub scopes: Vec<Scope>,
-    /// Map from AST node to scope ID
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    /// Map from AST node to scope ID.
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.node_scope_ids` so per-file
+    /// binders share via `Arc::clone` instead of deep-cloning. Read-only
+    /// after binding completes.
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Shorthand ambient modules (`declare module "foo"` without body)
@@ -1442,8 +1446,12 @@ pub struct BoundFile {
     pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     /// Persistent scopes (symbol IDs are global after merge)
     pub scopes: Vec<Scope>,
-    /// Map from AST node to scope ID
-    pub node_scope_ids: FxHashMap<u32, ScopeId>,
+    /// Map from AST node to scope ID.
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.node_scope_ids` so per-file
+    /// binders share via `Arc::clone` instead of deep-cloning. Read-only
+    /// after binding completes.
+    pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     /// Global augmentations (interface declarations inside `declare global` blocks)
@@ -4128,7 +4136,7 @@ fn build_lib_bound_file_for_interface_checks(
         declaration_arenas,
         module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
         scopes: Vec::new(),
-        node_scope_ids: FxHashMap::default(),
+        node_scope_ids: Arc::new(FxHashMap::default()),
         parse_diagnostics: Vec::new(),
         global_augmentations: FxHashMap::default(),
         module_augmentations: FxHashMap::default(),
