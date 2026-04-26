@@ -487,6 +487,46 @@ interface ITest<P extends Prefixes, E extends AllPrefixData = PrefixData<P>> { }
     );
 }
 
+/// TS2744 position must anchor at the offending forward-referenced identifier
+/// inside the type-parameter default, not at the start of the entire default
+/// expression. tsc points at the identifier itself.
+///
+/// Regression test for `subclassThisTypeAssignable01` conformance test.
+#[test]
+fn test_type_parameter_default_forward_ref_anchors_on_identifier() {
+    let source = r#"
+interface Vnode<Attrs, State extends Lifecycle<Attrs, State> = Lifecycle<Attrs, State>> { tag: number }
+interface Lifecycle<Attrs, State> { x: number }
+"#;
+    let diagnostics = crate::test_utils::check_source_diagnostics(source);
+    let ts2744 = diagnostics
+        .iter()
+        .filter(|d| d.code == 2744)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2744.len(),
+        1,
+        "Expected exactly one TS2744 forward-reference, got: {diagnostics:?}"
+    );
+    let diag = ts2744[0];
+    // The offending identifier is the second `State` inside the default
+    // `Lifecycle<Attrs, State>`. Locate the second occurrence of `State`
+    // that follows the `=` in the default position.
+    let bytes = source.as_bytes();
+    let eq_pos = source.find('=').expect("default `=` present");
+    let after_eq = &source[eq_pos..];
+    // First `State` after `=` is inside `Lifecycle<Attrs, State>`.
+    let rel = after_eq
+        .find("State")
+        .expect("State identifier after `=`");
+    let expected_pos = (eq_pos + rel) as u32;
+    assert_eq!(
+        diag.start, expected_pos,
+        "Expected TS2744 to anchor at the forward-referenced `State` identifier (pos={expected_pos}), got start={} in {bytes:?}",
+        diag.start
+    );
+}
+
 /// Generic function references passed as callback arguments should be properly
 /// instantiated, not cause the earlier arguments to be deferred from inference.
 /// Regression test for: `map("", identity)` incorrectly inferred T as `unknown`

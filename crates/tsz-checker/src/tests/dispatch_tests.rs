@@ -1017,6 +1017,51 @@ b(1);
 }
 
 #[test]
+fn jsdoc_type_tag_with_generic_interface_preserves_args_in_diagnostic() {
+    // Regression: assignability messages must preserve `Name<Args>` for
+    // generic interface/class refs (not just `@typedef`s) referenced from
+    // a JSDoc `@type` annotation. See: subclassThisTypeAssignable01
+    // conformance test where
+    // `/** @type {ClassComponent<any>} */ const test9 = new C();`
+    // previously produced "...is not assignable to type 'ClassComponent'."
+    // instead of "...is not assignable to type 'ClassComponent<any>'."
+    use crate::test_utils::check_source;
+    use crate::CheckerOptions;
+    let diags = check_source(
+        r#"
+interface Box<T> { value: T }
+class C { constructor() { this.q = 1; } }
+
+/** @type {Box<string>} */
+const b = new C();
+"#,
+        "test.ts",
+        CheckerOptions {
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    // Must mention the instantiated alias name with type arguments.
+    let assignability_codes = [2322u32, 2741];
+    assert!(
+        diags.iter().any(|d| assignability_codes.contains(&d.code)
+            && d.message_text.contains("Box<string>")),
+        "Expected an assignability message to mention `Box<string>`, got: {diags:?}"
+    );
+    // Must NOT show the bare `Box` (without type arguments) in any
+    // assignability-class diagnostic.
+    let has_bare = diags.iter().any(|d| {
+        assignability_codes.contains(&d.code)
+            && d.message_text.contains(" 'Box'")
+            && !d.message_text.contains("Box<")
+    });
+    assert!(
+        !has_bare,
+        "Expected no assignability message to show bare `Box`, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsdoc_callback_nested_params_build_one_object_parameter() {
     let diags = check_js_source_diagnostics(
         r#"
