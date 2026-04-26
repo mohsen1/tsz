@@ -3009,6 +3009,79 @@ fn type_predicate_in_function() {
 }
 
 #[test]
+fn asserts_type_predicate_in_setter_parameter_type() {
+    // tsc parses `asserts <ident-on-same-line>` predicates in any type position
+    // and emits TS1228 later when the predicate is in an invalid context.
+    // Previously the parser only accepted them in return-type position, so this
+    // setter parameter type produced a stray TS1005 (',' expected) instead.
+    //
+    // `declare class Wat { set p2(x: asserts this is string); }`
+    let (parser, root) = parse_source("declare class Wat { set p2(x: asserts this is string); }");
+    assert_no_errors(&parser, "asserts predicate in setter parameter type");
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let class = arena.get_class(stmt_node).expect("class");
+    let setter_idx = class.members.nodes[0];
+    let setter = arena.get(setter_idx).expect("setter");
+    assert_eq!(setter.kind, syntax_kind_ext::SET_ACCESSOR);
+    let acc = arena.get_accessor(setter).expect("accessor data");
+    let param_idx = acc.parameters.nodes[0];
+    let param_node = arena.get(param_idx).expect("parameter");
+    let param = arena.get_parameter(param_node).expect("parameter data");
+    let type_node = arena.get(param.type_annotation).expect("type annotation");
+    assert_eq!(
+        type_node.kind,
+        syntax_kind_ext::TYPE_PREDICATE,
+        "setter parameter type should parse as TYPE_PREDICATE, not a stray identifier"
+    );
+    let predicate = arena
+        .get_type_predicate(type_node)
+        .expect("type predicate data");
+    assert!(
+        predicate.asserts_modifier,
+        "predicate should carry the asserts modifier"
+    );
+}
+
+#[test]
+fn asserts_type_predicate_in_type_alias() {
+    // `type T = asserts x is string;` — same family of bug. Even though this is
+    // semantically invalid (the checker reports TS1228), the parser must not
+    // emit a TS1005 here. Matches tsc's behaviour where asserts predicates are
+    // recognised by `parseNonArrayType` regardless of context.
+    let (parser, _root) = parse_source("type T = asserts x is string;");
+    let parser_diags = parser.get_diagnostics();
+    assert!(
+        !parser_diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED),
+        "asserts predicate in type alias must not produce TS1005, got: {:?}",
+        parser_diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn asserts_identifier_with_line_break_is_type_reference() {
+    // `asserts` followed by a line break is just an identifier in type position
+    // (ASI). tsc's `nextTokenIsIdentifierOrKeywordOnSameLine` enforces this; the
+    // tsz lookahead used to ignore the line break, which would have parsed
+    // `asserts\n  bar` as an ill-formed predicate had we entered the branch.
+    let (parser, root) = parse_source("type T = asserts\n;");
+    assert_no_errors(&parser, "asserts as plain type reference");
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let alias = arena.get_type_alias(stmt_node).expect("type alias");
+    let alias_type = arena.get(alias.type_node).expect("alias type");
+    assert_eq!(
+        alias_type.kind,
+        syntax_kind_ext::TYPE_REFERENCE,
+        "trailing newline should keep `asserts` as a TypeReference"
+    );
+}
+
+#[test]
 fn import_with_attributes() {
     // `import data from './data.json' with { type: 'json' };`
     let (parser, root) = parse_source("import data from './data.json' with { type: 'json' };");
