@@ -321,12 +321,24 @@ impl<'a> CheckerContext<'a> {
             return sym_id;
         }
 
-        // When the local binder does not contain merged lib symbols, collect
-        // candidates from all known binders and prefer the largest SymbolId.
-        // Merged binders typically allocate from a wider shared symbol space,
-        // while per-lib binders frequently reuse low IDs (0, 1, ...), which can
-        // collide across files.
+        // HEURISTIC (NOT identity): when the local binder does not contain
+        // merged lib symbols and the global index doesn't either, fall back to
+        // scanning all known binders and picking the largest `SymbolId`.
+        //
+        // The assumption is that merged binders allocate from a wider shared
+        // symbol space while per-lib binders frequently reuse low IDs. This is
+        // an *allocator-order* property, not a semantic one — if allocation
+        // order ever changes (e.g. the binder switches to a smaller-IDs-first
+        // strategy, or an unrelated symbol gets a larger ID), this routine can
+        // pick the wrong identity. The right long-term fix is to ask
+        // `DefinitionStore` / a merged-binder marker for the canonical identity
+        // explicitly; tracked under
+        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item #4.
+        //
+        // We log (trace) every time the heuristic fires AND chooses a non-input
+        // candidate, so drift is visible without changing behavior.
         let mut best = per_lib_sym_id;
+        let initial = per_lib_sym_id;
         if let Some(all_binders) = self.all_binders.as_ref() {
             for binder in all_binders.iter() {
                 if let Some(sym_id) = binder.file_locals.get(name)
@@ -342,6 +354,15 @@ impl<'a> CheckerContext<'a> {
             {
                 best = sym_id;
             }
+        }
+        if best != initial {
+            tracing::trace!(
+                target: "tsz_checker::canonical_lib_sym_id",
+                name,
+                input_sym_id = ?initial,
+                chosen_sym_id = ?best,
+                "fell back to largest-SymbolId heuristic — see ROBUSTNESS_AUDIT_2026-04-26 item #4"
+            );
         }
         best
     }
