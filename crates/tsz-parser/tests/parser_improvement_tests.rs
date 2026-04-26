@@ -3916,3 +3916,73 @@ var b =~;
         "Diagnostic fingerprints must match tsc exactly, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_array_terminated_by_close_paren_emits_comma_expected() {
+    // Regression for conformance test
+    // `destructuringParameterDeclaration2.ts` line 8:
+    //   `a0([1, "string", [["world"]]);`
+    // The outer `[` is never closed before the `)`. tsc reports a single TS1005
+    // `',' expected.` at the `)`. Before this fix, we reported `']' expected.`
+    // because the array-literal loop broke without first emitting the missing-
+    // separator diagnostic that tsc's parseDelimitedList unconditionally emits.
+    let source = "a0([1, \"string\", [[\"world\"]]);\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+
+    let close_paren_pos = source.find(')').expect("`)` is in the source") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.start == close_paren_pos
+                && d.message == "',' expected."),
+        "expected TS1005 `',' expected.` at the `)`, got {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.start == close_paren_pos
+                && d.message == "']' expected."),
+        "TS1005 `']' expected.` at the `)` should be dedup'd by the comma error, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_terminated_by_close_brace_emits_comma_expected() {
+    // Sibling case: array literal terminated by an enclosing `}` (e.g. block
+    // boundary). Same expectation — tsc reports `,' expected` rather than
+    // `]' expected`.
+    let source = "{ const x = [1, 2 }\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+
+    let close_brace_pos = source.find('}').expect("`}` is in the source") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::EXPECTED
+                && d.start == close_brace_pos
+                && d.message == "',' expected."),
+        "expected TS1005 `',' expected.` at the `}}`, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_array_terminated_by_close_bracket_keeps_clean_close() {
+    // Sanity guard: a normal `[1, 2]` must not gain a spurious comma diagnostic.
+    let source = "var a = [1, 2];\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.is_empty(),
+        "well-formed array literal must not emit diagnostics, got {diagnostics:?}"
+    );
+}

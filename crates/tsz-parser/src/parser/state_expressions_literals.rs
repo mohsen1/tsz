@@ -2807,7 +2807,18 @@ impl ParserState {
                     // This handles cases like: [1 2 3] instead of [1, 2, 3]
                     self.error_comma_expected();
                 } else {
-                    // Not followed by an element, so we're really done
+                    // Match tsc's parseDelimitedList: when the array is terminated by an
+                    // outer-context closer (e.g. `)` from an enclosing call, `}` from a
+                    // block), report "',' expected" first. parse_expected(]) then runs at
+                    // the same position and gets dedup'd, so the user sees the comma
+                    // diagnostic that tsc would produce instead of a "']' expected" that
+                    // points the user at the wrong fix.
+                    if matches!(
+                        self.token(),
+                        SyntaxKind::CloseParenToken | SyntaxKind::CloseBraceToken
+                    ) {
+                        self.error_comma_expected();
+                    }
                     break;
                 }
             }
