@@ -99,6 +99,83 @@ const f2: (a: string) => string = f1;
     }
 }
 
+/// TS2345 against a union-of-callables target where the optional parameter
+/// surface contributes the only literal-sensitive `undefined` member must
+/// elide that synthetic `| undefined` and widen the literal argument
+/// display, matching tsc.
+///
+/// Conformance: `unionTypeCallSignatures.ts` (lines 36, 42, 48 in tsc cache).
+/// Before this fix, the diagnostic read:
+///   `Argument of type '"hello"' is not assignable to parameter of type 'number | undefined'.`
+/// tsc emits:
+///   `Argument of type 'string' is not assignable to parameter of type 'number'.`
+#[test]
+fn ts2345_union_callable_optional_param_widens_synthetic_undefined() {
+    let source = r#"
+declare var u: { (a: string, b?: number): string; } | { (a: string, b?: number): number; };
+u('hello', "hello");
+"#;
+    let diags = check_strict(source);
+    let ts2345: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2345).collect();
+    assert!(
+        !ts2345.is_empty(),
+        "expected TS2345 for the wrong-typed second arg; got: {diags:?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("Argument of type 'string'"),
+        "TS2345 should widen the literal argument display (got literal text \
+         when the union's `| undefined` is synthetic from the optional `?:`). \
+         Got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("Argument of type '\"hello\"'"),
+        "TS2345 should not preserve the literal argument text when the union \
+         on the parameter is purely a synthetic optional `| undefined`. \
+         Got: {msg:?}"
+    );
+    assert!(
+        msg.contains("parameter of type 'number'"),
+        "TS2345 should strip the synthetic `| undefined` from the parameter \
+         display for an optional non-rest slot in a union of callables. \
+         Got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("number | undefined"),
+        "TS2345 should not display `number | undefined` when the union arises \
+         only from the optional parameter in a union of callable shapes. \
+         Got: {msg:?}"
+    );
+}
+
+/// TS2345 against a union of callables where one member omits the slot
+/// entirely (`b?` in one, no `b` in the other) must still elide the
+/// synthetic `| undefined`, since the slot is "optional" in the union sense.
+#[test]
+fn ts2345_union_callable_mixed_arity_optional_param_widens() {
+    let source = r#"
+declare var u: { (a: string, b?: number): string; } | { (a: string): number; };
+u('hello', "hello");
+"#;
+    let diags = check_strict(source);
+    let ts2345: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2345).collect();
+    assert!(
+        !ts2345.is_empty(),
+        "expected TS2345 for the wrong-typed second arg; got: {diags:?}"
+    );
+    let msg = &ts2345[0].1;
+    assert!(
+        msg.contains("Argument of type 'string'"),
+        "TS2345 should widen the literal argument display for mixed-arity \
+         union callable. Got: {msg:?}"
+    );
+    assert!(
+        msg.contains("parameter of type 'number'"),
+        "TS2345 should strip the synthetic `| undefined` for mixed-arity \
+         union callable. Got: {msg:?}"
+    );
+}
+
 /// Sanity: when the parameter is EXPLICITLY typed `T | undefined`, the
 /// display preserves `T | undefined`. The fix only suppresses the
 /// implicit-undefined-from-`?` case, not explicit annotations.
