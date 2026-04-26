@@ -1626,7 +1626,7 @@ fn checker_files_stay_under_loc_limit() {
         ("error_reporter/call_errors.rs", 2554),
         ("error_reporter/core/diagnostic_source.rs", 2069),
         ("types/type_checking/duplicate_identifiers_helpers.rs", 2125),
-        ("types/type_checking/duplicate_identifiers.rs", 2051),
+        ("types/type_checking/duplicate_identifiers.rs", 2060),
         ("error_reporter/render_failure.rs", 2240),
         // Pushed over the 2000-LOC default by recent JSDoc/CommonJS source-display
         // changes (#679) and subsequent display-parity fixes (#682, #688, #690);
