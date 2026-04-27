@@ -942,14 +942,18 @@ run_emit_shard() {
   echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS}"
 
   local detail_json="$METRICS_DIR/emit-shard-${shard_index}.json"
+  local emit_args=(
+    --skip-build
+    --concurrency="$EMIT_WORKERS"
+    --timeout="${EMIT_TIMEOUT_MS:-30000}"
+    --json-out="$detail_json"
+  )
+  # Only restrict to a chunk when actually sharding; with one shard, run everything.
+  if [[ "$shard_count" -gt 1 ]]; then
+    emit_args+=(--max="$chunk" --offset="$offset")
+  fi
   set +e
-  ./scripts/emit/run.sh \
-    --skip-build \
-    --max="$chunk" \
-    --offset="$offset" \
-    --concurrency="$EMIT_WORKERS" \
-    --timeout="${EMIT_TIMEOUT_MS:-30000}" \
-    --json-out="$detail_json" \
+  ./scripts/emit/run.sh "${emit_args[@]}" \
     >"$LOG_DIR/emit/shard-${shard_index}.log" 2>&1
   local rc="$?"
   set -e

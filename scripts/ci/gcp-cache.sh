@@ -224,9 +224,11 @@ restore_caches() {
     # and let Cargo skip those crates entirely. Workspace crate artifacts inside
     # are stale after any source change but get recompiled via sccache.
     # Separate archives per profile so each job only saves what it built.
-    _restore_cargo_target_profile "cargo-target-deps" "$cargo_hash"
-    _restore_cargo_target_profile "cargo-target-unit" "$cargo_hash"
-    if [[ -d .target/dist-fast || -d .target/ci-unit ]]; then
+    _restore_cargo_target_profile "cargo-target-deps"  "$cargo_hash"   # .target/dist-fast (dist-binaries, build_test_binaries)
+    _restore_cargo_target_profile "cargo-target-unit"  "$cargo_hash"   # .target/ci-unit  (unit-archive, run_unit_tests)
+    _restore_cargo_target_profile "cargo-target-debug" "$cargo_hash"   # .target/debug   (lint: cargo clippy / cargo fmt)
+    _restore_cargo_target_profile "cargo-target-wasm"  "$cargo_hash"   # .target/wasm32-unknown-unknown (wasm-pack)
+    if [[ -d .target/dist-fast || -d .target/ci-unit || -d .target/debug || -d .target/wasm32-unknown-unknown ]]; then
       normalize_rust_source_mtimes
     fi
   else
@@ -304,6 +306,16 @@ save_caches() {
       "$(cache_uri "cargo-target-unit/${cargo_hash}.tar.gz")" \
       "." \
       .target/ci-unit
+    save_archive \
+      "cargo-target-debug-${cargo_hash}" \
+      "$(cache_uri "cargo-target-debug/${cargo_hash}.tar.gz")" \
+      "." \
+      .target/debug
+    save_archive \
+      "cargo-target-wasm-${cargo_hash}" \
+      "$(cache_uri "cargo-target-wasm/${cargo_hash}.tar.gz")" \
+      "." \
+      .target/wasm32-unknown-unknown
   fi
 
   save_archive \
