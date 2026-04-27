@@ -183,8 +183,21 @@ impl WasmProgram {
         let checker_options = self.compiler_options.to_checker_options();
         let check_result = check_files_parallel(&merged, &checker_options, &lib_file_objects);
 
-        // Build JSON result
-        let mut file_results: Vec<FileCheckResultJson> = Vec::new();
+        // Build JSON result.
+        //
+        // Build an O(1) file-name -> check_result index up front instead of
+        // doing a linear `file_results.iter().find(...)` per file. The
+        // previous pattern was O(N²) in `file_names.len()` and lived on the
+        // result-assembly path AFTER checking had completed, so it was
+        // entirely avoidable scaling cost. On a 6000-file project that's
+        // ~36M comparisons; on small projects it's a no-op-cheap helper.
+        let check_results_by_file: FxHashMap<&str, &_> = check_result
+            .file_results
+            .iter()
+            .map(|r| (r.file_name.as_str(), r))
+            .collect();
+
+        let mut file_results: Vec<FileCheckResultJson> = Vec::with_capacity(file_names.len());
         let mut total_diagnostics = 0;
 
         for (i, file_name) in file_names.iter().enumerate() {
@@ -198,11 +211,8 @@ impl WasmProgram {
                 })
                 .collect();
 
-            // Find check diagnostics for this file
-            let check_diagnostics: Vec<CheckDiagnosticJson> = check_result
-                .file_results
-                .iter()
-                .find(|r| &r.file_name == file_name)
+            let check_diagnostics: Vec<CheckDiagnosticJson> = check_results_by_file
+                .get(file_name.as_str())
                 .map(|r| {
                     r.diagnostics
                         .iter()
