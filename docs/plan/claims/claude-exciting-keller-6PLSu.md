@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-26
 - **Branch**: `claude/exciting-keller-6PLSu`
-- **PR**: TBD
+- **PR**: #1520
 - **Status**: ready
 - **Workstream**: Conformance — fingerprint parity
 
