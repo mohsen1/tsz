@@ -69,7 +69,7 @@ jobs:
 
   lint:
     name: lint
-    needs: gate
+    needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -125,7 +125,7 @@ jobs:
 
   wasm:
     name: wasm
-    needs: gate
+    needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -265,13 +265,18 @@ jobs:
       _TSZ_CI_EMIT_SHARD_COUNT: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
-      TSZ_CI_SKIP_TS_RESTORE: "1"
+      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_NODE_HARNESS_PREPPED: "1"
       TSZ_CI_CACHE_SAVE: "0"
+      TSZ_CI_CACHE_RESTORE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Restore GCS caches
+        env:
+          _TSZ_CI_SUITE: emit-shard
+        run: scripts/ci/gcp-cache.sh restore
       - name: Download dist-fast binaries
         uses: actions/download-artifact@v4
         with:
@@ -323,13 +328,18 @@ jobs:
       TSZ_CI_FOURSLASH_WORKERS: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
-      TSZ_CI_SKIP_TS_RESTORE: "1"
+      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_NODE_HARNESS_PREPPED: "1"
       TSZ_CI_CACHE_SAVE: "0"
+      TSZ_CI_CACHE_RESTORE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Restore GCS caches
+        env:
+          _TSZ_CI_SUITE: fourslash-shard
+        run: scripts/ci/gcp-cache.sh restore
       - name: Download dist-fast binaries
         uses: actions/download-artifact@v4
         with:

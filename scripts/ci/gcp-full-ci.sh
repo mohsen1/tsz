@@ -411,18 +411,6 @@ init_typescript_submodule() {
     rm -rf TypeScript
   fi
 
-  # If TypeScript/ was seeded by a node-harness artifact it has built/ and/or
-  # node_modules/ but no .git directory.  Stash those dirs, let git initialise
-  # the submodule (which needs a clean directory), then restore them on top of
-  # the freshly-cloned source tree.
-  local _ts_stash=""
-  if [[ -d TypeScript && ! -d TypeScript/.git ]]; then
-    _ts_stash="$(mktemp -d)"
-    [[ -d TypeScript/built ]] && mv TypeScript/built "$_ts_stash/"
-    [[ -d TypeScript/node_modules ]] && mv TypeScript/node_modules "$_ts_stash/"
-    rm -rf TypeScript
-  fi
-
   if [[ "$SYNTHETIC_GIT_CHECKOUT" -eq 0 ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     local gitlink_ref
     gitlink_ref="$(git ls-tree HEAD TypeScript | awk '{print $3}')"
@@ -436,14 +424,6 @@ init_typescript_submodule() {
     git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
     git -C TypeScript fetch --depth 1 origin "$expected_ref"
     git -C TypeScript checkout --detach FETCH_HEAD
-  fi
-
-  # Restore artifact-seeded content on top of the initialised source tree.
-  if [[ -n "$_ts_stash" ]]; then
-    rm -rf TypeScript/built TypeScript/node_modules
-    [[ -d "$_ts_stash/built" ]] && mv "$_ts_stash/built" TypeScript/
-    [[ -d "$_ts_stash/node_modules" ]] && mv "$_ts_stash/node_modules" TypeScript/
-    rm -rf "$_ts_stash"
   fi
 
   test -f TypeScript/src/lib/es5.d.ts

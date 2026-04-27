@@ -188,12 +188,8 @@ restore_caches() {
   ts_ref="$(typescript_ref)"
   commit="$(commit_key)"
 
-  if [[ "${TSZ_CI_SKIP_TS_RESTORE:-0}" != "1" ]]; then
-    restore_typescript
-    ts_deps_hash="$(typescript_deps_hash)"
-  else
-    echo "info: TypeScript GCS restores skipped (TSZ_CI_SKIP_TS_RESTORE=1)"
-  fi
+  restore_typescript
+  ts_deps_hash="$(typescript_deps_hash)"
 
   mkdir -p .ci-cache/cargo-home .ci-cache/npm .target scripts
 
@@ -247,7 +243,7 @@ restore_caches() {
     "$(cache_uri "scripts-node-modules/${node_hash}.tar.gz")" \
     "scripts"
 
-  if [[ "${TSZ_CI_SKIP_TS_RESTORE:-0}" != "1" ]]; then
+  if [[ "${TSZ_CI_SKIP_TS_HARNESS_RESTORE:-0}" != "1" ]]; then
     restore_archive \
       "typescript-harness-${ts_ref}" \
       "$(cache_uri "typescript-harness/${ts_ref}.tar.gz")" \
