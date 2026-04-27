@@ -129,8 +129,7 @@ impl<'a> CheckerState<'a> {
                         // value. Save the expression type and validate it after the
                         // class value side has been refreshed; doing it here can see a
                         // provisional/re-entrant constructor shape and miss TS1238.
-                        experimental_class_decorators
-                            .push((decorator.expression, decorator_type));
+                        experimental_class_decorators.push((decorator.expression, decorator_type));
                     } else {
                         // ES decorators: tsc anchors TS1238 at the whole decorator
                         // (including `@`) when the factory requires too many args, but

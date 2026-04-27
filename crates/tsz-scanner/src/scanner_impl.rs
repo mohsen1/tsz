@@ -3038,7 +3038,7 @@ impl ScannerState {
     /// Clear accumulated scanner diagnostics. Used by `ParserState::reset` so a
     /// reused parser doesn't carry stale scanner-side errors into a new parse.
     /// `set_text` does NOT clear them — callers like the LSP that re-text the
-    /// scanner across edits without going through ParserState may want the
+    /// scanner across edits without going through `ParserState` may want the
     /// previous diagnostics to remain accessible.
     pub fn clear_scanner_diagnostics(&mut self) {
         self.scanner_diagnostics.clear();
