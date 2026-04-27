@@ -1210,12 +1210,7 @@ impl<'a> CheckerState<'a> {
                             && property_context_type.is_none()
                             && !had_object_context
                         {
-                            let widened = self.widen_literal_type(value_type);
-                            if widened != value_type {
-                                let name_atom = self.ctx.types.intern_string(&name);
-                                display_type_overrides.insert(name_atom, value_type);
-                            }
-                            widened
+                            self.widen_literal_type(value_type)
                         } else {
                             value_type
                         }
