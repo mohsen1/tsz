@@ -474,10 +474,8 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
             # Pre-existing: context/core.rs is the project-wide state container; grew
             # past 2000 raw lines through ongoing checker boundary work.
-            "crates/tsz-checker/src/context/core.rs",
             # Pre-existing: condition_narrowing.rs hosts the dispatch table for
             # discriminant/literal/typeof narrowing arms; grew past 2000 raw lines.
-            "crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs",
         },
     ),
 ]
