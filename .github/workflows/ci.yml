@@ -10,6 +10,8 @@ on:
 
 permissions:
   contents: read
+  actions: read
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
@@ -28,6 +30,8 @@ jobs:
       should_run: ${{ steps.gate.outputs.should_run }}
     steps:
       - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -39,6 +43,26 @@ jobs:
             if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
               echo "Skipping self-hosted CI for fork PRs."
               should_run=false
+            fi
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+            # Skip redundant main CI when the push is a PR merge already validated by PR CI.
+            # Saves ~40+ runner-minutes per merge (32 conformance + lint + unit + wasm + emit shards).
+            pr_number=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
+              --jq '.[0].number // empty' 2>/dev/null || true)
+            if [[ -n "$pr_number" ]]; then
+              pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
+                --jq '.head.sha' 2>/dev/null || true)
+              if [[ -n "$pr_head_sha" ]]; then
+                ci_passed=$(gh api \
+                  "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${pr_head_sha}&status=success&per_page=1" \
+                  --jq '.total_count' 2>/dev/null || echo "0")
+                if [[ "${ci_passed}" -gt 0 ]]; then
+                  echo "PR #${pr_number} head ${pr_head_sha} already validated — skipping redundant main CI"
+                  should_run=false
+                else
+                  echo "No passing CI run for PR #${pr_number} head ${pr_head_sha} — running main CI"
+                fi
+              fi
             fi
           fi
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
