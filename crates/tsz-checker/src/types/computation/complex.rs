@@ -205,6 +205,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // Snapshot diagnostics before constructor resolution so we can detect
+        // whether the callee site emitted a name/value-resolution error
+        // (TS2304/TS2552/TS18004). When that happens, we should NOT inject a
+        // contextual `any` for callback arguments — doing so would silence real
+        // TS7006 ("Parameter implicitly has an 'any' type") diagnostics.
+        let new_callee_diag_snap = self.ctx.snapshot_diagnostics();
+
         // Get the type of the constructor expression.
         // Fast path for local class identifiers: avoid full identifier typing
         // machinery after `check_new_expression_target` has already validated
@@ -454,6 +461,39 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
         if constructor_type == TypeId::ERROR {
+            // The constructor target failed value resolution. Still walk the
+            // arguments so unresolved names inside nested expressions (e.g.
+            // `new Outer(new Inner(), new Other())`) emit
+            // TS2304 / TS2454 / TS18046 — matching tsc.
+            //
+            // Mirrors the call-expression ERROR branch in `call/inner.rs`:
+            // when the callee itself failed name/value resolution, avoid
+            // fabricating contextual `any` for callback arguments — that would
+            // suppress real TS7006 diagnostics. Other callee errors keep the
+            // historical `any` fallback to avoid broader regressions.
+            let callee_missing_value =
+                self.callee_suppresses_contextual_any(new_expr.expression, &new_callee_diag_snap);
+            let args = match new_expr.arguments.as_ref() {
+                Some(a) => a.nodes.as_slice(),
+                None => &[],
+            };
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |i, _arg_count| {
+                    if !callee_missing_value {
+                        return Some(TypeId::ANY);
+                    }
+                    args.get(i)
+                        .copied()
+                        .and_then(|arg_idx| self.ctx.arena.get(arg_idx))
+                        .filter(|arg_node| arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT)
+                        .map(|_| TypeId::ANY)
+                },
+                check_excess_properties,
+                None, // No skipping needed
+                CallableContext::none(),
+            );
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
