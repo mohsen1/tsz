@@ -485,6 +485,40 @@ check_prerequisites() {
 
 RESULTS_CSV=""
 BENCHMARKS_RUN=0
+FIXTURE_FAILURES=0
+
+# run_isolated <label> <command...>
+#
+# Runs a fixture function and swallows any non-zero exit so one bad fixture
+# (network blip on git clone, pnpm install flake, OOM during a project bench,
+# tsgo segfault on large-ts-repo) doesn't abort the entire bench run.
+# Records a degraded CSV row so the failure surfaces in the published JSON
+# instead of vanishing silently.
+#
+# Note: bash suspends `set -e` inside functions called from a conditional
+# context (cmd || ..., cmd && ..., if cmd, etc.), so commands inside the
+# fixture that fail individually won't abort the function automatically.
+# This matches the prior `fixture_call || true` behavior; it just adds
+# logging + a tracked failure row.
+run_isolated() {
+    local label="$1"; shift
+    local rc=0
+    "$@" || rc=$?
+    if (( rc != 0 )); then
+        echo -e "${YELLOW}warning:${NC} fixture '$label' exited rc=$rc — continuing with remaining benchmarks" >&2
+        record_fixture_failure "$label" "$rc"
+    fi
+    return 0
+}
+
+# Append a degraded row to RESULTS_CSV when a fixture group fails outright
+# (no individual benchmarks were recorded). The schema matches existing error
+# rows: name, lines, kb, tsz_ms, tsgo_ms, tsz_lps, tsgo_lps, winner, ratio, status.
+record_fixture_failure() {
+    local label="$1" rc="$2"
+    FIXTURE_FAILURES=$((FIXTURE_FAILURES + 1))
+    RESULTS_CSV="${RESULTS_CSV}${label},0,0,N/A,N/A,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
+}
 
 run_benchmark() {
     local name="$1"
@@ -2924,18 +2958,18 @@ main() {
         done
     fi  # End of medium/small files skip
 
-    run_utility_types_benchmarks
-    run_ts_toolbelt_benchmarks
-    run_ts_essentials_benchmarks
-    run_utility_types_project_benchmarks
-    run_ts_toolbelt_project_benchmarks || true
-    run_ts_essentials_project_benchmarks || true
-    run_rxjs_project_benchmarks || true
-    run_type_fest_project_benchmarks || true
-    run_zod_project_benchmarks || true
-    run_kysely_project_benchmarks || true
-    run_nextjs_benchmarks || true
-    run_large_ts_repo_benchmarks || true
+    run_isolated "utility-types"          run_utility_types_benchmarks
+    run_isolated "ts-toolbelt"            run_ts_toolbelt_benchmarks
+    run_isolated "ts-essentials"          run_ts_essentials_benchmarks
+    run_isolated "utility-types-project"  run_utility_types_project_benchmarks
+    run_isolated "ts-toolbelt-project"    run_ts_toolbelt_project_benchmarks
+    run_isolated "ts-essentials-project"  run_ts_essentials_project_benchmarks
+    run_isolated "rxjs-project"           run_rxjs_project_benchmarks
+    run_isolated "type-fest-project"      run_type_fest_project_benchmarks
+    run_isolated "zod-project"            run_zod_project_benchmarks
+    run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "nextjs"                 run_nextjs_benchmarks
+    run_isolated "large-ts-repo"          run_large_ts_repo_benchmarks
 
     print_header "Synthetic Benchmarks - Scaling Test"
     
