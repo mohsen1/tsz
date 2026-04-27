@@ -1347,9 +1347,14 @@ impl<'a> CheckerState<'a> {
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
             if !self.is_assignable_to(attrs_type, props_type) {
+                // tsc uses just the type parameter name here (e.g. "P"), not the
+                // full "IntrinsicAttributes & P" display target. The IntrinsicAttributes
+                // intersection check for spread attributes is handled separately by
+                // check_generic_sfc_spread_intrinsic_attrs.
+                let type_param_target = self.format_type(props_type);
                 self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
-                    &display_target,
+                    &type_param_target,
                     tag_name_idx,
                 );
                 true

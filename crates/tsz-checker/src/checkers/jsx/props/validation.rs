@@ -986,29 +986,19 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
-    /// TS2322: Check spread attributes against `IntrinsicAttributes` for generic SFCs.
+    /// TS2322: Check spread attributes against `IntrinsicAttributes`.
+    ///
+    /// Covers both SFCs with declared type parameters (e.g. `<T>(props: T) => ...`) and
+    /// SFCs that use free type variables from an outer generic (e.g. `function(props: P)`
+    /// inside `function test<P>`). tsc emits TS2322 whenever an unconstrained type
+    /// parameter spread doesn't satisfy `IntrinsicAttributes`, regardless of whether the
+    /// type parameter is declared on the SFC itself or comes from an enclosing scope.
     pub(in crate::checkers_domain::jsx) fn check_generic_sfc_spread_intrinsic_attrs(
         &mut self,
-        component_type: TypeId,
+        _component_type: TypeId,
         attributes_idx: NodeIndex,
         tag_name_idx: NodeIndex,
     ) {
-        // Only applies to generic SFCs (functions with type parameters)
-        let is_generic_sfc = crate::query_boundaries::common::function_shape_for_type(
-            self.ctx.types,
-            component_type,
-        )
-        .is_some_and(|shape| !shape.type_params.is_empty() && !shape.is_constructor)
-            || crate::query_boundaries::common::call_signatures_for_type(
-                self.ctx.types,
-                component_type,
-            )
-            .is_some_and(|sigs| sigs.iter().any(|s| !s.type_params.is_empty()));
-
-        if !is_generic_sfc {
-            return;
-        }
-
         let Some(ia_type) = self.get_intrinsic_attributes_type() else {
             return;
         };
