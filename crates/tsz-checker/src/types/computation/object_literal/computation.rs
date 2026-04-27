@@ -15,6 +15,18 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
+/// Whether a contextual type is "literal-permissive" — i.e., does not
+/// constrain literal property types and therefore should not suppress
+/// the object-literal property widening that tsc performs for non-fresh
+/// literal contexts.
+///
+/// `unknown`, `any`, and `never` fall into this bucket: tsc's
+/// `isLiteralOfContextualType` returns `false` for them, so a property
+/// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
+fn is_literal_permissive_context(ctx: TypeId) -> bool {
+    ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
+}
+
 impl<'a> CheckerState<'a> {
     fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
@@ -460,7 +472,14 @@ impl<'a> CheckerState<'a> {
                     // When a JSDoc @type is present, use it as the contextual type
                     // so that literal values like `"a"` preserve their literal type
                     // (e.g., `@type {"a"}` + `a: "a"` should not widen to `string`).
-                    let had_object_context = contextual_type.is_some();
+                    //
+                    // Treat `unknown`, `any`, and `never` as "no real context" for
+                    // widening purposes. tsc's `isLiteralOfContextualType` returns
+                    // false for these types, so property literals widen normally
+                    // (e.g., `{ a: 1 } satisfies unknown` produces `{ a: number }`,
+                    // not `{ a: 1 }`).
+                    let had_object_context =
+                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
                     // When the outer contextual type is a union with a non-nullish
                     // non-object member (e.g. `string | FullRule`), tsc does not
                     // provide a contextual type for function-like property initializers.
@@ -675,23 +694,28 @@ impl<'a> CheckerState<'a> {
                                 n.kind == syntax_kind_ext::AS_EXPRESSION
                                     || n.kind == syntax_kind_ext::TYPE_ASSERTION
                             });
-                        let final_type = if !self.ctx.in_const_assertion
+                        let widening_eligible = !self.ctx.in_const_assertion
                             && !self.ctx.preserve_literal_types
                             && property_context_type.is_none()
                             && !had_object_context
-                            && !value_has_type_assertion
-                        {
+                            && !value_has_type_assertion;
+                        let final_type = if widening_eligible {
                             self.widen_literal_type(value_type)
                         } else {
                             value_type
                         };
 
-                        // Freshness model: always record literal property values
-                        // from the AST for display in error messages. Store even
-                        // when lit_type == final_type — inference-time widening
-                        // may change the property type later, and we need the
-                        // original literal for error display.
-                        if prop.initializer != prop.name
+                        // Freshness model: record the literal property value from
+                        // the AST for display in error messages. Skip the override
+                        // when widening was actually performed: in that case the
+                        // computed property type already matches what tsc would
+                        // display (e.g. `{ a: number }` for `{ a: 1 } satisfies
+                        // unknown`). Storing the literal `1` here would override
+                        // the elaborated `Type 'number' is not assignable to
+                        // 'true'` diagnostic with `Type '1' ...`.
+                        let widened_value = widening_eligible && final_type != value_type;
+                        if !widened_value
+                            && prop.initializer != prop.name
                             && let Some(lit_type) =
                                 self.literal_type_from_initializer(prop.initializer)
                         {
@@ -1000,8 +1024,11 @@ impl<'a> CheckerState<'a> {
                     };
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
 
-                    // Set contextual type for shorthand property value
-                    let had_object_context = contextual_type.is_some();
+                    // Set contextual type for shorthand property value.
+                    // See note above on `is_literal_permissive_context` — treat
+                    // `unknown`/`any`/`never` as "no real context" for widening.
+                    let had_object_context =
+                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
                     if let Some(diag_target) = jsdoc_declared_type.or(property_context_type) {
                         self.ctx
                             .object_literal_property_diag_targets
