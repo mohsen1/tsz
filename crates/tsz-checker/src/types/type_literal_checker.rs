@@ -602,6 +602,55 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn indexed_access_references_owner_property(
+        &self,
+        type_node_idx: NodeIndex,
+        owner_name: &str,
+        property_name: &str,
+    ) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            return false;
+        }
+        let Some(indexed) = self.ctx.arena.get_indexed_access_type(type_node) else {
+            return false;
+        };
+        let Some(object_type_node) = self.ctx.arena.get(indexed.object_type) else {
+            return false;
+        };
+        if object_type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(object_type_node) else {
+            return false;
+        };
+        let object_name = self
+            .ctx
+            .arena
+            .get_identifier_at(type_ref.type_name)
+            .map(|ident| ident.escaped_text.as_str());
+        if object_name != Some(owner_name) {
+            return false;
+        }
+
+        let Some(index_node) = self.ctx.arena.get(indexed.index_type) else {
+            return false;
+        };
+        if let Some(lit) = self.ctx.arena.get_literal(index_node) {
+            return lit.text == property_name;
+        }
+        if let Some(lit_type) = self.ctx.arena.get_literal_type(index_node)
+            && let Some(inner) = self.ctx.arena.get(lit_type.literal)
+            && let Some(lit) = self.ctx.arena.get_literal(inner)
+        {
+            return lit.text == property_name;
+        }
+
+        false
+    }
+
     pub(crate) fn type_literal_has_circular_accessor_reference(
         &self,
         type_node_idx: NodeIndex,
@@ -861,7 +910,21 @@ impl<'a> CheckerState<'a> {
                             }
                             entry.push((call_sig, optional, readonly));
                         } else {
-                            let type_id = if sig.type_annotation.is_some() {
+                            let circular_self_reference = sig.type_annotation.is_some()
+                                && owner_name.as_deref().is_some_and(|owner_name| {
+                                    self.indexed_access_references_owner_property(
+                                        sig.type_annotation,
+                                        owner_name,
+                                        &name,
+                                    )
+                                });
+                            let type_id = if circular_self_reference {
+                                let message = format!(
+                                    "'{name}' is referenced directly or indirectly in its own type annotation."
+                                );
+                                self.error_at_node(sig.name, &message, 2502);
+                                TypeId::ANY
+                            } else if sig.type_annotation.is_some() {
                                 self.get_type_from_type_node_in_type_literal(sig.type_annotation)
                             } else {
                                 TypeId::ANY

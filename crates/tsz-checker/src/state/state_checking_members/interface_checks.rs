@@ -276,6 +276,27 @@ impl<'a> CheckerState<'a> {
                 {
                     self.check_nested_this_types_for_ts2526(sig.type_annotation);
                 }
+
+                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                    && let Some(owner_name) = iface_name.as_deref()
+                    && let Some(sig) = self.ctx.arena.get_signature(member_node)
+                    && sig.type_annotation.is_some()
+                    && let Some(property_name) =
+                        crate::types_domain::queries::core::get_literal_property_name(
+                            self.ctx.arena,
+                            sig.name,
+                        )
+                    && self.indexed_access_references_owner_property(
+                        sig.type_annotation,
+                        owner_name,
+                        &property_name,
+                    )
+                {
+                    let message = format!(
+                        "'{property_name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(sig.name, &message, 2502);
+                }
             }
             // TS2502 + TS2615: Check if property type annotation circularly
             // references itself through a mapped type applied to the enclosing interface.
