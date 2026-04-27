@@ -1310,6 +1310,30 @@ impl ScannerState {
             if is_digit(next) && self.scan_legacy_octal_number(start) {
                 return;
             }
+
+            // Numeric separator immediately after a leading zero (e.g. `0_0`,
+            // `0_1.5`) — tsc treats this as a legacy-octal-style leading zero
+            // and rejects the separator with TS6188. The integer part of a
+            // decimal literal that starts with a `0` followed by `_<digit>`
+            // is not a valid form. Emit the diagnostic at the `_` position
+            // and fall through to `scan_decimal_number` so the rest of the
+            // literal still produces the expected NumericLiteral token.
+            if next == CharacterCodes::UNDERSCORE
+                && self.char_code_at(self.pos + 2).is_some_and(is_digit)
+            {
+                self.scanner_diagnostics.push(ScannerDiagnostic {
+                    pos: self.pos + 1,
+                    length: 1,
+                    args: Vec::new(),
+                    message: diagnostic_messages::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                    code: diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                });
+                self.token_flags |= TokenFlags::ContainsInvalidSeparator as u32;
+                if self.token_invalid_separator_pos.is_none() {
+                    self.token_invalid_separator_pos = Some(self.pos + 1);
+                    self.token_invalid_separator_is_consecutive = false;
+                }
+            }
         }
 
         // Decimal number
@@ -4021,5 +4045,21 @@ mod tests {
         // `1_000_000` and `0xFF_FF` are well-formed.
         assert!(scan_separator_diagnostics("1_000_000").is_empty());
         assert!(scan_separator_diagnostics("0xFF_FF").is_empty());
+    }
+
+    #[test]
+    fn separator_after_leading_zero_emits_ts6188() {
+        // `0_0` — separator immediately after a leading zero in an unprefixed
+        // numeric literal is a legacy-octal-style pattern that tsc rejects
+        // with TS6188 at the `_` position. The literal still tokenizes as a
+        // NumericLiteral so the rest of the parse can proceed; only the
+        // separator-not-allowed-here diagnostic is added.
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        assert_eq!(scan_separator_diagnostics("0_0"), vec![(1, ts6188)]);
+        assert_eq!(scan_separator_diagnostics("0_1"), vec![(1, ts6188)]);
+        assert_eq!(scan_separator_diagnostics("0_8"), vec![(1, ts6188)]);
+        // Also fires when followed by a fraction or exponent.
+        assert_eq!(scan_separator_diagnostics("0_0.5_5"), vec![(1, ts6188)]);
+        assert_eq!(scan_separator_diagnostics("0_0e5_5"), vec![(1, ts6188)]);
     }
 }
