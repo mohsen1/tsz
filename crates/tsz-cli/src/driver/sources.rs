@@ -511,8 +511,26 @@ pub(super) fn read_source_files(
     let mut resolution_mode_errors = Vec::new();
     let use_cache = cache.is_some() && changed_paths.is_some();
 
-    for path in paths {
+    // PERF: cache `normalize_resolved_path` results for the BFS lifetime.
+    // The function calls `canonicalize` (= `realpath` syscall on macOS / Linux)
+    // plus a `path_has_symlinked_package_ancestor` walk that does
+    // `symlink_metadata` syscalls at every ancestor. Each unique resolved
+    // path is normalized once per `read_source_files` call; with thousands of
+    // import lookups in workspace projects this dominates BFS time after
+    // the module-resolver caches kick in. Keyed by raw resolved path; result
+    // is the canonical path returned by `normalize_resolved_path`.
+    let mut normalize_cache: FxHashMap<PathBuf, PathBuf> = FxHashMap::default();
+    let mut normalize = |path: &Path, options: &ResolvedCompilerOptions| -> PathBuf {
+        if let Some(cached) = normalize_cache.get(path) {
+            return cached.clone();
+        }
         let canonical = normalize_resolved_path(path, options);
+        normalize_cache.insert(path.to_path_buf(), canonical.clone());
+        canonical
+    };
+
+    for path in paths {
+        let canonical = normalize(path, options);
         if seen.insert(canonical.clone()) {
             pending.push_back(canonical);
         }
@@ -610,7 +628,7 @@ pub(super) fn read_source_files(
                     )
                     .classify();
                 if let Some(resolved) = outcome.resolved_path {
-                    let canonical = normalize_resolved_path(&resolved, options);
+                    let canonical = normalize(&resolved, options);
                     entry.insert(canonical.clone());
                     if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
@@ -687,7 +705,7 @@ pub(super) fn read_source_files(
                     )
                 });
                 if let Some(resolved) = resolved {
-                    let canonical = normalize_resolved_path(&resolved, options);
+                    let canonical = normalize(&resolved, options);
                     entry.insert(canonical.clone());
                     if seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
@@ -714,7 +732,7 @@ pub(super) fn read_source_files(
                                 options,
                             )
                         {
-                            let canonical = normalize_resolved_path(&alt, options);
+                            let canonical = normalize(&alt, options);
                             entry.insert(canonical.clone());
                             if seen.insert(canonical.clone()) {
                                 pending.push_back(canonical);
@@ -744,7 +762,7 @@ pub(super) fn read_source_files(
                 let Some(resolved_reference) = candidates
                     .iter()
                     .find(|candidate| candidate.is_file())
-                    .map(|candidate| normalize_resolved_path(candidate, options))
+                    .map(|candidate| normalize(candidate, options))
                 else {
                     continue;
                 };
