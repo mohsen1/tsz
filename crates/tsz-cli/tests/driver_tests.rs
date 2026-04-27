@@ -6656,6 +6656,88 @@ fn compile_type_only_export_equals_chain_reports_ts1361_without_ts2339() {
     );
 }
 
+/// Reproduces `conformance/externalModules/typeOnly/chained.ts`.
+///
+/// Chain: `/a.ts: export type {{ A as B }}` →
+///        `/b.ts: export {{ B as C }} from './a'` →
+///        `/c.ts: import type {{ C }} from './b'; export {{ C as D }}` →
+///        `/d.ts: import {{ D }} from './c'; new D()`.
+///
+/// The closest direct type-only marker to `D`'s use site is the
+/// `import type { C } from './b'` clause in `/c.ts`. `tsc` therefore emits
+/// **TS1361** (was imported using `import type`), not TS1362
+/// (which would attribute to the upstream `export type { A as B }`).
+///
+/// Regression: prior to fix, the chain walk visited the alias
+/// `C in /b.ts` first (whose import chain lands in `/a.ts`'s `export type`),
+/// inferred TS1362 from that cross-file resolution, and returned before
+/// reaching the more authoritative `import type` marker on `C in /c.ts`.
+/// The fix walks every alias on the chain — including ones in non-current
+/// binders — and prefers any direct `import type`/`export type` syntactic
+/// marker over inferred cross-file kinds.
+#[test]
+fn compile_chained_type_only_alias_attributes_to_import_type_marker() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "noEmit": true
+          },
+          "files": ["a.ts", "b.ts", "c.ts", "d.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("a.ts"),
+        "class A { a!: string }\nexport type { A as B };\nexport type Z = A;\n",
+    );
+    write_file(
+        &base.join("b.ts"),
+        "import { Z as Y } from './a';\nexport { B as C } from './a';\n",
+    );
+    write_file(
+        &base.join("c.ts"),
+        "import type { C } from './b';\nexport { C as D };\n",
+    );
+    write_file(
+        &base.join("d.ts"),
+        "import { D } from './c';\nnew D();\nconst d: D = {};\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts1361: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1361)
+        .collect();
+    let ts1362: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1362)
+        .collect();
+
+    assert_eq!(
+        ts1361.len(),
+        1,
+        "Expected exactly one TS1361 attributing to the `import type` marker. \
+         Got TS1361={ts1361:?}, TS1362={ts1362:?}, all={:?}",
+        result.diagnostics
+    );
+    assert!(
+        ts1362.is_empty(),
+        "Did not expect TS1362 — the upstream `export type` is shadowed \
+         by the closer `import type` marker. \
+         Got TS1362={ts1362:?}, all={:?}",
+        result.diagnostics
+    );
+}
+
 #[test]
 fn compile_declaration_true_emits_dts_files() {
     // Test that declaration: true produces .d.ts files

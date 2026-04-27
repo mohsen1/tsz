@@ -413,17 +413,34 @@ impl Symbol {
 
 /// A symbol table maps names to symbols.
 /// Used for scope management and name resolution.
+///
+/// The inner map is `Arc`-wrapped so cloning the table is an O(1)
+/// atomic refcount bump. Mutating methods (`set`, `remove`, `clear`)
+/// route through `Arc::make_mut`, which is free during the typical
+/// per-file binder lifecycle (refcount=1) and copy-on-writes only
+/// when the table is genuinely shared. This pattern matches the
+/// `SymbolArena` design above and the recently-merged `BoundFile`
+/// field Arc-wraps (PRs #1399/1404/1409/1416/1428).
+///
+/// On declaration-heavy projects (type-fest's 263 cross-file lookup
+/// binders × ~5K lib globals each) the per-file `file_locals` rebuild
+/// in `create_*_binder_with_augmentations` no longer pays for a full
+/// `HashMap` deep-clone of program-wide globals when callers can clone
+/// a pre-built globals table; the deep-clone cost shifts to the
+/// first per-file mutation, which happens at the same overall cost
+/// as the prior pattern but lets cleanly-empty per-file tables stay
+/// shared.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SymbolTable {
     /// Symbols indexed by their escaped name (using `FxHashMap` for faster hashing)
-    symbols: FxHashMap<String, SymbolId>,
+    symbols: Arc<FxHashMap<String, SymbolId>>,
 }
 
 impl SymbolTable {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            symbols: FxHashMap::default(),
+            symbols: Arc::new(FxHashMap::default()),
         }
     }
 
@@ -433,7 +450,10 @@ impl SymbolTable {
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            symbols: FxHashMap::with_capacity_and_hasher(capacity, Default::default()),
+            symbols: Arc::new(FxHashMap::with_capacity_and_hasher(
+                capacity,
+                Default::default(),
+            )),
         }
     }
 
@@ -445,12 +465,12 @@ impl SymbolTable {
 
     /// Set a symbol by name.
     pub fn set(&mut self, name: String, symbol: SymbolId) {
-        self.symbols.insert(name, symbol);
+        Arc::make_mut(&mut self.symbols).insert(name, symbol);
     }
 
     /// Remove a symbol by name.
     pub fn remove(&mut self, name: &str) -> Option<SymbolId> {
-        self.symbols.remove(name)
+        Arc::make_mut(&mut self.symbols).remove(name)
     }
 
     /// Check if a name exists in the table.
@@ -473,7 +493,7 @@ impl SymbolTable {
 
     /// Clear all symbols while keeping the allocated capacity.
     pub fn clear(&mut self) {
-        self.symbols.clear();
+        Arc::make_mut(&mut self.symbols).clear();
     }
 
     /// Iterate over symbols.

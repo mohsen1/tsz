@@ -1146,3 +1146,177 @@ class Foo<T extends string> {
          `this.data` should be `T`, not `T | undefined`. Got: {ts2532:#?}"
     );
 }
+
+/// `controlFlowAliasing.ts` C11: alias narrowing must survive a *later*
+/// reassignment of a `readonly` auto-property (`this.x = 10` in the else
+/// branch), but it must be invalidated for a parameter that is reassigned
+/// elsewhere in the same scope.
+#[test]
+fn alias_narrowing_readonly_property_survives_later_assignment() {
+    let source = r#"
+class C11 {
+    constructor(readonly x: string | number) {
+        const thisX_isString = typeof this.x === 'string';
+        const xIsString = typeof x === 'string';
+        if (thisX_isString && xIsString) {
+            let s: string;
+            s = this.x; // OK: this.x is a constant reference (readonly)
+            s = x;      // TS2322: x is reassigned later in the constructor
+        }
+        else {
+            this.x = 10;
+            x = 10;
+        }
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    let ts2322: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected exactly one TS2322 (on `s = x;`); the readonly property \
+         narrowing on `s = this.x;` must NOT error. Got: {ts2322:#?}"
+    );
+}
+
+/// `controlFlowAliasing.ts` f27: alias narrowing must NOT apply when the
+/// captured chain steps through a *mutable* property, even if no assignment
+/// is observed. tsc's `isConstantReference` rejects the chain because
+/// `obj` on `outer` is not declared `readonly`.
+#[test]
+fn alias_narrowing_rejected_for_mutable_property_chain() {
+    let source = r#"
+function f27(outer: { obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: number } }) {
+    const isFoo = outer.obj.kind === 'foo';
+    if (isFoo) {
+        outer.obj.foo;  // TS2339: not narrowed, `obj` is mutable
+    }
+    else {
+        outer.obj.bar;  // TS2339: not narrowed, `obj` is mutable
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    let ts2339: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .collect();
+
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Expected exactly two TS2339 from f27 (one per branch); the alias \
+         narrowing must be invalidated because `outer.obj` is mutable. \
+         Got: {ts2339:#?}"
+    );
+}
+
+/// `controlFlowAliasing.ts` f26: alias narrowing applies through a chain
+/// of `readonly` property accesses even when the same enclosing scope has
+/// other mutating operations on unrelated state. The whole chain must be
+/// constant for narrowing to apply.
+#[test]
+fn alias_narrowing_applies_for_readonly_property_chain() {
+    let source = r#"
+function f26(outer: { readonly obj: { kind: 'foo', foo: string } | { kind: 'bar', bar: number } }) {
+    const isFoo = outer.obj.kind === 'foo';
+    if (isFoo) {
+        outer.obj.foo;  // OK: `obj` is readonly so the chain is constant
+    }
+    else {
+        outer.obj.bar;  // OK: `obj` is readonly so the chain is constant
+    }
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty(), "Parse errors");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.check_source_file(root);
+
+    let ts2339: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2339)
+        .collect();
+
+    assert!(
+        ts2339.is_empty(),
+        "Expected no TS2339 in f26 (readonly chain narrows correctly), \
+         got: {ts2339:#?}"
+    );
+}

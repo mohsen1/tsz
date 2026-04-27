@@ -38,6 +38,13 @@ pub struct WasmProgram {
     lib_files: Vec<(String, String)>,
     /// Compiler options for type checking
     compiler_options: CompilerOptions,
+    /// Cached output of `checkAll()`, populated lazily on first call.
+    /// Invalidated by `addFile` / `addLibFile` / `setCompilerOptions` / `clear`.
+    check_all_cache: Option<String>,
+    /// Cached output of `getDiagnosticCodes()`, populated lazily on first call.
+    diagnostic_codes_cache: Option<String>,
+    /// Cached output of `getAllDiagnosticCodes()`, populated lazily on first call.
+    all_diagnostic_codes_cache: Option<Vec<u32>>,
 }
 
 impl Default for WasmProgram {
@@ -57,7 +64,19 @@ impl WasmProgram {
             merged: None,
             bind_results: None,
             compiler_options: CompilerOptions::default(),
+            check_all_cache: None,
+            diagnostic_codes_cache: None,
+            all_diagnostic_codes_cache: None,
         }
+    }
+
+    /// Drop all cached diagnostic outputs. Call from any mutator that
+    /// changes program inputs (`addFile`, `addLibFile`, `setCompilerOptions`,
+    /// `clear`) so the next diagnostic query rebuilds from fresh sources.
+    fn invalidate_diagnostic_caches(&mut self) {
+        self.check_all_cache = None;
+        self.diagnostic_codes_cache = None;
+        self.all_diagnostic_codes_cache = None;
     }
 
     /// Add a file to the program.
@@ -71,6 +90,7 @@ impl WasmProgram {
         // Invalidate any previous compilation
         self.merged = None;
         self.bind_results = None;
+        self.invalidate_diagnostic_caches();
 
         // Skip package.json files - they're used for module resolution but not parsed
         if file_name.ends_with("package.json") {
@@ -99,6 +119,7 @@ impl WasmProgram {
         // Invalidate any previous compilation
         self.merged = None;
         self.bind_results = None;
+        self.invalidate_diagnostic_caches();
 
         self.lib_files.push((file_name, source_text));
     }
@@ -114,6 +135,7 @@ impl WasmProgram {
         // Invalidate any previous compilation since options affect typing
         self.merged = None;
         self.bind_results = None;
+        self.invalidate_diagnostic_caches();
         Ok(())
     }
 
@@ -131,6 +153,7 @@ impl WasmProgram {
         self.lib_files.clear();
         self.merged = None;
         self.bind_results = None;
+        self.invalidate_diagnostic_caches();
     }
 
     /// Compile all files and return diagnostics as JSON.
@@ -147,6 +170,17 @@ impl WasmProgram {
     pub fn check_all(&mut self) -> String {
         if self.files.is_empty() && self.lib_files.is_empty() {
             return r#"{"files":[],"stats":{"totalFiles":0,"totalDiagnostics":0}}"#.to_string();
+        }
+
+        // Reuse cached output when the program hasn't been mutated since the
+        // last call. The previous behavior was to re-run the full lib-load +
+        // parse + bind + merge + check pipeline on every diagnostic call,
+        // even when the inputs were unchanged. Conformance harnesses, the
+        // playground, and any caller asking for diagnostics in more than one
+        // form (e.g. JSON for display PLUS codes for comparison) paid for
+        // the entire pipeline twice or three times per program revision.
+        if let Some(cached) = self.check_all_cache.as_ref() {
+            return cached.clone();
         }
 
         // Load lib files for binding
@@ -247,7 +281,9 @@ impl WasmProgram {
             }
         });
 
-        serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+        let serialized = serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string());
+        self.check_all_cache = Some(serialized.clone());
+        serialized
     }
 
     /// Get diagnostic codes for all files (for conformance testing).
@@ -257,6 +293,10 @@ impl WasmProgram {
     pub fn get_diagnostic_codes(&mut self) -> String {
         if self.files.is_empty() && self.lib_files.is_empty() {
             return "{}".to_string();
+        }
+
+        if let Some(cached) = self.diagnostic_codes_cache.as_ref() {
+            return cached.clone();
         }
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
@@ -300,7 +340,9 @@ impl WasmProgram {
         // Store merged program
         self.merged = Some(merged);
 
-        serde_json::to_string(&file_codes).unwrap_or_else(|_| "{}".to_string())
+        let serialized = serde_json::to_string(&file_codes).unwrap_or_else(|_| "{}".to_string());
+        self.diagnostic_codes_cache = Some(serialized.clone());
+        serialized
     }
 
     /// Get all diagnostic codes as a flat array (for simple conformance comparison).
@@ -311,6 +353,10 @@ impl WasmProgram {
     pub fn get_all_diagnostic_codes(&mut self) -> Vec<u32> {
         if self.files.is_empty() && self.lib_files.is_empty() {
             return Vec::new();
+        }
+
+        if let Some(cached) = self.all_diagnostic_codes_cache.as_ref() {
+            return cached.clone();
         }
 
         // Load lib files for binding (enables global symbol resolution: console, Array, etc.)
@@ -354,6 +400,7 @@ impl WasmProgram {
         // Store merged program
         self.merged = Some(merged);
 
+        self.all_diagnostic_codes_cache = Some(all_codes.clone());
         all_codes
     }
 }

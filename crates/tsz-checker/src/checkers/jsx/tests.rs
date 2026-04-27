@@ -1645,3 +1645,100 @@ fn jsx_generic_class_optional_ctor_constraint_reports_errors() {
         "Expected TS2739 or TS2322 for constraint-only generic with optional ctor, got: {codes:?}",
     );
 }
+
+// -- tsxNotUsingApparentTypeOfSFC fingerprint fixes ---------------------------
+
+/// Minimal JSX namespace with `IntrinsicAttributes` for the apparent-type-of-SFC tests.
+const JSX_WITH_INTRINSIC_ATTRS: &str = concat!(
+    "declare namespace JSX {\n",
+    "  interface Element {}\n",
+    "  interface ElementClass { render(): any; }\n",
+    "  interface ElementAttributesProperty { props: {}; }\n",
+    "  interface IntrinsicElements {}\n",
+    "  interface IntrinsicAttributes { key?: string; }\n",
+    "}\n",
+);
+
+/// `<MySFC />` where `MySFC` uses a free type variable `P` should emit TS2322 with target
+/// displayed as just `'P'`, not `'IntrinsicAttributes & P'`.
+/// Regression for tsxNotUsingApparentTypeOfSFC.tsx fingerprint bug.
+#[test]
+fn jsx_sfc_free_type_param_no_props_reports_plain_type_param_target() {
+    let source = format!(
+        "{JSX_WITH_INTRINSIC_ATTRS}
+function test<P>(wrappedProps: P) {{
+    let MySFC = function(props: P): JSX.Element {{ return null as any; }};
+    let x = <MySFC />;
+}}
+"
+    );
+    let diagnostics = check_jsx_strict(&source);
+    let has2322 = diagnostics.iter().any(|d| d.code == 2322);
+    assert!(
+        has2322,
+        "Expected TS2322 for <MySFC /> with free type param, got: {diagnostics:?}"
+    );
+    // The target in the error message must be 'P', not 'IntrinsicAttributes & P'.
+    let wrong_target = diagnostics
+        .iter()
+        .any(|d| d.code == 2322 && d.message_text.contains("IntrinsicAttributes & P"));
+    assert!(
+        !wrong_target,
+        "TS2322 must say 'not assignable to type P', not 'IntrinsicAttributes & P'. Got: {diagnostics:?}"
+    );
+    let correct_target = diagnostics
+        .iter()
+        .any(|d| d.code == 2322 && d.message_text.contains("not assignable to type 'P'"));
+    assert!(
+        correct_target,
+        "TS2322 message should contain \"not assignable to type 'P'\", got: {diagnostics:?}"
+    );
+}
+
+/// `<MySFC {{...wrappedProps}} />` where `wrappedProps: P` (unconstrained) should emit TS2322
+/// with target `'IntrinsicAttributes & P'` because P doesn't satisfy `IntrinsicAttributes`.
+/// Regression for tsxNotUsingApparentTypeOfSFC.tsx fingerprint bug.
+#[test]
+fn jsx_sfc_free_type_param_spread_reports_intrinsic_attrs_target() {
+    let source = format!(
+        "{JSX_WITH_INTRINSIC_ATTRS}
+function test<P>(wrappedProps: P) {{
+    let MySFC = function(props: P): JSX.Element {{ return null as any; }};
+    let z = <MySFC {{...wrappedProps}} />;
+}}
+"
+    );
+    let diagnostics = check_jsx_strict(&source);
+    let has2322 = diagnostics.iter().any(|d| d.code == 2322);
+    assert!(
+        has2322,
+        "Expected TS2322 for <MySFC {{...wrappedProps}} /> with unconstrained P, got: {diagnostics:?}"
+    );
+    // The target in the error message should be 'IntrinsicAttributes & P'.
+    let correct_target = diagnostics
+        .iter()
+        .any(|d| d.code == 2322 && d.message_text.contains("IntrinsicAttributes & P"));
+    assert!(
+        correct_target,
+        "TS2322 must say 'not assignable to type IntrinsicAttributes & P', got: {diagnostics:?}"
+    );
+}
+
+/// Sanity: when P extends `IntrinsicAttributes`, the spread should not error.
+#[test]
+fn jsx_sfc_type_param_constrained_to_intrinsic_attrs_no_error_on_spread() {
+    let source = format!(
+        "{JSX_WITH_INTRINSIC_ATTRS}
+function test<P extends JSX.IntrinsicAttributes>(wrappedProps: P) {{
+    let MySFC = function(props: P): JSX.Element {{ return null as any; }};
+    let z = <MySFC {{...wrappedProps}} />;
+}}
+"
+    );
+    let diagnostics = check_jsx_strict(&source);
+    let has2322 = diagnostics.iter().any(|d| d.code == 2322);
+    assert!(
+        !has2322,
+        "No TS2322 expected when P extends IntrinsicAttributes, got: {diagnostics:?}"
+    );
+}

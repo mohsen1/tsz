@@ -39,7 +39,7 @@ impl<'a> CheckerState<'a> {
         let mut symbols_to_check: Vec<(tsz_binder::SymbolId, String)> = Vec::new();
         let mut seen_decls: HashSet<(String, NodeIndex)> = HashSet::new();
 
-        for scope in &self.ctx.binder.scopes {
+        for scope in self.ctx.binder.scopes.iter() {
             // Skip root scope in script files
             if !is_module && scope.kind == ContainerKind::SourceFile {
                 continue;
