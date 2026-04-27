@@ -41,8 +41,13 @@ function toNumber(value) {
   return Number.isFinite(value) ? value : Number.NaN;
 }
 
-function formatMs(value) {
-  return Number(value).toFixed(1);
+function formatDurationMs(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms)) return "";
+  if (ms > 1000) {
+    return `${(ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}s`;
+  }
+  return `${ms.toFixed(1)}ms`;
 }
 
 function formatRatio(value) {
@@ -81,7 +86,7 @@ function renderHighlightedBenchmark(results) {
   const tszWidth = tszAvailable ? Math.max(2, (tszMs / maxMs) * widthMax) : 0;
   const tsgoWidth = Math.max(2, (tsgoMs / maxMs) * widthMax);
   const ratioLabel = tszAvailable ? formatSpeedupLabel(tszMs, tsgoMs) : "";
-  const tszLabel = tszAvailable ? `${formatMs(tszMs)}ms` : "measuring…";
+  const tszLabel = tszAvailable ? formatDurationMs(tszMs) : "measuring…";
 
   return `<section class="benchmark-mean-card" id="main-benchmark-spotlight">
   <p class="bench-category-title">Featured benchmark: <a href="/benchmarks/#projects-large-ts-repo">large-ts-repo</a></p>
@@ -95,7 +100,7 @@ function renderHighlightedBenchmark(results) {
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsgo</span>
       <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
-      <span class="bench-bar-time">${formatMs(tsgoMs)}ms</span>
+      <span class="bench-bar-time">${formatDurationMs(tsgoMs)}</span>
       ${ratioLabel ? `<span class="bench-winner">${ratioLabel}</span>` : ""}
     </div>
   </div>
@@ -126,12 +131,12 @@ function renderMeanChart(results) {
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>
       <div class="bench-bar tsz" style="width: ${tszWidth}px"></div>
-      <span class="bench-bar-time">${tszMean.toFixed(1)}ms</span>
+      <span class="bench-bar-time">${formatDurationMs(tszMean)}</span>
     </div>
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsgo</span>
       <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
-      <span class="bench-bar-time">${tsgoMean.toFixed(1)}ms</span>
+      <span class="bench-bar-time">${formatDurationMs(tsgoMean)}</span>
       ${speedupLabel ? `<span class="bench-winner">${speedupLabel}</span>` : ""}
     </div>
   </div>
