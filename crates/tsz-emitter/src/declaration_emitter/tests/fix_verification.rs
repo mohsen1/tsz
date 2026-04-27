@@ -1437,3 +1437,23 @@ fn exact_tsc_class_with_instance_and_static_accessor() {
         "export declare class C {\n    accessor x: number;\n    static accessor y: string;\n}\n";
     assert_eq!(output, expected, "Mismatch with tsc");
 }
+
+#[test]
+fn fix_identity_call_mutual_recursion_does_not_hang() {
+    // Regression: const_literal_identity_call_text used to create a fresh
+    // RecursionGuard on each call, so a mutually-recursive pair like
+    //   const a = id(b); const b = id(a);
+    // would loop forever.  The guard is now threaded through, so the cycle is
+    // detected and both consts fall back to their inferred types.
+    let source = r#"
+function id<T>(x: T): T { return x; }
+export const a = id(b);
+export const b = id(a);
+"#;
+    // Must complete without hanging; output type is not the goal of this test.
+    let output = emit_dts(source);
+    assert!(
+        !output.is_empty(),
+        "emitter should produce output: {output}"
+    );
+}
