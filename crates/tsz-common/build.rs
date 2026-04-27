@@ -13,6 +13,13 @@ use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    // CI never needs the dev-side git hook install. Running the script
+    // there forces cargo to consider the build-script output dynamic,
+    // which invalidates the workspace cache on every cache-warm rebuild.
+    println!("cargo:rerun-if-env-changed=CI");
+    if std::env::var_os("CI").is_some() {
+        return;
+    }
 
     let manifest_dir = match std::env::var_os("CARGO_MANIFEST_DIR") {
         Some(p) => p,
