@@ -43,7 +43,7 @@ fn is_js_like_file_name(file_name: &str) -> bool {
 
 impl BinderStateScopeInputs {
     pub(super) fn with_scopes(
-        scopes: Vec<Scope>,
+        scopes: Arc<Vec<Scope>>,
         node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     ) -> Self {
         Self {
@@ -196,7 +196,7 @@ impl BinderState {
             switch_clause_to_switch: Arc::new(FxHashMap::default()),
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
-            scopes: Vec::with_capacity(32),
+            scopes: Arc::new(Vec::with_capacity(32)),
             node_scope_ids: Arc::new(FxHashMap::with_capacity_and_hasher(64, Default::default())),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
@@ -266,7 +266,7 @@ impl BinderState {
         Arc::make_mut(&mut self.switch_clause_to_switch).clear();
         self.hoisted_vars.clear();
         self.hoisted_functions.clear();
-        self.scopes.clear();
+        Arc::make_mut(&mut self.scopes).clear();
         Arc::make_mut(&mut self.node_scope_ids).clear();
         self.current_scope_id = ScopeId::NONE;
         self.debugger.clear();
@@ -439,7 +439,7 @@ impl BinderState {
             switch_clause_to_switch: Arc::new(FxHashMap::default()),
             hoisted_vars: Vec::new(),
             hoisted_functions: Vec::new(),
-            scopes: Vec::new(),
+            scopes: Arc::new(Vec::new()),
             node_scope_ids: Arc::new(FxHashMap::default()),
             current_scope_id: ScopeId::NONE,
             debugger: ModuleResolutionDebugger::new(),
@@ -481,7 +481,7 @@ impl BinderState {
         symbols: SymbolArena,
         file_locals: SymbolTable,
         node_symbols: Arc<FxHashMap<u32, SymbolId>>,
-        scopes: Vec<Scope>,
+        scopes: Arc<Vec<Scope>>,
         node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     ) -> Self {
         Self::from_bound_state_with_scopes_and_augmentations(
@@ -638,7 +638,7 @@ impl BinderState {
         } else {
             Scope::new(self.current_scope_id, kind, node)
         };
-        self.scopes.push(new_scope);
+        Arc::make_mut(&mut self.scopes).push(new_scope);
 
         // Map node to this scope
         if node.is_some() {
@@ -667,7 +667,8 @@ impl BinderState {
             return;
         }
         if self.current_scope_id.is_some()
-            && let Some(scope) = self.scopes.get_mut(self.current_scope_id.0 as usize)
+            && let Some(scope) =
+                Arc::make_mut(&mut self.scopes).get_mut(self.current_scope_id.0 as usize)
         {
             scope.table.set(name, sym_id);
         }
@@ -677,7 +678,9 @@ impl BinderState {
         if self.current_scope_id.is_none() {
             return;
         }
-        if let Some(persistent_scope) = self.scopes.get_mut(self.current_scope_id.0 as usize) {
+        if let Some(persistent_scope) =
+            Arc::make_mut(&mut self.scopes).get_mut(self.current_scope_id.0 as usize)
+        {
             for (name, &sym_id) in self.current_scope.iter() {
                 persistent_scope.table.set(name.clone(), sym_id);
             }
@@ -1022,7 +1025,7 @@ impl BinderState {
         };
 
         // Initialize persistent scope system
-        self.scopes.clear();
+        Arc::make_mut(&mut self.scopes).clear();
         Arc::make_mut(&mut self.node_scope_ids).clear();
         self.current_scope_id = ScopeId::NONE;
         self.top_level_flow.clear();
@@ -1036,7 +1039,7 @@ impl BinderState {
 
         // Pre-populate root persistent scope with lib symbols if they were merged before binding
         if has_lib_symbols {
-            if let Some(root_scope) = self.scopes.first_mut() {
+            if let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut() {
                 for (name, sym_id) in &lib_symbols {
                     root_scope.table.set(name.clone(), *sym_id);
                 }
@@ -1608,7 +1611,7 @@ impl BinderState {
         }
 
         // Merge into the root persistent scope
-        if let Some(root_scope) = self.scopes.first_mut() {
+        if let Some(root_scope) = Arc::make_mut(&mut self.scopes).first_mut() {
             for (name, sym_id) in self.file_locals.iter() {
                 if !root_scope.table.has(name) {
                     root_scope.table.set(name.clone(), *sym_id);
@@ -1712,7 +1715,7 @@ impl BinderState {
                 continue;
             }
             self.file_locals.remove(&name);
-            if let Some(scope) = self.scopes.get_mut(0) {
+            if let Some(scope) = Arc::make_mut(&mut self.scopes).get_mut(0) {
                 scope.table.remove(&name);
             }
         }

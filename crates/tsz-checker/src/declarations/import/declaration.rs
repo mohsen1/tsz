@@ -2461,10 +2461,10 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::VARIABLE_STATEMENT => {
                         local_has_value = true;
                     }
-                    syntax_kind_ext::MODULE_DECLARATION => {
-                        if self.is_namespace_declaration_instantiated(decl_idx) {
-                            local_has_value = true;
-                        }
+                    syntax_kind_ext::MODULE_DECLARATION
+                        if self.is_namespace_declaration_instantiated(decl_idx) =>
+                    {
+                        local_has_value = true;
                     }
                     syntax_kind_ext::TYPE_ALIAS_DECLARATION
                     | syntax_kind_ext::INTERFACE_DECLARATION => {

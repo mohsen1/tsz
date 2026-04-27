@@ -2145,3 +2145,62 @@ fn non_generic_class_typeof_arg_in_generic_overload() {
          Got: {codes:?}"
     );
 }
+
+/// Regression test for TypeScript/tests/cases/compiler/arrayFrom.ts:
+///
+/// When inferring a generic type parameter `T` from a call argument whose type
+/// is an instantiation of an interface that *inherits* from the parameter's
+/// interface (e.g., source `MyChildIter<A>` extends `MyMidIter<A,...>` extends
+/// `MyBaseIter<A,...>`, target `MyBaseIter<T>`), the constraint walker must
+/// still pair signatures even when no source overload is *strictly assignable*
+/// to the target's erased form.
+///
+/// Before the fix, `select_signature_for_target` returned `None` whenever the
+/// pre-check `is_assignable_to(source_fn, target_erased)` failed for every
+/// source overload — which is the typical situation for inheritance-merged
+/// callable overloads (e.g. `[Symbol.iterator]` returning the more derived
+/// interface). This silently dropped inference, so the placeholder `T` only
+/// received its contextual return-type seed (e.g. `B` from `let r: B[] =`),
+/// and subsequent argument assignability check rejected the call as
+/// TS2769 "No overload matches this call". tsc instead pairs the LAST source
+/// overload with the target overload (matching `inferFromSignaturesOfType`).
+///
+/// With the fix, `constrain_matching_signatures` falls back to the last
+/// non-generic source signature (gated by an arity-compatibility check),
+/// allowing inference to populate `T` from the argument's element type. The
+/// assignment then surfaces a TS2322 "A[] is not assignable to B[]" — matching
+/// tsc's behaviour exactly.
+#[test]
+fn inheritance_merged_overload_pairs_last_source_sig_for_inference() {
+    let source = r#"
+        interface MyBaseIter<T, R = any, N = any> {
+            [Symbol.iterator](): MyBaseIter<T, R, N>;
+        }
+        interface MyMidIter<T, R = unknown, N = unknown> extends MyBaseIter<T, R, N> {
+            [Symbol.iterator](): MyMidIter<T, R, N>;
+        }
+        interface MyChildIter<T> extends MyMidIter<T, any, unknown> {
+            [Symbol.iterator](): MyChildIter<T>;
+        }
+
+        function from<T>(x: MyBaseIter<T>): T[];
+        function from(x: any): any { return null as any; }
+
+        interface A { a: string; }
+        interface B { b: string; }
+        declare const aIter: MyChildIter<A>;
+
+        const result: B[] = from(aIter);
+    "#;
+    let codes = get_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Cross-interface inference should produce TS2322 (A[] not assignable to B[]),\n\
+         not TS2769. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2769),
+        "Cross-interface inference must NOT emit TS2769 (no overload matches).\n\
+         Got: {codes:?}"
+    );
+}
