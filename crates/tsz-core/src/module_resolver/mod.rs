@@ -107,6 +107,22 @@ pub struct ModuleResolver {
     /// tree) so by-value clones on cache hits are still cheaper than the
     /// previous read+parse.
     package_json_cache: std::cell::RefCell<FxHashMap<PathBuf, Result<PackageJson, String>>>,
+    /// Cache for `should_skip_fallback_on_not_found` keyed by
+    /// (containing_dir, specifier, importing_module_kind). The function does
+    /// an unbounded walk up the directory tree calling `is_dir` and reading
+    /// `package.json` at every node_modules ancestor; on multi-package projects
+    /// this is the dominant cost in `read_source_files` BFS. Caching collapses
+    /// repeat checks for the same (dir, specifier) to an `FxHashMap` lookup.
+    /// `RefCell` keeps the function `&self`-callable without cascading
+    /// `&mut self` through the cold-path resolution code.
+    skip_fallback_cache:
+        std::cell::RefCell<FxHashMap<(PathBuf, String, ImportingModuleKind), bool>>,
+    /// Cache for `node_modules.is_dir()` checks during the
+    /// `should_skip_fallback_on_not_found` walk. Each ancestor directory's
+    /// `node_modules` presence is stable for the duration of a build, so
+    /// repeated walks from sibling files do not need to re-stat the same
+    /// ancestors.
+    node_modules_dir_cache: std::cell::RefCell<FxHashMap<PathBuf, bool>>,
     /// Cached package type for the current resolution
     current_package_type: Option<PackageType>,
     /// Root directory for the project (used for TS2209 ambiguous root detection)
@@ -146,6 +162,8 @@ impl ModuleResolver {
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             package_type_cache: FxHashMap::default(),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
+            skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
+            node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
             current_package_type: None,
             root_dir: options.root_dir.clone(),
             out_dir: options.out_dir.clone(),
@@ -174,6 +192,8 @@ impl ModuleResolver {
             rewrite_relative_import_extensions: false,
             package_type_cache: FxHashMap::default(),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
+            skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
+            node_modules_dir_cache: std::cell::RefCell::new(FxHashMap::default()),
             current_package_type: None,
             root_dir: None,
             out_dir: None,
