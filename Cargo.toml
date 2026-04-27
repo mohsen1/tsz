@@ -145,3 +145,21 @@ lto = "thin"
 inherits = "dev"
 debug = false
 codegen-units = 8
+
+[profile.ci-lint]
+# Used by `cargo clippy` in the CI lint suite. Clippy doesn't ship binaries
+# or run tests — it only needs `.rmeta` analysis output. So:
+#   debug = false      → no DWARF generation; clippy never reads it
+#   incremental = false → incremental fingerprinting fights sccache (sccache
+#                          can't cache work that depends on the per-target
+#                          incremental session) and CI runners are ephemeral
+#                          so the on-disk incremental cache is dead weight
+#   codegen-units = 256 → max parallelism. Clippy's per-crate work is
+#                          dominated by frontend/borrowck, which parallelizes
+#                          across CGUs cleanly when LLVM codegen is light.
+#   opt-level = 0      → inherited from dev; clippy doesn't need optimisation
+# Goal: clippy in <2 min warm, with sccache shouldering cross-commit reuse.
+inherits = "dev"
+debug = false
+incremental = false
+codegen-units = 256

@@ -434,11 +434,23 @@ run_lint() {
   cargo fmt --check
   scripts/arch/check-workspace-metadata.sh
   scripts/check-crate-root-files.sh
-  cargo clippy \
+  # Use the dedicated ci-lint profile (debug=false, incremental=false,
+  # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
+  # — separate cache key from .target/debug so dev incrementals on a
+  # contributor's machine aren't poisoned by CI-shaped fingerprints, and
+  # vice versa.
+  cargo clippy --profile ci-lint \
     -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
     -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
     --all-targets -- -D warnings
   scripts/arch/check-checker-boundaries.sh
+  # Surface sccache stats so the cache health is visible without reading
+  # the workflow log into a separate step.
+  if command -v sccache >/dev/null 2>&1; then
+    echo "::group::sccache stats"
+    sccache --show-stats || true
+    echo "::endgroup::"
+  fi
 }
 
 nextest_allow_no_tests() {
