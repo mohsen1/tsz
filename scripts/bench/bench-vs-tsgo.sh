@@ -674,7 +674,7 @@ run_project_benchmark() {
     # Very large fixtures (6000+ files) need an even longer timeout.
     local project_timeout
     if [ "$name" = "large-ts-repo" ]; then
-        project_timeout=$((BENCH_TIMEOUT * 5))
+        project_timeout=$((BENCH_TIMEOUT * 20))
     else
         project_timeout=$((BENCH_TIMEOUT * 2))
     fi
