@@ -1267,10 +1267,7 @@ function f1() {
         ts2556.is_empty(),
         "Expected no TS2556 for array literal spread (length is statically \
          known and elements are checked individually), got: {:?}",
-        ts2556
-            .iter()
-            .map(|d| &d.message_text)
-            .collect::<Vec<_>>()
+        ts2556.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
 

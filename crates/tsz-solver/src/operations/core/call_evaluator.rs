@@ -231,15 +231,15 @@ pub(super) enum UnionCallSignatureCompatibility {
 ///   → combined: (a: number & boolean): string | Date
 ///              = (a: never): string | Date
 /// ```
-pub(super) struct CombinedUnionSignature {
+pub(crate) struct CombinedUnionSignature {
     /// Intersected parameter types at each position
-    pub(super) param_types: Vec<TypeId>,
+    pub(crate) param_types: Vec<TypeId>,
     /// Minimum required arguments (max of all members' required counts)
-    pub(super) min_required: usize,
+    pub(crate) min_required: usize,
     /// Maximum allowed arguments (None if unbounded / has rest)
-    pub(super) max_allowed: Option<usize>,
+    pub(crate) max_allowed: Option<usize>,
     /// Unioned return type from all members
-    pub(super) return_type: TypeId,
+    pub(crate) return_type: TypeId,
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {

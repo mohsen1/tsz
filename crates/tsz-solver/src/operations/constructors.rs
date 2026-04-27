@@ -306,11 +306,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Resolve a `new` expression on a union type.
     ///
-    /// For unions, ALL members must be constructable (stricter than function calls).
-    /// If all members succeed, returns a union of their instance types.
+    /// Uses the same three-phase approach as `resolve_union_call`:
     ///
-    /// Example: `typeof A | typeof B` where both A and B are concrete classes
-    /// - `new (typeof A | typeof B)()` succeeds and returns `A | B`
+    /// Phase 1: Arity check against the combined signature (max of all members'
+    ///          required counts, intersection of param types, union of return types).
+    /// Phase 2: Per-member resolution to collect actual return types.
+    /// Phase 3: Validate arg types against the combined (intersected) param types.
+    ///
+    /// When no combined signature exists (any member has multiple/generic construct
+    /// signatures), falls back to strict per-member semantics: ALL members must
+    /// succeed for the union to succeed.
     fn resolve_union_new(
         &mut self,
         union_type: TypeId,
@@ -319,12 +324,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
 
-        // Pre-compute the combined construct return type from union members'
-        // construct signatures (mirrors try_compute_combined_union_signature
-        // for the call path). This is used as fallback_return when all members
-        // fail with ArgumentTypeMismatch but have identical param types.
-        let combined_construct_return = self.compute_combined_construct_return(&members);
+        // Compute a combined construct signature when all members have exactly one
+        // non-generic construct signature. Intersects param types (contravariant)
+        // and unions return types.
+        let combined = self.try_compute_combined_union_construct_signature(&members);
 
+        // Phase 1: Argument count validation using combined signature.
+        if let Some(ref combined) = combined {
+            if arg_types.len() < combined.min_required {
+                return CallResult::ArgumentCountMismatch {
+                    expected_min: combined.min_required,
+                    expected_max: combined.max_allowed,
+                    actual: arg_types.len(),
+                };
+            }
+            if let Some(max) = combined.max_allowed
+                && arg_types.len() > max
+            {
+                return CallResult::ArgumentCountMismatch {
+                    expected_min: combined.min_required,
+                    expected_max: combined.max_allowed,
+                    actual: arg_types.len(),
+                };
+            }
+        }
+
+        // Phase 2: Per-member resolution to collect return types and failures.
         let mut return_types = Vec::new();
         let mut failures = Vec::new();
 
@@ -334,11 +359,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return_types.push(ret);
                 }
                 CallResult::NotCallable { .. } => {
-                    // Skip non-constructable union members. tsc filters union
-                    // members to those with construct signatures rather than
-                    // failing the entire `new` expression when any member lacks one.
-                    // e.g. `new x` where `x: { a: string } | (new (a: string) => void)`
-                    // should succeed using the constructable member.
+                    if combined.is_some() {
+                        // Combined signature guarantees each member has a construct
+                        // signature; NotCallable is unexpected — treat as full failure.
+                        return CallResult::NotCallable {
+                            type_id: union_type,
+                        };
+                    }
+                    // When no combined signature, skip non-constructable members.
                 }
                 err => {
                     failures.push(err);
@@ -346,104 +374,90 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // If any members succeeded, return a union of their return types
+        // Phase 3 (combined path): validate arg types against intersected param types.
+        if let Some(ref combined) = combined {
+            // When all members succeeded, return the union of their return types.
+            if failures.is_empty() {
+                let return_type = if return_types.len() == 1 {
+                    return_types[0]
+                } else {
+                    self.interner.union(return_types)
+                };
+                return CallResult::Success(return_type);
+            }
+
+            // Validate each arg against the combined (intersected) parameter type.
+            for (i, &arg_type) in arg_types.iter().enumerate() {
+                if i < combined.param_types.len() {
+                    let param_type = combined.param_types[i];
+                    if !self.checker.is_assignable_to(arg_type, param_type) {
+                        return CallResult::ArgumentTypeMismatch {
+                            index: i,
+                            expected: param_type,
+                            actual: arg_type,
+                            fallback_return: combined.return_type,
+                        };
+                    }
+                }
+            }
+
+            // All arg types passed; handle arity-only failures from per-member resolution.
+            // (Can happen when a member has fewer params than the combined max allows.)
+            let all_failures_are_arity = !failures.is_empty()
+                && failures
+                    .iter()
+                    .all(|f| matches!(f, CallResult::ArgumentCountMismatch { .. }));
+
+            if all_failures_are_arity && !return_types.is_empty() {
+                // Some members succeeded, some failed on arity alone — combined
+                // arity check passed, so the call is valid.
+                return CallResult::Success(combined.return_type);
+            }
+
+            if all_failures_are_arity || failures.is_empty() {
+                return CallResult::Success(combined.return_type);
+            }
+
+            // Mixed failures — propagate first failure.
+            return failures
+                .into_iter()
+                .next()
+                .unwrap_or(CallResult::NotCallable {
+                    type_id: union_type,
+                });
+        }
+
+        // No combined signature — strict per-member semantics: ALL members must succeed.
         if !return_types.is_empty() {
-            if return_types.len() == 1 {
-                return CallResult::Success(return_types[0]);
-            }
-            // Return a union of all return types
-            let union_result = self.interner.union(return_types);
-            CallResult::Success(union_result)
-        } else if !failures.is_empty() {
-            // If all failures are ArgumentTypeMismatch, aggregate like build_union_call_result:
-            // intersect parameter types and use the combined construct return.
-            let all_arg_mismatches = failures
-                .iter()
-                .all(|f| matches!(f, CallResult::ArgumentTypeMismatch { .. }));
-
-            if all_arg_mismatches {
-                let mut param_types = Vec::new();
-                let mut actual_arg = TypeId::ERROR;
-                for failure in &failures {
-                    if let CallResult::ArgumentTypeMismatch {
-                        expected, actual, ..
-                    } = failure
-                    {
-                        param_types.push(*expected);
-                        actual_arg = *actual;
-                    }
-                }
-                let intersected_param = if param_types.len() == 1 {
-                    param_types[0]
+            if failures.is_empty() {
+                let return_type = if return_types.len() == 1 {
+                    return_types[0]
                 } else {
-                    let mut result = param_types[0];
-                    for &pt in &param_types[1..] {
-                        result = self.interner.intersection2(result, pt);
-                    }
-                    result
+                    self.interner.union(return_types)
                 };
-                // Only use the combined return when all union members expected
-                // the same parameter type (same guard as build_union_call_result).
-                let all_same_param = param_types.windows(2).all(|w| w[0] == w[1]);
-                let combined_return = if all_same_param {
-                    combined_construct_return.unwrap_or(TypeId::ERROR)
-                } else {
-                    TypeId::ERROR
-                };
-                CallResult::ArgumentTypeMismatch {
-                    index: 0,
-                    expected: intersected_param,
-                    actual: actual_arg,
-                    fallback_return: combined_return,
-                }
-            } else {
-                failures
-                    .into_iter()
-                    .next()
-                    .expect("failures is non-empty when no constituent is callable")
+                return CallResult::Success(return_type);
             }
-        } else {
-            CallResult::NotCallable {
-                type_id: union_type,
-            }
+            // Some members failed — propagate first failure.
+            return failures
+                .into_iter()
+                .next()
+                .unwrap_or(CallResult::NotCallable {
+                    type_id: union_type,
+                });
         }
-    }
 
-    /// Compute the combined construct return type for a union of constructors.
-    ///
-    /// Extracts construct signatures from each union member and returns the
-    /// union of their return types. This mirrors `try_compute_combined_union_signature`
-    /// for the call path but only computes the return type (not params/arity).
-    fn compute_combined_construct_return(&self, members: &[TypeId]) -> Option<TypeId> {
-        let mut return_types = Vec::new();
-        for &member in members {
-            match self.interner.lookup(member) {
-                Some(TypeData::Callable(callable_id)) => {
-                    let callable = self.interner.callable_shape(callable_id);
-                    if callable.construct_signatures.len() == 1 {
-                        return_types.push(callable.construct_signatures[0].return_type);
-                    } else if !callable.construct_signatures.is_empty() {
-                        // Multiple construct overloads — use first (conservative)
-                        return_types.push(callable.construct_signatures[0].return_type);
-                    } else {
-                        return None; // member has no construct signature
-                    }
-                }
-                Some(TypeData::Function(func_id)) => {
-                    let func = self.interner.function_shape(func_id);
-                    if func.is_constructor {
-                        return_types.push(func.return_type);
-                    } else {
-                        return None;
-                    }
-                }
-                _ => return None,
-            }
+        if !failures.is_empty() {
+            return failures
+                .into_iter()
+                .next()
+                .unwrap_or(CallResult::NotCallable {
+                    type_id: union_type,
+                });
         }
-        if return_types.is_empty() {
-            return None;
+
+        CallResult::NotCallable {
+            type_id: union_type,
         }
-        Some(self.interner.union(return_types))
     }
 
     /// Resolve a `new` expression on an intersection type.
