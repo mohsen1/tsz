@@ -56,6 +56,10 @@ name = "await_generic_non_promise_no_false_ts2339_tests"
 path = "tests/await_generic_non_promise_no_false_ts2339_tests.rs"
 
 [[test]]
+name = "await_thenable_this_context_tests"
+path = "tests/await_thenable_this_context_tests.rs"
+
+[[test]]
 name = "ts2449_parameter_decorator_no_tdz_tests"
 path = "tests/ts2449_parameter_decorator_no_tdz_tests.rs"
 
@@ -469,4 +473,3 @@ path = "tests/elaboration_wrapper_init_tests.rs"
 
 [lints]
 workspace = true
-

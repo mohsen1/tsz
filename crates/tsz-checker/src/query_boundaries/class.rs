@@ -151,6 +151,96 @@ fn needs_strict_generic_target_callable_recheck(
         && has_own_signature_type_params(checker, target)
 }
 
+fn source_this_parameter_is_acceptable_for_target_without_this(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    fn generic_head(display: &str) -> Option<&str> {
+        display.split_once('<').map(|(head, _)| head.trim())
+    }
+
+    fn signatures_have_matching_generic_shape(
+        checker: &CheckerState<'_>,
+        source_shape: &tsz_solver::FunctionShape,
+        target_shape: &tsz_solver::FunctionShape,
+    ) -> bool {
+        source_shape.this_type.is_some()
+            && target_shape.this_type.is_none()
+            && !source_shape.type_params.is_empty()
+            && !target_shape.type_params.is_empty()
+            && source_shape.params.len() == target_shape.params.len()
+            && generic_head(&checker.format_type(source_shape.return_type))
+                == generic_head(&checker.format_type(target_shape.return_type))
+    }
+
+    if let (Some(source_shape), Some(target_shape)) = (
+        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, source),
+        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, target),
+    ) {
+        if source_shape.this_type.is_none() || target_shape.this_type.is_some() {
+            return false;
+        }
+
+        let mut stripped = (*source_shape).clone();
+        stripped.this_type = None;
+        let stripped_source = checker.ctx.types.factory().function(stripped);
+        return checker.is_assignable_to_no_erase_generics(stripped_source, target)
+            || checker.is_assignable_to_no_erase_generics(target, stripped_source)
+            || signatures_have_matching_generic_shape(checker, &source_shape, &target_shape);
+    }
+
+    let (Some(source_shape), Some(target_shape)) = (
+        crate::query_boundaries::common::callable_shape_for_type(checker.ctx.types, source),
+        crate::query_boundaries::common::callable_shape_for_type(checker.ctx.types, target),
+    ) else {
+        return false;
+    };
+    if source_shape.call_signatures.is_empty()
+        || source_shape
+            .call_signatures
+            .iter()
+            .all(|sig| sig.this_type.is_none())
+        || target_shape
+            .call_signatures
+            .iter()
+            .any(|sig| sig.this_type.is_some())
+    {
+        return false;
+    }
+
+    let mut stripped = (*source_shape).clone();
+    for sig in &mut stripped.call_signatures {
+        sig.this_type = None;
+    }
+    let stripped_source = checker.ctx.types.factory().callable(stripped);
+    checker.is_assignable_to_no_erase_generics(stripped_source, target)
+        || checker.is_assignable_to_no_erase_generics(target, stripped_source)
+        || source_shape.call_signatures.iter().any(|source_sig| {
+            target_shape.call_signatures.iter().any(|target_sig| {
+                let source_fn = tsz_solver::FunctionShape {
+                    type_params: source_sig.type_params.clone(),
+                    params: source_sig.params.clone(),
+                    this_type: source_sig.this_type,
+                    return_type: source_sig.return_type,
+                    type_predicate: source_sig.type_predicate,
+                    is_constructor: false,
+                    is_method: source_sig.is_method,
+                };
+                let target_fn = tsz_solver::FunctionShape {
+                    type_params: target_sig.type_params.clone(),
+                    params: target_sig.params.clone(),
+                    this_type: target_sig.this_type,
+                    return_type: target_sig.return_type,
+                    type_predicate: target_sig.type_predicate,
+                    is_constructor: false,
+                    is_method: target_sig.is_method,
+                };
+                signatures_have_matching_generic_shape(checker, &source_fn, &target_fn)
+            })
+        })
+}
+
 // =============================================================================
 // Relation boundary helpers (thin wrappers over assignability)
 // =============================================================================
@@ -178,6 +268,9 @@ pub(crate) fn should_report_member_type_mismatch(
         return false;
     }
     if checker.is_assignable_to_no_erase_generics(source, target) {
+        return false;
+    }
+    if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {
         return false;
     }
     if checker.should_skip_weak_union_error(source, target, node_idx) {
@@ -229,6 +322,9 @@ pub(crate) fn should_report_own_member_type_mismatch(
         return false;
     }
     if checker.is_assignable_to_no_erase_generics(source, target) {
+        return false;
+    }
+    if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {
         return false;
     }
     if checker.should_skip_weak_union_error(source, target, node_idx) {

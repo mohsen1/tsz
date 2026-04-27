@@ -97,6 +97,11 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
+        if self.is_assignable_to(source, target)
+            || self.is_nested_same_wrapper_application_assignment(source, target)
+        {
+            return;
+        }
         self.diagnose_assignment_failure(source, target, idx);
     }
 
@@ -108,6 +113,11 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
+        if self.is_assignable_to(source, target)
+            || self.is_nested_same_wrapper_application_assignment(source, target)
+        {
+            return;
+        }
         self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
 

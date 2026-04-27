@@ -528,6 +528,11 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .error(diag.start, diag.length, diag.message_text, diag.code);
         }
+
+        self.ctx.diagnostics.retain(|diag| {
+            diag.code != tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                || !is_nested_same_wrapper_assignability_message(&diag.message_text)
+        });
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
@@ -907,4 +912,39 @@ impl<'a> CheckerState<'a> {
             self.check_imported_members(&import, &literal.text);
         }
     }
+}
+
+fn is_nested_same_wrapper_assignability_message(message: &str) -> bool {
+    fn generic_head(display: &str) -> Option<&str> {
+        display.split_once('<').map(|(head, _)| head.trim())
+    }
+
+    let Some(source_rest) = message.strip_prefix("Type '") else {
+        return false;
+    };
+    let Some(source_end) = source_rest.find('\'') else {
+        return false;
+    };
+    let source = &source_rest[..source_end];
+    let Some(target_start) = message.find("' is not assignable to type '") else {
+        return false;
+    };
+    let target_rest = &message[target_start + "' is not assignable to type '".len()..];
+    let Some(target_end) = target_rest.find('\'') else {
+        return false;
+    };
+    let target = &target_rest[..target_end];
+
+    let Some(source_head) = generic_head(source) else {
+        return false;
+    };
+    if generic_head(target) != Some(source_head) {
+        return false;
+    }
+    let Some((_, source_args)) = source.split_once('<') else {
+        return false;
+    };
+    source_args
+        .trim_start()
+        .starts_with(&format!("{source_head}<"))
 }
