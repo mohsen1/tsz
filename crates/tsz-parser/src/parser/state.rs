@@ -308,6 +308,18 @@ impl ParserState {
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
         self.jsx_missing_brace_semicolon_window_start = None;
         self.namespace_import_yielded_to_statement = false;
+        // The high-water mark tracks the count of scanner diagnostics that
+        // have been considered by the parser-side dedup at `parse_error_at`.
+        // When the parser is reused via `reset()` the caller passes a fresh
+        // source text. Without clearing the mark AND the scanner's diagnostic
+        // vec, the dedup check at line 1080 (`scanner_diags.len() > HWM`) could
+        // see a stale `last()` whose `pos` accidentally matches a new-parse
+        // error and wrongly suppress it. The Scanner's `set_text` (called
+        // above) intentionally does NOT clear the diagnostics for callers
+        // outside ParserState, so we explicitly clear them here. (Devin
+        // review on PR #1521.)
+        self.scanner.clear_scanner_diagnostics();
+        self.scanner_diagnostics_high_water_mark = 0;
     }
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded

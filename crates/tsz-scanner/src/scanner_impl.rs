@@ -3035,6 +3035,15 @@ impl ScannerState {
         &self.scanner_diagnostics
     }
 
+    /// Clear accumulated scanner diagnostics. Used by `ParserState::reset` so a
+    /// reused parser doesn't carry stale scanner-side errors into a new parse.
+    /// `set_text` does NOT clear them — callers like the LSP that re-text the
+    /// scanner across edits without going through ParserState may want the
+    /// previous diagnostics to remain accessible.
+    pub fn clear_scanner_diagnostics(&mut self) {
+        self.scanner_diagnostics.clear();
+    }
+
     /// Merge conflict marker length (7 characters: `<<<<<<<`, `=======`, etc.)
     const MERGE_CONFLICT_MARKER_LENGTH: usize = 7;
 
