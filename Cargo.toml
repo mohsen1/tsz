@@ -98,13 +98,13 @@ codegen-units = 1     # Single codegen unit for better optimization
 strip = "symbols"     # Strip debug symbols to reduce binary size
 
 [profile.dist-fast]
-# Fast build + good runtime: balance between compile time and performance
-# Use for: CI testing, quick benchmarks, faster conformance runs
-# Build time: ~20-30% faster than dist, Runtime: ~95% of dist performance
+# Fast build for CI: correctness over runtime performance.
+# LTO disabled so linking is not the bottleneck (sccache can't cache the link step).
+# Use for: CI testing, conformance runs. Not for representative perf benchmarks.
 inherits = "release"
-lto = "thin"          # Faster than fat LTO, still good optimization
-codegen-units = 16    # Parallel build (like release), unlike dist's serial build
-strip = "debuginfo"   # Keep symbols for debugging, strip debug info only
+lto = false           # No LTO: linking is ~5-10x faster; sccache hits the codegen step
+codegen-units = 16    # Parallel codegen
+strip = "debuginfo"
 
 [profile.dev-fast]
 inherits = "dev"
