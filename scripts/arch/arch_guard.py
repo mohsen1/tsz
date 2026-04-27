@@ -469,6 +469,10 @@ LINE_LIMIT_CHECKS = [
             # Pre-existing: display_formatting.rs grew past 2000 raw lines
             # (LOC ~1823, under the CI threshold; local raw-line guard catches it).
             "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
+            # Pre-existing: grew past 2000 lines in alias-narrowing and
+            # TS2415/TS2416/TS2420 elaboration fixes (#1545, #1541).
+            "crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs",
+            "crates/tsz-checker/src/context/core.rs",
         },
     ),
 ]

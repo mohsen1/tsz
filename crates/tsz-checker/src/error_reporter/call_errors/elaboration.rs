@@ -627,10 +627,42 @@ impl<'a> CheckerState<'a> {
         // For direct variable-initializer / direct-assignment elaboration
         // (`allow_unresolved_holes = true`), the target type is final and any
         // remaining type parameters are bound by the target's own quantifier,
-        // so the elaboration is sound and matches tsc.
-        if !allow_unresolved_holes && self.type_has_unresolved_inference_holes(expected_return_type)
-        {
-            return false;
+        // so the elaboration is sound and matches tsc. However, even in the
+        // `allow_unresolved_holes = true` path, if the callable target has NO
+        // own generic type parameters, the unresolved type parameters must
+        // come from an outer inference context (e.g., `B` in `(...args: A) => B`
+        // from `pipe<A,B,C>`). In that case, elaboration produces false TS2322
+        // errors and should be skipped.
+        if self.type_has_unresolved_inference_holes(expected_return_type) {
+            let should_skip = if !allow_unresolved_holes {
+                true
+            } else {
+                // allow_unresolved_holes=true (direct-assignment context): skip
+                // when the callable has no own type params in its signatures,
+                // meaning the holes come from an outer generic context.
+                let callable_has_own_type_params =
+                    crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types.as_type_database(),
+                        param_type,
+                    )
+                    .map(|shape| {
+                        shape
+                            .call_signatures
+                            .iter()
+                            .chain(shape.construct_signatures.iter())
+                            .any(|sig| !sig.type_params.is_empty())
+                    })
+                    .unwrap_or(false)
+                        || crate::query_boundaries::common::function_shape_for_type(
+                            self.ctx.types,
+                            param_type,
+                        )
+                        .is_some_and(|shape| !shape.type_params.is_empty());
+                !callable_has_own_type_params
+            };
+            if should_skip {
+                return false;
+            }
         }
 
         let Some(body_node) = self.ctx.arena.get(func.body) else {
