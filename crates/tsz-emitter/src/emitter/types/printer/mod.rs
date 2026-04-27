@@ -54,6 +54,12 @@ pub struct TypePrinter<'a> {
     strict_null_checks: bool,
     outer_type_param_names: Vec<Atom>,
     type_param_renames: Vec<(Atom, String)>,
+    /// True while printing types that lexically appear inside the `extends`
+    /// clause of a conditional type. Only inside this clause should an
+    /// `Infer(T)` placeholder render as `infer T`; references to the same
+    /// placeholder reused in the conditional's true/false branches (or anywhere
+    /// else, e.g. as a type argument) render as the bare name `T`.
+    in_extends_clause: bool,
 }
 
 impl<'a> TypePrinter<'a> {
@@ -74,7 +80,28 @@ impl<'a> TypePrinter<'a> {
             strict_null_checks: true,
             outer_type_param_names: Vec::new(),
             type_param_renames: Vec::new(),
+            in_extends_clause: false,
         }
+    }
+
+    /// Return a clone configured for printing the extends clause of a
+    /// conditional type, where `Infer(T)` should render as `infer T`.
+    pub(crate) fn entering_extends_clause(&self) -> Self {
+        let mut next = self.clone();
+        next.in_extends_clause = true;
+        next
+    }
+
+    /// Return a clone configured for printing positions outside any extends
+    /// clause, where `Infer(T)` collapses to the bare name `T`.
+    pub(crate) fn leaving_extends_clause(&self) -> Self {
+        let mut next = self.clone();
+        next.in_extends_clause = false;
+        next
+    }
+
+    pub(crate) const fn is_in_extends_clause(&self) -> bool {
+        self.in_extends_clause
     }
 
     /// Set the symbol arena for visibility checking.

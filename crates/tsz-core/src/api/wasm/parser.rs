@@ -97,20 +97,17 @@ impl Parser {
     /// Add a lib file (e.g., lib.es5.d.ts) for global type resolution.
     /// The lib file will be parsed and bound, and its global symbols will be
     /// available during binding and type checking.
+    ///
+    /// Routes through the global `get_or_create_lib_file` cache so multiple
+    /// `Parser` instances created in a single WASM session share one parsed-
+    /// and-bound representation per (`file_name`, `content_hash`) pair instead of
+    /// each rebuilding their own. The cache is keyed on a content hash, so
+    /// calls with different content for the same file name still get distinct,
+    /// freshly-bound lib files (no aliasing risk). Mirrors what
+    /// `WasmProgram::checkAll` already does.
     #[wasm_bindgen(js_name = addLibFile)]
     pub fn add_lib_file(&mut self, file_name: String, source_text: String) {
-        let mut lib_parser = ParserState::new(file_name.clone(), source_text);
-        let source_file_idx = lib_parser.parse_source_file();
-
-        let mut lib_binder = BinderState::new();
-        lib_binder.bind_source_file(lib_parser.get_arena(), source_file_idx);
-
-        // Wrap in Arc for sharing with LibContext during type checking
-        let arena = Arc::new(lib_parser.into_arena());
-        let binder = Arc::new(lib_binder);
-
-        // Create lib_loader::LibFile
-        let lib_file = Arc::new(LibFile::new(file_name, arena, binder, source_file_idx));
+        let lib_file = crate::api::wasm::lib_cache::get_or_create_lib_file(file_name, source_text);
 
         self.lib_files.push(lib_file);
 

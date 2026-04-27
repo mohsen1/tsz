@@ -469,7 +469,33 @@ impl<'a> IRPrinter<'a> {
                     self.write(" ");
                     self.write(operator);
                     self.write(" ");
-                    self.emit_sent_aware(right);
+                    // Plain assignment operators (`=`, `+=`, etc.) don't need
+                    // disambiguating parens around `_a.sent()` on the RHS — the
+                    // call-expression precedence is unambiguous in that
+                    // position. tsc emits `y = _a.sent();` without parens.
+                    let is_assign = matches!(
+                        operator.as_ref(),
+                        "=" | "+="
+                            | "-="
+                            | "*="
+                            | "/="
+                            | "%="
+                            | "**="
+                            | "<<="
+                            | ">>="
+                            | ">>>="
+                            | "&="
+                            | "|="
+                            | "^="
+                            | "&&="
+                            | "||="
+                            | "??="
+                    );
+                    if is_assign {
+                        self.emit_node(right);
+                    } else {
+                        self.emit_sent_aware(right);
+                    }
                 }
             }
             IRNode::PrefixUnaryExpr { operator, operand } => {

@@ -453,27 +453,45 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the Object's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // Get type params from the array base type (stored during test setup)
-                let type_params =
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+                // Get type params from the array base type (stored during test setup).
+                //
+                // GUARD: only apply array_base_type_params when this Application's
+                // base is actually the registered global Array. For other generic
+                // interfaces resolved to Object (e.g., BigInt64Array<TArrayBuffer>),
+                // these are *Array's* type-params, not the resolved interface's, and
+                // substituting with them is a no-op-or-worse. Without this guard,
+                // method return types like `(): BigInt64Array<TArrayBuffer>` get a
+                // wrong-substitution that yields a different `TypeId` than the
+                // receiver's own property lookup, surfacing as TS2719 ("Two
+                // different types with this name exist") on assignability checks
+                // (see project_iter21_typed_array_variance_root_cause.md).
+                let is_global_array_base =
+                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+                        .is_some_and(|b| b == app.base);
+                let type_params = if is_global_array_base {
+                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
+                } else {
+                    &[]
+                };
 
-                if type_params.is_empty() {
-                    // No type params available, return the property type as-is
-                    return PropertyAccessResult::simple(prop.type_id);
-                }
-
-                // Create substitution: map type params to application args
-                let substitution =
-                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
-
-                // Instantiate the property type with substitution
-                use crate::instantiation::instantiate::instantiate_type_with_infer;
-                let instantiated_prop_type =
-                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
-
-                // Handle `this` types
+                // Instantiate the property type with type-param substitution (only
+                // when we have valid type-params for this base). Then ALWAYS run
+                // `substitute_this_type` so `Promise<this>`-style return types
+                // resolve to the actual receiver — even when type-params are
+                // unavailable (e.g., non-Array generic interface resolved to
+                // Object). Without the always-on `this` substitution, regressions
+                // appear in patterns like `(a: Bar | Baz).doThing(): Promise<this>`.
+                use crate::instantiation::instantiate::{
+                    instantiate_type_with_infer, substitute_this_type,
+                };
+                let instantiated_prop_type = if type_params.is_empty() {
+                    prop.type_id
+                } else {
+                    let substitution =
+                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution)
+                };
                 let app_type = self.interner().application(app.base, app.args.clone());
-                use crate::instantiation::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
@@ -492,23 +510,28 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the ObjectWithIndex's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // Get type params
-                let type_params =
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
+                // GUARD: only apply array_base_type_params when this Application's
+                // base is the registered global Array. See Object branch above.
+                let is_global_array_base =
+                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+                        .is_some_and(|b| b == app.base);
+                let type_params = if is_global_array_base {
+                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
+                } else {
+                    &[]
+                };
 
-                if type_params.is_empty() {
-                    return PropertyAccessResult::simple(prop.type_id);
-                }
-
-                let substitution =
-                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
-
-                use crate::instantiation::instantiate::instantiate_type_with_infer;
-                let instantiated_prop_type =
-                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
-
+                use crate::instantiation::instantiate::{
+                    instantiate_type_with_infer, substitute_this_type,
+                };
+                let instantiated_prop_type = if type_params.is_empty() {
+                    prop.type_id
+                } else {
+                    let substitution =
+                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution)
+                };
                 let app_type = self.interner().application(app.base, app.args.clone());
-                use crate::instantiation::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
@@ -534,37 +557,31 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Try to find the property in the Callable's properties
             if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
-                // For Callable properties, we need to substitute type parameters
-                // The Array Callable has properties that reference the type parameter T
-                // We need to substitute T with the element_type from app.args[0]
+                // For Callable properties, we need to substitute type parameters.
+                // GUARD: only apply array_base_type_params when this Application's
+                // base is the registered global Array. See Object branch above —
+                // the array_base_type_params are *Array's* params, only valid when
+                // the Application's base actually references the global Array.
+                let is_global_array_base =
+                    crate::relations::subtype::TypeResolver::get_array_base_type(self.db)
+                        .is_some_and(|b| b == app.base);
+                let type_params = if is_global_array_base {
+                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db)
+                } else {
+                    &[]
+                };
 
-                // Create substitution: map the Callable's type parameters to the application's arguments
-                // For Array, this means T -> element_type
-                let type_params =
-                    crate::relations::subtype::TypeResolver::get_array_base_type_params(self.db);
-
-                if type_params.is_empty() {
-                    // No type params available, return the property type as-is
-                    return PropertyAccessResult::simple(prop.type_id);
-                }
-
-                // Task 2.2: Lazy Member Instantiation
-                // Instantiate ONLY the property type, not the entire Callable
-                // This avoids recursion into other 37+ Array methods
-                let substitution =
-                    TypeSubstitution::from_args(self.interner(), type_params, &app.args);
-
-                // Use instantiate_type_infer to handle infer vars and avoid depth issues
-                use crate::instantiation::instantiate::instantiate_type_with_infer;
-                let instantiated_prop_type =
-                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution);
-
-                // Task 2.3: Handle `this` Types
-                // Array methods may return `this` or `this[]` which need to be
-                // substituted with the actual Application type (e.g., `T[]`)
+                use crate::instantiation::instantiate::{
+                    instantiate_type_with_infer, substitute_this_type,
+                };
+                let instantiated_prop_type = if type_params.is_empty() {
+                    prop.type_id
+                } else {
+                    let substitution =
+                        TypeSubstitution::from_args(self.interner(), type_params, &app.args);
+                    instantiate_type_with_infer(self.interner(), prop.type_id, &substitution)
+                };
                 let app_type = self.interner().application(app.base, app.args.clone());
-
-                use crate::instantiation::instantiate::substitute_this_type;
                 let final_type =
                     substitute_this_type(self.interner(), instantiated_prop_type, app_type);
 
@@ -1009,6 +1026,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return PropertyAccessResult::simple(literal);
         }
 
+        if prop_name == "toLocaleString" {
+            return self.method_result(TypeId::STRING);
+        }
+
         let element_type = self.array_element_type(array_type);
 
         // Try to use the Array<T> interface from lib.d.ts
@@ -1289,15 +1310,27 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // STEP 2: Hardcoded well-known Function members (no-lib / bootstrap path).
         // Reached when the boxed `Function` interface is unavailable (no lib loaded)
-        // or didn't resolve the property.
-        match prop_name {
-            "apply" | "call" | "bind" => return self.method_result(TypeId::ANY),
-            "toString" => return self.method_result(TypeId::STRING),
-            "name" => return PropertyAccessResult::simple(TypeId::STRING),
-            "length" => return PropertyAccessResult::simple(TypeId::NUMBER),
-            "prototype" | "arguments" => return PropertyAccessResult::simple(TypeId::ANY),
-            "caller" => return PropertyAccessResult::simple(self.any_args_function(TypeId::ANY)),
-            _ => {}
+        // or didn't resolve the property. We emit a structured trace event so
+        // drift (e.g. tests inadvertently bootstrapping with no-lib semantics)
+        // is visible at runtime — see robustness audit item 15 / PR #O.
+        let hardcoded_match = match prop_name {
+            "apply" | "call" | "bind" => Some(self.method_result(TypeId::ANY)),
+            "toString" => Some(self.method_result(TypeId::STRING)),
+            "name" => Some(PropertyAccessResult::simple(TypeId::STRING)),
+            "length" => Some(PropertyAccessResult::simple(TypeId::NUMBER)),
+            "prototype" | "arguments" => Some(PropertyAccessResult::simple(TypeId::ANY)),
+            "caller" => Some(PropertyAccessResult::simple(
+                self.any_args_function(TypeId::ANY),
+            )),
+            _ => None,
+        };
+        if let Some(result) = hardcoded_match {
+            tracing::trace!(
+                target: "tsz_solver::function_hardcoded_fallback",
+                prop_name = prop_name,
+                "Function property resolved via hardcoded no-lib fallback"
+            );
+            return result;
         }
 
         if let Some(result) = self.resolve_object_member(prop_name, prop_atom) {

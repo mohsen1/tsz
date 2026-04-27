@@ -999,6 +999,25 @@ impl<'a> EnumES5Transformer<'a> {
         }
     }
 
+    /// Build a dotted path from a (possibly nested) property-access expression
+    /// or bare identifier. Used to resolve namespace-qualified enum references
+    /// like `M.N.E1` to a key in `prior_enum_values`.
+    fn build_dotted_path(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.is_identifier() {
+            let id = self.arena.get_identifier(node)?;
+            return Some(id.escaped_text.to_string());
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            let left = self.build_dotted_path(access.expression)?;
+            let right_node = self.arena.get(access.name_or_argument)?;
+            let right_id = self.arena.get_identifier(right_node)?;
+            return Some(format!("{left}.{}", right_id.escaped_text));
+        }
+        None
+    }
+
     /// Try to evaluate a constant expression to its numeric value.
     /// Handles numeric literals, binary/unary expressions, parenthesized expressions,
     /// and references to previously evaluated enum members (both bare identifiers and
@@ -1030,13 +1049,12 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 // Resolve E.Member references
                 let access = self.arena.get_access_expr(node)?;
+                let prop_node = self.arena.get(access.name_or_argument)?;
+                let prop_id = self.arena.get_identifier(prop_node)?;
                 let obj_node = self.arena.get(access.expression)?;
                 if obj_node.is_identifier()
                     && let Some(obj_id) = self.arena.get_identifier(obj_node)
                 {
-                    let prop_node = self.arena.get(access.name_or_argument)?;
-                    let prop_id = self.arena.get_identifier(prop_node)?;
-
                     // Same enum self-reference
                     if obj_id.escaped_text == self.current_enum_name
                         && let Some(&val) = self.member_values.get(prop_id.escaped_text.as_str())
@@ -1046,6 +1064,29 @@ impl<'a> EnumES5Transformer<'a> {
                     // Cross-enum reference (Foo.A from within enum Bar)
                     if let Some(enum_vals) =
                         self.prior_enum_values.get(obj_id.escaped_text.as_str())
+                        && let Some(&val) = enum_vals.get(prop_id.escaped_text.as_str())
+                    {
+                        return Some(val);
+                    }
+                    return None;
+                }
+                // Multi-level namespace-qualified reference (e.g. `M.N.E1.a`).
+                // tsc inlines the constant value at emit time so the JS output
+                // does not depend on the namespace IIFE having been evaluated.
+                if obj_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(qualified) = self.build_dotted_path(access.expression)
+                {
+                    // Try the full qualified name first (`M.N.E1`).
+                    if let Some(enum_vals) = self.prior_enum_values.get(&qualified)
+                        && let Some(&val) = enum_vals.get(prop_id.escaped_text.as_str())
+                    {
+                        return Some(val);
+                    }
+                    // Fall back to the trailing segment so simple-name keys
+                    // (`E1` in `prior_enum_values`) still resolve when the
+                    // emitter has not yet recorded a fully-qualified key.
+                    if let Some(last) = qualified.rsplit('.').next()
+                        && let Some(enum_vals) = self.prior_enum_values.get(last)
                         && let Some(&val) = enum_vals.get(prop_id.escaped_text.as_str())
                     {
                         return Some(val);

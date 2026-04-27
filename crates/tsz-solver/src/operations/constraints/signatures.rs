@@ -483,12 +483,72 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     Some(0)
                 } else {
                     let target_fn = self.function_type_from_signature(target_sig, is_constructor);
-                    self.select_signature_for_target(
+                    let selected = self.select_signature_for_target(
                         source_signatures,
                         target_fn,
                         var_map,
                         is_constructor,
-                    )
+                    );
+                    // Fallback: tsc's `inferFromSignaturesOfType` does NOT gate
+                    // inference on assignability — it just pairs signatures by
+                    // index from the end of each list (with `len = min(srcLen, tgtLen)`).
+                    // When the target has 1 signature, that pairing picks the last
+                    // source signature regardless of whether any source signature
+                    // is "assignable" to the placeholder-erased target.
+                    //
+                    // The strict pre-check in `select_signature_for_target` is too
+                    // restrictive for the common case where inheritance-merged
+                    // callable overloads (e.g. `ArrayIterator<T>` adds a
+                    // `[Symbol.iterator]` overload returning `ArrayIterator<T>`
+                    // on top of the inherited `IteratorObject<T,…>` signature)
+                    // disagree on the apparent return type while still being
+                    // structurally compatible. Without this fallback, inference
+                    // silently drops, the placeholder receives no candidate from
+                    // the argument, and the call later fails with a spurious
+                    // TS2769 (e.g. `Array.from(arr.values())`).
+                    //
+                    // Two guards prevent over-eager inference from the wrong
+                    // overload:
+                    //
+                    // 1. `arity_compatible`: the chosen source signature's
+                    //    parameter count must align with the target signature's
+                    //    arity. This is the primary discriminator that lets us
+                    //    pair `[Symbol.iterator](): ArrayIterator<A>` (arity 0)
+                    //    with `[Symbol.iterator](): Iterator<T,…>` (arity 0)
+                    //    while rejecting cross-arity pairings like a 2-arg
+                    //    overload paired against a 1-arg target.
+                    //
+                    // 2. `all_same_arity`: every non-generic source overload
+                    //    must share the same parameter count. Inheritance-merged
+                    //    overload sets (the case this fallback exists to
+                    //    rescue) always satisfy this — the derived interface's
+                    //    override is a return-type refinement of the inherited
+                    //    signature. By contrast, semantically split overload
+                    //    sets such as `Array.from`'s `(arrayLike)` plus
+                    //    `(arrayLike, mapfn, thisArg?)` represent distinct
+                    //    calling conventions and must still rely on the strict
+                    //    assignability discriminator.
+                    selected.or_else(|| {
+                        let last_idx = source_signatures
+                            .iter()
+                            .rposition(|sig| sig.type_params.is_empty())?;
+                        let target_arity = target_sig.params.len();
+                        let last_arity = source_signatures[last_idx].params.len();
+                        let arity_compatible = last_arity == target_arity
+                            || source_signatures[last_idx]
+                                .params
+                                .last()
+                                .is_some_and(|p| p.rest);
+                        let all_same_arity = source_signatures
+                            .iter()
+                            .filter(|sig| sig.type_params.is_empty())
+                            .all(|sig| sig.params.len() == last_arity);
+                        if all_same_arity && arity_compatible {
+                            Some(last_idx)
+                        } else {
+                            None
+                        }
+                    })
                 };
                 if let Some(idx) = source_idx {
                     self.constrain_signature_erasing_source_type_params(
@@ -568,6 +628,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Without combination priority, common supertype picks only the first type.
         let idx_priority = crate::types::InferencePriority::MappedType;
 
+        // Under `exactOptionalPropertyTypes`, the `?` modifier does NOT implicitly
+        // add `undefined` to a property's stored type. Any `undefined` present must
+        // have been written explicitly (e.g. `b?: number | undefined`) and should
+        // be preserved during index-signature inference. Without EOPT, optional
+        // properties carry an implicit `| undefined` that tsc strips when inferring
+        // T from `{ [k: string]: T }`.
+        let strip_optional_undefined =
+            !crate::caches::db::QueryDatabase::exact_optional_property_types(self.interner);
+
         for (i, prop) in source_props.iter().enumerate() {
             // Skip symbol-keyed properties (stored with "__unique_" prefix).
             // Symbol-keyed properties are NOT accessible via string or numeric index
@@ -582,9 +651,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // For optional properties, strip `undefined` from the type before contributing
             // to index signature inference. When inferring T from `{ a: string, b?: number }`
             // against `{ [x: string]: T }`, tsc infers T = string | number (not
-            // string | number | undefined). The optionality of a property does not contribute
-            // `undefined` to the inferred index signature value type.
-            let prop_type = if prop.optional {
+            // string | number | undefined). With `exactOptionalPropertyTypes` enabled,
+            // `b?: number | undefined` preserves the explicit `| undefined` and infers
+            // T = string | number | undefined.
+            let prop_type = if prop.optional && strip_optional_undefined {
                 crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
             } else {
                 prop.type_id

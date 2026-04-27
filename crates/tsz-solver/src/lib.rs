@@ -106,7 +106,7 @@ pub mod query {
         intersection_list_id, intrinsic_kind, is_array_type, is_conditional_type,
         is_empty_object_type, is_empty_object_type_through_type_constraints, is_enum_type,
         is_error_type, is_function_type, is_function_type_through_type_constraints,
-        is_generic_application, is_identity_comparable_type, is_index_access_type,
+        is_generic_application, is_identity_comparable_type, is_index_access_type, is_infer_type,
         is_intersection_type, is_lazy_type, is_literal_type,
         is_literal_type_through_type_constraints, is_mapped_type, is_module_namespace_type,
         is_object_like_type, is_object_like_type_through_type_constraints, is_primitive_type,

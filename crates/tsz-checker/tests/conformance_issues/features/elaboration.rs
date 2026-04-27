@@ -340,6 +340,70 @@ x.b;
 }
 
 #[test]
+fn test_property_receiver_display_preserves_annotated_mapped_type_params() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+type MyRecord<K extends keyof any, T> = { [P in K]: T };
+
+function pickAccess<T, K extends keyof T>(obj: MyPick<T, K>) {
+    obj.foo;
+}
+
+function recordAccess<T, K extends keyof T>(obj: MyRecord<K, number>) {
+    obj.foo;
+}
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339 && message == "Property 'foo' does not exist on type 'MyPick<T, K>'."
+        }),
+        "Expected TS2339 to preserve annotated MyPick<T, K> receiver.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339
+                && message == "Property 'foo' does not exist on type 'MyRecord<K, number>'."
+        }),
+        "Expected TS2339 to preserve annotated MyRecord<K, number> receiver.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_assignability_display_widens_fresh_application_args() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+declare function objAndReadonly<T>(primary: T, secondary: MyReadonly<T>): T;
+
+objAndReadonly({ x: 0, y: 0 }, { x: 1 });
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    let message = diagnostic_message(&diagnostics, 2345).expect("expected TS2345");
+    assert!(
+        message.contains("MyReadonly<{ x: number; y: number; }>"),
+        "Expected mapped application target display to widen fresh object args.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !message.contains("MyReadonly<{ x: 0; y: 0; }>"),
+        "Mapped application target display must not preserve fresh literal args.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_cross_binder_symbol_id_collision_emits_ts2322_for_this_return() {
     let passport_dts = r#"
 declare module 'passport' {

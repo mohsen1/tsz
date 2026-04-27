@@ -143,18 +143,11 @@ impl<'a> TypeFormatter<'a> {
                 format!("\"{escaped}\"")
             }
             LiteralValue::Number(n) => {
-                let v = n.0;
-                if v.is_infinite() {
-                    if v.is_sign_positive() {
-                        "Infinity".to_string()
-                    } else {
-                        "-Infinity".to_string()
-                    }
-                } else if v.is_nan() {
-                    "NaN".to_string()
-                } else {
-                    format!("{v}")
-                }
+                // Match JS `Number.prototype.toString()` so very large/small
+                // values use scientific notation (e.g. `5.46e+244`) rather
+                // than Rust's default integer expansion. Also handles
+                // `Infinity`, `-Infinity`, and `NaN` consistently.
+                crate::utils::js_number_to_string(n.0).into_owned()
             }
             LiteralValue::BigInt(b) => format!("{}n", self.atom(*b)),
             LiteralValue::Boolean(b) => if *b { "true" } else { "false" }.to_string(),
@@ -957,6 +950,12 @@ impl<'a> TypeFormatter<'a> {
     /// so the output matches tsc (e.g., `Foo.Yep | Bar.Yep`). When namespace
     /// qualification still leaves collisions (or is unavailable for plain
     /// cross-file class references), fall back to `import("<specifier>").Name`.
+    ///
+    /// tsc also applies `import(...)` qualification to namespace-qualified slots
+    /// even when no collision remains after Pass 1 — specifically for types that
+    /// live in a foreign module (not from `declare global {}`). This matches the
+    /// output `import("renderer2").predom.JSX.Element` rather than just
+    /// `predom.JSX.Element`.
     fn disambiguate_union_member_names(
         &mut self,
         members: &[TypeId],
@@ -972,30 +971,42 @@ impl<'a> TypeFormatter<'a> {
             return formatted;
         }
         // First pass: prefer namespace qualification.
+        // Track which slots were namespace-qualified (changed from original name).
+        let mut was_ns_qualified: Vec<bool> = vec![false; formatted.len()];
         let mut result: Vec<String> = formatted
             .iter()
             .zip(members.iter())
-            .map(|(name, &member)| {
+            .enumerate()
+            .map(|(i, (name, &member))| {
                 if counts.get(name.as_str()).copied().unwrap_or(0) > 1
                     && let Some(qualified) = self.namespace_qualified_name_for_type(member)
                     && qualified != *name
                 {
+                    was_ns_qualified[i] = true;
                     return qualified;
                 }
                 name.clone()
             })
             .collect();
-        // Second pass: any remaining collisions after namespace qualification
-        // get resolved via `import("<specifier>").Name` for types whose
-        // declaring symbol lives in a foreign file.
+        // Second pass: apply import-qualification to:
+        //   (a) slots that still collide after namespace qualification, OR
+        //   (b) slots that WERE namespace-qualified in Pass 1 — tsc always
+        //       import-qualifies these when the type comes from a foreign module.
+        // Exception: skip types from `declare global {}` augmentations since
+        // they are globally accessible and tsc never import-qualifies them.
         let mut second_counts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         for name in &result {
             *second_counts.entry(name.clone()).or_default() += 1;
         }
-        if second_counts.values().any(|&c| c > 1) {
-            for (slot, &member) in result.iter_mut().zip(members.iter()) {
-                if second_counts.get(slot.as_str()).copied().unwrap_or(0) > 1
+        let any_still_colliding = second_counts.values().any(|&c| c > 1);
+        let any_ns_qualified = was_ns_qualified.iter().any(|&q| q);
+        if any_still_colliding || any_ns_qualified {
+            for (i, (slot, &member)) in result.iter_mut().zip(members.iter()).enumerate() {
+                let still_collides = second_counts.get(slot.as_str()).copied().unwrap_or(0) > 1;
+                let ns_qualified = was_ns_qualified[i];
+                if (still_collides || ns_qualified)
+                    && !self.is_global_augmentation_type(member)
                     && let Some(qualified) = self.import_qualified_name_for_type(member)
                     && qualified != *slot
                 {
@@ -1004,6 +1015,29 @@ impl<'a> TypeFormatter<'a> {
             }
         }
         result
+    }
+
+    /// Returns `true` when `type_id` comes from a `declare global {}` augmentation.
+    /// Such types are globally accessible and tsc never import-qualifies them.
+    fn is_global_augmentation_type(&self, type_id: TypeId) -> bool {
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+        // Try Lazy(DefId)
+        if let Some(def_id) = crate::type_queries::get_lazy_def_id(self.interner, type_id)
+            && let Some(def) = def_store.get(def_id)
+        {
+            return def.is_global_augmentation;
+        }
+        // Try Object/ObjectWithIndex with symbol
+        if let Some(shape) = crate::type_queries::get_object_shape(self.interner, type_id)
+            && let Some(sym_id) = shape.symbol
+            && let Some(def_id) = def_store.find_def_by_symbol(sym_id.0)
+            && let Some(def) = def_store.get(def_id)
+        {
+            return def.is_global_augmentation;
+        }
+        false
     }
 
     /// Format two types for a diagnostic message where both appear side by

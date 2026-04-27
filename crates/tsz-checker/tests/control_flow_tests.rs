@@ -89,6 +89,41 @@ fn get_block_expression(arena: &NodeArena, block_idx: NodeIndex, stmt_index: usi
     extract_expression_from_statement(arena, stmt_idx)
 }
 
+fn get_function_if_branch_expression(
+    arena: &NodeArena,
+    root: NodeIndex,
+    fn_index: usize,
+    body_stmt_index: usize,
+    is_then: bool,
+) -> NodeIndex {
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let fn_idx = *source_file
+        .statements
+        .nodes
+        .get(fn_index)
+        .expect("function statement");
+    let fn_node = arena.get(fn_idx).expect("function node");
+    let fn_data = arena.get_function(fn_node).expect("function data");
+    let body_idx = fn_data.body;
+    let body_node = arena.get(body_idx).expect("function body");
+    let body = arena.get_block(body_node).expect("function body block");
+    let if_idx = *body
+        .statements
+        .nodes
+        .get(body_stmt_index)
+        .expect("if statement");
+    let if_node = arena.get(if_idx).expect("if node");
+    let if_data = arena.get_if_statement(if_node).expect("if data");
+    let branch_idx = if is_then {
+        if_data.then_statement
+    } else {
+        if_data.else_statement
+    };
+    assert!(branch_idx.is_some(), "missing branch statement");
+    extract_expression_from_statement(arena, branch_idx)
+}
+
 fn get_statement_expression(arena: &NodeArena, root: NodeIndex, stmt_index: usize) -> NodeIndex {
     let root_node = arena.get(root).expect("root node");
     let source_file = arena.get_source_file(root_node).expect("source file");
@@ -1195,11 +1230,19 @@ class Foo {
 
 #[test]
 fn test_const_alias_condition_narrows() {
+    // tsc only inlines an aliased condition when the reference being narrowed
+    // is a constant reference (parameter, non-exported local let, etc). A
+    // top-level `let` in a script context is *not* a mutable local for tsc
+    // (`isMutableLocalVariableDeclaration` excludes globals), so we wrap the
+    // declarations in a function to exercise the alias-narrowing path that
+    // tsc accepts.
     let source = r#"
-let x: string | number;
-const isString = typeof x === "string";
-if (isString) {
-  x;
+function f() {
+  let x: string | number;
+  const isString = typeof x === "string";
+  if (isString) {
+    x;
+  }
 }
 "#;
 
@@ -1213,7 +1256,7 @@ if (isString) {
     let types = TypeInterner::new();
     let analyzer = FlowAnalyzer::new(arena, &binder, &types);
 
-    let ident_then = get_if_branch_expression(arena, root, 2, true);
+    let ident_then = get_function_if_branch_expression(arena, root, 0, 2, true);
 
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
 

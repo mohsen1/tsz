@@ -372,3 +372,100 @@ fn test_template_rescan_invalid_hex_escape() {
         scanner.get_token_text_ref()
     );
 }
+
+// --- Empty-exponent / identifier-after-numeric scanner diagnostics --------
+//
+// Mirrors tsc's `scanNumber` exponent branch: a numeric literal whose
+// exponent has no digits (`1e+`, `1ee`, `3en`, ...) emits TS1124 right after
+// the `e` (or sign), and tsc's `parseErrorAtPosition` same-start dedup
+// suppresses any TS1351 that would fire at the same position. We verify the
+// scanner emits those diagnostics in the same shape so the merged
+// fingerprint matches tsc on `identifierStartAfterNumericLiteral.ts`.
+
+fn scan_first_token(source: &str) -> Vec<(usize, u32)> {
+    let mut scanner = ScannerState::new(source.to_string(), true);
+    let _ = scanner.scan();
+    scanner
+        .get_scanner_diagnostics()
+        .iter()
+        .map(|d| (d.pos, d.code))
+        .collect()
+}
+
+#[test]
+fn scan_number_empty_exponent_emits_ts1124_after_e() {
+    // `1e` — exponent has no digit. tsc emits TS1124 at pos=2 (right after
+    // the `e`, before EOF). No TS1351 because there is no following
+    // identifier.
+    let diags = scan_first_token("1e");
+    assert!(
+        diags.iter().any(|(pos, code)| *pos == 2 && *code == 1124),
+        "expected TS1124 at pos=2 for `1e`, got {diags:?}",
+    );
+    assert!(
+        !diags.iter().any(|(_, code)| *code == 1351),
+        "should not emit TS1351 for `1e`, got {diags:?}",
+    );
+}
+
+#[test]
+fn scan_number_exponent_with_sign_no_digit_emits_ts1124_after_sign() {
+    // `1e+` — sign consumed, no digit. tsc fires TS1124 at the position
+    // right after the sign (pos=3).
+    let diags = scan_first_token("1e+");
+    assert!(
+        diags.iter().any(|(pos, code)| *pos == 3 && *code == 1124),
+        "expected TS1124 at pos=3 for `1e+`, got {diags:?}",
+    );
+}
+
+#[test]
+fn scan_number_double_e_keeps_only_ts1124_dedup_ts1351() {
+    // `1ee` — exponent has no digit, but the trailing char is an identifier
+    // start. tsc's lastError-by-start dedup drops the TS1351 that would fire
+    // at the same position as the TS1124 emitted by the empty exponent.
+    let diags = scan_first_token("1ee");
+    assert!(
+        diags.iter().any(|(pos, code)| *pos == 2 && *code == 1124),
+        "expected TS1124 at pos=2 for `1ee`, got {diags:?}",
+    );
+    assert!(
+        !diags.iter().any(|(_, code)| *code == 1351),
+        "TS1351 must be deduped at same position as TS1124 for `1ee`, got {diags:?}",
+    );
+}
+
+#[test]
+fn scan_number_exponent_followed_by_n_keeps_ts1124_and_ts1352() {
+    // `3en` — exponent has no digit, then bigint suffix `n`. tsc emits both
+    // TS1124 (after `e`) and TS1352 (bigint with exponential), at distinct
+    // positions, so no dedup applies.
+    let diags = scan_first_token("3en");
+    assert!(
+        diags.iter().any(|(pos, code)| *pos == 2 && *code == 1124),
+        "expected TS1124 at pos=2 for `3en`, got {diags:?}",
+    );
+    assert!(
+        diags.iter().any(|(_, code)| *code == 1352),
+        "expected TS1352 (bigint exponential) for `3en`, got {diags:?}",
+    );
+    assert!(
+        !diags.iter().any(|(_, code)| *code == 1351),
+        "should not emit TS1351 for `3en` (bigint branch wins), got {diags:?}",
+    );
+}
+
+#[test]
+fn scan_number_well_formed_decimal_with_exponent_emits_no_diagnostic() {
+    // Sanity: `1e9` is fully valid; no diagnostics expected from the
+    // scanner's empty-exponent path.
+    let diags = scan_first_token("1e9");
+    assert!(
+        !diags.iter().any(|(_, code)| *code == 1124),
+        "well-formed `1e9` must not emit TS1124, got {diags:?}",
+    );
+    assert!(
+        !diags.iter().any(|(_, code)| *code == 1351),
+        "well-formed `1e9` must not emit TS1351, got {diags:?}",
+    );
+}

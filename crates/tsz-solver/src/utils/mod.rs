@@ -52,15 +52,16 @@ pub fn is_numeric_literal_name(name: &str) -> bool {
 
 /// Canonicalizes a numeric property name to its JavaScript canonical form.
 ///
-/// If the input parses as a finite number, returns `Some(canonical_form)` where
+/// If the input parses as a number, returns `Some(canonical_form)` where
 /// `canonical_form` matches JavaScript's `Number.prototype.toString()`.
 /// For example, `"1."`, `"1.0"`, and `"1"` all canonicalize to `"1"`.
+/// Numeric-literal source text that overflows to infinity (e.g. a giant
+/// `0o7777…` octal) canonicalizes to `"Infinity"` / `"-Infinity"`, matching
+/// JavaScript runtime semantics where `Number.prototype.toString()` returns
+/// the literal string `"Infinity"` for `Infinity`.
 /// Returns `None` if the name is not a numeric literal.
 pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
     let value: f64 = tsz_common::numeric::parse_numeric_literal_value(name)?;
-    if !value.is_finite() && !value.is_nan() {
-        return None;
-    }
     Some(js_number_to_string(value).into_owned())
 }
 
@@ -71,7 +72,7 @@ pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
 ///
 /// Returns `Cow::Borrowed` for static special cases (NaN, 0, Infinity) and
 /// `Cow::Owned` for dynamically formatted numbers.
-fn js_number_to_string(value: f64) -> Cow<'static, str> {
+pub fn js_number_to_string(value: f64) -> Cow<'static, str> {
     if value.is_nan() {
         return Cow::Borrowed("NaN");
     }

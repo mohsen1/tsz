@@ -539,12 +539,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn receiver_type_from_shape_symbol(&self, shape: &ObjectShape) -> Option<TypeId> {
         let sym_id = shape.symbol?;
         let symbol_ref = crate::SymbolRef(sym_id.0);
-        Some(
-            self.resolver
-                .symbol_to_def_id(symbol_ref)
-                .map(|def_id| self.interner.lazy(def_id))
-                .unwrap_or_else(|| self.interner.reference(symbol_ref)),
-        )
+        // Only nominalize when the resolver can produce a real DefId.
+        // Falling back to `interner.reference(symbol_ref)` here would conflate
+        // `SymbolId.0` with `DefId.0` (independent ID spaces) and yield a
+        // Lazy(DefId) that points at an unrelated declaration.
+        self.resolver
+            .symbol_to_def_id(symbol_ref)
+            .map(|def_id| self.interner.lazy(def_id))
     }
 
     fn bind_property_receiver_this(&self, receiver: Option<TypeId>, type_id: TypeId) -> TypeId {
@@ -564,11 +565,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let shape = self.interner.object_shape(shape_id);
                 if let Some(sym_id) = shape.symbol {
                     let symbol_ref = crate::SymbolRef(sym_id.0);
-                    return self
-                        .resolver
-                        .symbol_to_def_id(symbol_ref)
-                        .map(|def_id| self.interner.lazy(def_id))
-                        .unwrap_or_else(|| self.interner.reference(symbol_ref));
+                    // Only nominalize when the resolver can produce a real DefId.
+                    // Falling back to `interner.reference(symbol_ref)` would conflate
+                    // `SymbolId.0` with `DefId.0` and produce a Lazy pointing at an
+                    // unrelated declaration. When no DefId mapping exists, keep the
+                    // original Object receiver — the structural shape is still a
+                    // sound `this` substitution target.
+                    if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+                        return self.interner.lazy(def_id);
+                    }
                 }
                 receiver
             }
@@ -618,6 +623,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let Some(ref t_string_idx) = target.string_index else {
             return SubtypeResult::True; // Target has no string index constraint
         };
+
+        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
+        //   when the target has a string index AND the target's index info value
+        //   maps to `any`, the source need not declare a matching index signature.
+        //   This is the rule that allows `{ [n: number]: any }` -> `{ [s: string]: any }`
+        //   even when the source is a named class/interface. We mirror it here for
+        //   the assignability path (non-strict subtype).
+        if !self.disable_method_bivariance && t_string_idx.value_type.is_any() {
+            return SubtypeResult::True;
+        }
 
         match &source.string_index {
             Some(s_string_idx) => {
@@ -735,6 +750,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let Some(ref t_number_idx) = target.number_index else {
             return SubtypeResult::True; // Target has no number index constraint
         };
+
+        // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
+        //   if THIS target index info maps to `any` AND the target ALSO has a
+        //   string index signature, the source need not declare a matching
+        //   number index. Gated on a NAMED target (`target.symbol.is_some()`)
+        //   so we don't loosen merged-intersection synthetic shapes whose
+        //   indexes come from distinct intersection members; tsc relates each
+        //   intersection member separately, while our interner eagerly merges
+        //   them. Without this gate, `Obj <: StringTo<any> & NumberTo<any>`
+        //   would incorrectly succeed.
+        if !self.disable_method_bivariance
+            && t_number_idx.value_type.is_any()
+            && target.string_index.is_some()
+            && target.symbol.is_some()
+        {
+            return SubtypeResult::True;
+        }
 
         match &source.number_index {
             Some(s_number_idx) => {
@@ -1318,5 +1350,85 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         shape.properties.iter().any(|p| p.name == constructor)
             && shape.properties.iter().any(|p| p.name == has_own)
             && shape.properties.iter().any(|p| p.name == is_proto)
+    }
+
+    /// `ObjectWithIndex` source vs `Tuple` target.
+    ///
+    /// Matches tsc's behavior for array-like interfaces assigned to a tuple
+    /// type, e.g.
+    /// ```ts
+    /// interface StrNum extends Array<string|number> {
+    ///   0: string;
+    ///   1: number;
+    ///   length: 2;
+    /// }
+    /// declare let x: [string, number];
+    /// declare let y: StrNum;
+    /// x = y;  // OK
+    /// ```
+    ///
+    /// Iterates the target tuple's elements and looks up each by its numeric
+    /// property name (`"0"`, `"1"`, ...) on the source shape. Optional/rest
+    /// elements use the source's number index signature as a fallback.
+    /// `length` is also checked when the tuple has a fixed arity and the
+    /// source declares a numeric `length`.
+    pub(crate) fn check_object_with_index_to_tuple(
+        &mut self,
+        source: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        t_list: crate::types::TupleListId,
+        target_type: TypeId,
+    ) -> SubtypeResult {
+        use crate::types::PropertyInfo;
+        let target_elems = self.interner.tuple_list(t_list);
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+
+        for (i, t_elem) in target_elems.iter().enumerate() {
+            // Variadic / rest elements aren't structurally implementable by
+            // a fixed-property interface — bail out conservatively.
+            if t_elem.rest {
+                return SubtypeResult::False;
+            }
+            let prop_name = self.interner.intern_string(&i.to_string());
+            let s_prop_opt = PropertyInfo::find_in_slice(&source.properties, prop_name);
+
+            // Optional tuple slot can be satisfied by either a (matching) source
+            // property OR by the source's number index signature.
+            let s_type = if let Some(sp) = s_prop_opt {
+                self.bind_property_receiver_this(source_receiver, self.optional_property_type(sp))
+            } else if let Some(idx) = &source.number_index {
+                self.bind_property_receiver_this(source_receiver, idx.value_type)
+            } else if t_elem.optional {
+                continue;
+            } else {
+                return SubtypeResult::False;
+            };
+
+            let t_type = t_elem.type_id;
+            if !self.check_subtype(s_type, t_type).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+
+        // Length check: when the target tuple has a fixed arity (no rest), the
+        // source's `length` property type must be assignable to the literal
+        // target length. tsc applies this strictly — `length: 2` is not
+        // assignable to `length: 1`, and `length: number` is not assignable
+        // to `length: 1` either.
+        let length_atom = self.interner.intern_string("length");
+        if let Some(s_length) = PropertyInfo::find_in_slice(&source.properties, length_atom)
+            && target_elems.iter().all(|e| !e.rest)
+        {
+            let s_length_type = self.bind_property_receiver_this(source_receiver, s_length.type_id);
+            let target_len = target_elems.len();
+            let target_len_type = self.interner.literal_number(target_len as f64);
+            if !self.check_subtype(s_length_type, target_len_type).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+
+        let _ = target_type;
+        SubtypeResult::True
     }
 }

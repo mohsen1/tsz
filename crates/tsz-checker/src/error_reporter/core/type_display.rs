@@ -287,7 +287,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.factory().object_with_index(widened_shape)
     }
 
-    pub(crate) fn normalize_property_receiver_application_display_type(
+    pub(in crate::error_reporter) fn normalize_property_receiver_application_display_type(
         &mut self,
         ty: TypeId,
     ) -> TypeId {

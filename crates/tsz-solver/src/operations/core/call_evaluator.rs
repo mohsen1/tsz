@@ -205,9 +205,17 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// where each Application type references the previous one multiple times).
     pub(crate) contextual_sensitivity_cache: RefCell<FxHashMap<TypeId, bool>>,
     /// Recursion depth for reverse mapped type inference through mapped type templates.
-    /// Used to detect recursive type alias patterns (e.g., `Deep<T> = { [K in keyof T]: Deep<T[K]> }`)
-    /// and short-circuit infinite expansion, matching tsc's lazy `ReverseMappedType` convergence.
+    /// Used as a hard cap to prevent runaway recursion (in addition to the
+    /// `reverse_mapped_visited` set which short-circuits true recursive patterns).
     pub(crate) reverse_mapped_depth: Cell<u32>,
+    /// Set of `(mapped_template_id, source_value_id)` pairs currently being reverse-inferred.
+    /// When we re-enter `reverse_infer_through_template` Case 6 with a pair we've already seen
+    /// in the current chain, we've hit a true recursive type pattern (e.g., `Deep<T>` against
+    /// a self-referential interface like `interface A { a: A }`). In that case we short-circuit
+    /// to the source value itself, matching tsc's lazy `ReverseMappedType` convergence.
+    /// Distinct pairs (different source sub-objects) are still allowed to recurse so that
+    /// finite sources like `{Test: {Test1: {Test2: leaf}}}` reverse-map through every level.
+    pub(crate) reverse_mapped_visited: RefCell<FxHashSet<(TypeId, TypeId)>>,
 }
 
 #[derive(Clone, Copy)]
@@ -259,6 +267,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             last_instantiated_params: None,
             contextual_sensitivity_cache: RefCell::new(FxHashMap::default()),
             reverse_mapped_depth: Cell::new(0),
+            reverse_mapped_visited: RefCell::new(FxHashSet::default()),
         }
     }
 

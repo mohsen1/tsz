@@ -597,3 +597,46 @@ class C {
         "Expected no TS2591 for 'exports' in private-name base access, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_ts2304_emitted_for_nested_new_expression_arguments_when_target_unresolved() {
+    // When the constructor target identifier is unresolved (TS2304), tsc still
+    // walks the argument list so nested unresolved constructor names also emit
+    // TS2304. Previously, tsz bailed out as soon as the constructor type
+    // resolved to ERROR, swallowing every nested name lookup. This regression
+    // surfaced in `parserRealSource8.ts` as 17 missing TS2304 fingerprints for
+    // `DualStringHashTable` / `StringHashTable` references inside
+    // `new ScopedMembers(new DualStringHashTable(...))` chains.
+    //
+    // Mirrors the call-expression behavior where
+    // `undef0(undef1(), undef2())` already emits three TS2304 diagnostics —
+    // one per unresolved name.
+    let diagnostics = check_without_lib(
+        r#"var members = new ScopedMembers(new DualStringHashTable(new StringHashTable(), new StringHashTable()));"#,
+    );
+
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+
+    let count_for = |name: &str| {
+        ts2304_errors
+            .iter()
+            .filter(|d| diagnostic_contains(d, &format!("'{name}'")))
+            .count()
+    };
+
+    assert_eq!(
+        count_for("ScopedMembers"),
+        1,
+        "Expected 1 TS2304 for 'ScopedMembers', got diagnostics: {ts2304_errors:?}"
+    );
+    assert_eq!(
+        count_for("DualStringHashTable"),
+        1,
+        "Expected 1 TS2304 for 'DualStringHashTable' inside the outer `new` arguments, got: {ts2304_errors:?}"
+    );
+    assert_eq!(
+        count_for("StringHashTable"),
+        2,
+        "Expected 2 TS2304 for 'StringHashTable' inside the nested `new` arguments, got: {ts2304_errors:?}"
+    );
+}

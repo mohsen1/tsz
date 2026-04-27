@@ -636,6 +636,18 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 &t_shape.properties,
                 Some(self.target),
             )
+        } else if let Some(t_list) = tuple_list_id(self.checker.interner, self.target) {
+            // ObjectWithIndex <: Tuple — array-like interface (e.g.
+            // `interface StrNum extends Array<string|number> { 0: string; 1: number; length: 2 }`)
+            // is structurally assignable to a tuple `[string, number]`.
+            // Match each tuple element by its numeric property name on the source
+            // shape, plus check `length` if the tuple has a known fixed length.
+            self.checker.check_object_with_index_to_tuple(
+                &s_shape,
+                Some(self.source),
+                t_list,
+                self.target,
+            )
         } else {
             // Trace: ObjectWithIndex source doesn't match non-object target
             if let Some(tracer) = &mut self.checker.tracer

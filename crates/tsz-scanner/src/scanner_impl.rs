@@ -1310,6 +1310,30 @@ impl ScannerState {
             if is_digit(next) && self.scan_legacy_octal_number(start) {
                 return;
             }
+
+            // Numeric separator immediately after a leading zero (e.g. `0_0`,
+            // `0_1.5`) — tsc treats this as a legacy-octal-style leading zero
+            // and rejects the separator with TS6188. The integer part of a
+            // decimal literal that starts with a `0` followed by `_<digit>`
+            // is not a valid form. Emit the diagnostic at the `_` position
+            // and fall through to `scan_decimal_number` so the rest of the
+            // literal still produces the expected NumericLiteral token.
+            if next == CharacterCodes::UNDERSCORE
+                && self.char_code_at(self.pos + 2).is_some_and(is_digit)
+            {
+                self.scanner_diagnostics.push(ScannerDiagnostic {
+                    pos: self.pos + 1,
+                    length: 1,
+                    args: Vec::new(),
+                    message: diagnostic_messages::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                    code: diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE,
+                });
+                self.token_flags |= TokenFlags::ContainsInvalidSeparator as u32;
+                if self.token_invalid_separator_pos.is_none() {
+                    self.token_invalid_separator_pos = Some(self.pos + 1);
+                    self.token_invalid_separator_is_consecutive = false;
+                }
+            }
         }
 
         // Decimal number
@@ -1446,7 +1470,22 @@ impl ScannerState {
                         self.pos += 1;
                     }
                 }
-                self.scan_digits_with_separators(is_digit);
+                // Mirror tsc's `scanNumber` exponent branch: if the exponent has
+                // no digits (e.g. `1e`, `1e+`, `1ee`, `3en`), emit TS1124
+                // "Digit expected" at the current position. Emitting here (before
+                // `check_for_identifier_start_after_numeric_literal`) lets us
+                // mirror tsc's `parseErrorAtPosition` same-start dedup: a later
+                // TS1351 at the same position is suppressed by the helper below.
+                let saw_exp_digit = self.scan_digits_with_separators(is_digit);
+                if !saw_exp_digit {
+                    self.scanner_diagnostics.push(ScannerDiagnostic {
+                        pos: self.pos,
+                        length: 0,
+                        args: Vec::new(),
+                        message: diagnostic_messages::DIGIT_EXPECTED,
+                        code: diagnostic_codes::DIGIT_EXPECTED,
+                    });
+                }
             }
         }
 
@@ -1518,13 +1557,26 @@ impl ScannerState {
             });
             true
         } else {
-            self.scanner_diagnostics.push(ScannerDiagnostic {
-                pos: identifier_start,
-                length: identifier_end - identifier_start,
-                message: diagnostic_messages::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
-                code: diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
-                args: Vec::new(),
-            });
+            // Mirror tsc's `parseErrorAtPosition` same-start dedup: if a prior
+            // scanner diagnostic was already pushed at `identifier_start`
+            // (e.g. TS1124 "Digit expected" emitted by the empty-exponent
+            // branch in `scan_decimal_number` for `1ee`/`123ee`), tsc's parser
+            // would suppress this TS1351 because its `lastError.start` matches.
+            // We mirror that suppression here so the merged diagnostics match
+            // tsc fingerprint-for-fingerprint.
+            let already_diag_at_pos = self
+                .scanner_diagnostics
+                .last()
+                .is_some_and(|d| d.pos == identifier_start);
+            if !already_diag_at_pos {
+                self.scanner_diagnostics.push(ScannerDiagnostic {
+                    pos: identifier_start,
+                    length: identifier_end - identifier_start,
+                    message: diagnostic_messages::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                    code: diagnostic_codes::AN_IDENTIFIER_OR_KEYWORD_CANNOT_IMMEDIATELY_FOLLOW_A_NUMERIC_LITERAL,
+                    args: Vec::new(),
+                });
+            }
             self.pos = identifier_start;
             false
         }
@@ -3007,6 +3059,15 @@ impl ScannerState {
         &self.scanner_diagnostics
     }
 
+    /// Clear accumulated scanner diagnostics. Used by `ParserState::reset` so a
+    /// reused parser doesn't carry stale scanner-side errors into a new parse.
+    /// `set_text` does NOT clear them — callers like the LSP that re-text the
+    /// scanner across edits without going through `ParserState` may want the
+    /// previous diagnostics to remain accessible.
+    pub fn clear_scanner_diagnostics(&mut self) {
+        self.scanner_diagnostics.clear();
+    }
+
     /// Merge conflict marker length (7 characters: `<<<<<<<`, `=======`, etc.)
     const MERGE_CONFLICT_MARKER_LENGTH: usize = 7;
 
@@ -3984,5 +4045,21 @@ mod tests {
         // `1_000_000` and `0xFF_FF` are well-formed.
         assert!(scan_separator_diagnostics("1_000_000").is_empty());
         assert!(scan_separator_diagnostics("0xFF_FF").is_empty());
+    }
+
+    #[test]
+    fn separator_after_leading_zero_emits_ts6188() {
+        // `0_0` — separator immediately after a leading zero in an unprefixed
+        // numeric literal is a legacy-octal-style pattern that tsc rejects
+        // with TS6188 at the `_` position. The literal still tokenizes as a
+        // NumericLiteral so the rest of the parse can proceed; only the
+        // separator-not-allowed-here diagnostic is added.
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        assert_eq!(scan_separator_diagnostics("0_0"), vec![(1, ts6188)]);
+        assert_eq!(scan_separator_diagnostics("0_1"), vec![(1, ts6188)]);
+        assert_eq!(scan_separator_diagnostics("0_8"), vec![(1, ts6188)]);
+        // Also fires when followed by a fraction or exponent.
+        assert_eq!(scan_separator_diagnostics("0_0.5_5"), vec![(1, ts6188)]);
+        assert_eq!(scan_separator_diagnostics("0_0e5_5"), vec![(1, ts6188)]);
     }
 }

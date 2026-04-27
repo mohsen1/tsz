@@ -719,13 +719,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
                 ) = self.interner.lookup(source_value)
             {
-                // Detect recursive mapped type patterns (e.g., Deep<T> = { [K in keyof T]: Deep<T[K]> }).
-                // When we re-enter this case from an inner reverse_infer_through_template call,
-                // we're in a recursive expansion chain that would loop infinitely.
-                // Follow tsc's inferReversedType: for object sources against recursive homomorphic
-                // mapped types, the reversed type converges to the source itself.
+                // Detect recursive mapped type patterns (e.g., `Deep<T> = { [K in keyof T]: Deep<T[K]> }`
+                // against a self-referential source like `interface A { a: A }`).
+                //
+                // We track `(mapped_template_id, source_value_id)` pairs currently in the recursion
+                // chain. Re-entering with the SAME pair means the source is genuinely recursive and
+                // expanding further would loop forever. In that case we follow tsc's
+                // `inferReversedType` and converge to the source itself.
+                //
+                // Distinct pairs (e.g., the same mapped template against a strictly smaller source
+                // sub-object) ARE allowed to recurse so that finite sources reverse-map through every
+                // level. This matters for patterns like:
+                //   type Validator<T> = NativeTypeValidator<T> | ObjectValidator<T>
+                //   type ObjectValidator<O> = { [K in keyof O]: Validator<O[K]> }
+                // where the source `{ Test: { Test1: { Test2: leaf } } }` is finite and we need
+                // to drill all the way to `leaf` to extract the inferred type.
+                //
+                // We also keep a hard depth cap as a safety net for pathological inputs.
+                let pair = (template, source_value);
+                if self.reverse_mapped_visited.borrow().contains(&pair) {
+                    return Some(source_value);
+                }
                 let depth = self.reverse_mapped_depth.get();
-                if depth > 0 {
+                const REVERSE_MAPPED_DEPTH_CAP: u32 = 64;
+                if depth >= REVERSE_MAPPED_DEPTH_CAP {
                     return Some(source_value);
                 }
 
@@ -737,6 +754,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let mut any_reversed = false;
 
                 self.reverse_mapped_depth.set(depth + 1);
+                self.reverse_mapped_visited.borrow_mut().insert(pair);
 
                 for prop in &source_props {
                     // Instantiate the mapped template with the concrete key
@@ -837,6 +855,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
 
                 self.reverse_mapped_depth.set(depth);
+                self.reverse_mapped_visited.borrow_mut().remove(&pair);
 
                 if any_reversed {
                     if reverse_string_index.is_some() || reverse_number_index.is_some() {

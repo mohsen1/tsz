@@ -2144,7 +2144,7 @@ fn build_program_with_cache(
                     module_declaration_exports_publicly: Default::default(),
                     symbol_arenas: Default::default(),
                     declaration_arenas: Default::default(),
-                    scopes: Vec::new(),
+                    scopes: Default::default(),
                     node_scope_ids: Default::default(),
                     parse_diagnostics: Vec::new(),
                     shorthand_ambient_modules: Default::default(),
@@ -2443,6 +2443,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.no_unchecked_indexed_access {
         options.checker.no_unchecked_indexed_access = true;
+    }
+    if args.exact_optional_property_types {
+        options.checker.exact_optional_property_types = true;
     }
     if args.no_property_access_from_index_signature {
         options.checker.no_property_access_from_index_signature = true;

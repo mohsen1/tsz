@@ -1373,6 +1373,20 @@ impl BinderState {
             }
 
             let existing_flags = self.symbols.get(existing_id).map_or(0, |s| s.flags);
+            let is_js_script_function_implementation = !self.is_external_module
+                && !self.in_global_augmentation
+                && (flags & symbol_flags::FUNCTION) != 0
+                && arena.source_files.first().is_some_and(|sf| {
+                    let file_name = sf.file_name.as_str();
+                    file_name.ends_with(".js")
+                        || file_name.ends_with(".jsx")
+                        || file_name.ends_with(".mjs")
+                        || file_name.ends_with(".cjs")
+                })
+                && arena
+                    .get(declaration)
+                    .and_then(|node| arena.get_function(node))
+                    .is_some_and(|func| func.body.is_some());
 
             // In tsc, file-scope value declarations (function, var, class) shadow
             // identically-named globals from lib files — they live in different scopes.
@@ -1413,9 +1427,14 @@ impl BinderState {
                     // symbols. tsc resolves file-scope declarations before globals,
                     // so a user `declare function print(s: string): void;` shadows
                     // the lib's `print(): void` rather than merging into overloads.
+                    // JS/checkJs function implementations are the exception: tsc
+                    // keeps the ambient lib signature in the overload set and checks
+                    // the JS implementation against it (for example global
+                    // `function toString() {}` vs lib.dom's `toString(): string`).
                     ((flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) != 0)
                         && (existing_flags & symbol_flags::VALUE) != 0
                         && (flags & (symbol_flags::INTERFACE | symbol_flags::MODULE)) == 0
+                        && !is_js_script_function_implementation
                 }
             } else {
                 false

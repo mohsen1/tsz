@@ -1018,8 +1018,7 @@ fn ts2322_anchors_at_arrow_body_when_assigning_to_generic_function_type_alias() 
     let diagnostics = check_source_with_strict_null(
         r#"
 type EnvFunction = <T>() => T;
-type SimpleType = string | Promise<SimpleType>;
-declare const simple: SimpleType;
+declare const simple: string | number;
 const env: EnvFunction = () => simple;
 "#,
     );
@@ -1036,8 +1035,7 @@ const env: EnvFunction = () => simple;
     let source_text_offset_of = |pat: &str| {
         let s = "
 type EnvFunction = <T>() => T;
-type SimpleType = string | Promise<SimpleType>;
-declare const simple: SimpleType;
+declare const simple: string | number;
 const env: EnvFunction = () => simple;
 ";
         s.find(pat).expect("substring exists in fixture")
@@ -1047,8 +1045,7 @@ const env: EnvFunction = () => simple;
         // Use the second occurrence (the arrow body).
         let s = "
 type EnvFunction = <T>() => T;
-type SimpleType = string | Promise<SimpleType>;
-declare const simple: SimpleType;
+declare const simple: string | number;
 const env: EnvFunction = () => simple;
 ";
         let first = s.find(body_anchor).unwrap();

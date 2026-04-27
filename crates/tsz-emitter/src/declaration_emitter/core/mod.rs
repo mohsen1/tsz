@@ -128,6 +128,13 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.
     pub(super) emitted_js_export_equals_names: FxHashSet<String>,
+    /// Top-level JS bindings referenced by an `export default <Identifier>` statement
+    /// where the identifier resolves to a same-file top-level declaration. tsc hoists
+    /// these `export default` lines to the very top of the emitted .d.ts.
+    pub(super) js_export_default_names: FxHashSet<String>,
+    /// JS `export default <Identifier>` statements already hoisted ahead of their
+    /// declaration so the original statement is suppressed when the loop reaches it.
+    pub(super) emitted_js_export_default_names: FxHashSet<String>,
     /// Stable aliases for local declarations that shadow a JS export-equals root name.
     pub(super) js_shadowed_export_equals_local_aliases: FxHashMap<String, String>,
     /// JS namespace-like alias exports synthesized from expando assignments such

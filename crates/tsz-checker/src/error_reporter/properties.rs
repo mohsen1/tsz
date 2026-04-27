@@ -342,6 +342,18 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
             return name;
         }
+        if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
+            && let Some(annotation) = self.declared_type_annotation_text_for_expression(receiver)
+            && annotation.contains('<')
+            && annotation
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+            && (crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id)
+                || self.ctx.types.get_display_alias(type_id).is_some())
+        {
+            return self.format_annotation_like_type(&annotation);
+        }
         // When the receiver is a type alias whose body resolves to an Enum
         // (e.g. `type C1 = Color` where `Color` is an enum), tsc displays the
         // underlying enum's nominal name in TS2339 messages, not the alias.

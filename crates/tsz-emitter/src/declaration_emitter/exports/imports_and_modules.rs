@@ -783,6 +783,14 @@ impl<'a> DeclarationEmitter<'a> {
                         // matches the lib `Iterable<T, TReturn, TNext>`).
                         // Matches emptyArrayBindingPatternParameter02.
                         self.write(": Iterable<any, void, undefined>");
+                    } else if let Some(synth) = self.synthesize_destructured_param_type(param.name)
+                    {
+                        // Untyped destructured parameter: tsc synthesizes a tuple
+                        // matching the binding-pattern shape rather than collapsing
+                        // to `any`. `function bar([x, z, ...w]) {}` →
+                        // `bar([x, z, ...w]: [any, any, ...any[]])`.
+                        self.write(": ");
+                        self.write(&synth);
                     } else {
                         // In declaration emit from source, parameters without
                         // explicit type annotations default to `any` (matching tsc)
@@ -808,6 +816,110 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(", ");
             }
             self.write("...args: any[]");
+        }
+    }
+
+    /// Synthesize a tuple-shaped declaration-emit type for an untyped
+    /// destructured parameter. tsc's declaration emitter walks the binding
+    /// pattern shape and emits a corresponding tuple/object literal type
+    /// (e.g. `[x, z, ...w]` → `[any, any, ...any[]]`,
+    /// `[x, [y]]` → `[any, [any]]`, `{ x }` → `{ x: any }`).
+    ///
+    /// Returns `None` for empty patterns and patterns with computed,
+    /// rename-aliased, or initialized properties — those are handled by
+    /// other branches in `emit_parameters_with_body` or fall through to
+    /// the default `any` behavior.
+    fn synthesize_destructured_param_type(&self, pattern_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(pattern_idx)?;
+        if node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            let pat = self.arena.get_binding_pattern(node)?;
+            if pat.elements.nodes.is_empty() {
+                return None;
+            }
+            let mut out = String::from("[");
+            let mut first = true;
+            for &elem_idx in &pat.elements.nodes {
+                if !first {
+                    out.push_str(", ");
+                }
+                first = false;
+                if elem_idx.is_none() {
+                    out.push_str("any");
+                    continue;
+                }
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    out.push_str("any");
+                    continue;
+                };
+                let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                    out.push_str("any");
+                    continue;
+                };
+                if elem.dot_dot_dot_token {
+                    out.push_str("...any[]");
+                    continue;
+                }
+                let inner = self
+                    .synthesize_destructured_param_type(elem.name)
+                    .unwrap_or_else(|| String::from("any"));
+                out.push_str(&inner);
+            }
+            out.push(']');
+            Some(out)
+        } else if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            let pat = self.arena.get_binding_pattern(node)?;
+            if pat.elements.nodes.is_empty() {
+                return None;
+            }
+            let mut out = String::from("{ ");
+            for (i, &elem_idx) in pat.elements.nodes.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                if elem_idx.is_none() {
+                    return None;
+                }
+                let elem_node = self.arena.get(elem_idx)?;
+                let elem = self.arena.get_binding_element(elem_node)?;
+                if elem.dot_dot_dot_token {
+                    // Rest in object pattern is `...<name>: any` in tsc; preserve
+                    // the source binding name so the synthesized shape matches
+                    // the user's destructuring (e.g. `{ ...remaining }`).
+                    let rest_name = self
+                        .arena
+                        .get(elem.name)
+                        .and_then(|n| self.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.as_str())
+                        .unwrap_or("rest");
+                    out.push_str(&format!("...{rest_name}: any;"));
+                    continue;
+                }
+                // Property name: prefer the explicit `property_name` (`{ a: b }`),
+                // fall back to the binding name when shorthand (`{ a }`).
+                let prop_name_idx = if elem.property_name.is_some() {
+                    elem.property_name
+                } else {
+                    elem.name
+                };
+                let name_node = self.arena.get(prop_name_idx)?;
+                if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                    // Computed property names, string/numeric literal keys, etc.
+                    // are not supported by this synthesizer.
+                    return None;
+                }
+                let ident = self.arena.get_identifier(name_node)?;
+                out.push_str(&ident.escaped_text);
+                out.push_str(": ");
+                let value_type = self
+                    .synthesize_destructured_param_type(elem.name)
+                    .unwrap_or_else(|| String::from("any"));
+                out.push_str(&value_type);
+                out.push(';');
+            }
+            out.push_str(" }");
+            Some(out)
+        } else {
+            None
         }
     }
 

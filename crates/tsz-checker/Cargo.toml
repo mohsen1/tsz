@@ -116,6 +116,10 @@ name = "ts2300_tests"
 path = "tests/ts2300_tests.rs"
 
 [[test]]
+name = "ts2304_tests"
+path = "tests/ts2304_tests.rs"
+
+[[test]]
 name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
@@ -430,6 +434,10 @@ path = "tests/override_intersection_display_tests.rs"
 [[test]]
 name = "ts2451_cross_file_augmentation_tests"
 path = "tests/ts2451_cross_file_augmentation_tests.rs"
+
+[[test]]
+name = "isolated_modules_export_default_tests"
+path = "tests/isolated_modules_export_default_tests.rs"
 
 [[test]]
 name = "ts2451_cross_file_class_vs_const_tests"

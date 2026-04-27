@@ -477,40 +477,12 @@ impl ParserState {
             }
         }
 
-        // Check for missing exponent digits (e.g., 1e+, 1e-, 1e) - TS1124
-        // If there's a Scientific flag but the text ends without valid digits after e/E
-        if (token_flags & TokenFlags::Scientific as u32) != 0 {
-            let bytes = text.as_bytes();
-            let len = bytes.len();
-            let missing_digit = if let Some(exp_offset) = bytes
-                .iter()
-                .rposition(|byte| *byte == b'e' || *byte == b'E')
-            {
-                if exp_offset + 1 >= len {
-                    true
-                } else {
-                    let after = &bytes[exp_offset + 1..];
-                    let first = after[0];
-                    if first == b'+' || first == b'-' {
-                        after.len() == 1 || after[1] == b'_'
-                    } else {
-                        first == b'_'
-                    }
-                }
-            } else {
-                false
-            };
-            if missing_digit {
-                use tsz_common::diagnostics::diagnostic_codes;
-                // Find position of the missing digit (at the end)
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Digit expected.",
-                    diagnostic_codes::DIGIT_EXPECTED,
-                );
-            }
-        }
+        // TS1124 ("Digit expected") for empty exponents (`1e+`, `1e`, `1ee`,
+        // `3en`, etc.) is emitted by the scanner inline during
+        // `scan_decimal_number` so the position matches tsc (right after the
+        // `e`/sign) and the same-start dedup in
+        // `check_for_identifier_start_after_numeric_literal` can suppress a
+        // colliding TS1351 the same way tsc's `parseErrorAtPosition` does.
 
         // Check for missing hex digits (e.g., 0x, 0X) - TS1125
         if (token_flags & TokenFlags::HexSpecifier as u32) != 0 {

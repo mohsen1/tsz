@@ -95,6 +95,23 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // For JS source files, `export default <Identifier>` referencing a
+        // top-level local declaration is hoisted to the very top of the .d.ts
+        // ahead of the main statement loop. Suppress the in-source statement
+        // here so it isn't duplicated.
+        if export.is_default_export
+            && self.source_is_js_file
+            && export.export_clause.is_some()
+            && let Some(expr_node) = self.arena.get(export.export_clause)
+            && expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+            && self
+                .emitted_js_export_default_names
+                .contains(&ident.escaped_text)
+        {
+            return;
+        }
+
         if self.js_skipped_reexports.contains(&export_idx) {
             return;
         }

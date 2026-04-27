@@ -1041,7 +1041,10 @@ impl<'a> CheckerState<'a> {
 
         // TS2322: Check spread props against expected types (deferred to account for overrides).
         if !spread_entries.is_empty() {
-            let mut explicit_attr_names_with_pos: Vec<(usize, String)> = Vec::new();
+            // Track explicit attrs WITH their attr index AND name node index, so
+            // the spread checker can anchor per-property TS2322 at the earlier
+            // explicit attribute when a spread overrides it (TS2783 case).
+            let mut explicit_attr_entries: Vec<(usize, String, NodeIndex)> = Vec::new();
             let mut suppress_missing_props_from_spread = false;
             for (i, &node_idx) in attr_nodes.iter().enumerate() {
                 let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -1052,7 +1055,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(name_node) = self.ctx.arena.get(attr_data.name)
                     && let Some(attr_name) = self.get_jsx_attribute_name(name_node)
                 {
-                    explicit_attr_names_with_pos.push((i, attr_name));
+                    explicit_attr_entries.push((i, attr_name, attr_data.name));
                 }
             }
 
@@ -1065,10 +1068,10 @@ impl<'a> CheckerState<'a> {
                 spread_entries.iter().enumerate()
             {
                 // Only later explicit attributes override the current spread.
-                let mut overridden: rustc_hash::FxHashSet<&str> = explicit_attr_names_with_pos
+                let mut overridden: rustc_hash::FxHashSet<&str> = explicit_attr_entries
                     .iter()
-                    .filter(|(attr_pos, _)| *attr_pos > spread_pos)
-                    .map(|(_, name)| name.as_str())
+                    .filter(|(attr_pos, _, _)| *attr_pos > spread_pos)
+                    .map(|(_, name, _)| name.as_str())
                     .collect();
                 // Also include properties already provided by earlier spreads.
                 // This prevents false TS2739 on the last spread when earlier spreads
@@ -1080,11 +1083,21 @@ impl<'a> CheckerState<'a> {
                 // For missing property checks (TS2741), also include explicit attrs
                 // that come BEFORE this spread - they provide the property.
                 let mut overridden_for_missing = overridden.clone();
-                for (attr_pos, attr_name) in &explicit_attr_names_with_pos {
+                for (attr_pos, attr_name, _) in &explicit_attr_entries {
                     if *attr_pos < spread_pos {
                         overridden_for_missing.insert(attr_name.as_str());
                     }
                 }
+
+                // Earlier explicit attrs (BEFORE this spread): when the spread
+                // overrides one of them (TS2783) AND the spread's prop type
+                // mismatches the expected, the per-property TS2322 anchors here.
+                let earlier_explicit_attrs: rustc_hash::FxHashMap<String, NodeIndex> =
+                    explicit_attr_entries
+                        .iter()
+                        .filter(|(attr_pos, _, _)| *attr_pos < spread_pos)
+                        .map(|(_, name, name_idx)| (name.clone(), *name_idx))
+                        .collect();
 
                 // When JSX body children exist, treat `children` as already provided
                 // so spreads that don't include `children` don't trigger TS2741.
@@ -1119,6 +1132,7 @@ impl<'a> CheckerState<'a> {
                     tag_name_idx,
                     &overridden,
                     &overridden_for_missing,
+                    &earlier_explicit_attrs,
                     has_later_spreads,
                     suppress_missing_props,
                     &display_target,
@@ -1333,9 +1347,14 @@ impl<'a> CheckerState<'a> {
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
             if !self.is_assignable_to(attrs_type, props_type) {
+                // tsc uses just the type parameter name here (e.g. "P"), not the
+                // full "IntrinsicAttributes & P" display target. The IntrinsicAttributes
+                // intersection check for spread attributes is handled separately by
+                // check_generic_sfc_spread_intrinsic_attrs.
+                let type_param_target = self.format_type(props_type);
                 self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
-                    &display_target,
+                    &type_param_target,
                     tag_name_idx,
                 );
                 true

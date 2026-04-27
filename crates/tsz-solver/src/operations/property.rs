@@ -183,7 +183,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
             db,
             resolver: None,
             no_unchecked_indexed_access: false,
-            exact_optional_property_types: db.exact_optional_property_types(),
+            exact_optional_property_types:
+                crate::caches::db::QueryDatabase::exact_optional_property_types(db),
             guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::PropertyAccess,
             )),
@@ -232,9 +233,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if self.skip_this_binding.get() {
             return type_id;
         }
-        let receiver = self.nominalize_object_receiver(receiver);
+        let new_receiver = self.nominalize_object_receiver(receiver);
         if crate::contains_this_type(self.interner(), type_id) {
-            crate::substitute_this_type(self.interner(), type_id, receiver)
+            crate::substitute_this_type(self.interner(), type_id, new_receiver)
         } else {
             type_id
         }
@@ -246,11 +247,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 let shape = self.interner().object_shape(shape_id);
                 if let Some(sym_id) = shape.symbol {
                     let symbol_ref = crate::SymbolRef(sym_id.0);
-                    return self
-                        .resolver()
-                        .symbol_to_def_id(symbol_ref)
-                        .map(|def_id| self.interner().lazy(def_id))
-                        .unwrap_or_else(|| self.interner().reference(symbol_ref));
+                    // Only nominalize when the resolver can produce a real DefId.
+                    // Falling back to `interner().reference(symbol_ref)` here would
+                    // conflate `SymbolId.0` with `DefId.0` (independent ID spaces),
+                    // producing a Lazy(DefId) that points at a *different* declaration.
+                    // When no DefId mapping exists, keep the original object shape —
+                    // structural substitution is still correct, and the type formatter
+                    // can recover the interface name from `shape.symbol`.
+                    if let Some(def_id) = self.resolver().symbol_to_def_id(symbol_ref) {
+                        return self.interner().lazy(def_id);
+                    }
                 }
                 receiver
             }

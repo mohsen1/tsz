@@ -1287,8 +1287,34 @@ impl<'a> CheckerState<'a> {
                 // types from different primitive families (e.g., string vs number).
                 // For same-family comparisons (e.g., `"foo"` vs `"bar"`), literal
                 // types are preserved in the error message.
-                let (left_display, right_display) =
-                    self.widen_for_ts2367_cross_family_display(left_narrow, right_narrow);
+                let (left_display, right_display) = if let Some(type_param) = self
+                    .ts2367_explicit_unknown_like_intersection_type_param_display(
+                        left_narrow,
+                        right_narrow,
+                    ) {
+                    (
+                        type_param,
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            right_narrow,
+                        ),
+                    )
+                } else if let Some(type_param) = self
+                    .ts2367_explicit_unknown_like_intersection_type_param_display(
+                        right_narrow,
+                        left_narrow,
+                    )
+                {
+                    (
+                        crate::query_boundaries::common::widen_literal_type(
+                            self.ctx.types,
+                            left_narrow,
+                        ),
+                        type_param,
+                    )
+                } else {
+                    self.widen_for_ts2367_cross_family_display(left_narrow, right_narrow)
+                };
                 // tsc shows unique symbols as `typeof varName` in comparison overlap errors
                 // (distinct from index-type errors like TS2538/TS7053 where it uses `unique symbol`).
                 let left_str = self.format_type_for_ts2367_display(left_display);

@@ -1128,7 +1128,15 @@ impl<'a> Printer<'a> {
                 if let Some(name) = self.arena.get_qualified_name(node) {
                     self.emit_entity_name(name.left);
                     self.write(".");
+                    // The right side of a qualified entity name is a member of
+                    // the left, not a free identifier in the enclosing scope.
+                    // Suppress namespace-IIFE auto-qualification so e.g.
+                    // `x.c` inside `namespace m3` does not become `x.m3.c`
+                    // when `c` happens to be exported from `m3`.
+                    let prev = self.suppress_ns_qualification;
+                    self.suppress_ns_qualification = true;
                     self.emit_entity_name(name.right);
+                    self.suppress_ns_qualification = prev;
                 }
             }
             _ => {}
@@ -1355,15 +1363,15 @@ impl<'a> Printer<'a> {
                     }) =>
                 {
                     // Namespace `X` matches the export-equals identifier.
-                    // Distinguish runtime vs type-only:
-                    // - `declare namespace X` is always type-only at JS emit (ambient).
-                    // - `namespace X { ...types only... }` is type-only (non-instantiated).
-                    // - `namespace X { ...values... }` is runtime (instantiated IIFE).
+                    // Distinguish runtime vs type-only by inspecting the body:
+                    // - `namespace X { ...values... }` (with or without `declare`) is
+                    //   runtime — `declare namespace X { var a }` declares X as a
+                    //   value reference, so `export = X` must lower to
+                    //   `module.exports = X` like any other value export.
+                    // - `namespace X { ...types only... }` and empty namespaces are
+                    //   type-only.
                     if let Some(module_decl) = self.arena.get_module(stmt_node) {
-                        let is_declare = self
-                            .arena
-                            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
-                        if !is_declare && self.is_instantiated_module(module_decl.body) {
+                        if self.is_instantiated_module(module_decl.body) {
                             matched_runtime = true;
                         } else {
                             matched_type = true;
@@ -1374,12 +1382,14 @@ impl<'a> Printer<'a> {
                     && self
                         .collect_variable_names_from_node(stmt_node)
                         .iter()
-                        .any(|n| n == &assigned_name)
-                    && !self.arena.get_variable(stmt_node).is_some_and(|var_decl| {
-                        self.arena
-                            .has_modifier(&var_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    }) =>
+                        .any(|n| n == &assigned_name) =>
                 {
+                    // `var x` declares a runtime binding regardless of the
+                    // `declare` modifier. `declare var server` in a module
+                    // file says "the name `server` is a runtime value" — so
+                    // `export = server` must lower to
+                    // `module.exports = server`. Previously the `!is_declare`
+                    // gate elided the assignment for ambient bindings.
                     matched_runtime = true;
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION

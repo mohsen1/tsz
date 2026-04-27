@@ -17,7 +17,11 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn callee_suppresses_contextual_any(
+    /// Determine whether a call/new callee that resolved to `TypeId::ERROR`
+    /// emitted a name/value resolution diagnostic at the callee site. Used to
+    /// suppress contextual `any` for callback arguments so TS7006 still fires
+    /// after the callee's name lookup failed.
+    pub(crate) fn callee_suppresses_contextual_any(
         &self,
         callee_idx: NodeIndex,
         snap: &crate::context::speculation::DiagnosticSnapshot,

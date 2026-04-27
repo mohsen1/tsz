@@ -1154,6 +1154,10 @@ impl TypeDatabase for QueryCache<'_> {
     fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
         self.interner.set_contains_this_type_cache(type_id, result);
     }
+
+    fn exact_optional_property_types(&self) -> bool {
+        self.exact_optional_property_types.get()
+    }
 }
 
 /// Implement `TypeResolver` for `QueryCache` with noop resolution.
@@ -1664,7 +1668,8 @@ impl QueryDatabase for QueryCache<'_> {
         // QueryCache doesn't have full TypeResolver capability, so use PropertyAccessEvaluator
         // with the current QueryDatabase.
         let prop_atom = self.interner.intern_string(prop_name);
-        let exact_optional_property_types = self.exact_optional_property_types();
+        let exact_optional_property_types =
+            crate::caches::db::QueryDatabase::exact_optional_property_types(self);
         let key = (
             object_type,
             prop_atom,

@@ -114,6 +114,31 @@ type T00 = { [P in P]: string };
 }
 
 #[test]
+fn test_self_indexed_property_annotations_emit_ts2502() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+type T1 = {
+    x: T1["x"];
+};
+
+interface I1 {
+    x: I1["x"];
+}
+
+class C1 {
+    x: C1["x"];
+}
+"#,
+    );
+
+    let ts2502_count = diagnostics.iter().filter(|d| d.0 == 2502).count();
+    assert_eq!(
+        ts2502_count, 3,
+        "Expected TS2502 for self-indexed type literal, interface, and class properties.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_mapped_type_invalid_key_constraint_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"

@@ -95,17 +95,12 @@ impl<'a> CheckerState<'a> {
                 );
                 true
             }
-            Some(SubtypeFailureReason::TupleElementMismatch { .. }) => {
-                // Tuple arity mismatch (source has too many or too few elements
-                // for the target tuple). tsc reports this as the outer
-                // "Source has N element(s) but target requires/allows-only M."
-                // sub-message under the call-site TS2345/TS2322 — it does not
-                // drill into a specific source element (even when one of them
-                // would also fail an element-by-element assignability check).
-                // Returning false here lets the outer caller render the
-                // arity-aware TS2345 with related information directly.
-                false
-            }
+            // Tuple arity mismatch (`SubtypeFailureReason::TupleElementMismatch`)
+            // intentionally falls through to the wildcard `=> false`. tsc reports
+            // it as the outer "Source has N element(s) but target requires …"
+            // sub-message under TS2345/TS2322 and does not drill into a specific
+            // source element, so the outer caller renders the arity-aware
+            // diagnostic directly.
             Some(SubtypeFailureReason::ArrayElementMismatch {
                 source_element: _,
                 target_element,

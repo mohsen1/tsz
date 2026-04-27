@@ -565,6 +565,26 @@ impl<'a> TypePrinter<'a> {
             return self.print_callable(callable_id);
         }
         if let Some(param_info) = visitor::type_param_info(self.interner, type_id) {
+            // Distinguish `infer T` from a bare type parameter reference. tsc
+            // emits `infer T` (with constraint, if any) only when the
+            // placeholder appears inside the extends clause of a conditional
+            // type. References to the same `Infer(T)` reused elsewhere — true
+            // branch, false branch, or as a type argument — render as the
+            // bare name `T`. The `in_extends_clause` flag is propagated by
+            // `print_conditional` while it walks `cond.extends_type`.
+            if self.is_in_extends_clause() && visitor::is_infer_type(self.interner, type_id) {
+                let mut result = String::from("infer ");
+                result.push_str(&self.resolve_type_param_name(param_info.name));
+                if let Some(constraint) = param_info.constraint {
+                    // The constraint of an `infer T extends C` annotation is
+                    // not itself part of the extends clause for `infer`
+                    // purposes.
+                    let bare = self.leaving_extends_clause();
+                    result.push_str(" extends ");
+                    result.push_str(&bare.print_type(constraint));
+                }
+                return result;
+            }
             return self.print_type_parameter(&param_info);
         }
         if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id) {

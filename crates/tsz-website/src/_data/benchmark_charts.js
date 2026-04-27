@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const WEBSITE = path.resolve(import.meta.dirname, "..", "..");
-const ROOT = path.resolve(WEBSITE, "..", "..");
+const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
 function fmt(n) {
   return Number(n).toLocaleString("en-US");
@@ -70,8 +69,7 @@ function loadBenchmarks() {
     }
   })();
 
-  const snapshot = path.join(WEBSITE, "bench-snapshot.json");
-  for (const location of [...artifactFiles, snapshot]) {
+  for (const location of artifactFiles) {
     const data = readJsonIfExists(location);
     if (data?.results) return data;
   }
@@ -277,16 +275,13 @@ function categoryDescription(category) {
 
 function generateCharts(data) {
   if (!data?.results?.length) {
-    return `<div class="bench-placeholder">
-  <p>No benchmark data available.</p>
-  <p>Run <code>./scripts/bench/bench-vs-tsgo.sh --json</code> to generate benchmarks.</p>
-</div>`;
+    return "";
   }
 
   const allResults = data.results;
   const results = allResults.filter((r) => r.tsz_ms != null && r.tsz_ms > 0 && r.tsgo_ms != null && r.tsgo_ms > 0);
   const failedResults = allResults.filter((r) => !(r.tsz_ms != null && r.tsz_ms > 0) && r.tsgo_ms != null && r.tsgo_ms > 0);
-  if (!results.length && !failedResults.length) return `<div class="bench-placeholder">No valid benchmark results found.</div>`;
+  if (!results.length && !failedResults.length) return "";
   const grouped = new Map();
   for (const row of results) {
     const category = categoryFor(row.name || "", row.lines);

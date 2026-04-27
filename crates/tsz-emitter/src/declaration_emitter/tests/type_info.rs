@@ -1004,3 +1004,78 @@ var d = {
         "Did not expect enum member literal to leak into anonymous object type: {output}"
     );
 }
+
+/// Regression test for `declarationEmitShadowingInferNotRenamed`: a single
+/// non-abstract construct signature must render as `new (...) => T` (matching
+/// tsc), and an `Infer(T)` placeholder appearing inside the extends clause of
+/// a conditional must render as `infer T` (not `T`, and not collapsed to a
+/// `{ new(): { ... } }` object literal). Inside the conditional's true/false
+/// branches the same `Infer(T)` collapses to the bare name `T`.
+#[test]
+fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
+    use tsz_solver::types::{ConditionalType, TypeParamInfo};
+
+    let interner = TypeInterner::new();
+    let t_atom = interner.intern_string("T");
+    let t_param = interner.type_param(TypeParamInfo {
+        name: t_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let c_atom = interner.intern_string("C");
+    let c_param_info = TypeParamInfo {
+        name: c_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let infer_c = interner.infer(c_param_info);
+
+    // Build a non-abstract constructor type whose return is `infer C`.
+    let ctor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(Vec::new(), infer_c)],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    // Build conditional `any extends (new () => infer C) ? C : never` and
+    // verify both:
+    //   - the extends clause renders as `new () => infer C`
+    //   - the true branch references `C` as a bare name (no `infer`).
+    let cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: ctor_type,
+        true_type: infer_c,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    let parser = ParserState::new("test.ts".to_string(), String::new());
+    let binder = BinderState::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(cond);
+
+    assert!(
+        printed.contains("new () => infer C"),
+        "Expected non-abstract single-construct callable to render as `new () => infer C` \
+         when its return type is an Infer placeholder inside a conditional's extends clause: \
+         {printed}"
+    );
+    assert!(
+        !printed.contains("{\n    new (): infer C"),
+        "Did not expect a single-construct callable to fall through to the \
+         object-literal `{{ new (): T }}` form: {printed}"
+    );
+    // True branch references the same Infer placeholder; tsc prints just `C`.
+    assert!(
+        printed.contains("? C : "),
+        "Expected the true branch to reference the inferred placeholder by bare \
+         name `C`, not `infer C`: {printed}"
+    );
+}

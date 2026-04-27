@@ -254,6 +254,49 @@ impl<'a> CheckerState<'a> {
                     }
                     self.pop_type_parameters(type_param_updates);
                 }
+
+                // TS2526: Find `this` types appearing inside nested type
+                // literals on a property signature annotation and route them
+                // through `get_type_from_type_node` so the THIS_TYPE branch
+                // emits the diagnostic.
+                //
+                // Why a targeted walk: `get_type_of_interface` runs the
+                // property's annotation through the lowering pipeline, which
+                // silently maps `this` to `ThisType` without invoking
+                // `is_this_type_allowed`. Calling `get_type_from_type_node`
+                // on the entire annotation perturbs DefId registration order
+                // for adjacent interface types and corrupts type-printer
+                // output (e.g. `Real & Fake` rendering as
+                // `Lazy(N) & Lazy(M)`). Resolving only the THIS_TYPE leaves
+                // outer type registration untouched while still firing the
+                // diagnostic.
+                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                    && let Some(sig) = self.ctx.arena.get_signature(member_node)
+                    && sig.type_annotation.is_some()
+                {
+                    self.check_nested_this_types_for_ts2526(sig.type_annotation);
+                }
+
+                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                    && let Some(owner_name) = iface_name.as_deref()
+                    && let Some(sig) = self.ctx.arena.get_signature(member_node)
+                    && sig.type_annotation.is_some()
+                    && let Some(property_name) =
+                        crate::types_domain::queries::core::get_literal_property_name(
+                            self.ctx.arena,
+                            sig.name,
+                        )
+                    && self.indexed_access_references_owner_property(
+                        sig.type_annotation,
+                        owner_name,
+                        &property_name,
+                    )
+                {
+                    let message = format!(
+                        "'{property_name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(sig.name, &message, 2502);
+                }
             }
             // TS2502 + TS2615: Check if property type annotation circularly
             // references itself through a mapped type applied to the enclosing interface.
@@ -2031,5 +2074,61 @@ impl<'a> CheckerState<'a> {
             "Type of property '{prop_name}' circularly references itself in mapped type '{mapped_type_str}'."
         );
         self.error_at_node(sig.type_annotation, &message_2615, 2615);
+    }
+
+    /// Walk a type annotation and resolve any `this` type nodes that appear
+    /// inside nested `TYPE_LITERAL` contexts, so that the checker's `THIS_TYPE`
+    /// branch fires the TS2526 diagnostic.
+    ///
+    /// `get_type_of_interface` lowers property annotations through the
+    /// silent lowering pipeline, which never asks `is_this_type_allowed`.
+    /// We can't simply route the whole annotation through
+    /// `get_type_from_type_node` because that perturbs DefId registration
+    /// order and corrupts type-printer output for sibling interface types.
+    /// Resolving only the inner `THIS_TYPE` nodes keeps the outer type
+    /// registration intact while still emitting the diagnostic at the
+    /// right source position.
+    pub(crate) fn check_nested_this_types_for_ts2526(&mut self, root: NodeIndex) {
+        if root.is_none() {
+            return;
+        }
+
+        // Walk descendants of `root`. We only care about THIS_TYPE nodes
+        // that live inside a TYPE_LITERAL — at the top level the property
+        // annotation itself already covers the position where TSC anchors
+        // TS2526 (and `get_type_of_interface` calls into the type-literal
+        // handling for direct property annotations elsewhere).
+        let mut stack: Vec<NodeIndex> = self
+            .ctx
+            .arena
+            .get_children(root)
+            .into_iter()
+            .filter(|idx| idx.is_some())
+            .collect();
+
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            // ThisKeyword (the bare `this` token) and THIS_TYPE both
+            // map to a `this` type position. Treat them identically here.
+            if node.kind == syntax_kind_ext::THIS_TYPE
+                || node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
+            {
+                // Routing through the checker's type-node entry point
+                // dispatches to the TypeNodeChecker's THIS_TYPE branch,
+                // which calls `is_this_type_allowed` and emits TS2526
+                // when the position is invalid.
+                let _ = self.get_type_from_type_node(idx);
+                continue;
+            }
+            stack.extend(
+                self.ctx
+                    .arena
+                    .get_children(idx)
+                    .into_iter()
+                    .filter(|child| child.is_some()),
+            );
+        }
     }
 }

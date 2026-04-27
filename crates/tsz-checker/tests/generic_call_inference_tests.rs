@@ -1336,6 +1336,54 @@ function test(r: Real | Fake) {
     );
 }
 
+#[test]
+fn ts2684_union_method_this_message_uses_interface_names_not_outer_function() {
+    // Regression for an ID-conflation bug in the property-access `this`
+    // binder: when the noop TypeResolver couldn't translate an interface's
+    // SymbolId to a DefId, `nominalize_object_receiver` fell back to
+    // `interner.reference(SymbolRef(sym_id.0))`, which created a
+    // `Lazy(DefId(sym_id.0))`. Because `SymbolId.0` and `DefId.0` are
+    // independent ID spaces, this produced a Lazy that pointed at an
+    // *unrelated* declaration (e.g., the enclosing `test` function), so the
+    // TS2684 message rendered as `Real & test` (or `Fake & test`) instead of
+    // `Real & Fake`. The fix: keep the original Object receiver when no
+    // DefId mapping exists, so the formatter can recover the interface name
+    // through `shape.symbol`.
+    let source = r#"
+interface Real {
+    method(this: this, n: number): void;
+    data: string;
+}
+interface Fake {
+    method(this: this, n: number): void;
+    data: number;
+}
+function test(r: Real | Fake) {
+    r.method(12);
+}
+"#;
+    let diags = relevant_diagnostics(source);
+    let ts2684 = diags
+        .iter()
+        .find(|(code, _)| *code == 2684)
+        .expect("expected TS2684 diagnostic");
+    let msg = &ts2684.1;
+    // The expected `this` should display as `Real & Fake` (interface names),
+    // not as `Fake & test` or `Lazy(N) & Lazy(M)`.
+    assert!(
+        msg.contains("'Real & Fake'") || msg.contains("'Fake & Real'"),
+        "TS2684 message should reference both interface names, not the outer function. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("test'"),
+        "TS2684 message must not leak the enclosing function name `test`. Got: {msg}"
+    );
+    assert!(
+        !msg.contains("Lazy("),
+        "TS2684 message must not leak `Lazy(N)` placeholders. Got: {msg}"
+    );
+}
+
 // ─── Higher-order generic contextual types (compose/flip patterns) ──────
 
 #[test]

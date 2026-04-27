@@ -378,6 +378,27 @@ impl<'a> CheckerState<'a> {
             return alias_name;
         }
 
+        let application_display =
+            crate::query_boundaries::common::type_application(self.ctx.types, display_ty)
+                .map(|_| display_ty)
+                .or_else(|| {
+                    self.ctx
+                        .types
+                        .get_display_alias(display_ty)
+                        .or_else(|| self.ctx.types.get_display_alias(ty))
+                        .filter(|&alias| {
+                            crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                                .is_some()
+                        })
+                });
+        if let Some(application_display) = application_display {
+            let normalized =
+                self.normalize_property_receiver_application_display_type(application_display);
+            if normalized != application_display {
+                return self.format_type_diagnostic_widened_for_assignability_display(normalized);
+            }
+        }
+
         // Application-backed primitive Intersection: when an Application (e.g.
         // `Brand<T>`) evaluates to an Intersection that contains at least one
         // primitive member (number/string/boolean), tsc always shows the structural

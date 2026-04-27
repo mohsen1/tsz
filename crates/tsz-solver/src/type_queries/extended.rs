@@ -429,8 +429,13 @@ pub fn get_literal_property_name(
     match db.lookup(type_id) {
         Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
         Some(TypeData::Literal(crate::types::LiteralValue::Number(num))) => {
-            // Format number exactly like TS (e.g. 1.0 -> "1")
-            let s = format!("{}", num.0);
+            // Format number exactly like TS does for property names — match
+            // `Number.prototype.toString()` so very large/small magnitudes
+            // (e.g. `5.462437423415177e+244`) and special values
+            // (`Infinity`, `-Infinity`, `NaN`) line up with the canonical
+            // property keys produced by `canonicalize_numeric_name` for
+            // numeric-literal property names.
+            let s = crate::utils::js_number_to_string(num.0).into_owned();
             Some(db.intern_string(&s))
         }
         Some(TypeData::UniqueSymbol(sym)) => {

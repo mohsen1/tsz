@@ -192,7 +192,7 @@ impl<'a> FlowAnalyzer<'a> {
     ///
     /// Walks all ASSIGNMENT flow nodes in the arena to find non-initialization
     /// assignments that target the given reference. Results are cached per SymbolId.
-    fn get_last_assignment_pos(
+    pub(crate) fn get_last_assignment_pos(
         &self,
         symbol_id: tsz_binder::SymbolId,
         reference: NodeIndex,

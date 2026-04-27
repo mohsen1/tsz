@@ -14,6 +14,15 @@ impl<'a> CheckerState<'a> {
     /// When there are multiple spreads, we don't emit TS2739/TS2740 for missing
     /// properties here because later spreads might provide them. Instead, we let
     /// the final combined prop validation handle missing property checks.
+    ///
+    /// `earlier_explicit_attrs` maps earlier explicit attribute names (i.e.
+    /// attributes appearing BEFORE this spread) to their name-node indices.
+    /// When the spread's property mismatches the expected prop type AND there
+    /// is an earlier explicit attribute with the same name, tsc anchors the
+    /// per-property TS2322 at that earlier attribute (matching where TS2783
+    /// "specified more than once" is emitted), with the per-property message
+    /// ("Type 'X' is not assignable to type 'Y'") rather than the whole-type
+    /// message at the JSX tag name.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_spread_property_types(
         &mut self,
@@ -22,6 +31,7 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
         overridden_names: &rustc_hash::FxHashSet<&str>,
         overridden_for_missing: &rustc_hash::FxHashSet<&str>,
+        earlier_explicit_attrs: &rustc_hash::FxHashMap<String, NodeIndex>,
         has_later_spreads: bool,
         suppress_missing_props: bool,
         display_target: &str,
@@ -209,7 +219,14 @@ impl<'a> CheckerState<'a> {
         // Track mismatches that will NOT be fixed by later explicit attributes.
         // A mismatch is "fixable" if a later explicit attr will overwrite the property.
         // A mismatch is "unfixable" if the spread's value will actually be used.
+        //
+        // When an unfixable mismatch corresponds to an EARLIER explicit attribute
+        // (i.e. the spread overrides that attribute via TS2783), tsc anchors the
+        // per-property TS2322 at that earlier attribute with the per-property
+        // message. We collect those mismatches and emit them inline; remaining
+        // unfixable mismatches fall back to a whole-type TS2322 at the tag name.
         let mut has_unfixable_mismatch = false;
+        let mut anchored_per_property_emitted = false;
         for prop in &spread_shape.properties {
             let prop_name = self.ctx.types.resolve_atom(prop.name).to_string();
 
@@ -237,14 +254,36 @@ impl<'a> CheckerState<'a> {
             if !self.is_assignable_to(source_type, expected_type) {
                 // This property has a type mismatch.
                 // Check if it will be overwritten by a later explicit attribute.
-                if !overridden_names.contains(prop_name.as_str()) {
-                    // No later explicit attr will overwrite this property,
-                    // so the spread's wrong value will be used.
-                    has_unfixable_mismatch = true;
-                    break;
+                if overridden_names.contains(prop_name.as_str()) {
+                    // If the property is in overridden_names, a later explicit attr
+                    // will provide the value instead, so this mismatch is fixable.
+                    continue;
                 }
-                // If the property is in overridden_names, a later explicit attr
-                // will provide the value instead, so this mismatch is fixable.
+
+                // If an EARLIER explicit attribute has the same name, the spread
+                // overrides it (TS2783). tsc anchors the per-property TS2322 at
+                // that earlier attribute with the per-property message.
+                if let Some(&attr_name_idx) = earlier_explicit_attrs.get(&prop_name) {
+                    let source_str = self.format_type(source_type);
+                    let target_str = self.format_type(expected_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    self.error_at_node(
+                        attr_name_idx,
+                        &message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                    anchored_per_property_emitted = true;
+                    continue;
+                }
+
+                // No later explicit attr will overwrite this property AND no
+                // earlier explicit attr to anchor at, so the spread's wrong
+                // value will be used and we report a whole-type TS2322 below.
+                has_unfixable_mismatch = true;
+                break;
             }
         }
 
@@ -278,6 +317,11 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             );
+        } else if anchored_per_property_emitted {
+            // We emitted per-property TS2322 at earlier explicit attributes
+            // (matching the TS2783 anchor). Treat this as "had error" so the
+            // caller can suppress redundant TS2741 for the same spread.
+            return true;
         }
 
         false
