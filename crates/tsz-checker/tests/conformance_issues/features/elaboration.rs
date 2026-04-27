@@ -404,6 +404,47 @@ objAndReadonly({ x: 0, y: 0 }, { x: 1 });
 }
 
 #[test]
+fn test_excess_property_display_widens_fresh_application_args() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type MyReadonly<T> = { readonly [P in keyof T]: T[P] };
+type MyPartial<T> = { [P in keyof T]?: T[P] };
+declare function objAndReadonly<T>(primary: T, secondary: MyReadonly<T>): T;
+declare function objAndPartial<T>(primary: T, secondary: MyPartial<T>): T;
+
+objAndReadonly({ x: 0, y: 0 }, { x: 1, y: 1, z: 1 });
+objAndPartial({ x: 0, y: 0 }, { x: 1, y: 1, z: 1 });
+        "#,
+        CheckerOptions {
+            strict: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2353 && message.contains("MyReadonly<{ x: number; y: number; }>")
+        }),
+        "Expected TS2353 to widen fresh object args in MyReadonly target display.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2353 && message.contains("MyPartial<{ x: number; y: number; }>")
+        }),
+        "Expected TS2353 to widen fresh object args in MyPartial target display.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2353
+                && (message.contains("MyReadonly<{ x: 0; y: 0; }>")
+                    || message.contains("MyPartial<{ x: 0; y: 0; }>"))
+        }),
+        "TS2353 mapped application display must not preserve fresh literal args.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_cross_binder_symbol_id_collision_emits_ts2322_for_this_return() {
     let passport_dts = r#"
 declare module 'passport' {
