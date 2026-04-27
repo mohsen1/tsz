@@ -384,7 +384,62 @@ impl<'a> CheckerState<'a> {
         // letting a direct `import type` marker win when present.
         let mut saw_unclassified_cross_file_type_only = false;
 
-        // Walk the alias chain to find the first type-only import or export.
+        // Pass 1: walk every alias on the chain — including ones whose owning
+        // binder is not the current file's binder — and return the first
+        // direct `import type` / `export type` syntactic marker found. A
+        // direct marker is the most authoritative signal: e.g. for
+        //   /c.ts: import type { C } from './b';
+        //   /c.ts: export { C as D };
+        //   /d.ts: import { D } from './c'; new D();
+        // the chain visits D-d, D-c, C-c, C-b, ... — and C-c carries the
+        // `import type` clause that anchors `tsc`'s TS1361 attribution.
+        // Without this pass an unordered iteration order could hit C-b's
+        // cross-file inference (which infers TS1362 from `export type {A as B}`
+        // upstream in /a.ts) before reaching C-c, even though C-c is closer
+        // to the use-site and carries the more direct marker.
+        for alias_sym_id in &visited {
+            let Some(symbol) = self.get_symbol_from_any_binder(alias_sym_id) else {
+                continue;
+            };
+
+            // Only applies to alias symbols explicitly marked type-only.
+            // A plain `export { X as Y }` that merely re-exports a type-only
+            // symbol is not itself a direct marker.
+            if !(symbol.has_any_flags(symbol_flags::ALIAS) && symbol.is_type_only) {
+                continue;
+            }
+
+            // Find the arena that owns this alias's declarations. Prefer the
+            // per-symbol override if registered; otherwise resolve via the
+            // owning file index (cross-binder alias case).
+            let arena = self
+                .ctx
+                .binder
+                .symbol_arenas
+                .get(&alias_sym_id)
+                .map(|arc| &**arc)
+                .or_else(|| {
+                    self.ctx
+                        .resolve_symbol_file_index(alias_sym_id)
+                        .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+                })
+                .unwrap_or(self.ctx.arena);
+
+            for &decl in &symbol.declarations {
+                if decl.is_none() {
+                    continue;
+                }
+                if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
+                    return Some(kind);
+                }
+            }
+        }
+
+        // Pass 2: walk every alias and fall back to cross-file type-only
+        // inference for aliases whose import chain crosses into a type-only
+        // export. Skip namespace imports/exports — they create value
+        // bindings even when the module's exports are themselves type-only;
+        // individual type-only members surface as TS2339 via property lookup.
         for alias_sym_id in &visited {
             let symbol = match self
                 .ctx
@@ -395,35 +450,6 @@ impl<'a> CheckerState<'a> {
                 None => continue,
             };
 
-            // Only applies to alias symbols explicitly marked type-only.
-            // A plain `export { X as Y }` that merely re-exports a type-only
-            // symbol is not itself a direct marker — fall through to the
-            // next alias in `visited` in that case.
-            if symbol.has_any_flags(symbol_flags::ALIAS) && symbol.is_type_only {
-                let arena = self
-                    .ctx
-                    .binder
-                    .symbol_arenas
-                    .get(&alias_sym_id)
-                    .map(|arc| &**arc)
-                    .unwrap_or(self.ctx.arena);
-
-                for &decl in &symbol.declarations {
-                    if decl.is_none() {
-                        continue;
-                    }
-                    if let Some(kind) = Self::find_direct_type_only_marker(arena, decl) {
-                        return Some(kind);
-                    }
-                }
-            }
-
-            // If this alias resolves through an import chain that came from a type-only
-            // re-export or import, classify accordingly.
-            // Skip for namespace imports (import * as ns) and namespace re-exports
-            // (export * as ns from). These create value bindings — the namespace
-            // object itself is a value even if the module's exports are type-only.
-            // Individual type-only members surface as TS2339 via property lookup.
             if let Some(module_specifier) = symbol.import_module.as_deref() {
                 let Some((export_name, is_namespace_binding)) =
                     self.effective_import_binding_name(symbol)
