@@ -39,6 +39,18 @@ fn is_literal_permissive_context(ctx: TypeId) -> bool {
     ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
 }
 
+/// Whether a contextual type is "literal-permissive" — i.e., does not
+/// constrain literal property types and therefore should not suppress
+/// the object-literal property widening that tsc performs for non-fresh
+/// literal contexts.
+///
+/// `unknown`, `any`, and `never` fall into this bucket: tsc's
+/// `isLiteralOfContextualType` returns `false` for them, so a property
+/// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
+fn is_literal_permissive_context(ctx: TypeId) -> bool {
+    ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
+}
+
 impl<'a> CheckerState<'a> {
     fn function_like_has_explicit_signature_annotations(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
