@@ -97,15 +97,13 @@ jobs:
           fetch-depth: 1
       - name: Build dist-fast binaries
         run: scripts/ci/github-suite.sh dist-binaries
+      - name: Pack dist-fast binaries
+        run: tar -C .target/dist-fast -cf dist-fast-binaries.tar tsz tsz-server tsz-conformance generate-tsc-cache
       - name: Upload dist-fast binaries
         uses: actions/upload-artifact@v4
         with:
           name: dist-fast-binaries
-          path: |
-            .target/dist-fast/tsz
-            .target/dist-fast/tsz-server
-            .target/dist-fast/tsz-conformance
-            .target/dist-fast/generate-tsc-cache
+          path: dist-fast-binaries.tar
           retention-days: 1
           if-no-files-found: error
 
@@ -165,15 +163,21 @@ jobs:
           fetch-depth: 1
       - name: Prep node harnesses
         run: scripts/ci/github-suite.sh node-harness-prep
+      - name: Pack node harness
+        run: |
+          tar --create --file node-harness.tar \
+            scripts/node_modules/ \
+            scripts/emit/dist/ \
+            TypeScript/built/local \
+            TypeScript/node_modules
       - name: Upload node harness artifact
         uses: actions/upload-artifact@v4
         with:
           name: node-harness
-          path: |
-            scripts/node_modules/
-            scripts/emit/
+          path: node-harness.tar
           retention-days: 1
           if-no-files-found: warn
+          compression-level: 1
 
   unit:
     name: unit-${{ matrix.shard }}
@@ -223,8 +227,8 @@ jobs:
         with:
           name: dist-fast-binaries
           path: .
-      - name: Make binaries executable
-        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server .target/dist-fast/tsz-conformance .target/dist-fast/generate-tsc-cache
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Run conformance shard
         run: scripts/ci/github-suite.sh conformance
 
@@ -261,6 +265,8 @@ jobs:
       _TSZ_CI_EMIT_SHARD_COUNT: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_SKIP_TS_RESTORE: "1"
+      TSZ_CI_NODE_HARNESS_PREPPED: "1"
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
@@ -271,13 +277,15 @@ jobs:
         with:
           name: dist-fast-binaries
           path: .
-      - name: Make binaries executable
-        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server .target/dist-fast/tsz-conformance .target/dist-fast/generate-tsc-cache
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Download node harness
         uses: actions/download-artifact@v4
         with:
           name: node-harness
           path: .
+      - name: Unpack node harness
+        run: tar -xf node-harness.tar
       - name: Run emit shard
         run: scripts/ci/github-suite.sh emit-shard
 
@@ -306,14 +314,17 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
-      TSZ_CI_FOURSLASH_WORKERS: 8
+      TSZ_CI_FOURSLASH_WORKERS: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_SKIP_TS_RESTORE: "1"
+      TSZ_CI_NODE_HARNESS_PREPPED: "1"
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
@@ -324,13 +335,15 @@ jobs:
         with:
           name: dist-fast-binaries
           path: .
-      - name: Make binaries executable
-        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server .target/dist-fast/tsz-conformance .target/dist-fast/generate-tsc-cache
+      - name: Unpack dist-fast binaries
+        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Download node harness
         uses: actions/download-artifact@v4
         with:
           name: node-harness
           path: .
+      - name: Unpack node harness
+        run: tar -xf node-harness.tar
       - name: Run fourslash shard
         run: scripts/ci/github-suite.sh fourslash-shard
 

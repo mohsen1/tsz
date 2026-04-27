@@ -411,6 +411,18 @@ init_typescript_submodule() {
     rm -rf TypeScript
   fi
 
+  # If TypeScript/ was seeded by a node-harness artifact it has built/ and/or
+  # node_modules/ but no .git directory.  Stash those dirs, let git initialise
+  # the submodule (which needs a clean directory), then restore them on top of
+  # the freshly-cloned source tree.
+  local _ts_stash=""
+  if [[ -d TypeScript && ! -d TypeScript/.git ]]; then
+    _ts_stash="$(mktemp -d)"
+    [[ -d TypeScript/built ]] && mv TypeScript/built "$_ts_stash/"
+    [[ -d TypeScript/node_modules ]] && mv TypeScript/node_modules "$_ts_stash/"
+    rm -rf TypeScript
+  fi
+
   if [[ "$SYNTHETIC_GIT_CHECKOUT" -eq 0 ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     local gitlink_ref
     gitlink_ref="$(git ls-tree HEAD TypeScript | awk '{print $3}')"
@@ -424,6 +436,14 @@ init_typescript_submodule() {
     git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
     git -C TypeScript fetch --depth 1 origin "$expected_ref"
     git -C TypeScript checkout --detach FETCH_HEAD
+  fi
+
+  # Restore artifact-seeded content on top of the initialised source tree.
+  if [[ -n "$_ts_stash" ]]; then
+    rm -rf TypeScript/built TypeScript/node_modules
+    [[ -d "$_ts_stash/built" ]] && mv "$_ts_stash/built" TypeScript/
+    [[ -d "$_ts_stash/node_modules" ]] && mv "$_ts_stash/node_modules" TypeScript/
+    rm -rf "$_ts_stash"
   fi
 
   test -f TypeScript/src/lib/es5.d.ts
@@ -618,6 +638,14 @@ prep_node_artifacts() {
     npx tsc -p tsconfig.json
   )
   ./scripts/fourslash/run-fourslash.sh --prep-only
+}
+
+maybe_prep_node_artifacts() {
+  if [[ "${TSZ_CI_NODE_HARNESS_PREPPED:-0}" == "1" ]]; then
+    echo "info: skipping prep_node_artifacts (TSZ_CI_NODE_HARNESS_PREPPED=1)"
+    return 0
+  fi
+  prep_node_artifacts
 }
 
 read_conformance_results() {
@@ -1423,7 +1451,7 @@ main() {
       ;;
     emit-shard)
       timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_emit_shard run_emit_shard
       ;;
     emit-aggregate)
@@ -1431,7 +1459,7 @@ main() {
       ;;
     fourslash-shard)
       timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_fourslash_shard run_fourslash_shard
       ;;
     fourslash-aggregate)
