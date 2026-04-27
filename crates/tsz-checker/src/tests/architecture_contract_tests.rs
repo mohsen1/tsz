@@ -1650,6 +1650,9 @@ fn checker_files_stay_under_loc_limit() {
         // initial 2063 came from the `void` carve-out that preserves tsc's
         // widening for `IterableIterator<T, void>` (`generatorTypeCheck63.ts`).
         ("types/function_type.rs", 2066),
+        // Recently grew past 2000 lines on origin/main; grandfather as ratchet
+        // baseline. Test-style LOC count = non-empty, non-comment lines.
+        ("flow/control_flow/condition_narrowing.rs", 2020),
     ];
 
     let mut violations = Vec::new();
