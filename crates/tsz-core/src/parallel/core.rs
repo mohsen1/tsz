@@ -1747,7 +1747,15 @@ pub struct MergedProgram {
     /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
     /// The checker reads this during construction to pre-create solver `DefIds`.
-    pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    ///
+    /// `Arc`-wrapped so the parallel checker's lib-check pass and the
+    /// per-file binder reconstruction paths can share via `Arc::clone`
+    /// (atomic increment) instead of deep-cloning the underlying
+    /// `FxHashMap`. The lib-check overlays an always-empty per-lib map
+    /// on top of this (`build_lib_bound_file_for_interface_checks`
+    /// returns an empty `semantic_defs`), so for the lib path the
+    /// `Arc::clone` is the entire cost.
+    pub semantic_defs: Arc<FxHashMap<SymbolId, crate::binder::SemanticDefEntry>>,
     /// Shared `DefinitionStore` pre-populated with `DefId`s for all top-level
     /// semantic definitions during the merge phase. This moves identity creation
     /// from checker pre-population (per-file, order-dependent) to merge time
@@ -3553,7 +3561,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         lib_symbol_ids: Arc::new(global_lib_symbol_ids),
         type_interner,
         alias_partners,
-        semantic_defs,
+        semantic_defs: Arc::new(semantic_defs),
         definition_store,
         skeleton_index: Some(skeleton_index),
         dep_graph: Some(dep_graph),
@@ -4720,11 +4728,22 @@ pub fn check_files_parallel(
             build_lib_bound_file_for_interface_checks(program, lib_file, &affected_lib_interfaces);
         let mut binder =
             create_binder_from_bound_file(&lib_bound_file, program, program.files.len());
-        let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in lib_bound_file.semantic_defs.iter() {
-            composed_semantic_defs.insert(*sym_id, entry.clone());
+        // PERF: `build_lib_bound_file_for_interface_checks` always seeds
+        // `lib_bound_file.semantic_defs` as empty, so the previous
+        // clone-then-overlay collapsed to a deep clone of `program.semantic_defs`
+        // and Arc-wrapping the result. With `program.semantic_defs` now
+        // `Arc`-shared, the fast path is one atomic refcount bump plus a
+        // potential `Arc::make_mut` only when the per-lib map actually
+        // contributes entries (currently never).
+        if lib_bound_file.semantic_defs.is_empty() {
+            binder.semantic_defs = Arc::clone(&program.semantic_defs);
+        } else {
+            let mut composed_semantic_defs = (*program.semantic_defs).clone();
+            for (sym_id, entry) in lib_bound_file.semantic_defs.iter() {
+                composed_semantic_defs.insert(*sym_id, entry.clone());
+            }
+            binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
-        binder.semantic_defs = Arc::new(composed_semantic_defs);
 
         let mut checker = CheckerState::with_options(
             &lib_bound_file.arena,
@@ -5026,11 +5045,15 @@ pub fn create_binder_from_bound_file(
     // and resolve_cross_batch_heritage both skip when fully_populated=true).
     // Skip the expensive clone+overlay to avoid O(files * total_defs) work.
     if !program.definition_store.is_fully_populated() {
-        let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in file.semantic_defs.iter() {
-            composed_semantic_defs.insert(*sym_id, entry.clone());
+        if file.semantic_defs.is_empty() {
+            binder.semantic_defs = Arc::clone(&program.semantic_defs);
+        } else {
+            let mut composed_semantic_defs = (*program.semantic_defs).clone();
+            for (sym_id, entry) in file.semantic_defs.iter() {
+                composed_semantic_defs.insert(*sym_id, entry.clone());
+            }
+            binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
-        binder.semantic_defs = Arc::new(composed_semantic_defs);
     }
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
@@ -5125,11 +5148,15 @@ pub fn create_binder_from_bound_file_with_shared(
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
 
     if !program.definition_store.is_fully_populated() {
-        let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in file.semantic_defs.iter() {
-            composed_semantic_defs.insert(*sym_id, entry.clone());
+        if file.semantic_defs.is_empty() {
+            binder.semantic_defs = Arc::clone(&program.semantic_defs);
+        } else {
+            let mut composed_semantic_defs = (*program.semantic_defs).clone();
+            for (sym_id, entry) in file.semantic_defs.iter() {
+                composed_semantic_defs.insert(*sym_id, entry.clone());
+            }
+            binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
-        binder.semantic_defs = Arc::new(composed_semantic_defs);
     }
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
