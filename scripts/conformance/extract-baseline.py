@@ -11,15 +11,29 @@ Output is sorted by test path for stable diffing.
 
 import sys
 import os
+import re
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib.results import parse_runner_output
+
+
+# Always write paths repo-relative so the baseline is portable across
+# checkout dirs (CI runners, worktrees, contributors' workspaces).
+# Greedy match: if a checkout path itself contains "TypeScript/" (e.g.,
+# /workspace/TypeScript/tsz/TypeScript/tests/cases/foo.ts), we want the
+# LAST occurrence — the one that begins the in-repo path.
+_ABS_PREFIX_RE = re.compile(r"^.*(TypeScript/)")
+
+
+def normalize_path(path):
+    return _ABS_PREFIX_RE.sub(r"\1", path, count=1)
 
 
 def extract(input_path):
     tests = parse_runner_output(input_path)
     results = []
     for path, rec in tests.items():
+        path = normalize_path(path)
         status = rec["status"]
         exp = rec["expected"]
         act = rec["actual"]

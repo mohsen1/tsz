@@ -220,11 +220,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
-      TSZ_CI_CONFORMANCE_SHARDS: 32
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 16
+      TSZ_CI_CONFORMANCE_SHARDS: 16
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -251,8 +251,8 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
-      TSZ_CI_CONFORMANCE_SHARDS: 32
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 16
+      TSZ_CI_CONFORMANCE_SHARDS: 16
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
