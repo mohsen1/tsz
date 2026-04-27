@@ -66,6 +66,26 @@ tmp_archive() {
   printf '/tmp/tsz-cache-%s-%s.tar.gz\n' "$label" "$$"
 }
 
+_restore_cargo_target_profile() {
+  local label="$1" hash="$2"
+  local uri fallback_uri
+  uri="$(cache_uri "${label}/${hash}.tar.gz")"
+  if gsutil -q stat "$uri"; then
+    restore_archive "${label}-${hash}" "$uri" "."
+  else
+    echo "Cache miss: ${label}-${hash}"
+    fallback_uri="$(gsutil ls -l "$(cache_uri "${label}/*.tar.gz")" 2>/dev/null \
+      | grep -v '^TOTAL:' \
+      | sort -k2 -r \
+      | head -1 \
+      | awk '{print $NF}' || true)"
+    if [[ -n "$fallback_uri" ]]; then
+      echo "Cache warm-fallback: ${label} from ${fallback_uri}"
+      restore_archive "${label}-warm-fallback" "$fallback_uri" "."
+    fi
+  fi
+}
+
 restore_archive() {
   local label="$1" uri="$2" dest="$3"
   local archive
@@ -199,34 +219,14 @@ restore_caches() {
       "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
       ".ci-cache/cargo-home"
 
-    # Keyed by Cargo.lock so the entry is reused across all PRs that share the same
-    # dependency set. Only misses (and re-saves) when Cargo.lock actually changes.
-    # Archives only .target/dist-fast to keep the tarball small; project crate
-    # artifacts inside it are stale after any source change but Cargo recompiles
-    # them via sccache. External dep artifacts are valid (same Cargo.lock = same
-    # dep versions) and let Cargo skip those crates entirely.
-    local cargo_target_uri
-    cargo_target_uri="$(cache_uri "cargo-target-deps/${cargo_hash}.tar.gz")"
-    if gsutil -q stat "$cargo_target_uri"; then
-      restore_archive \
-        "cargo-target-deps-${cargo_hash}" \
-        "$cargo_target_uri" \
-        "." \
-        .target/dist-fast
-    else
-      echo "Cache miss: cargo-target-deps-${cargo_hash}"
-      local fallback_uri
-      fallback_uri="$(gsutil ls -l "$(cache_uri "cargo-target-deps/*.tar.gz")" 2>/dev/null \
-        | grep -v '^TOTAL:' \
-        | sort -k2 -r \
-        | head -1 \
-        | awk '{print $NF}' || true)"
-      if [[ -n "$fallback_uri" ]]; then
-        echo "Cache warm-fallback: cargo-target-deps from ${fallback_uri}"
-        restore_archive "cargo-target-deps-warm-fallback" "$fallback_uri" "." .target/dist-fast
-      fi
-    fi
-    if [[ -d .target/dist-fast ]]; then
+    # Per-profile Cargo target caches, each keyed by Cargo.lock hash.
+    # External dep artifacts are valid across commits (same lock = same versions)
+    # and let Cargo skip those crates entirely. Workspace crate artifacts inside
+    # are stale after any source change but get recompiled via sccache.
+    # Separate archives per profile so each job only saves what it built.
+    _restore_cargo_target_profile "cargo-target-deps" "$cargo_hash"
+    _restore_cargo_target_profile "cargo-target-unit" "$cargo_hash"
+    if [[ -d .target/dist-fast || -d .target/ci-unit ]]; then
       normalize_rust_source_mtimes
     fi
   else
@@ -292,14 +292,18 @@ save_caches() {
       ".ci-cache/cargo-home" \
       registry git
 
-    # Save only .target/dist-fast (not all of .target) keyed by Cargo.lock.
-    # Same Cargo.lock across PRs → already exists → save_archive skips the upload.
-    # Only re-saves when Cargo.lock changes (new/updated deps) — typically rare.
+    # Per-profile target caches keyed by Cargo.lock. Each job saves only the
+    # profile it built; save_archive is a no-op when the path is absent.
     save_archive \
       "cargo-target-deps-${cargo_hash}" \
       "$(cache_uri "cargo-target-deps/${cargo_hash}.tar.gz")" \
       "." \
       .target/dist-fast
+    save_archive \
+      "cargo-target-unit-${cargo_hash}" \
+      "$(cache_uri "cargo-target-unit/${cargo_hash}.tar.gz")" \
+      "." \
+      .target/ci-unit
   fi
 
   save_archive \
