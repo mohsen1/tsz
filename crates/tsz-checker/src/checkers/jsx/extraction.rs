@@ -577,22 +577,26 @@ impl<'a> CheckerState<'a> {
                 if !is_unresolved(return_type) && !is_valid_null_like_return(return_type) {
                     any_checked = true;
                     if let Some(element_type) = jsx_element_type {
-                        // TSC allows null/undefined in SFC return types
-                        // (e.g., `() => Element | null` is valid).
                         // Strip null/undefined before checking against JSX.Element.
+                        // `() => Element | null` is valid; `() => undefined` is not.
                         let non_null_return = crate::query_boundaries::common::remove_nullish(
                             self.ctx.types,
                             return_type,
                         );
-                        // `never` after stripping nullish means the SFC only
-                        // returns nullish values (or unreachable). tsc treats
-                        // this as a valid JSX return type because `never` is
-                        // assignable to anything (e.g. `function F() { return null!; }`).
-                        // Mirrors the construct-signature handling below and
-                        // `check_jsx_sfc_return_type` (which also early-exits on never).
-                        if non_null_return != TypeId::NEVER
-                            && !self.is_assignable_to(non_null_return, element_type)
-                        {
+                        if non_null_return == TypeId::NEVER {
+                            // Stripping nullish left NEVER. Two cases:
+                            // 1. return_type IS never (unreachable bottom type) → valid.
+                            // 2. return_type was nullish-only (e.g. `undefined`,
+                            //    `null | undefined`) → the pure-null case was already
+                            //    handled by `is_valid_null_like_return` above, so
+                            //    `undefined` is present. With strictNullChecks,
+                            //    `undefined` is not valid JSX (not in JSX.Element | null).
+                            //    Without strictNullChecks, undefined is a subtype of
+                            //    everything, so it is valid JSX → no error.
+                            if return_type != TypeId::NEVER && self.ctx.strict_null_checks() {
+                                all_valid = false;
+                            }
+                        } else if !self.is_assignable_to(non_null_return, element_type) {
                             all_valid = false;
                         }
                     }
@@ -647,7 +651,14 @@ impl<'a> CheckerState<'a> {
                                     ret,
                                 );
                                 if stripped == TypeId::NEVER {
-                                    return true;
+                                    // Same logic as the function-shape path above:
+                                    // never itself is valid; nullish-only (undefined
+                                    // or null|undefined) is invalid with strictNullChecks,
+                                    // but valid without (undefined is a universal subtype).
+                                    if ret == TypeId::NEVER {
+                                        return true;
+                                    }
+                                    return !self.ctx.strict_null_checks();
                                 }
                                 stripped
                             } else {
