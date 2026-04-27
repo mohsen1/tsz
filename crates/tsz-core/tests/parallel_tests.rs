@@ -5691,7 +5691,7 @@ fn definition_store_defids_deterministic_across_merges() {
     );
 
     // The DefId values should also be the same (sequential allocation from 1)
-    for (&sym_id, entry) in &program1.semantic_defs {
+    for (&sym_id, entry) in program1.semantic_defs.iter() {
         let def1 = program1.definition_store.find_def_by_symbol(sym_id.0);
         // Find the corresponding symbol in program2 by name
         let sym_id2 = program2
@@ -5722,7 +5722,7 @@ fn definition_store_preserves_kind_and_metadata() {
     let program = merge_bind_results(results);
 
     // Check that DefKind, is_abstract, is_const are preserved
-    for (_sym_id, entry) in &program.semantic_defs {
+    for (_sym_id, entry) in program.semantic_defs.iter() {
         let def_id = program
             .definition_store
             .find_def_by_symbol(_sym_id.0)
@@ -7548,7 +7548,7 @@ export const myVar = 42;
 
     // Collect all semantic def names and their DefIds before reconstruction
     let mut pre_reconstruct: Vec<(String, tsz_solver::def::DefId)> = Vec::new();
-    for (&sym_id, entry) in &program.semantic_defs {
+    for (&sym_id, entry) in program.semantic_defs.iter() {
         if let Some(def_id) = store.find_def_by_symbol(sym_id.0) {
             pre_reconstruct.push((entry.name.clone(), def_id));
         }
@@ -8483,10 +8483,10 @@ var e: Date = c.b();
         crate::binder::state::BinderStateScopeInputs {
             scopes: file1_bound.scopes.clone(),
             node_scope_ids: file1_bound.node_scope_ids.clone(),
-            global_augmentations: std::sync::Arc::new(file1_bound.global_augmentations.clone()),
-            module_augmentations: std::sync::Arc::new(file1_bound.module_augmentations.clone()),
-            augmentation_target_modules: std::sync::Arc::new(
-                file1_bound.augmentation_target_modules.clone(),
+            global_augmentations: std::sync::Arc::clone(&file1_bound.global_augmentations),
+            module_augmentations: std::sync::Arc::clone(&file1_bound.module_augmentations),
+            augmentation_target_modules: std::sync::Arc::clone(
+                &file1_bound.augmentation_target_modules,
             ),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file1_bound
@@ -8495,7 +8495,7 @@ var e: Date = c.b();
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
-            symbol_arenas: std::sync::Arc::new(file1_bound.symbol_arenas.clone()),
+            symbol_arenas: std::sync::Arc::clone(&file1_bound.symbol_arenas),
             declaration_arenas,
             sym_to_decl_indices,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),

@@ -52,7 +52,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.binder.node_symbols.values().copied().collect();
             let mut result = FxHashSet::default();
             if !self.ctx.binder.scopes.is_empty() {
-                for scope in &self.ctx.binder.scopes {
+                for scope in self.ctx.binder.scopes.iter() {
                     if scope.kind == tsz_binder::ContainerKind::Class {
                         continue;
                     }
@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
             // No libs: use scope tables or file_locals (all are user symbols)
             let mut result = FxHashSet::default();
             if !self.ctx.binder.scopes.is_empty() {
-                for scope in &self.ctx.binder.scopes {
+                for scope in self.ctx.binder.scopes.iter() {
                     if scope.kind == tsz_binder::ContainerKind::Class {
                         continue;
                     }

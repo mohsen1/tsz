@@ -2144,7 +2144,7 @@ fn build_program_with_cache(
                     module_declaration_exports_publicly: Default::default(),
                     symbol_arenas: Default::default(),
                     declaration_arenas: Default::default(),
-                    scopes: Vec::new(),
+                    scopes: Default::default(),
                     node_scope_ids: Default::default(),
                     parse_diagnostics: Vec::new(),
                     shorthand_ambient_modules: Default::default(),
