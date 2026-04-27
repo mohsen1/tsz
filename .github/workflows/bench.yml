@@ -38,10 +38,8 @@ jobs:
       - name: Restore caches
         run: scripts/ci/gcp-cache.sh restore
 
-      - name: Install bench dependencies
+      - name: Install pnpm
         run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends hyperfine jq bc
           if ! command -v pnpm &>/dev/null; then
             npm install -g pnpm --silent
           fi

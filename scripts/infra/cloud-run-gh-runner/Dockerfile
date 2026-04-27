@@ -10,6 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update -qq \
     && apt-get install -y --no-install-recommends \
       bash \
+      bc \
       binaryen \
       build-essential \
       ca-certificates \
@@ -24,6 +25,9 @@ RUN apt-get update -qq \
       tar \
       unzip \
       xz-utils \
+    && HYPERFINE_VER=1.18.0 \
+    && curl -sL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VER}/hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl.tar.gz" \
+       | tar xz --strip-components=1 -C /usr/local/bin "hyperfine-v${HYPERFINE_VER}-x86_64-unknown-linux-musl/hyperfine" \
     && curl -fsSL https://sdk.cloud.google.com > /tmp/install-gcloud.sh \
     && bash /tmp/install-gcloud.sh --disable-prompts --install-dir=/ \
     && rm -rf /tmp/install-gcloud.sh \
