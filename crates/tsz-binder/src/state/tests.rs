@@ -3009,6 +3009,27 @@ foo[sym] = 3;
     );
 }
 
+#[test]
+fn expando_element_assignments_on_prototype_named_properties_are_tracked() {
+    let (binder, _parser) = parse_and_bind(
+        r#"
+function F() {}
+const key = "realName";
+F.prototypeOf[key] = 1;
+"#,
+    );
+
+    let props = binder
+        .expando_properties
+        .get("F.prototypeOf")
+        .expect("expected expando properties for F.prototypeOf");
+
+    assert!(
+        props.contains("realName"),
+        "should not treat prototypeOf as a prototype-chain assignment"
+    );
+}
+
 // =============================================================================
 // 21. SHORTHAND AMBIENT MODULES
 // =============================================================================

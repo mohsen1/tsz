@@ -76,6 +76,30 @@ const a: string = foo[dashStrMem];
 }
 
 #[test]
+fn test_prototype_named_expando_element_access_no_ts7053() {
+    let source = r#"
+function F() {}
+const key = "lateBound";
+F.prototypeOf[key] = "ok";
+const value: string = F.prototypeOf[key];
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 for prototype-named non-prototype expando property access. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_inherited_abstract_property_access_in_constructor_reports_ts2715_without_shadowed_cb() {
     let source = r#"
 abstract class AbstractClass {
