@@ -223,6 +223,11 @@ impl BinderState {
                         .entry(name.clone())
                         .or_default()
                         .push(crate::state::GlobalAugmentation::new(idx, aug_flags));
+                    if !self.current_scope.has(&name)
+                        && let Some(existing_id) = self.file_locals.get(&name)
+                    {
+                        self.current_scope.set(name.clone(), existing_id);
+                    }
                 }
 
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;

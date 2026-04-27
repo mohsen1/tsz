@@ -2712,17 +2712,22 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // node_scope_ids because not all declaration types create scopes
                 // (e.g., InterfaceDeclaration does not create a scope, so its node
                 // won't appear in node_scope_ids, causing false negatives).
-                let is_nested_symbol = !result.scopes.first().is_some_and(|root_scope| {
-                    root_scope
-                        .table
-                        .get(&sym.escaped_name)
-                        .is_some_and(|root_sym_id| root_sym_id == old_id)
-                });
+                let is_global_augmentation_symbol =
+                    result.global_augmentations.contains_key(&sym.escaped_name);
+                let is_nested_symbol = !is_global_augmentation_symbol
+                    && !result.scopes.first().is_some_and(|root_scope| {
+                        root_scope
+                            .table
+                            .get(&sym.escaped_name)
+                            .is_some_and(|root_sym_id| root_sym_id == old_id)
+                    });
 
                 // Check if symbol already exists in globals (cross-file merging)
                 // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
                 // Nested scope symbols should NEVER be merged across scopes
-                let new_id = if !is_nested_symbol && !result.is_external_module {
+                let should_cross_file_merge = !is_nested_symbol
+                    && (!result.is_external_module || is_global_augmentation_symbol);
+                let new_id = if should_cross_file_merge {
                     let name_atom = name_interner.intern(&sym.escaped_name);
                     if let Some(&existing_id) = merged_symbols.get(&name_atom) {
                         // Symbol exists - check if we can merge
