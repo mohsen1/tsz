@@ -478,7 +478,7 @@ pub struct BindResult {
     /// File-level symbol table (exports, declarations)
     pub file_locals: SymbolTable,
     /// Ambient module declarations by specifier
-    pub declared_modules: FxHashSet<String>,
+    pub declared_modules: Arc<FxHashSet<String>>,
     /// Module exports keyed by specifier or file name
     pub module_exports: Arc<FxHashMap<String, SymbolTable>>,
     /// Node-to-symbol mapping.
@@ -582,7 +582,7 @@ pub struct BindResult {
     /// merge can move it into per-file binders without deep-cloning.
     pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
     /// Per-file alias partners from binder (`TYPE_ALIAS` → `ALIAS` mapping, pre-remap)
-    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+    pub alias_partners: Arc<FxHashMap<SymbolId, SymbolId>>,
     pub file_features: crate::binder::FileFeatures,
     /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Maps pre-remap `SymbolId` → `SemanticDefEntry`.
@@ -636,7 +636,7 @@ impl BindResult {
         size += self.file_locals.len() * (32 + std::mem::size_of::<SymbolId>());
 
         // declared_modules
-        for s in &self.declared_modules {
+        for s in self.declared_modules.iter() {
             size += s.capacity() + std::mem::size_of::<u64>();
         }
 
@@ -1710,7 +1710,7 @@ pub struct MergedProgram {
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
     pub file_locals: Vec<SymbolTable>,
     /// Ambient module declarations across all files
-    pub declared_modules: FxHashSet<String>,
+    pub declared_modules: Arc<FxHashSet<String>>,
     /// Shorthand ambient modules (`declare module "foo"` without body) - imports from these are `any`
     pub shorthand_ambient_modules: Arc<FxHashSet<String>>,
     /// Module exports: maps file name (or module specifier) to its exported symbols
@@ -1743,7 +1743,7 @@ pub struct MergedProgram {
     /// Alias partners: maps `TYPE_ALIAS` `SymbolId` → `ALIAS` `SymbolId` for merged type+namespace exports.
     /// When `export type X = ...` and `export * as X from "..."` coexist, the exports table
     /// holds the `TYPE_ALIAS` symbol and this map links it to the ALIAS symbol for value resolution.
-    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+    pub alias_partners: Arc<FxHashMap<SymbolId, SymbolId>>,
     /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
     /// The checker reads this during construction to pre-create solver `DefIds`.
@@ -2969,7 +2969,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         // Remap binder's per-file alias_partners to global SymbolIds
-        for (&type_alias_id, &alias_id) in &result.alias_partners {
+        for (&type_alias_id, &alias_id) in result.alias_partners.iter() {
             if let (Some(&new_ta), Some(&new_alias)) =
                 (id_remap.get(&type_alias_id), id_remap.get(&alias_id))
             {
@@ -3570,7 +3570,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         cross_file_node_symbols,
         globals,
         file_locals: file_locals_list,
-        declared_modules,
+        declared_modules: Arc::new(declared_modules),
         shorthand_ambient_modules: Arc::new(shorthand_ambient_modules),
         module_exports: Arc::new(module_exports),
         reexports: Arc::new(reexports),
@@ -3579,7 +3579,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         lib_binders: Arc::new(lib_binders),
         lib_symbol_ids: Arc::new(global_lib_symbol_ids),
         type_interner,
-        alias_partners,
+        alias_partners: Arc::new(alias_partners),
         semantic_defs: Arc::new(semantic_defs),
         definition_store,
         skeleton_index: Some(skeleton_index),

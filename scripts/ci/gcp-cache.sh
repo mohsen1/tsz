@@ -30,22 +30,6 @@ cargo_lock_hash() {
   hash_files Cargo.lock
 }
 
-cargo_target_hash() {
-  local files=(Cargo.lock Cargo.toml .cargo/config.toml)
-  while IFS= read -r -d '' path; do
-    files+=("$path")
-  done < <(
-    find crates -type f \
-      \( -name '*.rs' -o -name Cargo.toml -o -name build.rs \) \
-      -print0 | sort -z
-  )
-
-  {
-    printf '%s\n' "${TSZ_CI_RUST_CACHE_VERSION:-rust-1.90-bookworm}"
-    sha256sum "${files[@]}"
-  } | sha256sum | awk '{print $1}'
-}
-
 typescript_ref() {
   tr -d '[:space:]' < scripts/ci/typescript-submodule-ref
 }
@@ -104,16 +88,6 @@ restore_archive() {
   fi
 }
 
-normalize_rust_source_mtimes() {
-  local stamp="${TSZ_CI_CARGO_SOURCE_MTIME:-200001010000.00}"
-  {
-    printf '%s\0' Cargo.lock Cargo.toml .cargo/config.toml
-    find crates -type f \
-      \( -name '*.rs' -o -name Cargo.toml -o -name build.rs \) \
-      -print0
-  } | xargs -0 touch -t "$stamp"
-}
-
 save_archive() {
   local label="$1" uri="$2" base="$3"
   shift 3
@@ -160,24 +134,6 @@ suite_needs_rust_compile() {
   esac
 }
 
-should_save_cargo_target() {
-  local suite shard_index
-  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
-  shard_index="${_TSZ_CI_CONFORMANCE_SHARD_INDEX:-${TSZ_CI_CONFORMANCE_SHARD_INDEX:-0}}"
-
-  case "$suite" in
-    all|full|build)
-      return 0
-      ;;
-    conformance)
-      [[ "$shard_index" == "0" ]]
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
 restore_typescript() {
   local ref cache archive
   ref="$(typescript_ref)"
@@ -215,10 +171,19 @@ restore_typescript() {
   test -f TypeScript/src/lib/es5.d.ts
 }
 
+normalize_rust_source_mtimes() {
+  local stamp="${TSZ_CI_CARGO_SOURCE_MTIME:-200001010000.00}"
+  {
+    printf '%s\0' Cargo.lock Cargo.toml .cargo/config.toml
+    find crates -type f \
+      \( -name '*.rs' -o -name Cargo.toml -o -name build.rs \) \
+      -print0
+  } | xargs -0 touch -t "$stamp"
+}
+
 restore_caches() {
-  local cargo_hash cargo_target_hash node_hash ts_ref ts_deps_hash commit
+  local cargo_hash node_hash ts_ref ts_deps_hash commit
   cargo_hash="$(cargo_lock_hash)"
-  cargo_target_hash="$(cargo_target_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
   commit="$(commit_key)"
@@ -234,41 +199,35 @@ restore_caches() {
       "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
       ".ci-cache/cargo-home"
 
+    # Keyed by Cargo.lock so the entry is reused across all PRs that share the same
+    # dependency set. Only misses (and re-saves) when Cargo.lock actually changes.
+    # Archives only .target/dist-fast to keep the tarball small; project crate
+    # artifacts inside it are stale after any source change but Cargo recompiles
+    # them via sccache. External dep artifacts are valid (same Cargo.lock = same
+    # dep versions) and let Cargo skip those crates entirely.
     local cargo_target_uri
-    cargo_target_uri="$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")"
+    cargo_target_uri="$(cache_uri "cargo-target-deps/${cargo_hash}.tar.gz")"
     if gsutil -q stat "$cargo_target_uri"; then
       restore_archive \
-        "cargo-target-${cargo_target_hash}" \
+        "cargo-target-deps-${cargo_hash}" \
         "$cargo_target_uri" \
         "." \
-        .target
-      if [[ -d .target ]]; then
-        normalize_rust_source_mtimes
-        mkdir -p .ci-cache
-        touch .ci-cache/cargo-target-cache-hit
-      fi
+        .target/dist-fast
     else
-      echo "Cache miss: cargo-target-${cargo_target_hash}"
-      # Restore the most-recently-saved cargo-target as a warm fallback.
-      # sccache forces CARGO_INCREMENTAL=0 which makes incremental
-      # fingerprints incompatible across caches; the warm cache still
-      # seeds the .rlib files in .target/dist-fast/deps/ so Cargo skips
-      # crates whose content hashes match, avoiding sccache round-trips.
-      # Sort by GCS timestamp (gsutil ls -l col 2) to get the newest entry.
-      # Does not mark cache-hit so the exact-hash entry is still saved.
+      echo "Cache miss: cargo-target-deps-${cargo_hash}"
       local fallback_uri
-      fallback_uri="$(gsutil ls -l "$(cache_uri "cargo-target/*.tar.gz")" 2>/dev/null \
+      fallback_uri="$(gsutil ls -l "$(cache_uri "cargo-target-deps/*.tar.gz")" 2>/dev/null \
         | grep -v '^TOTAL:' \
         | sort -k2 -r \
         | head -1 \
         | awk '{print $NF}' || true)"
       if [[ -n "$fallback_uri" ]]; then
-        echo "Cache warm-fallback: cargo-target from ${fallback_uri}"
-        restore_archive "cargo-target-warm-fallback" "$fallback_uri" "." .target
-        if [[ -d .target ]]; then
-          normalize_rust_source_mtimes
-        fi
+        echo "Cache warm-fallback: cargo-target-deps from ${fallback_uri}"
+        restore_archive "cargo-target-deps-warm-fallback" "$fallback_uri" "." .target/dist-fast
       fi
+    fi
+    if [[ -d .target/dist-fast ]]; then
+      normalize_rust_source_mtimes
     fi
   else
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
@@ -317,28 +276,28 @@ restore_caches() {
 }
 
 save_caches() {
-  local cargo_hash cargo_target_hash node_hash ts_ref ts_deps_hash commit
+  local cargo_hash node_hash ts_ref ts_deps_hash commit
   cargo_hash="$(cargo_lock_hash)"
-  cargo_target_hash="$(cargo_target_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
   ts_deps_hash="$(typescript_deps_hash)"
   commit="$(commit_key)"
 
-  save_archive \
-    "cargo-home-${cargo_hash}" \
-    "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
-    ".ci-cache/cargo-home" \
-    registry git
-
-  if should_save_cargo_target; then
+  if suite_needs_rust_compile; then
     save_archive \
-      "cargo-target-${cargo_target_hash}" \
-      "$(cache_uri "cargo-target/${cargo_target_hash}.tar.gz")" \
+      "cargo-home-${cargo_hash}" \
+      "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
+      ".ci-cache/cargo-home" \
+      registry git
+
+    # Save only .target/dist-fast (not all of .target) keyed by Cargo.lock.
+    # Same Cargo.lock across PRs → already exists → save_archive skips the upload.
+    # Only re-saves when Cargo.lock changes (new/updated deps) — typically rare.
+    save_archive \
+      "cargo-target-deps-${cargo_hash}" \
+      "$(cache_uri "cargo-target-deps/${cargo_hash}.tar.gz")" \
       "." \
-      .target
-  else
-    echo "Cache save skipped: cargo-target-${cargo_target_hash} (suite does not own cargo target upload)"
+      .target/dist-fast
   fi
 
   save_archive \

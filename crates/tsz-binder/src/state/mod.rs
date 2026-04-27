@@ -253,8 +253,15 @@ pub struct BinderState {
     /// go through `Arc::make_mut` (free when refcount=1, the case during a
     /// single file's bind); read-only post-bind.
     pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
-    /// Ambient module declarations by specifier (e.g. "pkg", "./types")
-    pub declared_modules: FxHashSet<String>,
+    /// Ambient module declarations by specifier (e.g. "pkg", "./types").
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// (cross-file lookup + per-file checking, ~2N for N files) share via
+    /// `Arc::clone` (atomic increment) instead of deep-cloning the
+    /// underlying `FxHashSet`. Mutations during binding go through
+    /// `Arc::make_mut` (free when refcount=1, the case during a single
+    /// file's bind).
+    pub declared_modules: Arc<FxHashSet<String>>,
     /// Whether the current source file is an external module (has top-level import/export).
     pub is_external_module: bool,
     /// Whether the current scope is in strict mode (via "use strict" directive or --alwaysStrict).
@@ -528,7 +535,11 @@ pub struct BinderState {
     /// the exports table holds the `TYPE_ALIAS` symbol (for type reference resolution) and this
     /// map links it to the ALIAS symbol (for value/namespace resolution).
     /// Populated by `merge_bind_results` in parallel.rs.
-    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver
+    /// share via `Arc::clone` (atomic increment) instead of deep-cloning
+    /// the underlying `FxHashMap`. Read-only after `merge_bind_results`.
+    pub alias_partners: Arc<FxHashMap<SymbolId, SymbolId>>,
 
     /// Module specifier strings from static import/export declarations.
     ///
@@ -957,7 +968,7 @@ pub struct BinderStateScopeInputs {
     pub node_flow: Arc<FxHashMap<u32, FlowNodeId>>,
     pub switch_clause_to_switch: Arc<FxHashMap<u32, NodeIndex>>,
     pub expando_properties: Arc<FxHashMap<String, FxHashSet<String>>>,
-    pub alias_partners: FxHashMap<SymbolId, SymbolId>,
+    pub alias_partners: Arc<FxHashMap<SymbolId, SymbolId>>,
 }
 
 #[cfg(test)]

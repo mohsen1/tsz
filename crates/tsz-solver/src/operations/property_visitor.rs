@@ -370,10 +370,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             shape.properties.iter().any(|prop| prop.name == atom)
         };
 
-        has_prop("length")
-            && has_prop("buffer")
-            && has_prop("byteLength")
-            && has_prop("byteOffset")
+        has_prop("length") && has_prop("buffer") && has_prop("byteLength") && has_prop("byteOffset")
     }
 
     fn typed_array_to_locale_string_result(

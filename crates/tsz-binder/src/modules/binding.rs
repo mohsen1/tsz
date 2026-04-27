@@ -152,7 +152,8 @@ impl BinderState {
                         // Don't do this for top-level augmentations — those are true augmentations
                         // that need TS2664 if the target module doesn't exist.
                         if Self::is_inside_namespace(arena, idx) {
-                            self.declared_modules.insert(module_specifier.clone());
+                            Arc::make_mut(&mut self.declared_modules)
+                                .insert(module_specifier.clone());
                         }
                         if module.body.is_none() {
                             // Shorthand ambient module: `declare module "*.json";` (no body)
@@ -179,7 +180,7 @@ impl BinderState {
                     }
 
                     // Not an augmentation - track as ambient module declaration
-                    self.declared_modules.insert(module_specifier);
+                    Arc::make_mut(&mut self.declared_modules).insert(module_specifier);
                 }
             }
 

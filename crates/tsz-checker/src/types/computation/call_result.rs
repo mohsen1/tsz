@@ -843,6 +843,22 @@ impl<'a> CheckerState<'a> {
             if !refined_still_has_holes {
                 return false;
             }
+            // When neither callable has its own generic signatures, check if holes are
+            // only in the expected type (not the actual). This covers cases like
+            // `pipe(() => true, ...)` where the expected `(...args: A) => B` has type
+            // params A and B from pipe's outer inference context, while the actual
+            // `() => boolean` is fully concrete. Deferring is correct because the outer
+            // inference will resolve A and B. Contrast with `(x: T) => void` passed where
+            // T is from an *outer* function scope — in that case T appears in the actual,
+            // so we don't defer (the holes are structural, not inference-in-progress).
+            if !actual_has_generic_signatures && !expected_has_generic_signatures {
+                let actual_has_holes =
+                    assign_query::contains_infer_types(self.ctx.types, refined_actual)
+                        || assign_query::contains_type_parameters(self.ctx.types, refined_actual);
+                if !actual_has_holes {
+                    return true;
+                }
+            }
         }
         // Defer callable mismatches only when the actual or expected has its own generic
         // signatures (e.g., `<T>(x: T) => T`), which indicates the mismatch may be resolved
