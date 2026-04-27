@@ -1128,7 +1128,15 @@ impl<'a> Printer<'a> {
                 if let Some(name) = self.arena.get_qualified_name(node) {
                     self.emit_entity_name(name.left);
                     self.write(".");
+                    // The right side of a qualified entity name is a member of
+                    // the left, not a free identifier in the enclosing scope.
+                    // Suppress namespace-IIFE auto-qualification so e.g.
+                    // `x.c` inside `namespace m3` does not become `x.m3.c`
+                    // when `c` happens to be exported from `m3`.
+                    let prev = self.suppress_ns_qualification;
+                    self.suppress_ns_qualification = true;
                     self.emit_entity_name(name.right);
+                    self.suppress_ns_qualification = prev;
                 }
             }
             _ => {}
