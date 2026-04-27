@@ -1409,3 +1409,58 @@ fn test_remove_undefined_non_union_noop() {
     let result = remove_undefined(&interner, TypeId::STRING);
     assert_eq!(result, TypeId::STRING);
 }
+
+// =============================================================================
+// Instanceof: Constructor Returning `any`
+// =============================================================================
+
+/// Regression: when the extracted instance type is `any`, instanceof narrowing
+/// must NOT filter union members. tsc keeps the source type unchanged because
+/// every type is assignable to `any` so the check provides no information.
+///
+/// Mirrors the `interface FConstructor { new (): any }` case in
+/// `typeGuardsWithInstanceOfByConstructorSignature.ts`. Before this fix,
+/// `narrow_by_instance_type` dropped primitive members (e.g., `string`),
+/// wrongly narrowing `F | string` to `F` and silencing the expected TS2339
+/// diagnostics on `obj11.foo` / `obj11.bar`.
+#[test]
+fn test_narrow_by_instance_type_any_target_returns_source_unchanged() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Build an interface-like object type to stand in for `F`.
+    let foo_name = interner.intern_string("foo");
+    let f_like = interner.object(vec![PropertyInfo::new(foo_name, TypeId::STRING)]);
+
+    let union = interner.union2(f_like, TypeId::STRING);
+
+    // Instance type extracted from `new (): any` is `any`.
+    let narrowed = ctx.narrow_by_instance_type(union, TypeId::ANY);
+
+    // Both members must be preserved — string MUST NOT be filtered out.
+    assert_eq!(
+        narrowed, union,
+        "narrow_by_instance_type should preserve the union when the instance type is `any` \
+         (got {narrowed:?}, expected {union:?})"
+    );
+}
+
+/// Same regression via the public `narrow_type` API with `TypeGuard::Instanceof`.
+/// Confirms the fix is reachable through the checker's actual entry point.
+#[test]
+fn test_narrow_type_instanceof_any_target_returns_source_unchanged() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let foo_name = interner.intern_string("foo");
+    let f_like = interner.object(vec![PropertyInfo::new(foo_name, TypeId::STRING)]);
+    let union = interner.union2(f_like, TypeId::STRING);
+
+    let guard = TypeGuard::Instanceof(TypeId::ANY, false);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+
+    assert_eq!(
+        narrowed, union,
+        "TypeGuard::Instanceof(any) on the true branch should not filter union members"
+    );
+}
