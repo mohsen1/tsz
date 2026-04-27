@@ -66,6 +66,26 @@ tmp_archive() {
   printf '/tmp/tsz-cache-%s-%s.tar.gz\n' "$label" "$$"
 }
 
+_restore_cargo_target_profile() {
+  local label="$1" hash="$2"
+  local uri fallback_uri
+  uri="$(cache_uri "${label}/${hash}.tar.gz")"
+  if gsutil -q stat "$uri"; then
+    restore_archive "${label}-${hash}" "$uri" "."
+  else
+    echo "Cache miss: ${label}-${hash}"
+    fallback_uri="$(gsutil ls -l "$(cache_uri "${label}/*.tar.gz")" 2>/dev/null \
+      | grep -v '^TOTAL:' \
+      | sort -k2 -r \
+      | head -1 \
+      | awk '{print $NF}' || true)"
+    if [[ -n "$fallback_uri" ]]; then
+      echo "Cache warm-fallback: ${label} from ${fallback_uri}"
+      restore_archive "${label}-warm-fallback" "$fallback_uri" "."
+    fi
+  fi
+}
+
 restore_archive() {
   local label="$1" uri="$2" dest="$3"
   local archive
@@ -129,8 +149,26 @@ suite_needs_rust_compile() {
   local suite
   suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
   case "$suite" in
-    all|full|build|lint|unit|wasm) return 0 ;;
+    all|full|build|lint|unit|wasm|wasm-web|dist-binaries|unit-archive) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+# Which cargo-target-* GCS archives a suite actually needs.
+# Restoring archives a job will not use is pure overhead — the cargo-target-debug
+# archive alone takes ~90s to download. Each suite lists only the profile(s) it
+# compiles into. "all"/"full" runs do everything, so they restore everything.
+suite_target_caches() {
+  local suite
+  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
+  case "$suite" in
+    all|full)              echo "cargo-target-deps cargo-target-unit cargo-target-debug cargo-target-wasm" ;;
+    build)                 echo "cargo-target-deps cargo-target-unit" ;;
+    dist-binaries)         echo "cargo-target-deps" ;;
+    unit-archive|unit)     echo "cargo-target-unit" ;;
+    lint)                  echo "cargo-target-debug" ;;
+    wasm|wasm-web)         echo "cargo-target-wasm" ;;
+    *)                     echo "" ;;
   esac
 }
 
@@ -199,34 +237,17 @@ restore_caches() {
       "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
       ".ci-cache/cargo-home"
 
-    # Keyed by Cargo.lock so the entry is reused across all PRs that share the same
-    # dependency set. Only misses (and re-saves) when Cargo.lock actually changes.
-    # Archives only .target/dist-fast to keep the tarball small; project crate
-    # artifacts inside it are stale after any source change but Cargo recompiles
-    # them via sccache. External dep artifacts are valid (same Cargo.lock = same
-    # dep versions) and let Cargo skip those crates entirely.
-    local cargo_target_uri
-    cargo_target_uri="$(cache_uri "cargo-target-deps/${cargo_hash}.tar.gz")"
-    if gsutil -q stat "$cargo_target_uri"; then
-      restore_archive \
-        "cargo-target-deps-${cargo_hash}" \
-        "$cargo_target_uri" \
-        "." \
-        .target/dist-fast
-    else
-      echo "Cache miss: cargo-target-deps-${cargo_hash}"
-      local fallback_uri
-      fallback_uri="$(gsutil ls -l "$(cache_uri "cargo-target-deps/*.tar.gz")" 2>/dev/null \
-        | grep -v '^TOTAL:' \
-        | sort -k2 -r \
-        | head -1 \
-        | awk '{print $NF}' || true)"
-      if [[ -n "$fallback_uri" ]]; then
-        echo "Cache warm-fallback: cargo-target-deps from ${fallback_uri}"
-        restore_archive "cargo-target-deps-warm-fallback" "$fallback_uri" "." .target/dist-fast
-      fi
-    fi
-    if [[ -d .target/dist-fast ]]; then
+    # Per-profile Cargo target caches, each keyed by Cargo.lock hash.
+    # External dep artifacts are valid across commits (same lock = same versions)
+    # and let Cargo skip those crates entirely.
+    # Each suite only restores the profile(s) it actually compiles into —
+    # restoring archives we don't use is pure overhead (cargo-target-debug alone
+    # is ~90s to download).
+    local target_cache
+    for target_cache in $(suite_target_caches); do
+      _restore_cargo_target_profile "$target_cache" "$cargo_hash"
+    done
+    if [[ -d .target/dist-fast || -d .target/ci-unit || -d .target/debug || -d .target/wasm32-unknown-unknown ]]; then
       normalize_rust_source_mtimes
     fi
   else
@@ -243,18 +264,20 @@ restore_caches() {
     "$(cache_uri "scripts-node-modules/${node_hash}.tar.gz")" \
     "scripts"
 
-  restore_archive \
-    "typescript-harness-${ts_ref}" \
-    "$(cache_uri "typescript-harness/${ts_ref}.tar.gz")" \
-    "TypeScript"
+  if [[ "${TSZ_CI_SKIP_TS_HARNESS_RESTORE:-0}" != "1" ]]; then
+    restore_archive \
+      "typescript-harness-${ts_ref}" \
+      "$(cache_uri "typescript-harness/${ts_ref}.tar.gz")" \
+      "TypeScript"
 
-  restore_archive \
-    "typescript-node-modules-${ts_ref}-${ts_deps_hash}" \
-    "$(cache_uri "typescript-node-modules/${ts_ref}-${ts_deps_hash}.tar.gz")" \
-    "TypeScript" \
-    node_modules
+    restore_archive \
+      "typescript-node-modules-${ts_ref}-${ts_deps_hash}" \
+      "$(cache_uri "typescript-node-modules/${ts_ref}-${ts_deps_hash}.tar.gz")" \
+      "TypeScript" \
+      node_modules
+  fi
 
-  if [[ "$commit" != "unknown" ]]; then
+  if [[ "${TSZ_CI_SKIP_DIST_RESTORE:-0}" != "1" && "$commit" != "unknown" ]]; then
     local dist_cache
     dist_cache="$(cache_uri "dist-fast/${commit}.tar.gz")"
     if gsutil -q stat "$dist_cache"; then
@@ -290,14 +313,28 @@ save_caches() {
       ".ci-cache/cargo-home" \
       registry git
 
-    # Save only .target/dist-fast (not all of .target) keyed by Cargo.lock.
-    # Same Cargo.lock across PRs → already exists → save_archive skips the upload.
-    # Only re-saves when Cargo.lock changes (new/updated deps) — typically rare.
+    # Per-profile target caches keyed by Cargo.lock. Each job saves only the
+    # profile it built; save_archive is a no-op when the path is absent.
     save_archive \
       "cargo-target-deps-${cargo_hash}" \
       "$(cache_uri "cargo-target-deps/${cargo_hash}.tar.gz")" \
       "." \
       .target/dist-fast
+    save_archive \
+      "cargo-target-unit-${cargo_hash}" \
+      "$(cache_uri "cargo-target-unit/${cargo_hash}.tar.gz")" \
+      "." \
+      .target/ci-unit
+    save_archive \
+      "cargo-target-debug-${cargo_hash}" \
+      "$(cache_uri "cargo-target-debug/${cargo_hash}.tar.gz")" \
+      "." \
+      .target/debug
+    save_archive \
+      "cargo-target-wasm-${cargo_hash}" \
+      "$(cache_uri "cargo-target-wasm/${cargo_hash}.tar.gz")" \
+      "." \
+      .target/wasm32-unknown-unknown
   fi
 
   save_archive \

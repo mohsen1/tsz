@@ -404,7 +404,7 @@ check_prerequisites() {
         local llvm_profdata
         llvm_profdata="$(ls "$(rustc --print sysroot)"/lib/rustlib/*/bin/llvm-profdata 2>/dev/null | head -1 || true)"
         local use_pgo=true
-        if [ "$QUICK_MODE" = true ]; then
+        if [[ "$QUICK_MODE" == true || "${BENCH_PGO:-1}" != "1" ]]; then
             use_pgo=false
         fi
 
@@ -451,8 +451,8 @@ check_prerequisites() {
             rm -rf "$optimized_target_dir"
             rm -rf "$pgo_target_dir"
         else
-            if [ "$QUICK_MODE" = true ]; then
-                echo -e "${YELLOW}Quick mode skips PGO; using standard dist build${NC}"
+            if [[ "$QUICK_MODE" == true || "${BENCH_PGO:-1}" != "1" ]]; then
+                echo -e "${YELLOW}PGO skipped (quick mode or BENCH_PGO=0); using standard dist build${NC}"
             else
                 echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
             fi

@@ -211,16 +211,16 @@ suite_needs_group() {
       [[ "$suite" == "lint" ]]
       ;;
     unit)
-      [[ "$suite" == "unit" || "$suite" == "unit-shard" ]]
+      [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
       ;;
     wasm)
-      [[ "$suite" == "wasm" ]]
+      [[ "$suite" == "wasm" || "$suite" == "wasm-web" ]]
       ;;
     node)
-      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* ]]
+      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
       ;;
     rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" ]]
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
       ;;
     *)
       return 1
@@ -596,13 +596,22 @@ build_test_binaries() {
 }
 
 build_wasm() {
-  ci_section "WASM build"
+  ci_section "WASM build (nodejs target)"
   (
     cd crates/tsz-wasm
     wasm-pack build --target nodejs --out-dir ../../pkg --no-opt
   )
   mkdir -p pkg/lib
   cp -R TypeScript/src/lib/. pkg/lib/
+}
+
+build_wasm_web() {
+  ci_section "WASM build (web target for website playground)"
+  cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
+  (
+    cd crates/tsz-wasm
+    wasm-pack build --target web --out-dir ../../pkg/web --no-opt
+  )
 }
 
 prep_node_artifacts() {
@@ -618,6 +627,14 @@ prep_node_artifacts() {
     npx tsc -p tsconfig.json
   )
   ./scripts/fourslash/run-fourslash.sh --prep-only
+}
+
+maybe_prep_node_artifacts() {
+  if [[ "${TSZ_CI_NODE_HARNESS_PREPPED:-0}" == "1" ]]; then
+    echo "info: skipping prep_node_artifacts (TSZ_CI_NODE_HARNESS_PREPPED=1)"
+    return 0
+  fi
+  prep_node_artifacts
 }
 
 read_conformance_results() {
@@ -934,14 +951,18 @@ run_emit_shard() {
   echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS}"
 
   local detail_json="$METRICS_DIR/emit-shard-${shard_index}.json"
+  local emit_args=(
+    --skip-build
+    --concurrency="$EMIT_WORKERS"
+    --timeout="${EMIT_TIMEOUT_MS:-30000}"
+    --json-out="$detail_json"
+  )
+  # Only restrict to a chunk when actually sharding; with one shard, run everything.
+  if [[ "$shard_count" -gt 1 ]]; then
+    emit_args+=(--max="$chunk" --offset="$offset")
+  fi
   set +e
-  ./scripts/emit/run.sh \
-    --skip-build \
-    --max="$chunk" \
-    --offset="$offset" \
-    --concurrency="$EMIT_WORKERS" \
-    --timeout="${EMIT_TIMEOUT_MS:-30000}" \
-    --json-out="$detail_json" \
+  ./scripts/emit/run.sh "${emit_args[@]}" \
     >"$LOG_DIR/emit/shard-${shard_index}.log" 2>&1
   local rc="$?"
   set -e
@@ -1306,6 +1327,24 @@ aggregate_fourslash() {
   fi
 }
 
+run_dist_binaries() {
+  ci_section "Build dist-fast binaries"
+  timed build_test_binaries build_test_binaries
+  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+    sccache --show-stats 2>/dev/null || true
+  fi
+}
+
+run_unit_archive_only() {
+  ci_section "Build unit test archive"
+  timed build_unit_test_archive build_unit_test_archive
+}
+
+run_node_harness_prep() {
+  ci_section "Prep node harnesses (emit + fourslash)"
+  timed prep_node_artifacts prep_node_artifacts
+}
+
 run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
@@ -1325,9 +1364,6 @@ run_build() {
   fi
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
-  fi
-  if command -v gsutil >/dev/null 2>&1; then
-    scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
   fi
 }
 
@@ -1366,6 +1402,15 @@ main() {
     build)
       run_build
       ;;
+    dist-binaries)
+      run_dist_binaries
+      ;;
+    unit-archive)
+      run_unit_archive_only
+      ;;
+    node-harness-prep)
+      run_node_harness_prep
+      ;;
     lint)
       timed run_lint run_lint
       ;;
@@ -1377,6 +1422,9 @@ main() {
       ;;
     wasm)
       timed build_wasm build_wasm
+      ;;
+    wasm-web)
+      timed build_wasm_web build_wasm_web
       ;;
     conformance)
       timed build_test_binaries build_test_binaries
@@ -1399,7 +1447,7 @@ main() {
       ;;
     emit-shard)
       timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_emit_shard run_emit_shard
       ;;
     emit-aggregate)
@@ -1407,7 +1455,7 @@ main() {
       ;;
     fourslash-shard)
       timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_fourslash_shard run_fourslash_shard
       ;;
     fourslash-aggregate)
@@ -1415,7 +1463,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, lint, unit, unit-shard, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac
