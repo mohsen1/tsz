@@ -1105,6 +1105,53 @@ const f1 = pipe(list, box);
 }
 
 #[test]
+fn pipe_no_false_ts2345_on_concrete_arg_against_unresolved_callable_param() {
+    // `pipe(() => true, b => 42)` should emit no errors.
+    // The first argument `() => true` is a concrete callable; the expected type
+    // `(...args: A) => B` has type params A, B from pipe's inference context.
+    // When A and B are still unresolved, we must defer (not report TS2345 or TS2322).
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function pipe<A extends any[], B, C>(f: (...args: A) => B, g: (x: B) => C): (...args: A) => C;
+let g5 = pipe(() => true, b => 42);
+let g6 = pipe(x => "hello", s => s.length);
+let g8 = pipe((x: number, y: string) => 42, x => "" + x);
+"#,
+    );
+    let false_positives: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345)
+        .collect();
+    assert!(
+        false_positives.is_empty(),
+        "pipe() with concrete callback against generic params must emit no TS2322/TS2345, got: {:?}",
+        false_positives
+            .iter()
+            .map(|d| (d.code, d.start, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn pipe_concrete_callback_holes_only_in_expected_no_ts2322_in_body() {
+    // Specifically guards against the arrow-body TS2322 false positive.
+    // `() => true` against `(...args: A) => B` should NOT elaborate into the body
+    // and emit TS2322 "Type 'boolean' is not assignable to type 'B'".
+    let diagnostics = check_source_with_strict_null(
+        r#"
+declare function pipe<A extends any[], B, C>(f: (...args: A) => B, g: (x: B) => C): (...args: A) => C;
+let g5 = pipe(() => true, b => 42);
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Arrow body must not be elaborated to TS2322 when expected return type has unresolved type params from outer context, got: {:?}",
+        ts2322.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts2322_skips_arrow_body_elaboration_for_object_property_in_generic_call() {
     // Guard against the indirect-caller variant of the unresolved-holes regression:
     // when the arrow appears as a property value inside an object literal that is
