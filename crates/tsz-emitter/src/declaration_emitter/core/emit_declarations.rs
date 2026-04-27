@@ -1448,6 +1448,17 @@ impl<'a> DeclarationEmitter<'a> {
                             emitted_any_for_truncation = true;
                         }
                         if !emitted_any_for_truncation {
+                            if self.emit_non_serializable_local_alias_diagnostic(
+                                &type_text,
+                                &file_path,
+                                name_node.pos,
+                                name_node.end - name_node.pos,
+                            ) {
+                                self.write(": any");
+                                emitted_any_for_truncation = true;
+                            }
+                        }
+                        if !emitted_any_for_truncation {
                             let _ = self.emit_non_serializable_import_type_diagnostic(
                                 &type_text,
                                 &file_path,

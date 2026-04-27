@@ -2482,12 +2482,20 @@ impl BinderState {
         // Track for functions and namespace-like roots.
         // Classes are excluded: tsc does not allow expando assignments on class
         // constructor types (`class C {} C.x = 1;` → TS2339).
+        //
+        // Don't track prototype element-access expandos (e.g.
+        // `F.prototype[sym] = val`). TSC's late-bound assignment
+        // declarations are unsupported for prototype chains, so we
+        // should emit TS7053 rather than suppress it.
+        let is_prototype_element_access = obj_key.split('.').any(|segment| segment == "prototype")
+            && lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
         if (symbol.flags
             & (symbol_flags::FUNCTION
                 | symbol_flags::VALUE_MODULE
                 | symbol_flags::NAMESPACE_MODULE))
             != 0
             && (symbol.flags & symbol_flags::CLASS) == 0
+            && !is_prototype_element_access
         {
             Arc::make_mut(&mut self.expando_properties)
                 .entry(obj_key.clone())
