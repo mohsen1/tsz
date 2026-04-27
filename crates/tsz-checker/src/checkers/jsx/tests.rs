@@ -1527,6 +1527,95 @@ fn jsx_type_predicate_default_props_no_false_ts2322() {
     );
 }
 
+/// JSX spread that overrides an EARLIER explicit attribute with a mismatched
+/// type emits TS2322 anchored at the explicit attribute's name (matching tsc
+/// at the same anchor as TS2783), with the per-property message
+/// ("Type 'X' is not assignable to type 'Y'") rather than the whole-type
+/// message at the JSX tag name.
+///
+/// Repro from `TypeScript/tests/cases/conformance/jsx/tsxAttributeResolution3.tsx`:
+/// ```tsx
+/// var obj5 = { x: 32, y: 32 };
+/// <test1 x="ok" {...obj5} />
+/// ```
+/// tsc emits:
+///   TS2783 at `x` of `x="ok"` ('x' is specified more than once...)
+///   TS2322 at `x` of `x="ok"` (Type 'number' is not assignable to type 'string'.)
+#[test]
+fn jsx_spread_overrides_earlier_attr_anchors_per_property_ts2322_at_attr() {
+    let source = concat!(
+        "declare namespace JSX {\n",
+        "  interface Element {}\n",
+        "  interface IntrinsicElements { test1: { x: string }; }\n",
+        "}\n",
+        "var obj5 = { x: 32 };\n",
+        "<test1 x=\"ok\" {...obj5} />;\n",
+    );
+    let diagnostics = check_jsx(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 for spread overriding earlier attr with mismatched type, got: {codes:?}",
+    );
+    assert!(
+        codes.contains(&2783),
+        "Expected TS2783 for spread overriding explicit attr, got: {codes:?}",
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("TS2322 must be present");
+    // Per-property message, not whole-type ("Type 'X' is not assignable to type 'Y'").
+    assert!(
+        ts2322.message_text.contains("'number'") && ts2322.message_text.contains("'string'"),
+        "Expected per-property TS2322 message about number→string, got: {}",
+        ts2322.message_text
+    );
+    // Should NOT include the whole-type message (the synthesized object type).
+    assert!(
+        !ts2322.message_text.contains("{ x: number"),
+        "Expected per-property message, not whole-type message, got: {}",
+        ts2322.message_text
+    );
+
+    // Anchor parity: TS2322 and TS2783 should share the same anchor (the `x` of `x="ok"`).
+    let ts2783 = diagnostics
+        .iter()
+        .find(|d| d.code == 2783)
+        .expect("TS2783 must be present");
+    assert_eq!(
+        ts2322.start, ts2783.start,
+        "TS2322 must share TS2783's anchor at the earlier explicit attribute name",
+    );
+}
+
+/// When a spread overrides an EARLIER explicit attribute but the spread's
+/// property TYPE matches the expected, only TS2783 is emitted — no TS2322.
+///
+/// Repro: `<test1 x={32} {...{ x: 'foo' }} />` against `{ x: string }`.
+#[test]
+fn jsx_spread_overrides_earlier_attr_with_matching_type_no_ts2322() {
+    let source = concat!(
+        "declare namespace JSX {\n",
+        "  interface Element {}\n",
+        "  interface IntrinsicElements { test1: { x: string }; }\n",
+        "}\n",
+        "var obj7 = { x: \"foo\" };\n",
+        "<test1 x={32} {...obj7} />;\n",
+    );
+    let diagnostics = check_jsx(source);
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Expected NO TS2322 when spread's prop type matches expected (TS2783 only), got: {codes:?}",
+    );
+    assert!(
+        codes.contains(&2783),
+        "Expected TS2783 for spread overriding explicit attr, got: {codes:?}",
+    );
+}
+
 /// JSX class component with optional constructor parameter must still report
 /// missing required props when the type param only has a constraint (no default).
 #[test]
