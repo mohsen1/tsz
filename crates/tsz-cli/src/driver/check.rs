@@ -945,7 +945,7 @@ pub(super) fn collect_diagnostics(
     // DefId allocation is globally unique. Without this, independent DefId sequences
     // in separate checkers cause TypeId collisions via Lazy(DefId) interning.
     {
-        let mut all_semantic_defs = program.semantic_defs.clone();
+        let mut all_semantic_defs = (*program.semantic_defs).clone();
         for file in &program.files {
             for (sym_id, entry) in file.semantic_defs.iter() {
                 all_semantic_defs.insert(*sym_id, entry.clone());
