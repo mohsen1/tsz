@@ -485,7 +485,6 @@ check_prerequisites() {
 
 RESULTS_CSV=""
 BENCHMARKS_RUN=0
-FIXTURE_FAILURES=0
 
 # run_isolated <label> <command...>
 #
@@ -516,8 +515,7 @@ run_isolated() {
 # rows: name, lines, kb, tsz_ms, tsgo_ms, tsz_lps, tsgo_lps, winner, ratio, status.
 record_fixture_failure() {
     local label="$1" rc="$2"
-    FIXTURE_FAILURES=$((FIXTURE_FAILURES + 1))
-    RESULTS_CSV="${RESULTS_CSV}${label},0,0,N/A,N/A,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
+    RESULTS_CSV="${RESULTS_CSV}${label},0,0,ERR,ERR,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
 }
 
 run_benchmark() {
