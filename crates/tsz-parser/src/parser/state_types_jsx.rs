@@ -913,11 +913,11 @@ impl ParserState {
 
         // Parse tag name
         let tag_name = self.parse_jsx_element_name();
-        let tag_name_is_missing = self
-            .arena
-            .get(tag_name)
-            .and_then(|node| self.arena.get_identifier(node))
-            .is_some_and(|ident| ident.escaped_text.is_empty());
+        // tsc-parity recovery requires distinguishing parser-synthesized
+        // placeholder identifiers (from `create_missing_expression`) from
+        // genuine empty identifiers. Use the canonical helper rather than
+        // re-deriving the `escaped_text.is_empty()` heuristic inline.
+        let tag_name_is_missing = self.arena.is_missing_recovery_identifier(tag_name);
 
         // In JS/JSX recovery, `~< <` should produce TS1003 on the malformed tag
         // name and then a trailing TS1109 after we consume the dangling `<`.
