@@ -6,7 +6,7 @@
 //! Uses a match statement instead of a `HashMap` for zero-cost initialization
 //! (no Lazy, no heap allocation, no `once_cell` synchronization).
 
-pub const LIB_FILE_COUNT: usize = 103;
+pub const LIB_FILE_COUNT: usize = 105;
 
 /// Look up embedded lib content by filename (e.g., "dom.d.ts", "es5.d.ts").
 /// Returns None for unknown filenames.
@@ -132,6 +132,7 @@ pub fn get_lib_content(filename: &str) -> Option<&'static str> {
         "es5.full.d.ts" => Some(include_str!("../lib-assets-stripped/es5.full.d.ts")),
         "es6.d.ts" => Some(include_str!("../lib-assets-stripped/es6.d.ts")),
         "esnext.array.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.array.d.ts")),
+        "esnext.date.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.date.d.ts")),
         "esnext.collection.d.ts" => Some(include_str!(
             "../lib-assets-stripped/esnext.collection.d.ts"
         )),
@@ -151,6 +152,7 @@ pub fn get_lib_content(filename: &str) -> Option<&'static str> {
         "esnext.sharedmemory.d.ts" => Some(include_str!(
             "../lib-assets-stripped/esnext.sharedmemory.d.ts"
         )),
+        "esnext.temporal.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.temporal.d.ts")),
         "esnext.typedarrays.d.ts" => Some(include_str!(
             "../lib-assets-stripped/esnext.typedarrays.d.ts"
         )),
@@ -269,6 +271,7 @@ static ALL_LIB_FILENAMES: &[&str] = &[
     "esnext.array.d.ts",
     "esnext.collection.d.ts",
     "esnext.d.ts",
+    "esnext.date.d.ts",
     "esnext.decorators.d.ts",
     "esnext.disposable.d.ts",
     "esnext.error.d.ts",
@@ -278,6 +281,7 @@ static ALL_LIB_FILENAMES: &[&str] = &[
     "esnext.iterator.d.ts",
     "esnext.promise.d.ts",
     "esnext.sharedmemory.d.ts",
+    "esnext.temporal.d.ts",
     "esnext.typedarrays.d.ts",
     "scripthost.d.ts",
     "tsserverlibrary.d.ts",
@@ -330,5 +334,43 @@ mod tests {
         }
 
         assert_eq!(seen, LIB_FILE_COUNT);
+    }
+
+    #[test]
+    fn test_esnext_date_lib_embedded() {
+        let content =
+            get_lib_content("esnext.date.d.ts").expect("esnext.date.d.ts should be embedded");
+        assert!(is_embedded_lib("esnext.date.d.ts"));
+        assert!(
+            content.contains("toTemporalInstant"),
+            "esnext.date.d.ts should define toTemporalInstant"
+        );
+        assert!(
+            content.contains("Temporal.Instant"),
+            "esnext.date.d.ts should reference Temporal.Instant"
+        );
+    }
+
+    #[test]
+    fn test_esnext_temporal_lib_embedded() {
+        let content = get_lib_content("esnext.temporal.d.ts")
+            .expect("esnext.temporal.d.ts should be embedded");
+        assert!(is_embedded_lib("esnext.temporal.d.ts"));
+        assert!(
+            content.contains("namespace Temporal"),
+            "esnext.temporal.d.ts should declare Temporal namespace"
+        );
+        assert!(
+            content.contains("Instant"),
+            "esnext.temporal.d.ts should define Temporal.Instant"
+        );
+        assert!(
+            content.contains("PlainDate"),
+            "esnext.temporal.d.ts should define Temporal.PlainDate"
+        );
+        assert!(
+            content.contains("ZonedDateTime"),
+            "esnext.temporal.d.ts should define Temporal.ZonedDateTime"
+        );
     }
 }
