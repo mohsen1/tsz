@@ -451,7 +451,7 @@ impl BinderState {
         arena: &NodeArena,
         name: &str,
     ) -> Option<String> {
-        for scope in &self.scopes {
+        for scope in self.scopes.iter() {
             if scope.kind != ContainerKind::Class || scope.table.get(name).is_none() {
                 continue;
             }

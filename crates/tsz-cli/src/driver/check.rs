@@ -945,7 +945,7 @@ pub(super) fn collect_diagnostics(
     // DefId allocation is globally unique. Without this, independent DefId sequences
     // in separate checkers cause TypeId collisions via Lazy(DefId) interning.
     {
-        let mut all_semantic_defs = program.semantic_defs.clone();
+        let mut all_semantic_defs = (*program.semantic_defs).clone();
         for file in &program.files {
             for (sym_id, entry) in file.semantic_defs.iter() {
                 all_semantic_defs.insert(*sym_id, entry.clone());
@@ -2838,15 +2838,15 @@ fn build_lib_bound_file_for_interface_checks(
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
         node_symbols: std::sync::Arc::new(node_symbols),
-        symbol_arenas: (*program.symbol_arenas).clone(),
-        declaration_arenas,
+        symbol_arenas: std::sync::Arc::clone(&program.symbol_arenas),
+        declaration_arenas: std::sync::Arc::new(declaration_arenas),
         module_declaration_exports_publicly: std::sync::Arc::new(FxHashMap::default()),
-        scopes: Vec::new(),
+        scopes: std::sync::Arc::new(Vec::new()),
         node_scope_ids: std::sync::Arc::new(FxHashMap::default()),
         parse_diagnostics: Vec::new(),
-        global_augmentations: FxHashMap::default(),
-        module_augmentations: FxHashMap::default(),
-        augmentation_target_modules: FxHashMap::default(),
+        global_augmentations: std::sync::Arc::new(FxHashMap::default()),
+        module_augmentations: std::sync::Arc::new(FxHashMap::default()),
+        augmentation_target_modules: std::sync::Arc::new(FxHashMap::default()),
         flow_nodes: std::sync::Arc::new(tsz::binder::FlowNodeArena::default()),
         node_flow: std::sync::Arc::new(FxHashMap::default()),
         switch_clause_to_switch: std::sync::Arc::new(FxHashMap::default()),
