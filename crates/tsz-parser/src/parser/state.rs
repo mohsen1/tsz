@@ -136,6 +136,15 @@ pub struct ParserState {
     pub(crate) recursion_depth: u32,
     /// Position of last error (to prevent cascading errors at same position)
     pub(crate) last_error_pos: u32,
+    /// Number of scanner diagnostics observed at the time the most recent
+    /// parser-side diagnostic was pushed. `scanner_diagnostics[idx..]` for
+    /// any `idx >= this` represents scanner emissions that happened *after*
+    /// our last parser push and therefore are the effective "lastError" tail
+    /// for tsc's `parseErrorAtPosition` `lastError.start` dedup. Without
+    /// this, a TS1124 emitted by the scanner (`1ee`'s empty exponent) would
+    /// not suppress a follow-up TS1005 the parser emits at the same position
+    /// the way tsc's single `parseDiagnostics` vec does.
+    pub(crate) scanner_diagnostics_high_water_mark: usize,
     /// Stack of label scopes for duplicate label detection (TS1114)
     /// Each scope is a map from label name to the position where it was first defined
     pub(crate) label_scopes: Vec<FxHashMap<String, u32>>,
@@ -242,6 +251,7 @@ impl ParserState {
             node_count: 0,
             recursion_depth: 0,
             last_error_pos: 0,
+            scanner_diagnostics_high_water_mark: 0,
             label_scopes: vec![FxHashMap::default()],
             seen_module_indicator: false,
             last_named_imports_consumed_closing_brace: false,
@@ -1055,6 +1065,23 @@ impl ParserState {
         if let Some(last) = self.parse_diagnostics.last()
             && last.start == start
         {
+            self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
+            return;
+        }
+        // tsc routes scanner errors through the same `parseErrorAtPosition`
+        // path via `scanError`, so they share the same `lastError` slot. We
+        // mirror that here: any scanner diagnostics emitted *after* our most
+        // recent parser push are the effective "lastError" tail. If the very
+        // last such scanner diagnostic shares this start, dedup applies.
+        // (Earlier scanner diagnostics are not relevant: a parser push or
+        // a later scanner push past their position has already moved the
+        // effective `lastError` past them.)
+        let scanner_diags = self.scanner.get_scanner_diagnostics();
+        if scanner_diags.len() > self.scanner_diagnostics_high_water_mark
+            && let Some(last_scanner) = scanner_diags.last()
+            && self.u32_from_usize(last_scanner.pos) == start
+        {
+            self.scanner_diagnostics_high_water_mark = scanner_diags.len();
             return;
         }
         // Track the position of this error to prevent cascading errors at same position
@@ -1065,6 +1092,9 @@ impl ParserState {
             message: message.to_string(),
             code,
         });
+        // After pushing a parser diagnostic, the effective "lastError" is
+        // ours; subsequent scanner emissions reset the comparison frame.
+        self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
     }
 
     /// Report parse error at current token with specific error code
