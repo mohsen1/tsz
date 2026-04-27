@@ -136,6 +136,25 @@ impl<'a> CheckerState<'a> {
             self.check_type_annotation_for_implicit_any_params(prop.type_annotation);
         }
 
+        if prop.type_annotation.is_some()
+            && let Some(class_info) = self.ctx.enclosing_class.as_ref()
+            && let Some(property_name) =
+                crate::types_domain::queries::core::get_literal_property_name(
+                    self.ctx.arena,
+                    prop.name,
+                )
+            && self.indexed_access_references_owner_property(
+                prop.type_annotation,
+                &class_info.name,
+                &property_name,
+            )
+        {
+            let message = format!(
+                "'{property_name}' is referenced directly or indirectly in its own type annotation."
+            );
+            self.error_at_node(prop.name, &message, 2502);
+        }
+
         // Track static property initializer context for TS17011
         let is_static = self.has_static_modifier(&prop.modifiers);
         let prev_static_prop_init = self
