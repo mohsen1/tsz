@@ -349,6 +349,8 @@ suite_caches() {
       ;;
     conformance-aggregate|emit-aggregate|fourslash-aggregate)
       # Aggregates pull per-shard JSONs from GCS via gsutil only.
+      # No cargo-home, no TS source, no Node modules.
+      # Mirror in gcp-full-ci.sh:suite_needs_typescript_source().
       echo ""
       ;;
     emit|fourslash)

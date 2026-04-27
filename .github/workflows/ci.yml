@@ -107,22 +107,6 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  unit-archive:
-    name: unit-archive
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Build unit test archive
-        run: scripts/ci/github-suite.sh unit-archive
-
   wasm:
     name: wasm
     needs: gate
@@ -191,25 +175,24 @@ jobs:
           compression-level: 1
 
   unit:
-    name: unit-${{ matrix.shard }}
-    needs: [gate, unit-archive]
+    # Single job, no archive split. Sharding into 4 shards traded ~30s of
+    # wall clock for ~80s × 4 of per-shard setup overhead, and unit isn't
+    # on the conformance-dominated critical path anyway. Single build +
+    # run is the cheaper pattern here.
+    name: unit
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3]
+    timeout-minutes: 30
     env:
-      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_UNIT_SHARD_COUNT: 4
-      TSZ_CI_CACHE_SAVE: "0"
+      GITHUB_SHA: ${{ github.sha }}
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit shard
-        run: scripts/ci/github-suite.sh unit-shard
+      - name: Run unit suite
+        run: scripts/ci/github-suite.sh unit
 
   conformance:
     name: conformance-${{ matrix.shard }}

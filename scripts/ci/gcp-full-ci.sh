@@ -1394,6 +1394,9 @@ suite_needs_typescript_source() {
   case "$suite" in
     lint) return 1 ;;
     unit-shard) return 1 ;;
+    # Aggregate suites only download per-shard JSONs from GCS, jq-sum
+    # them, and compare to a snapshot file. They never read TypeScript/.
+    conformance-aggregate|emit-aggregate|fourslash-aggregate) return 1 ;;
     *) return 0 ;;
   esac
 }
