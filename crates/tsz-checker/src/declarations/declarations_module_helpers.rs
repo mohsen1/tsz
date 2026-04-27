@@ -121,8 +121,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
         } else {
             for patterns in [
-                &self.ctx.binder.declared_modules,
-                &self.ctx.binder.shorthand_ambient_modules,
+                self.ctx.binder.declared_modules.as_ref(),
+                self.ctx.binder.shorthand_ambient_modules.as_ref(),
             ] {
                 for pattern in patterns {
                     let pattern = pattern.trim().trim_matches('"').trim_matches('\'');

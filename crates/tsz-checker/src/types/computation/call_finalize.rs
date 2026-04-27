@@ -361,11 +361,18 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-                        let defer_mismatch = is_type_parameter_type(self.ctx.types, expected_param)
-                            && self.should_defer_contextual_argument_mismatch(
-                                arg_type,
-                                expected_param,
-                            );
+                        // Use contains_type_parameters (not just is_type_parameter_type) so that
+                        // callable expected types like `(...args: A) => B` — where A and B are
+                        // outer inference variables, not quantified in the signature — also
+                        // participate in deferral. `should_defer_contextual_argument_mismatch`
+                        // applies the real policy; this guard just avoids calling it for
+                        // fully-concrete expected types where deferral is never appropriate.
+                        let defer_mismatch =
+                            common::contains_type_parameters(self.ctx.types, expected_param)
+                                && self.should_defer_contextual_argument_mismatch(
+                                    arg_type,
+                                    expected_param,
+                                );
                         if !fresh_assignable && !excess_property_recovery && !defer_mismatch {
                             allow_contextual_mismatch_deferral = false;
                         }

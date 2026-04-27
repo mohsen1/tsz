@@ -151,9 +151,9 @@ jobs:
         with:
           node-version: '22'
 
-      # Benchmarks now run on Cloud Build (c3-88, 88 vCPU) via cloudbuild-bench.yaml
-      # and publish results to GCS. We download the latest result here so the site
-      # always deploys immediately without waiting for a benchmark run.
+      # Benchmarks run on Cloud Run via bench.yml and publish results to GCS.
+      # We download the latest result here so the site always deploys immediately
+      # without waiting for a benchmark run.
       - name: Authenticate to Google Cloud
         id: gcp-auth
         uses: google-github-actions/auth@v2

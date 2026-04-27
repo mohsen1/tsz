@@ -11817,3 +11817,237 @@ fn test_union_call_mixed_overloads_compatible_this_callable() {
          should be callable when `this` types match. Got: {result:?}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// resolve_union_new — combined construct-signature tests
+// These lock the Phase 1/2/3 algorithm used by resolve_union_new.
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Helper: build a one-construct-signature Callable type.
+#[cfg(test)]
+fn make_construct_callable(
+    interner: &TypeInterner,
+    params: Vec<ParamInfo>,
+    return_type: TypeId,
+) -> TypeId {
+    interner.callable(CallableShape {
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_method: false,
+        }],
+        ..Default::default()
+    })
+}
+
+#[test]
+fn test_union_new_different_param_types_rejects_any_arg() {
+    // { new(a: number): number } | { new(a: string): Date }
+    // Combined param type = number & string = never → every arg fails.
+    let interner = TypeInterner::new();
+    let num_param = ParamInfo {
+        name: None,
+        type_id: TypeId::NUMBER,
+        optional: false,
+        rest: false,
+    };
+    let str_param = ParamInfo {
+        name: None,
+        type_id: TypeId::STRING,
+        optional: false,
+        rest: false,
+    };
+    let m1 = make_construct_callable(&interner, vec![num_param], TypeId::NUMBER);
+    let m2 = make_construct_callable(&interner, vec![str_param], TypeId::STRING);
+    let union_type = interner.union(vec![m1, m2]);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // Passing `10` (number) should fail with AtM { expected: never }
+    let result = evaluator.resolve_new(union_type, &[TypeId::NUMBER]);
+    assert!(
+        matches!(
+            result,
+            CallResult::ArgumentTypeMismatch {
+                index: 0,
+                expected,
+                ..
+            } if expected == TypeId::NEVER
+        ),
+        "union new with incompatible param types should report AtM(never). Got: {result:?}"
+    );
+
+    // Passing `"hello"` (string) should also fail with AtM { expected: never }
+    let result2 = evaluator.resolve_new(union_type, &[TypeId::STRING]);
+    assert!(
+        matches!(
+            result2,
+            CallResult::ArgumentTypeMismatch {
+                index: 0,
+                expected,
+                ..
+            } if expected == TypeId::NEVER
+        ),
+        "union new with incompatible param types should report AtM(never). Got: {result2:?}"
+    );
+}
+
+#[test]
+fn test_union_new_different_param_counts_requires_max_args() {
+    // { new(a: string): string } | { new(a: string, b: number): number }
+    // Combined min_required = 2 (max of 1 and 2).
+    let interner = TypeInterner::new();
+    let str_param = || ParamInfo {
+        name: None,
+        type_id: TypeId::STRING,
+        optional: false,
+        rest: false,
+    };
+    let num_param = ParamInfo {
+        name: None,
+        type_id: TypeId::NUMBER,
+        optional: false,
+        rest: false,
+    };
+    let m1 = make_construct_callable(&interner, vec![str_param()], TypeId::STRING);
+    let m2 = make_construct_callable(&interner, vec![str_param(), num_param], TypeId::NUMBER);
+    let union_type = interner.union(vec![m1, m2]);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // 0 args → arity error: expected_min = 2
+    let result = evaluator.resolve_new(union_type, &[]);
+    assert!(
+        matches!(
+            result,
+            CallResult::ArgumentCountMismatch {
+                expected_min: 2,
+                expected_max: Some(2),
+                actual: 0
+            }
+        ),
+        "0 args should require expected_min=2. Got: {result:?}"
+    );
+
+    // 1 arg → arity error: expected_min = 2
+    let result = evaluator.resolve_new(union_type, &[TypeId::STRING]);
+    assert!(
+        matches!(
+            result,
+            CallResult::ArgumentCountMismatch {
+                expected_min: 2,
+                ..
+            }
+        ),
+        "1 arg should still fail (min=2). Got: {result:?}"
+    );
+
+    // 2 args → success
+    let result = evaluator.resolve_new(union_type, &[TypeId::STRING, TypeId::NUMBER]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "2 args should succeed. Got: {result:?}"
+    );
+}
+
+#[test]
+fn test_union_new_same_return_types_correct_union() {
+    // { new(a: number): string } | { new(a: number): number }
+    // Combined: param = number, return = string | number.
+    let interner = TypeInterner::new();
+    let num_param = || ParamInfo {
+        name: None,
+        type_id: TypeId::NUMBER,
+        optional: false,
+        rest: false,
+    };
+    let m1 = make_construct_callable(&interner, vec![num_param()], TypeId::STRING);
+    let m2 = make_construct_callable(&interner, vec![num_param()], TypeId::NUMBER);
+    let union_type = interner.union(vec![m1, m2]);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let result = evaluator.resolve_new(union_type, &[TypeId::NUMBER]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "compatible construct sigs should succeed. Got: {result:?}"
+    );
+
+    // Wrong arg type → AtM at index 0
+    let result = evaluator.resolve_new(union_type, &[TypeId::STRING]);
+    assert!(
+        matches!(result, CallResult::ArgumentTypeMismatch { index: 0, .. }),
+        "wrong arg type should give AtM at index 0. Got: {result:?}"
+    );
+}
+
+#[test]
+fn test_union_new_all_fail_requires_all_member_success() {
+    // { new(a: number): number } | { new(a: number): Date; new(a: string): boolean }
+    // Member 2 has multiple construct sigs → combined = None → strict per-member.
+    // If member 1 fails (string arg), whole union fails.
+    let interner = TypeInterner::new();
+    let num_param = || ParamInfo {
+        name: None,
+        type_id: TypeId::NUMBER,
+        optional: false,
+        rest: false,
+    };
+    let str_param = ParamInfo {
+        name: None,
+        type_id: TypeId::STRING,
+        optional: false,
+        rest: false,
+    };
+
+    let m1 = make_construct_callable(&interner, vec![num_param()], TypeId::NUMBER);
+
+    // member2 has TWO construct signatures
+    let m2 = interner.callable(CallableShape {
+        construct_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![num_param()],
+                this_type: None,
+                return_type: TypeId::NUMBER,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![str_param],
+                this_type: None,
+                return_type: TypeId::BOOLEAN,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    let union_type = interner.union(vec![m1, m2]);
+
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    // `10` (number) → member1 succeeds, member2 succeeds (first overload) → union succeeds
+    let result = evaluator.resolve_new(union_type, &[TypeId::NUMBER]);
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "number arg where both members can construct should succeed. Got: {result:?}"
+    );
+
+    // `"hello"` (string) → member1 fails, member2 succeeds (second overload)
+    // Strict semantics: member1 fails → whole union fails.
+    let result = evaluator.resolve_new(union_type, &[TypeId::STRING]);
+    assert!(
+        !matches!(result, CallResult::Success(_)),
+        "string arg where member1 fails should fail the union. Got: {result:?}"
+    );
+}

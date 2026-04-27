@@ -1034,11 +1034,36 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
+        let mut guard = tsz_solver::recursion::RecursionGuard::with_profile(
+            tsz_solver::recursion::RecursionProfile::ShallowTraversal,
+        );
+        self.const_literal_initializer_text_deep_guarded(expr_idx, &mut guard)
+    }
+
+    fn const_literal_initializer_text_deep_guarded(
+        &self,
+        expr_idx: NodeIndex,
+        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
+    ) -> Option<String> {
+        use tsz_solver::recursion::RecursionResult;
+        if !matches!(guard.enter(expr_idx), RecursionResult::Entered) {
+            return None;
+        }
+        let result = self.const_literal_initializer_text_deep_inner(expr_idx, guard);
+        guard.leave(expr_idx);
+        result
+    }
+
+    fn const_literal_initializer_text_deep_inner(
+        &self,
+        expr_idx: NodeIndex,
+        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
+    ) -> Option<String> {
         // Try the normal path first
         if let Some(text) = self.const_literal_initializer_text(expr_idx) {
             return Some(text);
         }
-        if let Some(text) = self.const_literal_identity_call_text(expr_idx) {
+        if let Some(text) = self.const_literal_identity_call_text(expr_idx, guard) {
             return Some(text);
         }
         // Unwrap as/satisfies expressions
@@ -1047,14 +1072,64 @@ impl<'a> DeclarationEmitter<'a> {
             || expr_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
         {
             let assertion = self.arena.get_type_assertion(expr_node)?;
-            return self.const_literal_initializer_text_deep(assertion.expression);
+            return self.const_literal_initializer_text_deep_guarded(assertion.expression, guard);
         }
+
+        // Chase identifiers to their const declaration initializer, matching
+        // tsc behavior when a const variable references another const whose
+        // literal value is known (e.g. `const a = "abc"; const b = a` →
+        // `declare const b = "abc"`).
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(name) = self.get_identifier_text(expr_idx)
+            && let Some(source_file_idx) = self.current_source_file_idx
+            && let Some(source_file_node) = self.arena.get(source_file_idx)
+            && let Some(source_file) = self.arena.get_source_file(source_file_node)
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                    continue;
+                }
+                let Some(variable) = self.arena.get_variable(stmt_node) else {
+                    continue;
+                };
+                for &decl_list_idx in &variable.declarations.nodes {
+                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        if self.arena.is_const_variable_declaration(decl_idx)
+                            && self.get_identifier_text(decl.name).as_deref() == Some(&name)
+                            && decl.initializer.is_some()
+                        {
+                            return self.const_literal_initializer_text_deep_guarded(
+                                decl.initializer,
+                                guard,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         None
     }
 
     pub(in crate::declaration_emitter) fn const_literal_identity_call_text(
         &self,
         expr_idx: NodeIndex,
+        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
     ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
@@ -1084,7 +1159,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let mut text = self.const_literal_initializer_text_deep(args.nodes[0])?;
+        let mut text = self.const_literal_initializer_text_deep_guarded(args.nodes[0], guard)?;
         if text.starts_with('-') {
             while text.ends_with(')') {
                 text.pop();

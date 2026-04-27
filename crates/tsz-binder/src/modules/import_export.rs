@@ -693,7 +693,7 @@ impl BinderState {
                             .is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
                     });
                     if let Some(type_alias_id) = existing_type_alias_id {
-                        self.alias_partners.insert(type_alias_id, sym_id);
+                        Arc::make_mut(&mut self.alias_partners).insert(type_alias_id, sym_id);
                     } else if is_umd {
                         self.current_scope.set(name.to_string(), sym_id);
                     }
