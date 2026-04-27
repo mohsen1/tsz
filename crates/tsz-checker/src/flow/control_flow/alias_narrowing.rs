@@ -364,7 +364,10 @@ impl<'a> FlowAnalyzer<'a> {
     /// function is found (source file level).
     fn containing_function_bounds(&self, reference: NodeIndex) -> (u32, u32) {
         let mut current = reference;
-        while current.is_some() {
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            if current.is_none() {
+                break;
+            }
             let Some(node) = self.arena.get(current) else {
                 break;
             };
