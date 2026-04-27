@@ -373,13 +373,18 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS1284/TS1285: export default checks under verbatimModuleSyntax.
+    /// TS1292: export default of a type-only alias under isolatedModules.
     pub(crate) fn check_verbatim_module_syntax_export_default(&mut self, clause_idx: NodeIndex) {
         use tsz_binder::symbol_flags;
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if !self.ctx.compiler_options.verbatim_module_syntax {
+        let option_name = if self.ctx.compiler_options.verbatim_module_syntax {
+            "verbatimModuleSyntax"
+        } else if self.ctx.compiler_options.isolated_modules {
+            "isolatedModules"
+        } else {
             return;
-        }
+        };
 
         let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
             return;
@@ -400,30 +405,184 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_id) = self.ctx.binder.file_locals.get(&name)
             && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
         {
-            if sym.is_type_only {
-                let message = format_message(
-                    diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
-                    &[&name],
-                );
-                self.error_at_node(
-                    clause_idx,
-                    &message,
-                    diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
-                );
+            // verbatimModuleSyntax-only: TS1284/TS1285.
+            if option_name == "verbatimModuleSyntax" {
+                if sym.is_type_only {
+                    let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        clause_idx,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                    );
+                    return;
+                }
+
+                if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+                    let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        clause_idx,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                    );
+                    return;
+                }
+            }
+
+            // TS1292: under isolatedModules (or verbatimModuleSyntax),
+            // emit when `export default <Identifier>` references an alias
+            // whose non-local meanings include Type but not Value, and the
+            // alias was NOT declared as `import type` in this file.
+            //
+            // Mirrors tsc's checker logic at checkExportAssignment:
+            //   if (sym.flags & Alias && nonLocalMeanings & Type
+            //       && !(nonLocalMeanings & Value)) { TS1292 }
+            //
+            // Local meanings are the merged TYPE_ALIAS/INTERFACE that the
+            // binder tracks via alias_partners. The "non-local" alias is the
+            // partner: it provides the original import.
+            //
+            // The `sym` we have here is whichever is in file_locals: either
+            // the import alias itself, or the local TYPE_ALIAS that shadowed
+            // it. We resolve the import alias via alias_partner_for if the
+            // local sym is a TYPE_ALIAS.
+            if (sym.flags & VALUE) != 0 {
                 return;
             }
 
-            if (sym.flags & PURE_TYPE) != 0 && (sym.flags & VALUE) == 0 {
+            let alias_sym_id = if sym.has_any_flags(symbol_flags::ALIAS) {
+                Some(sym_id)
+            } else {
+                self.ctx.alias_partner_for(self.ctx.binder, sym_id)
+            };
+
+            let Some(alias_sym_id) = alias_sym_id else {
+                return;
+            };
+            let Some(alias_sym) = self.ctx.binder.get_symbol(alias_sym_id) else {
+                return;
+            };
+            if !alias_sym.has_any_flags(symbol_flags::ALIAS) {
+                return;
+            }
+            // Ambient declarations are exempt.
+            if alias_sym.is_type_only {
+                // `import type` in this file: typeOnlyDeclaration is in the
+                // current file, suppressing TS1292.
+                return;
+            }
+            let Some(ref module_spec) = alias_sym.import_module else {
+                return;
+            };
+            let import_name = alias_sym
+                .import_name
+                .as_deref()
+                .unwrap_or(name.as_str())
+                .to_string();
+
+            // Resolve the imported target's flags. If the target is type-only
+            // (Type but not Value), TS1292 applies.
+            let (target_has_type, target_has_value) =
+                self.lookup_imported_target_flags(module_spec, &import_name);
+            if target_has_type && !target_has_value {
                 let message = format_message(
-                    diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
-                    &[&name],
+                    diagnostic_messages::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING_2,
+                    &[&name, option_name],
                 );
                 self.error_at_node(
                     clause_idx,
                     &message,
-                    diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                    diagnostic_codes::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING_2,
                 );
             }
         }
+    }
+
+    /// Best-effort resolution of an imported symbol's non-local meanings.
+    /// Returns `(has_type, has_value)` for the target of `import { name } from module_spec`.
+    /// Used by TS1292 / TS2865 isolatedModules checks.
+    fn lookup_imported_target_flags(&self, module_spec: &str, import_name: &str) -> (bool, bool) {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut has_type = false;
+        let mut has_value = false;
+
+        // Try declared modules first (`declare module "x"`) via the
+        // global module binder index.
+        if let Some(binders) = &self.ctx.all_binders {
+            let candidate_indices = self
+                .ctx
+                .global_module_binder_index
+                .as_ref()
+                .and_then(|idx| idx.get(module_spec));
+            let scan_indices: Vec<usize> = match candidate_indices {
+                Some(indices) => indices.iter().copied().collect(),
+                None => (0..binders.len()).collect(),
+            };
+            for binder_idx in scan_indices {
+                if let Some(binder) = binders.get(binder_idx)
+                    && let Some(exports) = self.ctx.module_exports_for_module(binder, module_spec)
+                    && let Some(target_sym_id) = exports.get(import_name)
+                    && let Some(target_sym) = binder.symbols.get(target_sym_id)
+                {
+                    if target_sym.has_any_flags(symbol_flags::TYPE) {
+                        has_type = true;
+                    }
+                    if target_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE) {
+                        has_value = true;
+                    }
+                    if has_value {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Try regular file exports — follow re-export chains.
+        if !has_value && let Some(target_idx) = self.ctx.resolve_import_target(module_spec) {
+            let mut visited = rustc_hash::FxHashSet::default();
+            if let Some((resolved_sym_id, resolved_file_idx)) =
+                self.resolve_export_in_file(target_idx, import_name, &mut visited)
+                && let Some(resolved_binder) = self.ctx.get_binder_for_file(resolved_file_idx)
+                && let Some(resolved_sym) = resolved_binder.symbols.get(resolved_sym_id)
+            {
+                // Skip namespace pseudo-symbols (`namespace foo { ... }` with
+                // only type members) — they appear in exports but don't
+                // introduce a runtime value.
+                let mut sym_has_value =
+                    resolved_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
+                if sym_has_value
+                    && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
+                    && !resolved_sym
+                        .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)
+                {
+                    // declarations carry file-local NodeIndex into the resolved
+                    // file's arena, not the current file's arena.
+                    let resolved_arena = self.ctx.get_arena_for_file(resolved_file_idx as u32);
+                    let any_instantiated = resolved_sym.declarations.iter().any(|&decl_idx| {
+                        let Some(decl_node) = resolved_arena.get(decl_idx) else {
+                            return false;
+                        };
+                        // Only namespace declarations contribute runtime value;
+                        // type-only declarations (interface/type alias) do not.
+                        decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    });
+                    sym_has_value = any_instantiated;
+                }
+                if resolved_sym.has_any_flags(symbol_flags::TYPE) {
+                    has_type = true;
+                }
+                if sym_has_value {
+                    has_value = true;
+                }
+            }
+        }
+
+        (has_type, has_value)
     }
 }
