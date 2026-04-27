@@ -49,7 +49,21 @@ fn walk_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
 /// Both ceilings can only shrink as files are split into smaller modules.
 #[test]
 fn test_solver_file_size_ceiling() {
-    let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    // Use the runtime workspace lookup so this test resolves the same way
+    // when run from a `cargo nextest archive` bundle with `--workspace-remap`.
+    // The previous `env!("CARGO_MANIFEST_DIR")` path was the build-time path
+    // baked into the binary; on a cache hit from a different runner, that
+    // path could not exist on disk and `walk_rs_files_recursive` would
+    // panic before we ever read a single source file.
+    let solver_src = workspace_subtree("tsz-solver/src");
+    assert!(
+        solver_src.exists(),
+        "solver source tree not found at {} — this test requires the workspace \
+         source tree. If running from a nextest archive, use `cargo nextest run \
+         --archive-file ... --workspace-remap <path>` so CARGO_MANIFEST_DIR \
+         resolves to the actual checkout.",
+        solver_src.display()
+    );
     let mut files = Vec::new();
     walk_rs_files_recursive(&solver_src, &mut files);
 
