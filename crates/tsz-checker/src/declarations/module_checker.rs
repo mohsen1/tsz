@@ -1174,7 +1174,7 @@ impl<'a> CheckerState<'a> {
         // Iterating symbols.iter() would cause each file to check every file's symbols,
         // leading to duplicate TS2303 emissions. Scope tables contain only this file's symbols.
         let mut local_alias_ids: Vec<tsz_binder::SymbolId> = Vec::new();
-        for scope in &self.ctx.binder.scopes {
+        for scope in self.ctx.binder.scopes.iter() {
             for (_, &sym_id) in scope.table.iter() {
                 if let Some(s) = self.ctx.binder.symbols.get(sym_id)
                     && s.has_any_flags(symbol_flags::ALIAS)

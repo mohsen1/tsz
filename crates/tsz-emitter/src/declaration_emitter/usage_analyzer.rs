@@ -405,7 +405,7 @@ impl<'a> UsageAnalyzer<'a> {
             sym_id
         } else {
             let mut found = None;
-            for scope in &self.binder.scopes {
+            for scope in self.binder.scopes.iter() {
                 if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
                     found = Some(sym_id);
                     break;
@@ -1372,7 +1372,7 @@ impl<'a> UsageAnalyzer<'a> {
                     // namespace members referenced by exported members are
                     // properly marked as used (and thus emitted + triggering
                     // `export {};` scope markers).
-                    for scope in &self.binder.scopes {
+                    for scope in self.binder.scopes.iter() {
                         if let Some(sym_id) = scope.table.get(&ident.escaped_text) {
                             self.mark_symbol_used(sym_id, kind);
                         }

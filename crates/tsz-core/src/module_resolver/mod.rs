@@ -93,17 +93,17 @@ pub struct ModuleResolver {
     ///
     /// `RefCell` so `&self` paths in `file_probing` / `exports_imports` /
     /// `self_reference` can populate it without cascading `&mut self`
-    /// through every helper that touches a package.json. The same
+    /// through every helper that touches a `package.json`. The same
     /// `node_modules/foo/package.json` previously got read from disk +
-    /// parsed by serde_json once for every distinct resolution role
-    /// (package_type, exports lookup, main-field lookup, types lookup,
+    /// parsed by `serde_json` once for every distinct resolution role
+    /// (`package_type`, exports lookup, main-field lookup, types lookup,
     /// self-reference) — five+ identical read+parse cycles per package
     /// per resolution. This cache lets the second-and-later visit hit a
     /// hashmap entry instead of touching the file system.
     ///
     /// `Result<PackageJson, String>` is cached so failure paths (missing
     /// file, invalid JSON) also don't re-stat / re-parse repeatedly.
-    /// PackageJson is small (Option<String> fields plus a modest exports
+    /// `PackageJson` is small (`Option<String>` fields plus a modest exports
     /// tree) so by-value clones on cache hits are still cheaper than the
     /// previous read+parse.
     package_json_cache: std::cell::RefCell<FxHashMap<PathBuf, Result<PackageJson, String>>>,

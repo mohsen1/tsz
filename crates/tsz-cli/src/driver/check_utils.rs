@@ -1483,7 +1483,7 @@ impl MergedAugmentations {
         > = rustc_hash::FxHashMap::default();
 
         for file in &program.files {
-            for (spec, augs) in &file.module_augmentations {
+            for (spec, augs) in file.module_augmentations.iter() {
                 module_augmentations
                     .entry(spec.clone())
                     .or_default()
@@ -1495,10 +1495,10 @@ impl MergedAugmentations {
                         )
                     }));
             }
-            for (&sym_id, module_spec) in &file.augmentation_target_modules {
+            for (&sym_id, module_spec) in file.augmentation_target_modules.iter() {
                 augmentation_target_modules.insert(sym_id, module_spec.clone());
             }
-            for (name, decls) in &file.global_augmentations {
+            for (name, decls) in file.global_augmentations.iter() {
                 global_augmentations
                     .entry(name.clone())
                     .or_default()

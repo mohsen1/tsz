@@ -213,7 +213,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
         // Check all scope tables (not just file_locals) since the symbol
         // may be in a namespace scope
-        for scope in &binder.scopes {
+        for scope in binder.scopes.iter() {
             if let Some(sym_id) = scope.table.get(&name)
                 && used.contains_key(&sym_id)
             {
@@ -284,7 +284,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
-        for scope in &binder.scopes {
+        for scope in binder.scopes.iter() {
             if let Some(sym_id) = scope.table.get(&name_ident.escaped_text)
                 && used.contains_key(&sym_id)
             {
@@ -504,7 +504,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Search all resolution paths for a non-ALIAS symbol.
         // The import's own ALIAS symbol shares the same name, so skip it
         // to find the actual target entity.
-        for scope in &binder.scopes {
+        for scope in binder.scopes.iter() {
             if let Some(sym_id) = scope.table.get(name)
                 && let Some(symbol) = binder.symbols.get(sym_id)
                 && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
