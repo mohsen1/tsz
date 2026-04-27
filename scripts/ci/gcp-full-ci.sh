@@ -434,11 +434,23 @@ run_lint() {
   cargo fmt --check
   scripts/arch/check-workspace-metadata.sh
   scripts/check-crate-root-files.sh
-  cargo clippy \
+  # Use the dedicated ci-lint profile (debug=false, incremental=false,
+  # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
+  # — separate cache key from .target/debug so dev incrementals on a
+  # contributor's machine aren't poisoned by CI-shaped fingerprints, and
+  # vice versa.
+  cargo clippy --profile ci-lint \
     -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
     -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
     --all-targets -- -D warnings
   scripts/arch/check-checker-boundaries.sh
+  # Surface sccache stats so the cache health is visible without reading
+  # the workflow log into a separate step.
+  if command -v sccache >/dev/null 2>&1; then
+    echo "::group::sccache stats"
+    sccache --show-stats || true
+    echo "::endgroup::"
+  fi
 }
 
 nextest_allow_no_tests() {
@@ -1367,11 +1379,41 @@ run_build() {
   fi
 }
 
+# Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
+# Keep these in sync — if you add a suite that reads TypeScript/ source,
+# update both here and there.
+#
+# Default is "needs TS source" because most cargo build / cargo test
+# invocations reference TypeScript/src/lib (and test fixtures pull from
+# tests/cases). The exceptions are explicit:
+#   - lint runs only `cargo clippy`, no build/test.
+#   - unit-shard runs nextest from a pre-built archive, no compilation.
+# Aggregate suites bypass run_common_setup() entirely (see main()).
+suite_needs_typescript_source() {
+  local suite="$1"
+  case "$suite" in
+    lint) return 1 ;;
+    unit-shard) return 1 ;;
+    # Aggregate suites only download per-shard JSONs from GCS, jq-sum
+    # them, and compare to a snapshot file. They never read TypeScript/.
+    conformance-aggregate|emit-aggregate|fourslash-aggregate) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 run_common_setup() {
   local suite="${1:-all}"
   timed ensure_host_tools ensure_host_tools "$suite"
   timed ensure_source_git_context ensure_source_git_context
-  timed init_typescript_submodule init_typescript_submodule
+  if suite_needs_typescript_source "$suite"; then
+    timed init_typescript_submodule init_typescript_submodule
+  else
+    # lint, dist-binaries, unit-archive, unit*, wasm, wasm-web don't read
+    # TypeScript/ at compile time. Skipping the submodule init avoids
+    # downloading ~50 MB of source and avoids the gitlink-vs-ref-file
+    # staleness check that's only relevant when the tree is actually used.
+    echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
+  fi
   if suite_needs_group "$suite" rust_compile; then
     configure_sccache
   fi
