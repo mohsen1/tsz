@@ -1310,6 +1310,25 @@ impl ScannerState {
             if is_digit(next) && self.scan_legacy_octal_number(start) {
                 return;
             }
+
+            // tsc parity: when a numeric literal opens with `0_` (i.e. the
+            // leading `0` is immediately followed by a numeric separator) tsc's
+            // `scanNumber` emits TS6188 ("Numeric separators are not allowed
+            // here") at the underscore *before* recursing into
+            // `scanNumberFragment`. The fragment scan itself never reports the
+            // separator at position `start + 1` because, from the fragment's
+            // point of view, it sits between two digits which is a permitted
+            // placement. Without this pre-check we miss the diagnostic on
+            // shapes like `0__0.0e0`, `0__0.0e+0`, `0__0.0e-0` and the
+            // `0_<digit>` family covered by `numberLiteralsWithLeadingZeros`.
+            //
+            // The dedup in `push_invalid_numeric_separator` keeps single-`_`
+            // shapes (e.g. `0_`, `0_.0`) from double-emitting at the same
+            // position when the trailing-underscore rescue path also fires.
+            if next == CharacterCodes::UNDERSCORE {
+                self.token_flags |= TokenFlags::ContainsSeparator as u32;
+                self.push_invalid_numeric_separator(self.pos + 1, /*consecutive*/ false);
+            }
         }
 
         // Decimal number
@@ -4021,5 +4040,82 @@ mod tests {
         // `1_000_000` and `0xFF_FF` are well-formed.
         assert!(scan_separator_diagnostics("1_000_000").is_empty());
         assert!(scan_separator_diagnostics("0xFF_FF").is_empty());
+    }
+
+    #[test]
+    fn separator_leading_zero_underscore_emits_ts6188_before_consecutive() {
+        // `0__0.0e0` — tsc emits TS6188 at the *first* underscore (special
+        // `0_` opening rule in `scanNumber`) and TS6189 at the second
+        // underscore (the consecutive-separator rule in `scanNumberFragment`).
+        // Equivalent shapes appear in
+        // `parser.numericSeparators.decmialNegative` files 18.ts/31.ts/44.ts.
+        let diags = scan_separator_diagnostics("0__0.0e0");
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        let ts6189 = diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED;
+        assert_eq!(
+            diags,
+            vec![(1, ts6188), (2, ts6189)],
+            "expected TS6188 at the first `_` (pos=1) and TS6189 at the second (pos=2)",
+        );
+    }
+
+    #[test]
+    fn separator_leading_zero_underscore_signed_exponent_emits_ts6188() {
+        // `0__0.0e+0` and `0__0.0e-0` — tsc emits TS6188 at pos=1 and TS6189
+        // at pos=2. The `+`/`-` after the exponent does not change the
+        // diagnostic shape (mirrors files 31.ts and 44.ts).
+        for src in ["0__0.0e+0", "0__0.0e-0"] {
+            let diags = scan_separator_diagnostics(src);
+            let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+            let ts6189 =
+                diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED;
+            assert_eq!(
+                diags,
+                vec![(1, ts6188), (2, ts6189)],
+                "expected TS6188+TS6189 for `{src}`",
+            );
+        }
+    }
+
+    #[test]
+    fn separator_leading_zero_single_underscore_then_digit_emits_ts6188() {
+        // `0_0.5_5` — tsc still emits TS6188 at pos=1 even though the
+        // separator sits between two digits. This mirrors the special
+        // `0_` opening rule in `scanNumber` (legacy-octal grammar forbids
+        // separators here). Used by `numberLiteralsWithLeadingZeros`.
+        let diags = scan_separator_diagnostics("0_0.5_5");
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        assert_eq!(diags, vec![(1, ts6188)]);
+    }
+
+    #[test]
+    fn separator_leading_zero_underscore_dot_emits_single_ts6188() {
+        // `0_.0e0` — only one TS6188 at pos=1. The trailing-underscore
+        // rescue path in `scan_digits_with_separators` would attempt a
+        // duplicate emission at the same position; the same-position dedup
+        // in `push_invalid_numeric_separator` collapses it.
+        let diags = scan_separator_diagnostics("0_.0e0");
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        assert_eq!(diags, vec![(1, ts6188)]);
+    }
+
+    #[test]
+    fn separator_non_zero_leading_double_underscore_keeps_only_ts6189() {
+        // `1__0.0e0` — tsc emits ONLY TS6189 at pos=2. The `0_` opening
+        // rule does not apply to leading `1`, `2`, …, `9`, so the first
+        // `_` is permissible and the second is "multiple consecutive".
+        let diags = scan_separator_diagnostics("1__0.0e0");
+        let ts6189 = diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED;
+        assert_eq!(diags, vec![(2, ts6189)]);
+    }
+
+    #[test]
+    fn separator_decimal_double_underscore_after_digit_keeps_only_ts6189() {
+        // `0.0__0e0` — the leading `0` is followed by `.`, not `_`, so the
+        // `0_` rule does NOT fire. Only TS6189 at the second `_` (pos=4)
+        // survives. Mirrors file 19.ts (no extra TS6188).
+        let diags = scan_separator_diagnostics("0.0__0e0");
+        let ts6189 = diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED;
+        assert_eq!(diags, vec![(4, ts6189)]);
     }
 }
