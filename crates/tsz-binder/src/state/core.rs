@@ -298,6 +298,7 @@ impl BinderState {
         self.continue_targets.clear();
         self.return_targets.clear();
         Arc::make_mut(&mut self.semantic_defs).clear();
+        Arc::make_mut(&mut self.alias_partners).clear();
         self.file_import_sources.clear();
         // Note: file_idx is NOT reset here. It is set by the driver (LSP/CLI)
         // and should persist across re-binds of the same file.
