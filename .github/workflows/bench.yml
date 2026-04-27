@@ -20,7 +20,6 @@ permissions:
 
 env:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
-  TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
 
 jobs:
   bench:
@@ -31,7 +30,6 @@ jobs:
       BENCH_COLD: "1"
       TSC_NPM_SPEC: "6.0.2"
       GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,7 +59,7 @@ jobs:
           if [[ ! -f "$GITHUB_WORKSPACE/bench-results.json" ]]; then
             echo "No results to publish (benchmark may have failed or timed out)."
             tail -100 "$GITHUB_WORKSPACE/bench-run.log" || true
-            exit 0
+            exit 1
           fi
           TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
@@ -72,7 +70,6 @@ jobs:
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
 
       - name: Trigger website redeploy
-        if: success()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run gh-pages.yml --ref main
