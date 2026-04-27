@@ -671,19 +671,24 @@ run_project_benchmark() {
 
     # Pre-validate with timeout: record errors/timeouts in summary table.
     # Project-level benchmarks get a longer timeout since they check many files.
-    # Very large fixtures (6000+ files) need an even longer timeout.
-    local project_timeout
-    if [ "$name" = "large-ts-repo" ]; then
-        project_timeout=$((BENCH_TIMEOUT * 20))
-    else
-        project_timeout=$((BENCH_TIMEOUT * 2))
-    fi
+    # large-ts-repo skips tsz pre-validation entirely — tsz currently OOMs on
+    # 6000+ file projects so we only benchmark tsgo and record tsz as pending.
+    local project_timeout=$((BENCH_TIMEOUT * 2))
     local tsz_check=0
-    run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+    if [ "$name" != "large-ts-repo" ]; then
+        run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+    else
+        tsz_check=1  # treat as failed so we enter the partial-data path below
+    fi
     local tsgo_check=0
     run_with_timeout "$project_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
 
-    if [ "$tsz_check" -ne 0 ] || [ "$tsgo_check" -ne 0 ]; then
+    # For large-ts-repo: tsz is expected to fail (OOM); still benchmark tsgo.
+    # For other projects: any failure is an error, skip.
+    local tsz_failed_expected=false
+    [ "$name" = "large-ts-repo" ] && [ "$tsz_check" -ne 0 ] && tsz_failed_expected=true
+
+    if { [ "$tsz_check" -ne 0 ] && [ "$tsz_failed_expected" = false ]; } || [ "$tsgo_check" -ne 0 ]; then
         local status=""
         local tsz_ms="N/A"
         local tsgo_ms="N/A"
@@ -765,6 +770,38 @@ run_project_benchmark() {
         tsconfig_dir="$(dirname "$tsconfig")"
         hyperfine_prepare_args=(--prepare "find '${tsconfig_dir}' -name '*.tsbuildinfo' -delete 2>/dev/null; true")
     fi
+
+    # When tsz is expected to fail (e.g. large-ts-repo OOMs), run tsgo-only.
+    if [ "$tsz_failed_expected" = true ]; then
+        echo -e "${YELLOW}$name${NC} ($info) — tsz unavailable, benchmarking tsgo only"
+        if ! hyperfine \
+            --warmup "$proj_warmup" \
+            --min-runs "$proj_min" \
+            --max-runs "$proj_max" \
+            --style full \
+            --ignore-failure \
+            --export-json "$json_file" \
+            "${hyperfine_prepare_args[@]}" \
+            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null"; then
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,tsgo,0,tsz unavailable; tsgo error\n"
+            rm -f "$json_file"
+            return
+        fi
+        if [ -f "$json_file" ] && command -v jq &>/dev/null; then
+            local tsgo_mean
+            tsgo_mean=$(jq -r '.results[] | select(.command | contains("tsgo")) | .mean' "$json_file" 2>/dev/null || echo "0")
+            if [ -n "$tsgo_mean" ] && [ "$tsgo_mean" != "0" ]; then
+                local tsgo_lps
+                tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+                local tsgo_ms
+                tsgo_ms=$(printf "%.2f" "$(echo "$tsgo_mean * 1000" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
+                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,${tsgo_ms},N/A,${tsgo_lps},tsgo,0,tsz unavailable\n"
+            fi
+        fi
+        rm -f "$json_file"
+        return
+    fi
+
     if ! hyperfine \
         --warmup "$proj_warmup" \
         --min-runs "$proj_min" \

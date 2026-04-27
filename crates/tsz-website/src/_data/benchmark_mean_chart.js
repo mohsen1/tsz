@@ -70,26 +70,27 @@ function renderHighlightedBenchmark(results) {
   const tszMs = toNumber(row.tsz_ms);
   const tsgoMs = toNumber(row.tsgo_ms);
 
-  if (!Number.isFinite(tszMs) || !Number.isFinite(tsgoMs)) {
+  // Need at least tsgo data to render; tsz may be unavailable for very large projects
+  if (!Number.isFinite(tsgoMs)) {
     return "";
   }
 
-  const maxMs = Math.max(tszMs, tsgoMs);
+  const tszAvailable = Number.isFinite(tszMs) && tszMs > 0;
+  const maxMs = tszAvailable ? Math.max(tszMs, tsgoMs) : tsgoMs;
   const widthMax = 420;
-  const tszWidth = Math.max(2, (tszMs / maxMs) * widthMax);
+  const tszWidth = tszAvailable ? Math.max(2, (tszMs / maxMs) * widthMax) : 0;
   const tsgoWidth = Math.max(2, (tsgoMs / maxMs) * widthMax);
-  const ratioLabel = formatSpeedupLabel(tszMs, tsgoMs);
-  const statusLine = row.status ? ` (${row.status})` : "";
+  const ratioLabel = tszAvailable ? formatSpeedupLabel(tszMs, tsgoMs) : "";
+  const tszLabel = tszAvailable ? `${formatMs(tszMs)}ms` : "measuring…";
 
   return `<section class="benchmark-mean-card" id="main-benchmark-spotlight">
   <p class="bench-category-title">Featured benchmark: <a href="/benchmarks/#projects-large-ts-repo">large-ts-repo</a></p>
   <p class="bench-category-desc">Real-world production-style project benchmark (~${format(row.lines || 0)} lines, ${format(row.kb || 0)} KB).</p>
-  ${statusLine ? `<p class="bench-bar-time">${statusLine}</p>` : ""}
   <div class="bench-bars">
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>
-      <div class="bench-bar tsz" style="width: ${tszWidth}px"></div>
-      <span class="bench-bar-time">${formatMs(tszMs)}ms</span>
+      ${tszAvailable ? `<div class="bench-bar tsz" style="width: ${tszWidth}px"></div>` : ""}
+      <span class="bench-bar-time">${tszLabel}</span>
     </div>
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsgo</span>
