@@ -79,10 +79,22 @@ export = X;
 
 #[test]
 fn export_equals_declare_namespace_does_not_emit_module_exports() {
-    // `declare namespace X { ... }` is ambient and produces no JS even when
-    // it contains "values" (declared variables). `export = X;` must be erased.
+    // `declare namespace X` that contains only type-level members (interfaces,
+    // type aliases) is non-instantiated at the JS level and must not produce
+    // `module.exports = X`. tsc erases such export-equals and emits the
+    // `__esModule` marker only.
+    //
+    // Note: `declare namespace X { const value: number; }` IS considered
+    // instantiated by tsc (VariableStatement → Instantiated in
+    // getModuleInstanceStateWorker) and DOES emit `module.exports = X`.
+    // Only namespaces whose bodies contain exclusively type-only declarations
+    // (interface, type alias, const enum without preserveConstEnums, etc.)
+    // are non-instantiated.
     let source = r#"declare namespace X {
-    const value: number;
+    interface I {
+        x: number;
+    }
+    type T = string;
 }
 
 export = X;
@@ -92,7 +104,7 @@ export = X;
 
     assert!(
         !output.contains("module.exports = X"),
-        "declare namespace must not appear in module.exports, got:\n{output}"
+        "declare namespace with only type members must not appear in module.exports, got:\n{output}"
     );
 }
 
