@@ -521,7 +521,7 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .and_then(|idx| idx.get(module_spec));
             let scan_indices: Vec<usize> = match candidate_indices {
-                Some(indices) => indices.iter().copied().collect(),
+                Some(indices) => indices.to_vec(),
                 None => (0..binders.len()).collect(),
             };
             for binder_idx in scan_indices {
