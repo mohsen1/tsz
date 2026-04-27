@@ -310,7 +310,6 @@ impl<'a> FlowAnalyzer<'a> {
         self.interner
             .is_property_readonly(base_type, prop_text.as_ref())
     }
-
     /// Check if any assignment flow node in the containing function targets
     /// the base of the given reference after the specified position. This is a
     /// conservative function-wide check used for property access aliases.
