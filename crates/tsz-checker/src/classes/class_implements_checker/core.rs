@@ -300,14 +300,52 @@ impl<'a> CheckerState<'a> {
         target_type: &str,
         code: u32,
     ) {
-        if let Some((pos, end)) = self.get_node_span(node_idx) {
-            self.error(
-                pos,
-                end - pos,
-                format!("Type '{source_type}' is not assignable to type '{target_type}'."),
-                code,
-            );
+        let Some((pos, end)) = self.get_node_span(node_idx) else {
+            return;
+        };
+        let length = end.saturating_sub(pos);
+        let detail = format!("Type '{source_type}' is not assignable to type '{target_type}'.");
+
+        // Attach to the most recent diagnostic at this position with this code
+        // (the lead "Property X is not assignable" message we just emitted).
+        // This produces tsc-style multi-line diagnostics where the elaboration is
+        // indented under the lead, instead of two top-level diagnostics that the
+        // conformance fingerprinter treats as distinct entries.
+        //
+        // Match by `(code, start)` rather than `(code, start, length)` because
+        // `error_at_node` normalizes the anchor span (e.g., trimming to the
+        // leading identifier of a declaration), while `get_node_span` here returns
+        // the raw node span.
+        if let Some(parent) = self
+            .ctx
+            .diagnostics
+            .iter_mut()
+            .rev()
+            .find(|diag| diag.code == code && diag.start == pos)
+        {
+            // Avoid duplicate related-info text.
+            if !parent
+                .related_information
+                .iter()
+                .any(|info| info.message_text == detail)
+            {
+                parent
+                    .related_information
+                    .push(crate::diagnostics::DiagnosticRelatedInformation {
+                        file: parent.file.clone(),
+                        start: pos,
+                        length,
+                        message_text: detail,
+                        category: crate::diagnostics::DiagnosticCategory::Message,
+                        code,
+                    });
+            }
+            return;
         }
+
+        // Fallback: emit as a standalone diagnostic when no matching parent is
+        // present (e.g., the lead error was suppressed).
+        self.error(pos, length, detail, code);
     }
 
     /// Check that non-abstract class implements all abstract members from base class (error 2654).
@@ -1087,6 +1125,43 @@ impl<'a> CheckerState<'a> {
                                 (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
                             let interface_visibility = prop.visibility;
                             if is_class_member_private {
+                                // When BOTH class member and interface member are private,
+                                // they're nominally separate declarations (different brands).
+                                // tsc behavior:
+                                //   - Types compatible: emit TS2420 with
+                                //     "Types have separate declarations of a private property 'x'."
+                                //   - Types incompatible: emit TS2416 (per-property type mismatch),
+                                //     suppress the visibility-form TS2420 entirely.
+                                if interface_visibility == tsz_solver::Visibility::Private {
+                                    let types_incompatible = interface_member_type
+                                        != tsz_solver::TypeId::ANY
+                                        && class_member_type != tsz_solver::TypeId::ANY
+                                        && interface_member_type != tsz_solver::TypeId::ERROR
+                                        && class_member_type != tsz_solver::TypeId::ERROR
+                                        && should_report_own_member_type_mismatch(
+                                            self,
+                                            class_member_type,
+                                            interface_member_type,
+                                            class_member_idx,
+                                        );
+                                    if types_incompatible {
+                                        let expected_str = self.format_type(interface_member_type);
+                                        let actual_str = self.format_type(class_member_type);
+                                        incompatible_members.push((
+                                            class_member_idx,
+                                            member_name.clone(),
+                                            expected_str,
+                                            actual_str,
+                                        ));
+                                    } else {
+                                        self.error_at_node(
+                                                class_error_idx,
+                                                &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Types have separate declarations of a private property '{member_name}'."),
+                                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                            );
+                                    }
+                                    continue;
+                                }
                                 self.error_at_node(
                                         class_error_idx,
                                         &format!("Class '{class_name}' incorrectly implements interface '{interface_display_name}'.\n  Property '{member_name}' is private in type '{class_name}' but not in type '{interface_display_name}'."),

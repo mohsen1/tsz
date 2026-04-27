@@ -1462,7 +1462,13 @@ impl<'a> CheckerContext<'a> {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
             (hasher.finish() as u32, code)
-        } else if code == 2322 || code == 2411 || code == 2430 || code == 2536 || code == 4094 {
+        } else if code == 2322
+            || code == 2411
+            || code == 2416
+            || code == 2430
+            || code == 2536
+            || code == 4094
+        {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             message.hash(&mut hasher);
@@ -1576,6 +1582,10 @@ impl<'a> CheckerContext<'a> {
     ///   global type errors.
     /// - TS2411 uses (start ^ `message_hash`, code) to allow a single property to
     ///   report both string and number index incompatibilities.
+    /// - TS2416 (incorrectly extends/implements property type) uses (start ^ `message_hash`,
+    ///   code) to allow distinct per-base diagnostics at the same property position
+    ///   (e.g., a class that both extends a base and implements an interface where the
+    ///   same property is incompatible against both).
     /// - TS2430 (incorrectly extends interface) uses (start ^ `message_hash`, code) to allow
     ///   multiple per-base diagnostics at the same interface name position.
     /// - TS4094 uses (start ^ `message_hash`, code) so each private/protected member of an

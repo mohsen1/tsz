@@ -479,6 +479,129 @@ fn test_ts2420_for_public_class_member_vs_private_interface_member() {
     );
 }
 
+/// Regression: `interfaceExtendsClassWithPrivate2` conformance test.
+///
+/// When a class redeclares a `private x` of a base class with a compatible
+/// type while also declaring extra private members (so the brand differs),
+/// tsc reports TS2415 + TS2420 with a "Types have separate declarations of a
+/// private property 'x'." elaboration nested under each error.
+#[test]
+fn test_ts2415_ts2420_separate_declarations_private_property() {
+    let source = r#"
+class C {
+    public foo(x: any) { return x; }
+    private x = 1;
+}
+
+interface I extends C {
+    other(x: any): any;
+}
+
+class D extends C implements I {
+    public foo(x: any) { return x; }
+    private x = 2;
+    private y = 3;
+    other(x: any) { return x; }
+    bar() {}
+}
+"#;
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let ts2415 = diagnostics
+        .iter()
+        .find(|d| d.code == 2415 && d.message_text.contains("Class 'D'"))
+        .expect("expected TS2415 for D incorrectly extends C");
+    assert!(
+        ts2415.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'x'."))
+            || ts2415
+                .message_text
+                .contains("Types have separate declarations of a private property 'x'."),
+        "expected TS2415 to carry the 'separate declarations' elaboration, got: {ts2415:?}"
+    );
+
+    let ts2420 = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2420
+                && d.message_text.contains("Class 'D'")
+                && d.message_text.contains("interface 'I'")
+        })
+        .expect("expected TS2420 for D incorrectly implements I");
+    assert!(
+        ts2420.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'x'."))
+            || ts2420
+                .message_text
+                .contains("Types have separate declarations of a private property 'x'."),
+        "expected TS2420 to carry the 'separate declarations' elaboration, got: {ts2420:?}"
+    );
+}
+
+/// Regression: when both class and interface have a private same-named
+/// property with **incompatible** types, tsc emits TS2416 (per-base) at the
+/// property position rather than the visibility-widening TS2420 form.
+#[test]
+fn test_ts2416_per_base_for_private_property_type_mismatch() {
+    let source = r#"
+class C {
+    public foo(x: any) { return x; }
+    private x = 1;
+}
+
+interface I extends C {
+    other(x: any): any;
+}
+
+class D2 extends C implements I {
+    public foo(x: any) { return x; }
+    private x = "";
+    other(x: any) { return x; }
+    bar() {}
+}
+"#;
+    let diagnostics = collect_private_brand_diagnostics(source);
+
+    let ts2416_for_c = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2416
+                && d.message_text.contains("type 'D2'")
+                && d.message_text.contains("base type 'C'")
+        })
+        .expect("expected TS2416 for D2.x vs C.x");
+    let ts2416_for_i = diagnostics
+        .iter()
+        .find(|d| {
+            d.code == 2416
+                && d.message_text.contains("type 'D2'")
+                && d.message_text.contains("base type 'I'")
+        })
+        .expect("expected TS2416 for D2.x vs I.x (interface inherits C.x)");
+
+    // Both TS2416 errors should carry the type-mismatch elaboration.
+    for diag in [ts2416_for_c, ts2416_for_i] {
+        assert!(
+            diag.related_information.iter().any(|info| info
+                .message_text
+                .contains("Type 'string' is not assignable to type 'number'.")),
+            "expected 'Type string is not assignable to type number' related info on TS2416, got: {diag:?}"
+        );
+    }
+
+    // Verify there is no spurious TS2420 with the "private in D2 but not in I"
+    // form — the brands differ but tsc reports the type mismatch instead.
+    let bogus_ts2420 = diagnostics.iter().find(|d| {
+        d.code == 2420 && d.message_text.contains("type 'D2'") && d.message_text.contains("private")
+    });
+    assert!(
+        bogus_ts2420.is_none(),
+        "did not expect TS2420 'private in D2 but not in I' when types are incompatible (TS2416 covers it). Got: {bogus_ts2420:?}"
+    );
+}
+
 // ============================================================
 // Ergonomic brand check (`#field in expr`) diagnostics
 // ============================================================
