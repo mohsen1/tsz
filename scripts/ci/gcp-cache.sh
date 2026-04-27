@@ -1,4 +1,34 @@
 #!/usr/bin/env bash
+#
+# CI cache restore/save against GCS.
+#
+# Cache-policy invariants (DO NOT regress):
+#
+#   1. Writes are gated by branch.
+#      Only push events on refs/heads/main publish blobs to GCS. PRs and
+#      merge_group runs read main's latest blob and recompile their
+#      delta locally. They do NOT publish their (stale-relative-to-main)
+#      target dirs as the new shared blob. This eliminates the prior
+#      "first PR to ever populate this Cargo.lock-keyed blob owns it
+#      forever" trap. TSZ_CI_CACHE_OVERWRITE=1 escapes the gate for
+#      emergency repairs (workflow_dispatch from main).
+#
+#   2. Saves overwrite. A stale main blob always loses to the next
+#      successful main build. There is no "skip if exists" path on the
+#      write side anymore.
+#
+#   3. Cache keys include rustc version. Mixing artifacts across rustc
+#      versions is unsafe — every rustc fingerprint encodes the compiler
+#      version, so a cached blob built with rustc 1.95 must not be
+#      restored into a workspace running 1.96.
+#
+#   4. Source mtimes are NOT touched. Cargo's content-hash check is the
+#      correctness backstop against using stale .rlib files; bypassing
+#      its mtime input via `touch -t 200001010000` (the prior trick) can
+#      let actual source changes slip through. sccache is the right tool
+#      for cross-commit Rust reuse — it keys on real compiler inputs.
+#
+# Run with TSZ_CI_DEBUG_CACHE=1 to enable bash xtrace for cache ops.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -28,6 +58,50 @@ scripts_deps_hash() {
 
 cargo_lock_hash() {
   hash_files Cargo.lock
+}
+
+# rustc identity (version + target triple). Mixing object files / .rmeta
+# across rustc versions is unsafe — every rustc fingerprint encodes the
+# compiler version, so a cached blob built with rustc 1.95 must not be
+# restored into a workspace running 1.96.
+rustc_version_hash() {
+  if command -v rustc >/dev/null 2>&1; then
+    rustc -Vv 2>&1 | sha256sum | awk '{print $1}'
+  else
+    # Called before host tools install: refuse to share blobs across
+    # unknown compilers. Caller's stat will miss; safer than colliding
+    # with the rustc-aware blob.
+    printf 'no-rustc\n'
+  fi
+}
+
+# Composite cache key for Rust target caches.
+#   <cargo_lock_hash>-<rustc_version_hash>
+# Independent of branch and commit. main and PRs read the same blob;
+# only main writes (see cache_writes_allowed below).
+cargo_target_cache_key() {
+  printf '%s-%s\n' "$(cargo_lock_hash)" "$(rustc_version_hash)"
+}
+
+# Decide whether this CI run is allowed to write back to the GCS cache.
+#
+# Only `push` events on main update the cache. PRs and merge_group runs
+# read main's latest blob, recompile their delta locally, but never
+# publish their own (stale-relative-to-main) target dirs as the new
+# shared blob. This eliminates the "first PR to ever populate this lock
+# hash owns it forever" trap that the prior `skip if exists` policy
+# created.
+#
+# TSZ_CI_CACHE_OVERWRITE=1 escapes the gate (e.g., emergency
+# workflow_dispatch repair).
+cache_writes_allowed() {
+  if [[ "${TSZ_CI_CACHE_OVERWRITE:-0}" == "1" ]]; then
+    return 0
+  fi
+  case "${GITHUB_REF:-}" in
+    refs/heads/main) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 typescript_ref() {
@@ -96,24 +170,40 @@ restore_archive() {
     return 0
   fi
 
-  echo "Cache hit: ${label}"
-  mkdir -p "$dest"
+  local t0=$SECONDS
   if ! gsutil -q cp "$uri" "$archive"; then
     echo "warning: failed to download cache ${label}" >&2
+    rm -f "$archive"
     return 0
   fi
+  local download_secs=$((SECONDS - t0))
+  local size_h
+  size_h="$(du -h "$archive" 2>/dev/null | awk '{print $1}')"
+
+  mkdir -p "$dest"
+  local t1=$SECONDS
   if ! tar --warning=no-unknown-keyword -xzf "$archive" -C "$dest"; then
     echo "warning: failed to extract cache ${label}" >&2
+    rm -f "$archive"
     return 0
   fi
+  local extract_secs=$((SECONDS - t1))
+  rm -f "$archive"
+
+  echo "Cache hit: ${label} (size=${size_h:-?}, download=${download_secs}s, extract=${extract_secs}s)"
 }
 
+# save_archive <label> <gs://...> <base> <path...>
+#
+# Cache write policy: only push-on-main runs publish blobs. PRs and
+# merge_group runs always log the reason a save was skipped.
+# TSZ_CI_CACHE_OVERWRITE=1 forces a write regardless of branch.
 save_archive() {
   local label="$1" uri="$2" base="$3"
   shift 3
 
-  if [[ "${TSZ_CI_CACHE_OVERWRITE:-0}" != "1" ]] && gsutil -q stat "$uri"; then
-    echo "Cache save skipped: ${label} (already exists)"
+  if ! cache_writes_allowed; then
+    echo "Cache save skipped: ${label} (writes disabled on ${GITHUB_REF:-unknown ref})"
     return 0
   fi
 
@@ -137,12 +227,20 @@ save_archive() {
 
   local archive
   archive="$(tmp_archive "$label")"
+  local t0=$SECONDS
   tar -czf "$archive" -C "$base" "${existing[@]}"
+  local pack_secs=$((SECONDS - t0))
+  local size_h
+  size_h="$(du -h "$archive" 2>/dev/null | awk '{print $1}')"
+
+  local t1=$SECONDS
   if gsutil -q cp "$archive" "$uri"; then
-    echo "Cache saved: ${label}"
+    local upload_secs=$((SECONDS - t1))
+    echo "Cache saved: ${label} (size=${size_h:-?}, pack=${pack_secs}s, upload=${upload_secs}s)"
   else
     echo "warning: failed to upload cache ${label}" >&2
   fi
+  rm -f "$archive"
 }
 
 suite_needs_rust_compile() {
@@ -155,18 +253,26 @@ suite_needs_rust_compile() {
 }
 
 # Which cargo-target-* GCS archives a suite actually needs.
-# Restoring archives a job will not use is pure overhead — the cargo-target-debug
-# archive alone takes ~90s to download. Each suite lists only the profile(s) it
-# compiles into. "all"/"full" runs do everything, so they restore everything.
+# Restoring archives a job will not use is pure overhead. Each suite lists
+# only the profile(s) it compiles into; sccache GCS handles cross-commit
+# rustc-level reuse for all profiles.
+#
+# lint deliberately gets nothing: the ci-lint profile lives in
+# .target/ci-lint/ and the cost of archiving + transferring +
+# fingerprint-revalidating that target dir routinely exceeded the
+# wall-clock saved by skipping recompilation. sccache GCS is the right
+# tool for cross-commit lint — it keys on actual rustc inputs and can't
+# go stale silently. See the prior "cargo-target-debug stale forever"
+# bug fixed in this redesign.
 suite_target_caches() {
   local suite
   suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
   case "$suite" in
-    all|full)              echo "cargo-target-deps cargo-target-unit cargo-target-debug cargo-target-wasm" ;;
+    all|full)              echo "cargo-target-deps cargo-target-unit cargo-target-wasm" ;;
     build)                 echo "cargo-target-deps cargo-target-unit" ;;
     dist-binaries)         echo "cargo-target-deps" ;;
     unit-archive|unit)     echo "cargo-target-unit" ;;
-    lint)                  echo "cargo-target-debug" ;;
+    lint)                  echo "" ;;
     wasm|wasm-web)         echo "cargo-target-wasm" ;;
     *)                     echo "" ;;
   esac
@@ -210,7 +316,7 @@ restore_typescript() {
 }
 
 restore_caches() {
-  local cargo_hash node_hash ts_ref ts_deps_hash commit
+  local cargo_hash node_hash ts_ref ts_deps_hash commit cargo_target_key
   cargo_hash="$(cargo_lock_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
@@ -227,15 +333,15 @@ restore_caches() {
       "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
       ".ci-cache/cargo-home"
 
-    # Per-profile Cargo target caches, each keyed by Cargo.lock hash.
-    # External dep artifacts are valid across commits (same lock = same versions)
-    # and let Cargo skip those crates entirely.
-    # Each suite only restores the profile(s) it actually compiles into —
-    # restoring archives we don't use is pure overhead (cargo-target-debug alone
-    # is ~90s to download).
+    # Per-profile Cargo target caches keyed by (Cargo.lock + rustc version).
+    # External dep artifacts are valid across commits (same lock = same
+    # versions) and let Cargo skip those crates entirely. Cross-rustc
+    # mixing is unsafe so a rustc upgrade rolls the key.
+    cargo_target_key="$(cargo_target_cache_key)"
+    echo "Cargo target cache key: ${cargo_target_key}"
     local target_cache
     for target_cache in $(suite_target_caches); do
-      _restore_cargo_target_profile "$target_cache" "$cargo_hash"
+      _restore_cargo_target_profile "$target_cache" "$cargo_target_key"
     done
     # NOTE: we deliberately do NOT backdate source-file mtimes. A previous
     # version of this script ran "touch -t 200001010000" over every .rs and
@@ -295,7 +401,7 @@ restore_caches() {
 }
 
 save_caches() {
-  local cargo_hash node_hash ts_ref ts_deps_hash commit
+  local cargo_hash node_hash ts_ref ts_deps_hash commit cargo_target_key
   cargo_hash="$(cargo_lock_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
@@ -309,26 +415,29 @@ save_caches() {
       ".ci-cache/cargo-home" \
       registry git
 
-    # Per-profile target caches keyed by Cargo.lock. Each job saves only the
-    # profile it built; save_archive is a no-op when the path is absent.
+    # Per-profile target caches keyed by (Cargo.lock + rustc version).
+    # Each job saves only the profile it built; save_archive is a no-op
+    # when the path is absent. cargo-target-debug intentionally removed:
+    # the lint suite now writes to .target/ci-lint/ via the dedicated
+    # ci-lint Cargo profile, and sccache GCS handles cross-commit reuse
+    # for that workspace path. The old cargo-target-debug blob was
+    # routinely stale because PRs would never overwrite an existing
+    # blob; new write policy (main-only) plus profile isolation makes
+    # the dedicated lint cache redundant.
+    cargo_target_key="$(cargo_target_cache_key)"
     save_archive \
-      "cargo-target-deps-${cargo_hash}" \
-      "$(cache_uri "cargo-target-deps/${cargo_hash}.tar.gz")" \
+      "cargo-target-deps-${cargo_target_key}" \
+      "$(cache_uri "cargo-target-deps/${cargo_target_key}.tar.gz")" \
       "." \
       .target/dist-fast
     save_archive \
-      "cargo-target-unit-${cargo_hash}" \
-      "$(cache_uri "cargo-target-unit/${cargo_hash}.tar.gz")" \
+      "cargo-target-unit-${cargo_target_key}" \
+      "$(cache_uri "cargo-target-unit/${cargo_target_key}.tar.gz")" \
       "." \
       .target/ci-unit
     save_archive \
-      "cargo-target-debug-${cargo_hash}" \
-      "$(cache_uri "cargo-target-debug/${cargo_hash}.tar.gz")" \
-      "." \
-      .target/debug
-    save_archive \
-      "cargo-target-wasm-${cargo_hash}" \
-      "$(cache_uri "cargo-target-wasm/${cargo_hash}.tar.gz")" \
+      "cargo-target-wasm-${cargo_target_key}" \
+      "$(cache_uri "cargo-target-wasm/${cargo_target_key}.tar.gz")" \
       "." \
       .target/wasm32-unknown-unknown
   fi
