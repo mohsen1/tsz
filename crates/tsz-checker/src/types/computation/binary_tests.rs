@@ -824,6 +824,43 @@ fn ts2367_preserves_literal_types_in_display() {
 }
 
 #[test]
+fn ts2367_for_explicit_unknown_intersection_compared_to_primitive() {
+    let diags = check_source_diagnostics(
+        r#"function f<T extends unknown>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function g<T extends {} | undefined>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function unconstrained<T>(value: T & ({} | null)) {
+    if (value === 42) {}
+}
+
+function object_constrained<T extends {}>(value: T & ({} | null)) {
+    if (value === 42) {}
+}"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        2,
+        "Expected TS2367 only for explicit unknown/undefined-bearing constraints, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        relevant
+            .iter()
+            .all(|diag| diag.message_text.contains("types 'T' and 'number'")),
+        "Expected tsc-style `T` vs `number` display, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn no_ts2367_for_three_member_union_narrowed_in_loop() {
     // Three-member union `0 | 1 | 2` narrowed by control flow in a for-of loop.
     // This matches the f1() case from controlFlowNoIntermediateErrors.

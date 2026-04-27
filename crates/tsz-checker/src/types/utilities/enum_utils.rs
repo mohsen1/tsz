@@ -1096,6 +1096,13 @@ impl<'a> CheckerState<'a> {
         //    overlap just because `I1` is assignable from `I2`.
         if let Some(left_members) = query::get_intersection_members(self.ctx.types, effective_left)
         {
+            if self.intersection_with_explicit_unknown_like_constraint_excludes_primitive(
+                &left_members,
+                effective_right,
+            ) {
+                return true;
+            }
+
             let has_type_param = left_members
                 .iter()
                 .any(|m| is_type_parameter_like(self.ctx.types, *m));
@@ -1141,6 +1148,13 @@ impl<'a> CheckerState<'a> {
         if let Some(right_members) =
             query::get_intersection_members(self.ctx.types, effective_right)
         {
+            if self.intersection_with_explicit_unknown_like_constraint_excludes_primitive(
+                &right_members,
+                effective_left,
+            ) {
+                return true;
+            }
+
             let has_type_param = right_members
                 .iter()
                 .any(|m| is_type_parameter_like(self.ctx.types, *m));
@@ -1253,6 +1267,112 @@ impl<'a> CheckerState<'a> {
         tracing::trace!("no overlap detected");
         // No other overlap detected
         true
+    }
+
+    pub(crate) fn ts2367_explicit_unknown_like_intersection_type_param_display(
+        &self,
+        type_id: TypeId,
+        other: TypeId,
+    ) -> Option<TypeId> {
+        let members = query::get_intersection_members(self.ctx.types, type_id)?;
+        if !self.is_non_nullish_primitive_or_literal(other) {
+            return None;
+        }
+
+        let type_param = members.iter().copied().find(|&member| {
+            is_type_parameter_like(self.ctx.types, member)
+                && self.type_param_has_explicit_unknown_or_undefined_constraint(member)
+        })?;
+        let has_object_nullish_member = members.iter().any(|&member| {
+            !is_type_parameter_like(self.ctx.types, member)
+                && self.is_object_or_nullish_only_type(member)
+        });
+
+        has_object_nullish_member.then_some(type_param)
+    }
+
+    fn intersection_with_explicit_unknown_like_constraint_excludes_primitive(
+        &self,
+        members: &[TypeId],
+        other: TypeId,
+    ) -> bool {
+        if !self.is_non_nullish_primitive_or_literal(other) {
+            return false;
+        }
+
+        let mut has_matching_type_param = false;
+        let mut has_object_nullish_member = false;
+
+        for &member in members {
+            if is_type_parameter_like(self.ctx.types, member) {
+                has_matching_type_param |=
+                    self.type_param_has_explicit_unknown_or_undefined_constraint(member);
+            } else if self.is_object_or_nullish_only_type(member) {
+                has_object_nullish_member = true;
+            }
+        }
+
+        has_matching_type_param && has_object_nullish_member
+    }
+
+    fn type_param_has_explicit_unknown_or_undefined_constraint(&self, type_id: TypeId) -> bool {
+        let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        let Some(constraint) = info.constraint else {
+            return false;
+        };
+
+        constraint == TypeId::UNKNOWN
+            || (self.type_contains_exact(constraint, TypeId::UNDEFINED)
+                && !self.type_contains_exact(constraint, TypeId::NULL))
+    }
+
+    fn is_object_or_nullish_only_type(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::OBJECT
+            || type_id == TypeId::NULL
+            || type_id == TypeId::UNDEFINED
+            || crate::query_boundaries::common::is_empty_object_type(self.ctx.types, type_id)
+        {
+            return true;
+        }
+
+        crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some_and(
+            |members| {
+                !members.is_empty()
+                    && members
+                        .iter()
+                        .all(|&member| self.is_object_or_nullish_only_type(member))
+            },
+        )
+    }
+
+    fn type_contains_exact(&self, type_id: TypeId, needle: TypeId) -> bool {
+        type_id == needle
+            || crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some_and(
+                |members| {
+                    members
+                        .iter()
+                        .any(|&member| self.type_contains_exact(member, needle))
+                },
+            )
+    }
+
+    fn is_non_nullish_primitive_or_literal(&self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common::{classify_literal_type, LiteralTypeKind};
+
+        if matches!(
+            type_id,
+            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+        ) {
+            return true;
+        }
+
+        !matches!(
+            classify_literal_type(self.ctx.types, type_id),
+            LiteralTypeKind::NotLiteral
+        ) || crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, type_id)
     }
 
     pub(crate) fn are_pure_signature_objects(&mut self, left: TypeId, right: TypeId) -> bool {
