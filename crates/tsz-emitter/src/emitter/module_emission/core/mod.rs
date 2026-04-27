@@ -1382,12 +1382,14 @@ impl<'a> Printer<'a> {
                     && self
                         .collect_variable_names_from_node(stmt_node)
                         .iter()
-                        .any(|n| n == &assigned_name)
-                    && !self.arena.get_variable(stmt_node).is_some_and(|var_decl| {
-                        self.arena
-                            .has_modifier(&var_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    }) =>
+                        .any(|n| n == &assigned_name) =>
                 {
+                    // `var x` declares a runtime binding regardless of the
+                    // `declare` modifier. `declare var server` in a module
+                    // file says "the name `server` is a runtime value" — so
+                    // `export = server` must lower to
+                    // `module.exports = server`. Previously the `!is_declare`
+                    // gate elided the assignment for ambient bindings.
                     matched_runtime = true;
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION

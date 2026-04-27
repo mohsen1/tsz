@@ -1360,7 +1360,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_non_nullish_primitive_or_literal(&self, type_id: TypeId) -> bool {
-        use crate::query_boundaries::common::{classify_literal_type, LiteralTypeKind};
+        use crate::query_boundaries::common::{LiteralTypeKind, classify_literal_type};
 
         if matches!(
             type_id,

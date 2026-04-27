@@ -131,7 +131,7 @@ class C1 {
 "#,
     );
 
-    let ts2502_count = diagnostics.iter().filter(|d| d.code == 2502).count();
+    let ts2502_count = diagnostics.iter().filter(|d| d.0 == 2502).count();
     assert_eq!(
         ts2502_count, 3,
         "Expected TS2502 for self-indexed type literal, interface, and class properties.\nActual diagnostics: {diagnostics:#?}"
