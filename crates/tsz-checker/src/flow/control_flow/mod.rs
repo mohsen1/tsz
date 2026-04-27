@@ -18,6 +18,7 @@
 //! }
 //! ```
 
+pub(crate) mod alias_narrowing;
 pub(crate) mod assignment;
 mod assignment_fallback;
 mod call_condition_narrowing;

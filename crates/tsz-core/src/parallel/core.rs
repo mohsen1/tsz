@@ -1446,9 +1446,19 @@ pub struct BoundFile {
     /// template to `semantic_defs`; this extends it to `node_symbols`.
     pub node_symbols: Arc<FxHashMap<u32, SymbolId>>,
     /// Per-file symbol-to-arena mapping captured during binding.
-    pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver and
+    /// the parallel checker can share via `Arc::clone` (atomic increment)
+    /// instead of deep-cloning the underlying `FxHashMap`. Same template as
+    /// the recently-merged BoundFile field Arc-wraps (#1399 / #1404 / #1409
+    /// / #1416 / #1428 / #1535 / #1559).
+    pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Per-file declaration-to-arena mapping captured during binding.
-    pub declaration_arenas: DeclarationArenaMap,
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.declaration_arenas` (same field)
+    /// so per-file binders share via `Arc::clone` instead of deep-cloning
+    /// the underlying map.
+    pub declaration_arenas: Arc<DeclarationArenaMap>,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
     /// Persistent scopes (symbol IDs are global after merge).
@@ -1467,12 +1477,24 @@ pub struct BoundFile {
     pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     /// Parse diagnostics
     pub parse_diagnostics: Vec<ParseDiagnostic>,
-    /// Global augmentations (interface declarations inside `declare global` blocks)
-    pub global_augmentations: FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>,
-    /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks)
-    pub module_augmentations: FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>,
-    /// Maps symbols declared inside module augmentation blocks to their target module specifier
-    pub augmentation_target_modules: FxHashMap<SymbolId, String>,
+    /// Global augmentations (interface declarations inside `declare global` blocks).
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.global_augmentations` so per-file
+    /// binders share via `Arc::clone` (atomic increment) instead of
+    /// deep-cloning the underlying `FxHashMap` per consumer.
+    pub global_augmentations: Arc<FxHashMap<String, Vec<crate::binder::GlobalAugmentation>>>,
+    /// Module augmentations (interface/type declarations inside `declare module 'x'` blocks).
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.module_augmentations` so per-file
+    /// binders share via `Arc::clone` (atomic increment) instead of
+    /// deep-cloning the underlying `FxHashMap` per consumer.
+    pub module_augmentations: Arc<FxHashMap<String, Vec<crate::binder::ModuleAugmentation>>>,
+    /// Maps symbols declared inside module augmentation blocks to their target module specifier.
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.augmentation_target_modules` so
+    /// per-file binders share via `Arc::clone` (atomic increment) instead of
+    /// deep-cloning the underlying `FxHashMap` per consumer.
+    pub augmentation_target_modules: Arc<FxHashMap<SymbolId, String>>,
     /// Flow nodes for control flow analysis.
     ///
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver can
@@ -1725,7 +1747,15 @@ pub struct MergedProgram {
     /// Binder-captured semantic definitions for top-level declarations (Phase 1 DefId-first).
     /// Maps post-remap `SymbolId` → `SemanticDefEntry` across all files.
     /// The checker reads this during construction to pre-create solver `DefIds`.
-    pub semantic_defs: FxHashMap<SymbolId, crate::binder::SemanticDefEntry>,
+    ///
+    /// `Arc`-wrapped so the parallel checker's lib-check pass and the
+    /// per-file binder reconstruction paths can share via `Arc::clone`
+    /// (atomic increment) instead of deep-cloning the underlying
+    /// `FxHashMap`. The lib-check overlays an always-empty per-lib map
+    /// on top of this (`build_lib_bound_file_for_interface_checks`
+    /// returns an empty `semantic_defs`), so for the lib path the
+    /// `Arc::clone` is the entire cost.
+    pub semantic_defs: Arc<FxHashMap<SymbolId, crate::binder::SemanticDefEntry>>,
     /// Shared `DefinitionStore` pre-populated with `DefId`s for all top-level
     /// semantic definitions during the merge phase. This moves identity creation
     /// from checker pre-population (per-file, order-dependent) to merge time
@@ -3372,22 +3402,24 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             // `FxHashMap<u32, SymbolId>` is shared via refcount instead of
             // deep-cloned per consumer.
             node_symbols: Arc::new(remapped_node_symbols),
-            symbol_arenas: remapped_symbol_arenas,
-            declaration_arenas: remapped_declaration_arenas,
+            symbol_arenas: Arc::new(remapped_symbol_arenas),
+            declaration_arenas: Arc::new(remapped_declaration_arenas),
             module_declaration_exports_publicly: result.module_declaration_exports_publicly.clone(),
             scopes: Arc::new(remapped_scopes),
             node_scope_ids: result.node_scope_ids.clone(),
             parse_diagnostics: result.parse_diagnostics.clone(),
-            global_augmentations: (*result.global_augmentations).clone(),
-            module_augmentations,
-            augmentation_target_modules: result
-                .augmentation_target_modules
-                .iter()
-                .map(|(&old_sym, name)| {
-                    let new_sym = id_remap.get(&old_sym).copied().unwrap_or(old_sym);
-                    (new_sym, name.clone())
-                })
-                .collect(),
+            global_augmentations: Arc::clone(&result.global_augmentations),
+            module_augmentations: Arc::new(module_augmentations),
+            augmentation_target_modules: Arc::new(
+                result
+                    .augmentation_target_modules
+                    .iter()
+                    .map(|(&old_sym, name)| {
+                        let new_sym = id_remap.get(&old_sym).copied().unwrap_or(old_sym);
+                        (new_sym, name.clone())
+                    })
+                    .collect(),
+            ),
             flow_nodes: result.flow_nodes.clone(),
             // Arc::clone is O(1); per-file `BoundFile` shares the same
             // `node_flow` map as later `cross_file_*` binder constructions.
@@ -3529,7 +3561,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         lib_symbol_ids: Arc::new(global_lib_symbol_ids),
         type_interner,
         alias_partners,
-        semantic_defs,
+        semantic_defs: Arc::new(semantic_defs),
         definition_store,
         skeleton_index: Some(skeleton_index),
         dep_graph: Some(dep_graph),
@@ -4145,15 +4177,15 @@ fn build_lib_bound_file_for_interface_checks(
         source_file: lib_file.root_index,
         arena: Arc::clone(&lib_file.arena),
         node_symbols: Arc::new(node_symbols),
-        symbol_arenas: (*program.symbol_arenas).clone(),
-        declaration_arenas,
+        symbol_arenas: Arc::clone(&program.symbol_arenas),
+        declaration_arenas: Arc::new(declaration_arenas),
         module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
         scopes: Arc::new(Vec::new()),
         node_scope_ids: Arc::new(FxHashMap::default()),
         parse_diagnostics: Vec::new(),
-        global_augmentations: FxHashMap::default(),
-        module_augmentations: FxHashMap::default(),
-        augmentation_target_modules: FxHashMap::default(),
+        global_augmentations: Arc::new(FxHashMap::default()),
+        module_augmentations: Arc::new(FxHashMap::default()),
+        augmentation_target_modules: Arc::new(FxHashMap::default()),
         flow_nodes: Arc::new(FlowNodeArena::default()),
         node_flow: Arc::new(FxHashMap::default()),
         switch_clause_to_switch: Arc::new(FxHashMap::default()),
@@ -4696,11 +4728,22 @@ pub fn check_files_parallel(
             build_lib_bound_file_for_interface_checks(program, lib_file, &affected_lib_interfaces);
         let mut binder =
             create_binder_from_bound_file(&lib_bound_file, program, program.files.len());
-        let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in lib_bound_file.semantic_defs.iter() {
-            composed_semantic_defs.insert(*sym_id, entry.clone());
+        // PERF: `build_lib_bound_file_for_interface_checks` always seeds
+        // `lib_bound_file.semantic_defs` as empty, so the previous
+        // clone-then-overlay collapsed to a deep clone of `program.semantic_defs`
+        // and Arc-wrapping the result. With `program.semantic_defs` now
+        // `Arc`-shared, the fast path is one atomic refcount bump plus a
+        // potential `Arc::make_mut` only when the per-lib map actually
+        // contributes entries (currently never).
+        if lib_bound_file.semantic_defs.is_empty() {
+            binder.semantic_defs = Arc::clone(&program.semantic_defs);
+        } else {
+            let mut composed_semantic_defs = (*program.semantic_defs).clone();
+            for (sym_id, entry) in lib_bound_file.semantic_defs.iter() {
+                composed_semantic_defs.insert(*sym_id, entry.clone());
+            }
+            binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
-        binder.semantic_defs = Arc::new(composed_semantic_defs);
 
         let mut checker = CheckerState::with_options(
             &lib_bound_file.arena,
@@ -4874,7 +4917,7 @@ impl SharedBinderData {
         let mut merged_global_augmentations = rustc_hash::FxHashMap::default();
 
         for file in files {
-            for (spec, augs) in &file.module_augmentations {
+            for (spec, augs) in file.module_augmentations.iter() {
                 merged_module_augmentations
                     .entry(spec.clone())
                     .or_insert_with(Vec::new)
@@ -4886,10 +4929,10 @@ impl SharedBinderData {
                         )
                     }));
             }
-            for (&sym_id, module_spec) in &file.augmentation_target_modules {
+            for (&sym_id, module_spec) in file.augmentation_target_modules.iter() {
                 merged_augmentation_target_modules.insert(sym_id, module_spec.clone());
             }
-            for (name, decls) in &file.global_augmentations {
+            for (name, decls) in file.global_augmentations.iter() {
                 merged_global_augmentations
                     .entry(name.clone())
                     .or_insert_with(Vec::new)
@@ -4923,7 +4966,7 @@ pub fn create_binder_from_bound_file(
     program: &MergedProgram,
     file_idx: usize,
 ) -> BinderState {
-    let declaration_arenas = Arc::new(file.declaration_arenas.clone());
+    let declaration_arenas = Arc::clone(&file.declaration_arenas);
     // The per-file subset is small; build a local `sym_to_decl_indices` from it
     // so consumers that go through the secondary index still see the same set.
     let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
@@ -4934,7 +4977,7 @@ pub fn create_binder_from_bound_file(
             .push(decl_idx);
     }
     let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
-    let symbol_arenas = Arc::new(file.symbol_arenas.clone());
+    let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
     // Get file locals for this specific file
     let mut file_locals = SymbolTable::new();
@@ -4963,9 +5006,9 @@ pub fn create_binder_from_bound_file(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: Arc::new(file.global_augmentations.clone()),
-            module_augmentations: Arc::new(file.module_augmentations.clone()),
-            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
+            global_augmentations: Arc::clone(&file.global_augmentations),
+            module_augmentations: Arc::clone(&file.module_augmentations),
+            augmentation_target_modules: Arc::clone(&file.augmentation_target_modules),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
@@ -5002,11 +5045,15 @@ pub fn create_binder_from_bound_file(
     // and resolve_cross_batch_heritage both skip when fully_populated=true).
     // Skip the expensive clone+overlay to avoid O(files * total_defs) work.
     if !program.definition_store.is_fully_populated() {
-        let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in file.semantic_defs.iter() {
-            composed_semantic_defs.insert(*sym_id, entry.clone());
+        if file.semantic_defs.is_empty() {
+            binder.semantic_defs = Arc::clone(&program.semantic_defs);
+        } else {
+            let mut composed_semantic_defs = (*program.semantic_defs).clone();
+            for (sym_id, entry) in file.semantic_defs.iter() {
+                composed_semantic_defs.insert(*sym_id, entry.clone());
+            }
+            binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
-        binder.semantic_defs = Arc::new(composed_semantic_defs);
     }
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
@@ -5037,7 +5084,7 @@ pub fn create_binder_from_bound_file_with_shared(
     // Keep the legacy per-file subset behavior here (see `create_binder_from_bound_file`):
     // these paths are used by `check_files_parallel` and tests that expect the
     // binder's `declaration_arenas` to exclude lib-originated symbols.
-    let declaration_arenas = Arc::new(file.declaration_arenas.clone());
+    let declaration_arenas = Arc::clone(&file.declaration_arenas);
     let mut sym_to_decl_indices_local: SymToDeclIndicesMap = FxHashMap::default();
     for &(sym_id, decl_idx) in declaration_arenas.keys() {
         sym_to_decl_indices_local
@@ -5046,7 +5093,7 @@ pub fn create_binder_from_bound_file_with_shared(
             .push(decl_idx);
     }
     let sym_to_decl_indices = Arc::new(sym_to_decl_indices_local);
-    let symbol_arenas = Arc::new(file.symbol_arenas.clone());
+    let symbol_arenas = Arc::clone(&file.symbol_arenas);
 
     let mut file_locals = SymbolTable::new();
     if file_idx < program.file_locals.len() {
@@ -5070,9 +5117,9 @@ pub fn create_binder_from_bound_file_with_shared(
         BinderStateScopeInputs {
             scopes: file.scopes.clone(),
             node_scope_ids: file.node_scope_ids.clone(),
-            global_augmentations: Arc::new(file.global_augmentations.clone()),
-            module_augmentations: Arc::new(file.module_augmentations.clone()),
-            augmentation_target_modules: Arc::new(file.augmentation_target_modules.clone()),
+            global_augmentations: Arc::clone(&file.global_augmentations),
+            module_augmentations: Arc::clone(&file.module_augmentations),
+            augmentation_target_modules: Arc::clone(&file.augmentation_target_modules),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file.module_declaration_exports_publicly.clone(),
             reexports: program.reexports.clone(),
@@ -5101,11 +5148,15 @@ pub fn create_binder_from_bound_file_with_shared(
     binder.lib_symbol_ids = program.lib_symbol_ids.clone();
 
     if !program.definition_store.is_fully_populated() {
-        let mut composed_semantic_defs = program.semantic_defs.clone();
-        for (sym_id, entry) in file.semantic_defs.iter() {
-            composed_semantic_defs.insert(*sym_id, entry.clone());
+        if file.semantic_defs.is_empty() {
+            binder.semantic_defs = Arc::clone(&program.semantic_defs);
+        } else {
+            let mut composed_semantic_defs = (*program.semantic_defs).clone();
+            for (sym_id, entry) in file.semantic_defs.iter() {
+                composed_semantic_defs.insert(*sym_id, entry.clone());
+            }
+            binder.semantic_defs = Arc::new(composed_semantic_defs);
         }
-        binder.semantic_defs = Arc::new(composed_semantic_defs);
     }
     if let Some(root_scope) = binder.scopes.first() {
         binder.current_scope = root_scope.table.clone();
