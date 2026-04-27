@@ -1063,7 +1063,7 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(text) = self.const_literal_initializer_text(expr_idx) {
             return Some(text);
         }
-        if let Some(text) = self.const_literal_identity_call_text(expr_idx) {
+        if let Some(text) = self.const_literal_identity_call_text(expr_idx, guard) {
             return Some(text);
         }
         // Unwrap as/satisfies expressions
@@ -1113,8 +1113,10 @@ impl<'a> DeclarationEmitter<'a> {
                             && self.get_identifier_text(decl.name).as_deref() == Some(&name)
                             && decl.initializer.is_some()
                         {
-                            return self
-                                .const_literal_initializer_text_deep_guarded(decl.initializer, guard);
+                            return self.const_literal_initializer_text_deep_guarded(
+                                decl.initializer,
+                                guard,
+                            );
                         }
                     }
                 }
@@ -1127,6 +1129,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn const_literal_identity_call_text(
         &self,
         expr_idx: NodeIndex,
+        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
     ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
@@ -1156,7 +1159,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let mut text = self.const_literal_initializer_text_deep(args.nodes[0])?;
+        let mut text = self.const_literal_initializer_text_deep_guarded(args.nodes[0], guard)?;
         if text.starts_with('-') {
             while text.ends_with(')') {
                 text.pop();
