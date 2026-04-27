@@ -32,7 +32,7 @@ RUN apt-get update -qq \
     && bash /tmp/install-gcloud.sh --disable-prompts --install-dir=/ \
     && rm -rf /tmp/install-gcloud.sh \
     && curl https://sh.rustup.rs -sSf | su runner -c 'sh -s -- -y --profile minimal --default-toolchain stable' \
-    && su runner -c '/home/runner/.cargo/bin/rustup component add clippy rustfmt' \
+    && su runner -c '/home/runner/.cargo/bin/rustup component add clippy rustfmt llvm-tools-preview' \
     && su runner -c '/home/runner/.cargo/bin/rustup target add wasm32-unknown-unknown' \
     && curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin \
     && curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh \
