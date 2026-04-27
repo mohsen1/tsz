@@ -627,6 +627,24 @@ impl<'a> CheckerState<'a> {
                         request,
                         children_ctx,
                     );
+                    // For SFCs whose props type is a bare type parameter (e.g.
+                    // `function(props: P)` inside `function test<P>`), also check that each
+                    // spread attribute satisfies IntrinsicAttributes. tsc emits TS2322
+                    // "Type 'P' is not assignable to type 'IntrinsicAttributes & P'" when the
+                    // unconstrained type parameter does not extend IntrinsicAttributes.
+                    // The spread-satisfies-type-param guard inside check_jsx_attributes_against_props
+                    // suppresses the whole-object TS2322 (correct), but the IntrinsicAttributes
+                    // intersection check must still run separately.
+                    if crate::query_boundaries::common::is_type_parameter_like(
+                        self.ctx.types,
+                        props_type,
+                    ) {
+                        self.check_generic_sfc_spread_intrinsic_attrs(
+                            resolved_component_type,
+                            jsx_opening.attributes,
+                            jsx_opening.tag_name,
+                        );
+                    }
                 }
             } else if uses_jsx_overload_resolution {
                 // JSX overload resolution: try each call signature (including generic

@@ -84,10 +84,7 @@ fn export_default_of_type_only_alias_emits_ts1292() {
     let type_ts = "export type T = number;\n";
     let test3_ts = "import { T } from \"./type\";\nexport default T;\n";
 
-    let diags = compile_with_isolated_modules(
-        &[("/type.ts", type_ts), ("/test3.ts", test3_ts)],
-        1,
-    );
+    let diags = compile_with_isolated_modules(&[("/type.ts", type_ts), ("/test3.ts", test3_ts)], 1);
 
     assert!(
         diags.iter().any(|(code, _, _)| *code == 1292),
@@ -105,10 +102,7 @@ fn import_type_clashing_with_local_type_alias_emits_ts2440_and_ts1292() {
     let type_ts = "export type T = number;\n";
     let test2_ts = "import { T } from \"./type\";\ntype T = number;\nexport default T;\n";
 
-    let diags = compile_with_isolated_modules(
-        &[("/type.ts", type_ts), ("/test2.ts", test2_ts)],
-        1,
-    );
+    let diags = compile_with_isolated_modules(&[("/type.ts", type_ts), ("/test2.ts", test2_ts)], 1);
 
     assert!(
         diags.iter().any(|(code, _, _)| *code == 2440),
@@ -132,10 +126,7 @@ fn import_type_clashing_with_local_const_emits_ts2865() {
     let type_ts = "export type T = number;\n";
     let test1_ts = "import { T } from \"./type\";\nconst T = 0;\nexport default T;\n";
 
-    let diags = compile_with_isolated_modules(
-        &[("/type.ts", type_ts), ("/test1.ts", test1_ts)],
-        1,
-    );
+    let diags = compile_with_isolated_modules(&[("/type.ts", type_ts), ("/test1.ts", test1_ts)], 1);
 
     assert!(
         diags.iter().any(|(code, _, _)| *code == 2865),
@@ -156,13 +147,13 @@ fn type_only_import_with_no_local_conflict_is_clean() {
     let type_ts = "export type T = number;\n";
     let consumer_ts = "import { T } from \"./type\";\nexport type Alias = T;\n";
 
-    let diags = compile_with_isolated_modules(
-        &[("/type.ts", type_ts), ("/consumer.ts", consumer_ts)],
-        1,
-    );
+    let diags =
+        compile_with_isolated_modules(&[("/type.ts", type_ts), ("/consumer.ts", consumer_ts)], 1);
 
     assert!(
-        diags.iter().all(|(code, _, _)| *code != 2440 && *code != 2865),
+        diags
+            .iter()
+            .all(|(code, _, _)| *code != 2440 && *code != 2865),
         "Expected no TS2440/TS2865 for a clean type-only import. Got: {diags:?}"
     );
 }
@@ -175,10 +166,8 @@ fn type_only_import_modifier_suppresses_ts2865() {
     let type_ts = "export type T = number;\n";
     let consumer_ts = "import type { T } from \"./type\";\nconst T = 0;\nexport { T };\n";
 
-    let diags = compile_with_isolated_modules(
-        &[("/type.ts", type_ts), ("/consumer.ts", consumer_ts)],
-        1,
-    );
+    let diags =
+        compile_with_isolated_modules(&[("/type.ts", type_ts), ("/consumer.ts", consumer_ts)], 1);
 
     assert!(
         diags.iter().all(|(code, _, _)| *code != 2865),
