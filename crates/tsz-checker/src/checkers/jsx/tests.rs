@@ -16,6 +16,43 @@ fn check_jsx_codes(source: &str) -> Vec<u32> {
     check_jsx(source).iter().map(|d| d.code).collect()
 }
 
+fn check_jsx_strict(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    use crate::context::CheckerOptions;
+    use tsz_common::checker_options::JsxMode;
+    let opts = CheckerOptions {
+        jsx_mode: JsxMode::Preserve,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    check_source(source, "test.tsx", opts)
+}
+
+fn check_jsx_strict_codes(source: &str) -> Vec<u32> {
+    check_jsx_strict(source).iter().map(|d| d.code).collect()
+}
+
+fn check_jsx_no_strict(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    use crate::context::CheckerOptions;
+    use tsz_common::checker_options::JsxMode;
+    let opts = CheckerOptions {
+        jsx_mode: JsxMode::Preserve,
+        strict: false,
+        strict_null_checks: false,
+        strict_function_types: false,
+        strict_property_initialization: false,
+        no_implicit_any: false,
+        no_implicit_this: false,
+        use_unknown_in_catch_variables: false,
+        strict_builtin_iterator_return: false,
+        ..CheckerOptions::default()
+    };
+    check_source(source, "test.tsx", opts)
+}
+
+fn check_jsx_no_strict_codes(source: &str) -> Vec<u32> {
+    check_jsx_no_strict(source).iter().map(|d| d.code).collect()
+}
+
 /// JSX shorthand boolean attribute (`<Foo bar />`) typed as `true` for assignability.
 /// When prop expects literal `true`, shorthand must be assignable (no false positive).
 #[test]
@@ -404,6 +441,69 @@ fn jsx_sfc_returning_never_no_ts2786() {
     assert!(
         !diagnostics.contains(&2786),
         "SFC returning never (bottom type) should not emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+/// TS2786 SHOULD fire with strictNullChecks for an SFC returning `undefined`
+/// (arrow function form). `undefined` is not assignable to `JSX.Element | null`.
+/// Mirrors `tsxSfcReturnUndefinedStrictNullChecks.tsx`.
+#[test]
+fn jsx_sfc_returning_undefined_strict_null_checks_emits_ts2786() {
+    let diagnostics = check_jsx_strict_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface IntrinsicElements { }
+        }
+        const Foo = (props: any) => undefined;
+        <Foo />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2786),
+        "SFC returning undefined with strictNullChecks should emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+/// TS2786 SHOULD fire with strictNullChecks for an SFC whose body returns `undefined`
+/// (function declaration form).
+#[test]
+fn jsx_sfc_function_body_returning_undefined_strict_null_checks_emits_ts2786() {
+    let diagnostics = check_jsx_strict_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface IntrinsicElements { }
+        }
+        function Greet(x: { name?: string }) {
+            return undefined;
+        }
+        <Greet />;
+        "#,
+    );
+    assert!(
+        diagnostics.contains(&2786),
+        "SFC returning undefined (function body) with strictNullChecks should emit TS2786, got: {diagnostics:?}"
+    );
+}
+
+/// TS2786 should NOT fire without strictNullChecks for an SFC returning `undefined`
+/// (undefined is a subtype of every type without strict null checks).
+#[test]
+fn jsx_sfc_returning_undefined_no_strict_null_checks_no_ts2786() {
+    let diagnostics = check_jsx_no_strict_codes(
+        r#"
+        declare namespace JSX {
+            interface Element { }
+            interface IntrinsicElements { }
+        }
+        const Foo = (props: any) => undefined;
+        <Foo />;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2786),
+        "SFC returning undefined without strictNullChecks should not emit TS2786, got: {diagnostics:?}"
     );
 }
 
