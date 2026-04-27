@@ -384,7 +384,7 @@ impl ProjectFile {
         size += b.file_locals.len() * (32 + std::mem::size_of::<SymbolId>());
 
         // declared_modules
-        for s in &b.declared_modules {
+        for s in b.declared_modules.iter() {
             size += s.capacity() + 8;
         }
 

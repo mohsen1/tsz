@@ -177,7 +177,7 @@ impl BinderState {
             scope_stack: Vec::with_capacity(16),
             file_locals: SymbolTable::new(),
             expando_properties: Arc::new(FxHashMap::default()),
-            declared_modules: FxHashSet::default(),
+            declared_modules: Arc::new(FxHashSet::default()),
             is_external_module: false,
             is_strict_scope: false,
             flow_nodes: Arc::new(flow_nodes),
@@ -223,7 +223,7 @@ impl BinderState {
             continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
-            alias_partners: FxHashMap::default(),
+            alias_partners: Arc::new(FxHashMap::default()),
             semantic_defs: Arc::new(FxHashMap::default()),
             file_import_sources: Vec::new(),
             file_idx: u32::MAX,
@@ -244,7 +244,7 @@ impl BinderState {
         self.scope_stack.clear();
         self.file_locals.clear();
         Arc::make_mut(&mut self.expando_properties).clear();
-        self.declared_modules.clear();
+        Arc::make_mut(&mut self.declared_modules).clear();
         self.is_external_module = false;
         self.is_strict_scope = false;
         {
@@ -420,7 +420,7 @@ impl BinderState {
             scope_stack: Vec::new(),
             file_locals,
             expando_properties: Arc::new(FxHashMap::default()),
-            declared_modules: FxHashSet::default(),
+            declared_modules: Arc::new(FxHashSet::default()),
             is_external_module: false,
             is_strict_scope: false,
             flow_nodes: Arc::new(flow_nodes),
@@ -466,7 +466,7 @@ impl BinderState {
             continue_targets: Vec::new(),
             return_targets: Vec::new(),
             file_features: FileFeatures::NONE,
-            alias_partners: FxHashMap::default(),
+            alias_partners: Arc::new(FxHashMap::default()),
             semantic_defs: Arc::new(FxHashMap::default()),
             file_import_sources: Vec::new(),
             file_idx: u32::MAX,
@@ -545,7 +545,7 @@ impl BinderState {
             scope_stack: Vec::new(),
             file_locals,
             expando_properties,
-            declared_modules: FxHashSet::default(),
+            declared_modules: Arc::new(FxHashSet::default()),
             is_external_module: false,
             is_strict_scope: false,
             flow_nodes,
