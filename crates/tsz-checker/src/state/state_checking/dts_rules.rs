@@ -10,12 +10,14 @@ impl<'a> CheckerState<'a> {
     /// Emit TS1036 for non-declaration statements in .d.ts files.
     /// In .d.ts files the entire file is implicitly ambient, so non-declaration
     /// statements (break, continue, return, if, while, for, debugger, etc.) are not allowed.
-    pub(crate) fn check_dts_statement_in_ambient_context(&mut self, stmt_idx: NodeIndex) {
+    /// Returns `true` if a diagnostic was emitted (the first non-declaration
+    /// statement in the file). TSC only reports the first TS1036 per file.
+    pub(crate) fn check_dts_statement_in_ambient_context(&mut self, stmt_idx: NodeIndex) -> bool {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_parser::parser::syntax_kind_ext;
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
+            return false;
         };
 
         let is_non_declaration = matches!(
@@ -45,7 +47,9 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS.to_string(),
                 diagnostic_codes::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
             );
+            return true;
         }
+        false
     }
 
     /// Emit TS1046 for the first top-level declaration in a .d.ts file that
