@@ -1906,8 +1906,16 @@ impl<'a> FlowAnalyzer<'a> {
                 return false;
             };
             let decl_id = symbol.value_declaration;
-            if decl_id.is_some() && self.arena.is_const_variable_declaration(decl_id) {
+            if self.declaration_is_const(decl_id) {
                 return true;
+            }
+            // Catch clause variables behave as constant references in tsc
+            // (`isParameterOrMutableLocalVariable` accepts
+            // `isVariableDeclaration(d) && isCatchClause(d.parent)`), but our
+            // `is_effectively_const_for_narrowing` helper does not cover
+            // them. Honor the rule here, gated on no reassignments.
+            if self.is_catch_clause_variable(decl_id) {
+                return self.get_last_assignment_pos(symbol_id, target) == 0;
             }
             // For non-const identifiers, require parameter/let-style local
             // (`is_effectively_const_for_narrowing` enforces the eligibility
@@ -1953,6 +1961,97 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
+        false
+    }
+
+    /// True iff `decl_id` is (or is contained within) the variable
+    /// declaration directly belonging to a `try { } catch (e) { }` clause.
+    /// tsc treats such variables as constant references inside the catch
+    /// block when they are not reassigned.
+    fn is_catch_clause_variable(&self, decl_id: NodeIndex) -> bool {
+        if decl_id.is_none() {
+            return false;
+        }
+        // Walk up to find a VARIABLE_DECLARATION (catch's variableDeclaration
+        // wraps any binding pattern). Then check whether its direct parent is
+        // a CATCH_CLAUSE.
+        let mut current = decl_id;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let Some(ext) = self.arena.get_extended(current) else {
+                    return false;
+                };
+                if ext.parent.is_none() {
+                    return false;
+                }
+                let Some(parent) = self.arena.get(ext.parent) else {
+                    return false;
+                };
+                return parent.kind == syntax_kind_ext::CATCH_CLAUSE;
+            }
+            if node.kind != syntax_kind_ext::BINDING_ELEMENT
+                && node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+                && node.kind != SyntaxKind::Identifier as u16
+            {
+                return false;
+            }
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    /// True iff `decl_id` is (or is contained within) a `const` variable
+    /// declaration. Mirrors tsc's `isConstantVariable` lookup
+    /// (`getDeclarationNodeFlagsFromSymbol & NodeFlags.Constant`).
+    ///
+    /// Symbols for destructured bindings store the *binding element identifier*
+    /// as their `value_declaration`, so checking the identifier directly via
+    /// `is_const_variable_declaration` would miss the `const` keyword on the
+    /// enclosing `VariableDeclarationList`. Walk up through binding patterns
+    /// until we reach a `VariableDeclaration`.
+    fn declaration_is_const(&self, decl_id: NodeIndex) -> bool {
+        if decl_id.is_none() {
+            return false;
+        }
+        // Direct hit (simple `const x = ...` declarations).
+        if self.arena.is_const_variable_declaration(decl_id) {
+            return true;
+        }
+        let mut current = decl_id;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return self.arena.is_const_variable_declaration(current);
+            }
+            // Only walk through binding-pattern wrappers; bail at anything
+            // else so we don't accidentally claim other `const` ancestors.
+            if node.kind != syntax_kind_ext::BINDING_ELEMENT
+                && node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+                && node.kind != SyntaxKind::Identifier as u16
+            {
+                return false;
+            }
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
         false
     }
 
