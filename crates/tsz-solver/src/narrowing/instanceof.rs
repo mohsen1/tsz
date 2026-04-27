@@ -351,6 +351,17 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         }
 
+        // When the instance type is `any` (e.g., from a constructor signature
+        // returning `any`, such as `interface FConstructor { new (): any }`),
+        // we cannot narrow because everything is assignable to `any`. Returning
+        // the source unchanged matches tsc's behavior — see
+        // `typeGuardsWithInstanceOfByConstructorSignature.ts` where `obj: F | string`
+        // remains `string | F` inside `if (obj instanceof F)`. This mirrors the
+        // false-branch handling in `narrow_by_instanceof_false`.
+        if instance_type == TypeId::ANY || resolved_target == TypeId::ANY {
+            return source_type;
+        }
+
         // TypeScript narrows `any` via instanceof UNLESS the instance type is
         // the global Function or Object interface. This helper is called after
         // instance type extraction, so apply the same rule.
