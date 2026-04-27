@@ -1,0 +1,78 @@
+name: Bench
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Only one benchmark runs at a time.  If a run is already in progress when a
+# new push arrives, the new run queues up.  If a *second* new push arrives
+# before the queued one starts, GitHub Actions automatically cancels the older
+# pending run — so only the latest commit ever waits in the queue.  The
+# currently-running benchmark always completes (no mid-run cancellation).
+concurrency:
+  group: bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+
+jobs:
+  bench:
+    name: bench
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 360
+    env:
+      BENCH_COLD: "1"
+      TSC_NPM_SPEC: "6.0.2"
+      GITHUB_SHA: ${{ github.sha }}
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Restore caches
+        run: scripts/ci/gcp-cache.sh restore
+
+      - name: Install bench dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends hyperfine jq bc
+          if ! command -v pnpm &>/dev/null; then
+            npm install -g pnpm --silent
+          fi
+
+      - name: Run benchmarks
+        run: |
+          ./scripts/bench/bench-vs-tsgo.sh \
+            --json \
+            --json-file "$GITHUB_WORKSPACE/bench-results.json" \
+            2>&1 | tee "$GITHUB_WORKSPACE/bench-run.log"
+
+      - name: Publish results
+        if: always()
+        run: |
+          if [[ ! -f "$GITHUB_WORKSPACE/bench-results.json" ]]; then
+            echo "No results to publish (benchmark may have failed or timed out)."
+            tail -100 "$GITHUB_WORKSPACE/bench-run.log" || true
+            exit 0
+          fi
+          TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+
+      - name: Trigger website redeploy
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run gh-pages.yml --ref main
