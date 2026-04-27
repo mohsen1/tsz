@@ -466,7 +466,7 @@ _UNIT_TEST_PACKAGES=(
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  cargo nextest run --profile ci --cargo-profile ci-unit --no-tests=pass \
+  cargo nextest run --profile ci --cargo-profile ci-unit \
     "${_UNIT_TEST_PACKAGES[@]}"
 }
 
@@ -494,7 +494,6 @@ build_unit_test_archive() {
   cargo nextest archive \
     --cargo-profile ci-unit \
     --archive-file "$tmp_archive" \
-    --no-tests=pass \
     "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
   if [[ "$archive_rc" -ne 0 ]]; then
     echo "error: cargo nextest archive failed (rc=${archive_rc}); sharding unavailable" >&2
@@ -546,7 +545,6 @@ run_unit_shard() {
   cargo nextest run \
     --archive-file "$tmp_archive" \
     --profile ci \
-    --no-tests=pass \
     --partition "count:$((shard_index + 1))/${shard_count}"
   rm -f "$tmp_archive"
 }
