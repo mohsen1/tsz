@@ -518,6 +518,163 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         })
     }
 
+    /// Compute the combined union signature for a union of construct signatures.
+    ///
+    /// Mirrors `try_compute_combined_union_signature` but uses `construct_signatures`
+    /// instead of `call_signatures`. Returns `None` if any member has no (or multiple)
+    /// construct signatures or if any is generic.
+    pub(crate) fn try_compute_combined_union_construct_signature(
+        &mut self,
+        members: &[TypeId],
+    ) -> Option<CombinedUnionSignature> {
+        if members.is_empty() {
+            return None;
+        }
+
+        // Collect single construct signatures from each member: (params, return_type, has_rest)
+        let mut all_signatures: Vec<(Vec<ParamInfo>, TypeId, bool)> = Vec::new();
+
+        for &member in members {
+            let member = self.normalize_union_member(member);
+            match self.interner.lookup(member) {
+                Some(TypeData::Callable(callable_id)) => {
+                    let callable = self.interner.callable_shape(callable_id);
+                    if callable.construct_signatures.len() != 1 {
+                        return None; // 0 or multiple overloads — no combined
+                    }
+                    let sig = &callable.construct_signatures[0];
+                    if !sig.type_params.is_empty() {
+                        return None;
+                    }
+                    let params = self.normalize_union_signature_params(&sig.params);
+                    let has_rest = params.iter().any(|p| p.rest);
+                    all_signatures.push((params, sig.return_type, has_rest));
+                }
+                _ => return None, // not a constructable type with a single signature
+            }
+        }
+
+        if all_signatures.is_empty() {
+            return None;
+        }
+
+        let max_param_count = all_signatures
+            .iter()
+            .map(|(params, _, _)| params.len())
+            .max()
+            .unwrap_or(0);
+
+        let mut combined_params = Vec::new();
+        let mut min_required = 0;
+
+        for i in 0..max_param_count {
+            let mut param_types_at_pos = Vec::new();
+            let mut any_required = false;
+
+            for (params, _, has_rest) in &all_signatures {
+                if i < params.len() {
+                    let param = &params[i];
+                    if param.rest {
+                        if let Some(elem) = crate::type_queries::get_array_element_type(
+                            self.interner,
+                            param.type_id,
+                        ) {
+                            param_types_at_pos.push(elem);
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        // Strip `| undefined` that the binder may add for optional
+                        // params (`b?: number` → type_id = `number | undefined`).
+                        // The combined param type should be the raw type (`number`)
+                        // so that error messages say "not assignable to 'number'"
+                        // rather than "not assignable to 'number | undefined'".
+                        let type_id = if param.optional {
+                            crate::narrowing::utils::remove_undefined(self.interner, param.type_id)
+                        } else {
+                            param.type_id
+                        };
+                        param_types_at_pos.push(type_id);
+                    }
+                    if param.is_required() {
+                        any_required = true;
+                    }
+                } else if *has_rest
+                    && let Some(rest_param) = params.last().filter(|p| p.rest)
+                    && let Some(elem) = crate::type_queries::get_array_element_type(
+                        self.interner,
+                        rest_param.type_id,
+                    )
+                {
+                    param_types_at_pos.push(elem);
+                }
+            }
+
+            let combined_type = if param_types_at_pos.len() == 1 {
+                param_types_at_pos[0]
+            } else if param_types_at_pos.is_empty() {
+                continue;
+            } else {
+                let mut result = param_types_at_pos[0];
+                for &pt in &param_types_at_pos[1..] {
+                    result = self.interner.intersection2(result, pt);
+                }
+                result
+            };
+
+            combined_params.push(combined_type);
+
+            if any_required {
+                min_required = i + 1;
+            }
+        }
+
+        let max_allowed = {
+            let member_mins: Vec<usize> = all_signatures
+                .iter()
+                .map(|(params, _, _)| {
+                    params
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, p)| p.is_required() && !p.rest)
+                        .map(|(i, _)| i + 1)
+                        .max()
+                        .unwrap_or(0)
+                })
+                .collect();
+
+            let max_min = *member_mins.iter().max().unwrap_or(&0);
+
+            let base_has_rest = all_signatures
+                .iter()
+                .zip(member_mins.iter())
+                .any(|((_, _, has_rest), &m_min)| m_min == max_min && *has_rest);
+            let base_max_params = all_signatures
+                .iter()
+                .zip(member_mins.iter())
+                .filter(|&(_, &m_min)| m_min == max_min)
+                .map(|((params, _, _), _)| params.len())
+                .max()
+                .unwrap_or(0);
+
+            if base_has_rest {
+                None
+            } else {
+                Some(base_max_params)
+            }
+        };
+
+        let return_types: Vec<TypeId> = all_signatures.iter().map(|(_, ret, _)| *ret).collect();
+        let return_type = self.interner.union(return_types);
+
+        Some(CombinedUnionSignature {
+            param_types: combined_params,
+            min_required,
+            max_allowed,
+            return_type,
+        })
+    }
+
     fn build_union_call_result(
         &self,
         union_type: TypeId,
