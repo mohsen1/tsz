@@ -1188,21 +1188,42 @@ impl<'a> CheckerContext<'a> {
 
         let arenas = self.all_arenas.as_ref()?;
 
-        // Prefer the O(1) reverse index (`global_file_name_index`) when one
-        // is wired in — this is the common case for any parallel project
-        // check via `ProjectEnv`. The previous "Direct-match fast path"
-        // linear scan over `all_arenas` was unconditionally allocating a
-        // `.replace('\\', "/")` String per arena on every call. For large
-        // projects (~6000 files) with bare imports like `@shared/foo` that
-        // never match a project file name verbatim, the scan visited all
-        // arenas and allocated thousands of strings before falling through
-        // to the index. Profile (samply, 1429-file slice of large-ts-repo):
-        // this function was the #1 hot leaf at 22.46% self-time, with
-        // `HashMap::insert` and `resolve_namespace_member_from_all_binders`
-        // as downstream consequences of the wasted work. The index already
-        // handles direct file-name matches as one of its candidate forms
-        // (see `resolve_specifier_via_file_index`), so skipping the scan
-        // when an index is available is semantically a no-op.
+        // Direct-match fast path on the pre-built reverse index when one is
+        // wired in. The previous version of this fast path did an O(N)
+        // linear scan over `all_arenas` allocating a `.replace('\\', "/")`
+        // String per arena per call — which on a 6000-file project with
+        // bare imports like `@shared/foo` showed up as the #1 hot leaf at
+        // 22.46% self-time on a profiled subset. The reverse index keys are
+        // already normalized file names, so a single `get(&specifier)` (and
+        // a backslash-normalized variant if needed) covers the same cases
+        // without per-arena allocation.
+        //
+        // Importantly, this fast path is NOT a substitute for the linear
+        // scan below: the index covers *literal* file-name matches, but
+        // `resolve_specifier_via_file_index` will return `None` for bare
+        // specifiers that contain a slash without a `./` / `../` / `/`
+        // prefix (project-relative paths like `packages/foo/src/bar.ts`).
+        // The linear scan handled those by direct comparison; we preserve
+        // that behavior here without scanning, by trying the index lookup
+        // for both the raw and stripped-extension forms.
+        let normalized_specifier = if specifier.contains('\\') {
+            specifier.replace('\\', "/")
+        } else {
+            specifier.to_string()
+        };
+
+        if let Some(idx) = self.global_file_name_index.as_ref() {
+            if let Some(&target_idx) = idx.get(&normalized_specifier) {
+                return Some(target_idx);
+            }
+            let stripped = Self::strip_ts_extension(&normalized_specifier);
+            if stripped != normalized_specifier
+                && let Some(&target_idx) = idx.get(stripped)
+            {
+                return Some(target_idx);
+            }
+        }
+
         let source_file_name = arenas
             .get(source_file_idx)
             .and_then(|arena| arena.source_files.first())
@@ -1217,11 +1238,8 @@ impl<'a> CheckerContext<'a> {
         }
 
         // No pre-built index (legacy single-context paths with no ProjectEnv
-        // wiring). Try the cheap direct-match scan first — this only matters
-        // here, where `all_arenas` is bounded by the much smaller per-file
-        // context. Then fall back to building a one-shot reverse index for
-        // richer specifier resolution.
-        let normalized_specifier = specifier.replace('\\', "/");
+        // wiring). Use the original linear scan, then build a one-shot
+        // reverse index for richer specifier resolution.
         let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
         if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
             arena.source_files.first().is_some_and(|sf| {
