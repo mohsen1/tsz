@@ -490,15 +490,30 @@ build_unit_test_archive() {
 
   tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
   echo "Building unit test archive → ${tmp_archive}"
+  local archive_rc=0
   cargo nextest archive \
     --cargo-profile ci-unit \
     --archive-file "$tmp_archive" \
     --no-tests=pass \
-    "${_UNIT_TEST_PACKAGES[@]}"
+    "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
+  if [[ "$archive_rc" -ne 0 ]]; then
+    echo "error: cargo nextest archive failed (rc=${archive_rc}); sharding unavailable" >&2
+    rm -f "$tmp_archive"
+    return "$archive_rc"
+  fi
+  if [[ ! -f "$tmp_archive" ]]; then
+    echo "error: archive file not created at ${tmp_archive}; sharding unavailable" >&2
+    return 1
+  fi
 
   echo "Uploading unit test archive → ${archive_uri}"
-  gsutil -q cp "$tmp_archive" "$archive_uri"
+  local upload_rc=0
+  gsutil -q cp "$tmp_archive" "$archive_uri" || upload_rc=$?
   rm -f "$tmp_archive"
+  if [[ "$upload_rc" -ne 0 ]]; then
+    echo "error: gsutil upload failed (rc=${upload_rc}); sharding unavailable" >&2
+    return "$upload_rc"
+  fi
   echo "Unit test archive uploaded: ${archive_uri}"
 }
 
@@ -523,9 +538,9 @@ run_unit_shard() {
 
   echo "Downloading unit test archive: ${archive_uri}"
   if ! gsutil -q cp "$archive_uri" "$tmp_archive"; then
-    echo "warning: unit test archive not found for ${run_key}; falling back to full build" >&2
-    run_unit_tests
-    return
+    echo "error: unit test archive not found for ${run_key} — build job must have failed to upload it" >&2
+    echo "error: refusing to fall back to full unsharded run (would defeat sharding and inflate CI cost)" >&2
+    return 1
   fi
 
   cargo nextest run \
