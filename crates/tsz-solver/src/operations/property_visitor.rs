@@ -360,6 +360,36 @@ impl<'a> PropertyAccessEvaluator<'a> {
     // Helper methods to call visitor logic from &self context
     // These contain the actual implementation that the TypeVisitor trait methods delegate to
 
+    fn is_typed_array_like_shape(&self, shape: &crate::types::ObjectShape) -> bool {
+        if shape.number_index.is_none() {
+            return false;
+        }
+
+        let has_prop = |name: &str| {
+            let atom = self.interner().intern_string(name);
+            shape.properties.iter().any(|prop| prop.name == atom)
+        };
+
+        has_prop("length") && has_prop("buffer") && has_prop("byteLength") && has_prop("byteOffset")
+    }
+
+    fn typed_array_to_locale_string_result(
+        &self,
+        shape: &crate::types::ObjectShape,
+        prop_name: &str,
+    ) -> Option<PropertyAccessResult> {
+        if prop_name == "toLocaleString" && self.is_typed_array_like_shape(shape) {
+            let function_type =
+                crate::evaluation::evaluate_rules::apparent::make_apparent_method_type(
+                    self.interner(),
+                    TypeId::STRING,
+                );
+            Some(PropertyAccessResult::simple(function_type))
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn visit_object_impl(
         &self,
         shape_id: u32,
@@ -377,6 +407,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let obj_type = self
             .interner()
             .object_type_from_shape(ObjectShapeId(shape_id));
+
+        if let Some(result) = self.typed_array_to_locale_string_result(&shape, prop_name) {
+            return Some(result);
+        }
 
         // Check explicit properties first
         if let Some(prop) =
@@ -454,6 +488,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
         let obj_type = self
             .interner()
             .object_with_index_type_from_shape(ObjectShapeId(shape_id));
+
+        if let Some(result) = self.typed_array_to_locale_string_result(&shape, prop_name) {
+            return Some(result);
+        }
 
         // Check explicit properties first
         if let Some(prop) =
