@@ -148,7 +148,15 @@ _restore_cargo_target_profile() {
     restore_archive "${label}-${hash}" "$uri" "."
   else
     echo "Cache miss: ${label}-${hash}"
-    fallback_uri="$(gsutil ls -l "$(cache_uri "${label}/*.tar.gz")" 2>/dev/null \
+    # Warm-fallback: pick the most recent blob whose key ends with the
+    # SAME rustc version as the current host. Crossing rustc versions is
+    # unsafe per invariant #3 — cargo's fingerprint check would catch it
+    # and force a full rebuild, but we'd still pay the GCS download.
+    # The glob restricts to the rustc-suffix portion of the composite key
+    # (`<lock>-<rustc>`); different Cargo.lock hashes are still acceptable
+    # (cargo will recompile only the changed deps).
+    local rustc_part="${hash##*-}"
+    fallback_uri="$(gsutil ls -l "$(cache_uri "${label}/*-${rustc_part}.tar.gz")" 2>/dev/null \
       | grep -v '^TOTAL:' \
       | sort -k2 -r \
       | head -1 \
@@ -156,6 +164,8 @@ _restore_cargo_target_profile() {
     if [[ -n "$fallback_uri" ]]; then
       echo "Cache warm-fallback: ${label} from ${fallback_uri}"
       restore_archive "${label}-warm-fallback" "$fallback_uri" "."
+    else
+      echo "Cache warm-fallback: ${label} no rustc-${rustc_part} blob available"
     fi
   fi
 }
