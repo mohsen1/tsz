@@ -231,9 +231,38 @@ ensure_binaries() {
     # Check whether the current conformance runner supports a CLI flag.
     # This keeps the shell wrapper compatible with slightly older runner builds
     # that may not expose newer optional arguments yet.
+    #
+    # Memoizes the runner's --help output so the 3 call sites that build
+    # compat flag arrays don't each shell out to "$RUNNER_BIN --help" again.
+    _RUNNER_HELP_CACHE=""
     runner_supports_flag() {
         local flag="$1"
-        "$RUNNER_BIN" --help 2>&1 | grep -q -- "$flag"
+        if [ -z "$_RUNNER_HELP_CACHE" ]; then
+            _RUNNER_HELP_CACHE="$("$RUNNER_BIN" --help 2>&1 || true)"
+        fi
+        printf '%s\n' "$_RUNNER_HELP_CACHE" | grep -q -- "$flag"
+    }
+
+    # Populate the array named in $1 with runner compat flags. Picks server
+    # mode (--mode server --server-binary "$SERVER_BIN") when both flags are
+    # supported by the runner, else falls back to CLI batch mode (no flags).
+    # Server mode shares one tsz-server process across many test files, which
+    # avoids per-test process-startup overhead and is dramatically faster on
+    # CI runners. Logs the chosen mode once per invocation.
+    fill_runner_compat_flags() {
+        local -n _out="$1"
+        _out=()
+        if runner_supports_flag "--server-binary"; then
+            _out+=(--server-binary "$SERVER_BIN")
+            if runner_supports_flag "--mode"; then
+                _out+=(--mode server)
+                echo -e "${GREEN}✓${NC} conformance runner: --mode server (using $SERVER_BIN)" >&2
+            else
+                echo -e "${YELLOW}⚠${NC} conformance runner: --mode flag not supported; falling back to CLI batch mode" >&2
+            fi
+        else
+            echo -e "${YELLOW}⚠${NC} conformance runner: --server-binary not supported; using CLI batch mode" >&2
+        fi
     }
 
 # Ensure scripts/node_modules is installed (provides TypeScript lib files for type checking)
@@ -416,10 +445,8 @@ run_tests() {
     local last_run="$REPO_ROOT/scripts/conformance/conformance-last-run.txt"
     local tmpout
     tmpout=$(mktemp)
-    local runner_compat_flags=()
-    if runner_supports_flag "--server-binary"; then
-        runner_compat_flags+=(--server-binary "$SERVER_BIN")
-    fi
+    local runner_compat_flags
+    fill_runner_compat_flags runner_compat_flags
 
     # Run with --print-test to get PASS/FAIL per test line
     $RUNNER_BIN \
@@ -500,10 +527,8 @@ areas_analysis() {
     local tmpfile
     tmpfile=$(mktemp)
     trap "rm -f '$tmpfile'" EXIT
-    local runner_compat_flags=()
-    if runner_supports_flag "--server-binary"; then
-        runner_compat_flags+=(--server-binary "$SERVER_BIN")
-    fi
+    local runner_compat_flags
+    fill_runner_compat_flags runner_compat_flags
 
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
@@ -673,10 +698,8 @@ except Exception:
     local summary_json
     summary_json=$(mktemp)
     trap "rm -f '$tmpfile' '$summary_json'" RETURN
-    local runner_compat_flags=()
-    if runner_supports_flag "--server-binary"; then
-        runner_compat_flags+=(--server-binary "$SERVER_BIN")
-    fi
+    local runner_compat_flags
+    fill_runner_compat_flags runner_compat_flags
 
     run_snapshot_once() {
         rm -f "$tmpfile"

@@ -743,12 +743,18 @@ run_conformance() {
     shard_expected_passed=0
     shard_expected_total=0
   fi
+  # Surface the worker count up front so CI logs show whether the
+  # TSZ_CI_CONFORMANCE_WORKERS cap took effect or the default heuristic kicked in.
+  echo "Conformance workers (selected): ${CONFORMANCE_WORKERS}"
 
   set +e
   ./scripts/conformance/conformance.sh run --workers "$CONFORMANCE_WORKERS" "${conformance_args[@]}" >"$log_file" 2>&1
   local rc="$?"
   set -e
 
+  # Surface the runner mode (server vs CLI) and final pass/fail line so CI
+  # logs show how the shard ran without having to upload the full log.
+  grep -a 'conformance runner:' "$log_file" | head -1 || true
   grep -a 'FINAL RESULTS:' "$log_file" | tail -1 || true
 
   local total_passed=0 total_tests=0 skipped_tests=0

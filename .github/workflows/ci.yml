@@ -69,6 +69,11 @@ jobs:
 
   lint:
     name: lint
+    # NOTE: lint intentionally does NOT depend on dist-binaries. dist-fast and
+    # debug profiles share almost no sccache keys (different opt-level, codegen-units,
+    # debug=true vs debug=false), so making lint wait on dist-binaries adds ~3 min
+    # of latency for zero compile savings. The cargo-target-debug GCS cache and
+    # sccache GCS handle warm-cache cases on their own.
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
@@ -81,6 +86,14 @@ jobs:
           fetch-depth: 1
       - name: Run lint suite
         run: scripts/ci/github-suite.sh lint
+      - name: sccache stats (post-lint)
+        if: always()
+        run: |
+          if command -v sccache >/dev/null 2>&1; then
+            sccache --show-stats || true
+          else
+            echo "sccache not on PATH; skipping stats"
+          fi
 
   dist-binaries:
     name: dist-binaries
@@ -219,12 +232,23 @@ jobs:
     timeout-minutes: 75
     strategy:
       fail-fast: false
+      # 8 shards (matches docs/gcp-ci.md). Each shard runs server mode
+      # internally (one tsz-server shared across all tests in the shard),
+      # so per-shard parallelism comes from the runner's worker pool, not
+      # from launching one process per test. Higher shard counts oversubscribe
+      # the Cloud Run pool without proportionally faster wall-clock.
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
-      TSZ_CI_CONFORMANCE_SHARDS: 32
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 8
+      TSZ_CI_CONFORMANCE_SHARDS: 8
+      # Cap worker count explicitly. The default heuristic
+      # (default_conformance_workers in gcp-full-ci.sh) picks HOST_CPUS-8
+      # which on the 8-CPU runner falls back to HOST_CPUS=8 — combined with
+      # 8 shards that is 8x8=64 active rustc/tsz processes contending for
+      # the same Cloud Run pool. Pin to 8 per shard for predictable load.
+      TSZ_CI_CONFORMANCE_WORKERS: "8"
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -251,8 +275,8 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
-      TSZ_CI_CONFORMANCE_SHARDS: 32
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 8
+      TSZ_CI_CONFORMANCE_SHARDS: 8
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
