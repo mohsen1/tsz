@@ -2033,6 +2033,29 @@ impl<'a> CheckerState<'a> {
                         }
 
                         if !import_has_value {
+                            // Even when the imported target carries no value,
+                            // there are two isolated-modules-specific checks:
+                            //
+                            // (a) TS2865: imported `T` is type-only at target,
+                            //     but the local file has a value declaration
+                            //     called `T` (`const T = 0`). Under
+                            //     isolatedModules the import would be erased
+                            //     by the transpiler and the local value would
+                            //     replace it. tsc requires `import type` here.
+                            //
+                            // (b) TS2440: imported `T` is type-only at target,
+                            //     and the local file has a TYPE declaration
+                            //     called `T` (`type T = number`). Both bind
+                            //     the same type-name slot.
+                            self.report_isolated_modules_import_conflicts(
+                                stmt_idx,
+                                binding_node_idx,
+                                clause_idx,
+                                diagnostic_name_idx,
+                                &name,
+                                sym_id,
+                                import_has_type,
+                            );
                             continue;
                         }
 
@@ -2298,6 +2321,283 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Helper for `check_import_declaration_conflicts` covering the
+    /// type-only-import case. When the imported target carries no value
+    /// semantics, we still need two isolatedModules-specific diagnostics:
+    ///
+    /// - **TS2440**: a local TYPE declaration with the same name. tsc treats
+    ///   this as `excludedMeanings & Type` overlap.
+    /// - **TS2865**: a local VALUE declaration with the same name. tsc emits
+    ///   this only under isolatedModules to flag that the transpiler would
+    ///   erase the import and pick the local value instead.
+    ///
+    /// Both must respect the same scope/declaration filters as the main
+    /// conflict check (skip module-augmentation/global-augmentation decls,
+    /// skip re-export specifiers, etc.).
+    fn report_isolated_modules_import_conflicts(
+        &mut self,
+        stmt_idx: NodeIndex,
+        binding_node_idx: NodeIndex,
+        clause_idx: NodeIndex,
+        diagnostic_name_idx: NodeIndex,
+        name: &str,
+        sym_id: tsz_binder::SymbolId,
+        import_has_type: bool,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // The import declaration node at this point is for a regular
+        // ImportDeclaration / ImportSpecifier — the import-equals path is
+        // handled elsewhere. Skip when the import itself is type-only.
+        let import_is_type_only_syntax = self
+            .ctx
+            .arena
+            .get(clause_idx)
+            .and_then(|n| self.ctx.arena.get_import_clause(n))
+            .map(|c| c.is_type_only)
+            .unwrap_or(false);
+        if import_is_type_only_syntax {
+            return;
+        }
+        // ImportSpecifier-level `type` modifier (`import { type T }`).
+        if self
+            .ctx
+            .arena
+            .get(binding_node_idx)
+            .and_then(|n| self.ctx.arena.get_specifier(n))
+            .is_some_and(|spec| spec.is_type_only)
+        {
+            return;
+        }
+
+        // Already-reported conflicts: avoid double-reporting when
+        // import_conflict_names was set by another path.
+        if self.ctx.import_conflict_names.contains(name) {
+            return;
+        }
+
+        // Walk other same-name local symbols and figure out whether any
+        // carry Value or pure-Type meaning.
+        let import_scope = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, stmt_idx);
+        let mut local_has_value = false;
+        let mut local_has_pure_type = false;
+
+        // Look at merged decls on the import's own symbol.
+        if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+            for &decl_idx in &sym.declarations {
+                if decl_idx == binding_node_idx
+                    || decl_idx == clause_idx
+                    || decl_idx == stmt_idx
+                {
+                    continue;
+                }
+                if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
+                    continue;
+                }
+                if self.is_inside_module_augmentation(decl_idx) {
+                    continue;
+                }
+                if self.is_inside_global_augmentation(decl_idx) {
+                    continue;
+                }
+                if self.decl_is_namespace_export_declaration(decl_idx) {
+                    continue;
+                }
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                if matches!(
+                    decl_node.kind,
+                    syntax_kind_ext::IMPORT_CLAUSE
+                        | syntax_kind_ext::NAMESPACE_IMPORT
+                        | syntax_kind_ext::IMPORT_SPECIFIER
+                        | syntax_kind_ext::NAMED_IMPORTS
+                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        | syntax_kind_ext::IMPORT_DECLARATION
+                        | syntax_kind_ext::EXPORT_SPECIFIER
+                        | syntax_kind_ext::EXPORT_DECLARATION
+                        | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                ) {
+                    continue;
+                }
+                // Same-scope check.
+                let decl_containing_scope = self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                    let parent = ext.parent;
+                    if parent.is_some() {
+                        self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                    } else {
+                        self.ctx
+                            .binder
+                            .find_enclosing_scope(self.ctx.arena, decl_idx)
+                    }
+                });
+                let in_same_scope = match (import_scope, decl_containing_scope) {
+                    (Some(a), Some(b)) if a == b => true,
+                    (Some(a), Some(b)) => {
+                        let sym_a = self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
+                            self.ctx.binder.node_symbols.get(&s.container_node.0)
+                        });
+                        let sym_b = self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
+                            self.ctx.binder.node_symbols.get(&s.container_node.0)
+                        });
+                        sym_a.is_some() && sym_a == sym_b
+                    }
+                    _ => true,
+                };
+                if !in_same_scope {
+                    continue;
+                }
+                match decl_node.kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::ENUM_DECLARATION
+                    | syntax_kind_ext::VARIABLE_DECLARATION
+                    | syntax_kind_ext::VARIABLE_STATEMENT => {
+                        local_has_value = true;
+                    }
+                    syntax_kind_ext::MODULE_DECLARATION => {
+                        if self.is_namespace_declaration_instantiated(decl_idx) {
+                            local_has_value = true;
+                        }
+                    }
+                    syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    | syntax_kind_ext::INTERFACE_DECLARATION => {
+                        local_has_pure_type = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Look at separate same-name symbols (binder may keep them split
+        // across imports vs locals via alias_partners).
+        if !local_has_value || !local_has_pure_type {
+            let all_symbols: Vec<tsz_binder::SymbolId> = self
+                .ctx
+                .binder
+                .symbols
+                .find_all_by_name(name)
+                .iter()
+                .copied()
+                .collect();
+            for other_sym_id in all_symbols {
+                if other_sym_id == sym_id {
+                    continue;
+                }
+                let Some(other_sym) = self.ctx.binder.symbols.get(other_sym_id) else {
+                    continue;
+                };
+                // Skip purely-alias symbols (other imports).
+                if other_sym.has_any_flags(symbol_flags::ALIAS)
+                    && !other_sym.has_any_flags(!symbol_flags::ALIAS)
+                {
+                    continue;
+                }
+                // Same-scope filter.
+                let other_in_same_scope = other_sym.declarations.iter().any(|&decl_idx| {
+                    let decl_containing =
+                        self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                            let parent = ext.parent;
+                            if parent.is_some() {
+                                self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                            } else {
+                                self.ctx
+                                    .binder
+                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
+                            }
+                        });
+                    match (import_scope, decl_containing) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => true,
+                    }
+                });
+                if !other_in_same_scope {
+                    continue;
+                }
+                let has_local_decl = other_sym.declarations.iter().any(|&decl_idx| {
+                    if self.ctx.binder.node_symbols.get(&decl_idx.0) != Some(&other_sym_id) {
+                        return false;
+                    }
+                    if self.is_inside_global_augmentation(decl_idx) {
+                        return false;
+                    }
+                    if self.decl_is_namespace_export_declaration(decl_idx) {
+                        return false;
+                    }
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        return false;
+                    };
+                    !matches!(
+                        decl_node.kind,
+                        syntax_kind_ext::EXPORT_SPECIFIER
+                            | syntax_kind_ext::EXPORT_DECLARATION
+                            | syntax_kind_ext::IMPORT_CLAUSE
+                            | syntax_kind_ext::NAMESPACE_IMPORT
+                            | syntax_kind_ext::IMPORT_SPECIFIER
+                            | syntax_kind_ext::NAMED_IMPORTS
+                            | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            | syntax_kind_ext::IMPORT_DECLARATION
+                            | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                    )
+                });
+                if !has_local_decl {
+                    continue;
+                }
+                if other_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE) {
+                    local_has_value = true;
+                }
+                let pure_type_flags = symbol_flags::TYPE_ALIAS | symbol_flags::INTERFACE;
+                if other_sym.has_any_flags(pure_type_flags)
+                    && !other_sym.has_any_flags(symbol_flags::VALUE)
+                {
+                    local_has_pure_type = true;
+                }
+            }
+        }
+
+        // TS2440: local Type collides with imported Type.
+        if local_has_pure_type && import_has_type {
+            let message = format_message(
+                diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                &[name],
+            );
+            self.error_at_node(
+                diagnostic_name_idx,
+                &message,
+                diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+            );
+            self.ctx.import_conflict_names.insert(name.to_string());
+            return;
+        }
+
+        // TS2865: local Value collides with imported type-only target under
+        // isolatedModules. Not under verbatimModuleSyntax — that case is
+        // already covered by the existing TS1361/TS1362 imports-of-types
+        // diagnostics.
+        if local_has_value
+            && self.ctx.compiler_options.isolated_modules
+            && !self.ctx.compiler_options.verbatim_module_syntax
+        {
+            let message = format_message(
+                diagnostic_messages::IMPORT_CONFLICTS_WITH_LOCAL_VALUE_SO_MUST_BE_DECLARED_WITH_A_TYPE_ONLY_IMPORT_WH,
+                &[name],
+            );
+            // tsc anchors TS2865 at the whole import specifier node, not
+            // just the imported name. Preserve that for fingerprint parity.
+            self.error_at_node(
+                binding_node_idx,
+                &message,
+                diagnostic_codes::IMPORT_CONFLICTS_WITH_LOCAL_VALUE_SO_MUST_BE_DECLARED_WITH_A_TYPE_ONLY_IMPORT_WH,
+            );
+            self.ctx.import_conflict_names.insert(name.to_string());
         }
     }
 
