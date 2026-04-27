@@ -61,15 +61,37 @@ function outer<U extends object>(value: U) {
 
 #[test]
 fn generic_wrapper_with_extra_arguments_preserves_contextual_function_type() {
+    // The minimal Proxy/Reflect ambient declarations below mirror the relevant
+    // shape of lib.es2015.proxy/lib.es2015.reflect — `check_source_diagnostics`
+    // does not load lib, so without these the constructor would resolve to
+    // ERROR and the TS2304-driven argument walk would produce TS7006 for every
+    // callback parameter (which matches tsc's actual behavior, but obscures
+    // the retype-on-contextual-retry behavior this test is locking).
     let diags = check_source_diagnostics(
         r#"
+declare interface ProxyHandler<T extends object> {
+    set?: (target: T, property: string | symbol, value: any, receiver: any) => boolean;
+    defineProperty?: (target: T, property: string | symbol, descriptor: any) => boolean;
+    deleteProperty?: (target: T, property: string | symbol) => boolean;
+    setPrototypeOf?: (target: T, proto: any) => boolean;
+}
+declare class Proxy<T extends object> {
+    constructor(target: T, handler: ProxyHandler<T>);
+}
+declare namespace Reflect {
+    function set(target: object, property: string | symbol, value: any, receiver?: any): boolean;
+    function defineProperty(target: object, property: string | symbol, descriptor: any): boolean;
+    function deleteProperty(target: object, property: string | symbol): boolean;
+    function setPrototypeOf(target: object, proto: any): boolean;
+}
+
 declare function deprecate<T extends Function>(
     fn: T,
     msg: string,
     code?: string,
 ): T;
 
-function outer<U extends object>(value: U, message: string, code: string): U {
+function outer<U extends object>(value: U, message: string, code: string) {
     return new Proxy(value, {
         set: deprecate(
             (target, property, nextValue, receiver) =>

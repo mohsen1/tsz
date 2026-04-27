@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-04-27T02:43:30Z",
-  "git_sha": "04e6e7379e4eb4d304580313e4fb86560f5ef635",
+  "timestamp": "2026-04-27T03:17:02Z",
+  "git_sha": "7d48a5c1245509a4d11a092c0bb4f755595fd9e2",
   "summary": {
     "total_tests": 12582,
-    "passed": 12215,
-    "failed": 367,
+    "passed": 12218,
+    "failed": 364,
     "pass_rate": 97.1
   },
   "areas_by_pass_rate": [
     {
       "area": "/tmp",
       "total": 12582,
-      "passed": 12215,
-      "failed": 367,
-      "pass_rate": 97.08
+      "passed": 12218,
+      "failed": 364,
+      "pass_rate": 97.11
     }
   ],
   "top_failures": [
@@ -426,11 +426,11 @@
       "count": 1
     },
     {
-      "code": "TS1005",
+      "code": "TS18046",
       "count": 1
     },
     {
-      "code": "TS18046",
+      "code": "TS1005",
       "count": 1
     },
     {
@@ -832,7 +832,7 @@
     "false_positive": 19,
     "all_missing": 19,
     "wrong_code": 90,
-    "fingerprint_only": 239,
+    "fingerprint_only": 236,
     "same_code_count_drift": 0,
     "close_to_passing": 57
   }

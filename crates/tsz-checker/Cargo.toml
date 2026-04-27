@@ -116,6 +116,10 @@ name = "ts2300_tests"
 path = "tests/ts2300_tests.rs"
 
 [[test]]
+name = "ts2304_tests"
+path = "tests/ts2304_tests.rs"
+
+[[test]]
 name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
