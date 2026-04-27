@@ -580,6 +580,10 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
+                    if result.is_none() && self.entity_name_text(qn.left).as_deref() == Some("JSX")
+                    {
+                        result = self.resolve_jsx_namespace_merged_export_symbol_id(&right_name);
+                    }
                     if result.is_none() {
                         result = self.resolve_named_class_expression_namespace_member(
                             qn.left,
