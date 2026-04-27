@@ -1302,7 +1302,17 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        if is_application || evaluated_application.is_some() {
+        let application_display = if is_application {
+            Some(ty)
+        } else {
+            evaluated_application
+        };
+        if let Some(application_display) = application_display {
+            let normalized =
+                self.normalize_property_receiver_application_display_type(application_display);
+            if normalized != application_display {
+                return self.format_type_diagnostic_widened(normalized);
+            }
             let mut formatter = self
                 .ctx
                 .create_diagnostic_type_formatter()
