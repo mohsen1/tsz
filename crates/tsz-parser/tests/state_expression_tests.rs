@@ -10,6 +10,80 @@ fn parse_diagnostics(source: &str) -> usize {
 }
 
 #[test]
+fn await_in_heritage_type_argument_recovery_reports_tsc_parser_fingerprints() {
+    let source = "class C extends await<string> {}\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let await_pos = source.find("await").unwrap() as u32;
+    let less_than_pos = source.find('<').unwrap() as u32;
+    let greater_than_pos = source.find('>').unwrap() as u32;
+
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                && diag.start == await_pos),
+        "expected TS1109 at `await` in heritage clause, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                && diag.start == less_than_pos),
+        "expected TS1109 at `<` after invalid heritage await, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == greater_than_pos
+                && diag.message == "',' expected."),
+        "expected TS1005 comma diagnostic at `>` in invalid heritage await, got {diags:?}"
+    );
+}
+
+#[test]
+fn await_in_decorator_expression_reports_tsc_parser_fingerprints() {
+    let source = r#"
+@await
+class C1 {}
+@(await)
+class C2 {}
+class C3 {
+    @await(1)
+    ["foo"]() {}
+    method(@await [x]) {}
+    method2(@(await) [x]) {}
+}
+"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let bare_await_pos = source.find("@await").unwrap() as u32 + 1;
+    let parenthesized_close_pos = source.find("@(await)").unwrap() as u32 + "@(await".len() as u32;
+    let member_await_pos = source.find("@await(1)").unwrap() as u32 + 1;
+    let parameter_await_pos = source.find("@await [x]").unwrap() as u32 + 1;
+    let parameter_close_pos = source.find("@(await) [x]").unwrap() as u32 + "@(await".len() as u32;
+
+    for expected_pos in [
+        bare_await_pos,
+        parenthesized_close_pos,
+        member_await_pos,
+        parameter_await_pos,
+        parameter_close_pos,
+    ] {
+        assert!(
+            diags
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                    && diag.start == expected_pos),
+            "expected TS1109 at byte {expected_pos}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn expression_parsing_handles_shift_and_greater_token_ambiguity() {
     let diag_count = parse_diagnostics("const shifted = 1 >> 2 >>> 3; let rhs = x >= 1;");
     assert_eq!(diag_count, 0, "unexpected parser diagnostics: {diag_count}");
