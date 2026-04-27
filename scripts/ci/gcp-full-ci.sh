@@ -211,7 +211,7 @@ suite_needs_group() {
       [[ "$suite" == "lint" ]]
       ;;
     unit)
-      [[ "$suite" == "unit" || "$suite" == "unit-shard" ]]
+      [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
       ;;
     wasm)
       [[ "$suite" == "wasm" ]]

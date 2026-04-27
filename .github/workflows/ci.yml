@@ -69,7 +69,7 @@ jobs:
 
   lint:
     name: lint
-    needs: [gate, dist-binaries]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -125,7 +125,7 @@ jobs:
 
   wasm:
     name: wasm
-    needs: [gate, dist-binaries]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -216,6 +216,7 @@ jobs:
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
       TSZ_CI_CONFORMANCE_SHARDS: 32
       TSZ_CI_SKIP_DIST_RESTORE: "1"
+      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
       TSZ_CI_CACHE_SAVE: "0"
     steps:
@@ -319,12 +320,11 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 4
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
       TSZ_CI_FOURSLASH_WORKERS: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -365,7 +365,7 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
