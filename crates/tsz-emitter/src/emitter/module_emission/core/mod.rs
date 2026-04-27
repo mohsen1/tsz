@@ -1355,15 +1355,15 @@ impl<'a> Printer<'a> {
                     }) =>
                 {
                     // Namespace `X` matches the export-equals identifier.
-                    // Distinguish runtime vs type-only:
-                    // - `declare namespace X` is always type-only at JS emit (ambient).
-                    // - `namespace X { ...types only... }` is type-only (non-instantiated).
-                    // - `namespace X { ...values... }` is runtime (instantiated IIFE).
+                    // Distinguish runtime vs type-only by inspecting the body:
+                    // - `namespace X { ...values... }` (with or without `declare`) is
+                    //   runtime — `declare namespace X { var a }` declares X as a
+                    //   value reference, so `export = X` must lower to
+                    //   `module.exports = X` like any other value export.
+                    // - `namespace X { ...types only... }` and empty namespaces are
+                    //   type-only.
                     if let Some(module_decl) = self.arena.get_module(stmt_node) {
-                        let is_declare = self
-                            .arena
-                            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword);
-                        if !is_declare && self.is_instantiated_module(module_decl.body) {
+                        if self.is_instantiated_module(module_decl.body) {
                             matched_runtime = true;
                         } else {
                             matched_type = true;
