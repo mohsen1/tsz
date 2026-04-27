@@ -100,7 +100,7 @@ impl Parser {
     ///
     /// Routes through the global `get_or_create_lib_file` cache so multiple
     /// `Parser` instances created in a single WASM session share one parsed-
-    /// and-bound representation per (file_name, content_hash) pair instead of
+    /// and-bound representation per (`file_name`, `content_hash`) pair instead of
     /// each rebuilding their own. The cache is keyed on a content hash, so
     /// calls with different content for the same file name still get distinct,
     /// freshly-bound lib files (no aliasing risk). Mirrors what
