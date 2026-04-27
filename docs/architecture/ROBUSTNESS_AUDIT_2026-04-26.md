@@ -331,7 +331,7 @@ control-flow-heavy tests.
 
 ---
 
-### 12. ⏳ Parser recovery placeholders are indistinguishable from real empty identifiers
+### 12. ✅ Parser recovery placeholders are indistinguishable from real empty identifiers
 
 **Files**
 
@@ -530,3 +530,8 @@ invariant.
   no-lib hardcoded ladder fires (`apply`/`call`/`bind`/`toString`/`name`/
   `length`/`prototype`/`arguments`/`caller`). Behaviour preserved; surfaces
   drift when the boxed `Function` interface fails to provide the property.
+- ✅ #12 (#L) parser recovery placeholders distinguishable from real empty
+  identifiers — already addressed by `NodeArena::is_missing_recovery_identifier`
+  (see `crates/tsz-parser/src/parser/node_access.rs:169`). Codifies the
+  `escaped_text.is_empty() && atom == Atom::NONE` invariant into a stable
+  API. Inline call-site migration is incremental and tracked separately.
