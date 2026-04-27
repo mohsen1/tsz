@@ -2365,7 +2365,10 @@ export default validate;
         "Expected `export default validate;` to be hoisted to the top: {trimmed}"
     );
     let count = trimmed.matches("export default validate;").count();
-    assert_eq!(count, 1, "Expected exactly one export-default emission: {trimmed}");
+    assert_eq!(
+        count, 1,
+        "Expected exactly one export-default emission: {trimmed}"
+    );
     assert!(
         trimmed.contains("declare function validate(): void;"),
         "Expected the function declaration to follow: {trimmed}"
@@ -2395,7 +2398,10 @@ export default Test;
         "Expected `export default Test;` to be hoisted to the top: {trimmed}"
     );
     let count = trimmed.matches("export default Test;").count();
-    assert_eq!(count, 1, "Expected exactly one export-default emission: {trimmed}");
+    assert_eq!(
+        count, 1,
+        "Expected exactly one export-default emission: {trimmed}"
+    );
     let default_pos = trimmed.find("export default Test;").unwrap();
     let decl_pos = trimmed
         .find("declare class Test")
@@ -2417,12 +2423,12 @@ export default validate;
 "#,
     );
     let trimmed = output.trim();
-    let default_pos = trimmed.find("export default validate;").expect(
-        "expected export default validate; in TS output",
-    );
-    let decl_pos = trimmed.find("declare function validate").expect(
-        "expected declare function validate in TS output",
-    );
+    let default_pos = trimmed
+        .find("export default validate;")
+        .expect("expected export default validate; in TS output");
+    let decl_pos = trimmed
+        .find("declare function validate")
+        .expect("expected declare function validate in TS output");
     assert!(
         decl_pos < default_pos,
         "TS files should preserve source order (declaration first): {trimmed}"
