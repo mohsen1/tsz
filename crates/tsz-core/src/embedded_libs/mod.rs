@@ -6,7 +6,7 @@
 //! Uses a match statement instead of a `HashMap` for zero-cost initialization
 //! (no Lazy, no heap allocation, no `once_cell` synchronization).
 
-pub const LIB_FILE_COUNT: usize = 105;
+pub const LIB_FILE_COUNT: usize = 106;
 
 /// Look up embedded lib content by filename (e.g., "dom.d.ts", "es5.d.ts").
 /// Returns None for unknown filenames.
@@ -128,6 +128,7 @@ pub fn get_lib_content(filename: &str) -> Option<&'static str> {
             "../lib-assets-stripped/es2024.sharedmemory.d.ts"
         )),
         "es2024.string.d.ts" => Some(include_str!("../lib-assets-stripped/es2024.string.d.ts")),
+        "es2025.intl.d.ts" => Some(include_str!("../lib-assets-stripped/es2025.intl.d.ts")),
         "es5.d.ts" => Some(include_str!("../lib-assets-stripped/es5.d.ts")),
         "es5.full.d.ts" => Some(include_str!("../lib-assets-stripped/es5.full.d.ts")),
         "es6.d.ts" => Some(include_str!("../lib-assets-stripped/es6.d.ts")),
@@ -265,6 +266,7 @@ static ALL_LIB_FILENAMES: &[&str] = &[
     "es2024.regexp.d.ts",
     "es2024.sharedmemory.d.ts",
     "es2024.string.d.ts",
+    "es2025.intl.d.ts",
     "es5.d.ts",
     "es5.full.d.ts",
     "es6.d.ts",
