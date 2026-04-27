@@ -50,6 +50,9 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
+            return;
+        }
 
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
         if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {

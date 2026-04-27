@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-27
 - **Branch**: `fix/checker-controlflow-generic-fingerprint`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1609
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance and fingerprints)
 
 ## Intent
@@ -16,12 +16,13 @@ test for the narrowed behavior.
 
 ## Files Touched
 
-- `crates/tsz-checker/src/**` or `crates/tsz-solver/src/**` once the
-  diagnostic root cause is isolated
-- `crates/tsz-checker/tests/**` or `crates/tsz-solver/tests/**` for the
-  regression lock
-- `reference/deepwiki/**` for TypeScript and tsgo implementation notes
+- `crates/tsz-checker/src/types/property_access_type/resolve.rs`
+- `crates/tsz-checker/src/assignability/assignability_diagnostics.rs`
+- `crates/tsz-checker/src/error_reporter/call_errors/error_emission.rs`
+- `crates/tsz-checker/tests/conditional_keyof_test.rs`
 
 ## Verification
 
-- Pending: `./scripts/conformance/conformance.sh run --filter "controlFlowGenericTypes" --verbose`
+- `cargo test -p tsz-checker conditional_alias_assignable_to_partial_of_itself_has_no_ts2345`
+- `cargo test -p tsz-checker generic_receiver_property_miss_reports_constraint_union_ts2339`
+- `./scripts/conformance/conformance.sh run --filter "controlFlowGenericTypes" --verbose` (1/1 passed)
