@@ -254,6 +254,13 @@ ensure_scripts_deps() {
     fi
 }
 
+running_in_ci() {
+    [ "${CI:-}" = "true" ] ||
+        [ "${GITHUB_ACTIONS:-}" = "true" ] ||
+        [ -n "${TSZ_CI_SUITE:-}" ] ||
+        [ -n "${_TSZ_CI_SUITE:-}" ]
+}
+
 generate_cache() {
     local force_regenerate="${1:-false}"
 
@@ -377,6 +384,10 @@ EOF
 }
 
 run_tests() {
+    if ! running_in_ci; then
+        ensure_scripts_deps
+    fi
+
     echo -e "${GREEN}Running conformance tests...${NC}"
     echo "Cache file: $CACHE_FILE"
     echo "Workers: $WORKERS"
