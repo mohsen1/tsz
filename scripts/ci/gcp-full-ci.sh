@@ -217,10 +217,10 @@ suite_needs_group() {
       [[ "$suite" == "wasm" ]]
       ;;
     node)
-      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* ]]
+      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
       ;;
     rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" ]]
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
       ;;
     *)
       return 1
@@ -1306,6 +1306,24 @@ aggregate_fourslash() {
   fi
 }
 
+run_dist_binaries() {
+  ci_section "Build dist-fast binaries"
+  timed build_test_binaries build_test_binaries
+  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+    sccache --show-stats 2>/dev/null || true
+  fi
+}
+
+run_unit_archive_only() {
+  ci_section "Build unit test archive"
+  timed build_unit_test_archive build_unit_test_archive
+}
+
+run_node_harness_prep() {
+  ci_section "Prep node harnesses (emit + fourslash)"
+  timed prep_node_artifacts prep_node_artifacts
+}
+
 run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
@@ -1325,9 +1343,6 @@ run_build() {
   fi
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
-  fi
-  if command -v gsutil >/dev/null 2>&1; then
-    scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
   fi
 }
 
@@ -1365,6 +1380,15 @@ main() {
       ;;
     build)
       run_build
+      ;;
+    dist-binaries)
+      run_dist_binaries
+      ;;
+    unit-archive)
+      run_unit_archive_only
+      ;;
+    node-harness-prep)
+      run_node_harness_prep
       ;;
     lint)
       timed run_lint run_lint
@@ -1415,7 +1439,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, lint, unit, unit-shard, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac

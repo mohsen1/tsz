@@ -129,7 +129,7 @@ suite_needs_rust_compile() {
   local suite
   suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
   case "$suite" in
-    all|full|build|lint|unit|wasm) return 0 ;;
+    all|full|build|lint|unit|wasm|dist-binaries|unit-archive) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -254,7 +254,7 @@ restore_caches() {
     "TypeScript" \
     node_modules
 
-  if [[ "$commit" != "unknown" ]]; then
+  if [[ "${TSZ_CI_SKIP_DIST_RESTORE:-0}" != "1" && "$commit" != "unknown" ]]; then
     local dist_cache
     dist_cache="$(cache_uri "dist-fast/${commit}.tar.gz")"
     if gsutil -q stat "$dist_cache"; then

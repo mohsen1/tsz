@@ -67,25 +67,9 @@ jobs:
           fi
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: build
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Build dist-fast binaries
-        run: scripts/ci/github-suite.sh build
-
   lint:
     name: lint
-    needs: [gate, build]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -98,29 +82,52 @@ jobs:
       - name: Run lint suite
         run: scripts/ci/github-suite.sh lint
 
-  unit:
-    name: unit-${{ matrix.shard }}
-    needs: [gate, build]
+  dist-binaries:
+    name: dist-binaries
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    timeout-minutes: 30
     env:
-      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_UNIT_SHARD_COUNT: 8
+      GITHUB_SHA: ${{ github.sha }}
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit shard
-        run: scripts/ci/github-suite.sh unit-shard
+      - name: Build dist-fast binaries
+        run: scripts/ci/github-suite.sh dist-binaries
+      - name: Upload dist-fast binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: |
+            .target/dist-fast/tsz
+            .target/dist-fast/tsz-server
+            .target/dist-fast/tsz-conformance
+            .target/dist-fast/generate-tsc-cache
+          retention-days: 1
+          if-no-files-found: error
+
+  unit-archive:
+    name: unit-archive
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 30
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Build unit test archive
+        run: scripts/ci/github-suite.sh unit-archive
 
   wasm:
     name: wasm
-    needs: [gate, build]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -143,24 +150,81 @@ jobs:
           path: pkg/web/
           retention-days: 30
 
+  node-harness-prep:
+    name: node-harness-prep
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 20
+    env:
+      GITHUB_SHA: ${{ github.sha }}
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Prep node harnesses
+        run: scripts/ci/github-suite.sh node-harness-prep
+      - name: Upload node harness artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-harness
+          path: |
+            scripts/node_modules/
+            scripts/emit/
+          retention-days: 1
+          if-no-files-found: warn
+
+  unit:
+    name: unit-${{ matrix.shard }}
+    needs: [gate, unit-archive]
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_UNIT_SHARD_COUNT: 8
+      TSZ_CI_CACHE_SAVE: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run unit shard
+        run: scripts/ci/github-suite.sh unit-shard
+
   conformance:
     name: conformance-${{ matrix.shard }}
-    needs: [gate, build]
+    needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
     strategy:
       fail-fast: false
+      max-parallel: 24
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
       TSZ_CI_CONFORMANCE_SHARDS: 32
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Make binaries executable
+        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server .target/dist-fast/tsz-conformance .target/dist-fast/generate-tsc-cache
       - name: Run conformance shard
         run: scripts/ci/github-suite.sh conformance
 
@@ -174,6 +238,7 @@ jobs:
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 32
       TSZ_CI_CONFORMANCE_SHARDS: 32
+      TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -183,7 +248,7 @@ jobs:
 
   emit:
     name: emit-${{ matrix.shard }}
-    needs: [gate, build]
+    needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
@@ -194,10 +259,25 @@ jobs:
     env:
       _TSZ_CI_EMIT_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_EMIT_SHARD_COUNT: 4
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Make binaries executable
+        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server .target/dist-fast/tsz-conformance .target/dist-fast/generate-tsc-cache
+      - name: Download node harness
+        uses: actions/download-artifact@v4
+        with:
+          name: node-harness
+          path: .
       - name: Run emit shard
         run: scripts/ci/github-suite.sh emit-shard
 
@@ -210,6 +290,7 @@ jobs:
     env:
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_EMIT_SHARD_COUNT: 4
+      TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -219,7 +300,7 @@ jobs:
 
   fourslash:
     name: fourslash-${{ matrix.shard }}
-    needs: [gate, build]
+    needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -231,10 +312,25 @@ jobs:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
       TSZ_CI_FOURSLASH_WORKERS: 8
+      TSZ_CI_SKIP_DIST_RESTORE: "1"
+      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
+      TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Download dist-fast binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-fast-binaries
+          path: .
+      - name: Make binaries executable
+        run: chmod +x .target/dist-fast/tsz .target/dist-fast/tsz-server .target/dist-fast/tsz-conformance .target/dist-fast/generate-tsc-cache
+      - name: Download node harness
+        uses: actions/download-artifact@v4
+        with:
+          name: node-harness
+          path: .
       - name: Run fourslash shard
         run: scripts/ci/github-suite.sh fourslash-shard
 
@@ -247,6 +343,7 @@ jobs:
     env:
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
+      TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
         with:

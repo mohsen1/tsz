@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-suite="${1:?usage: $0 <build|lint|unit|unit-shard|wasm|conformance|conformance-aggregate|emit|emit-shard|emit-aggregate|fourslash|fourslash-shard|fourslash-aggregate>}"
+suite="${1:?usage: $0 <build|dist-binaries|unit-archive|node-harness-prep|lint|unit|unit-shard|wasm|conformance|conformance-aggregate|emit|emit-shard|emit-aggregate|fourslash|fourslash-shard|fourslash-aggregate>}"
 export _TSZ_CI_SUITE="$suite"
 export TSZ_CI_SUITE="$suite"
 export _TSZ_CI_CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache}}"
@@ -18,13 +18,17 @@ export TSZ_CI_SKIP_HOST_APT="${TSZ_CI_SKIP_HOST_APT:-1}"
 mkdir -p "$TSZ_CI_METRICS_DIR" "$TSZ_CI_LOG_DIR" .ci-status
 
 restore_rc=0
-if command -v gsutil >/dev/null 2>&1; then
-  scripts/ci/gcp-cache.sh restore || restore_rc="$?"
+if [[ "${TSZ_CI_CACHE_RESTORE:-1}" == "1" ]]; then
+  if command -v gsutil >/dev/null 2>&1; then
+    scripts/ci/gcp-cache.sh restore || restore_rc="$?"
+  else
+    echo "warning: gsutil is unavailable; skipping GCS CI cache restore" >&2
+  fi
+  if [[ "$restore_rc" -ne 0 ]]; then
+    echo "warning: CI cache restore failed with rc=${restore_rc}; continuing" >&2
+  fi
 else
-  echo "warning: gsutil is unavailable; skipping GCS CI cache restore" >&2
-fi
-if [[ "$restore_rc" -ne 0 ]]; then
-  echo "warning: CI cache restore failed with rc=${restore_rc}; continuing" >&2
+  echo "info: GCS cache restore skipped (TSZ_CI_CACHE_RESTORE=0)"
 fi
 
 set +e
@@ -40,10 +44,14 @@ python3 scripts/ci/gcp-summary.py \
   --logs-dir "$TSZ_CI_LOG_DIR" \
   --out .ci-status/check-summary.md || true
 
-if command -v gsutil >/dev/null 2>&1; then
-  scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+if [[ "${TSZ_CI_CACHE_SAVE:-1}" == "1" ]]; then
+  if command -v gsutil >/dev/null 2>&1; then
+    scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+  else
+    echo "warning: gsutil is unavailable; skipping GCS CI cache save" >&2
+  fi
 else
-  echo "warning: gsutil is unavailable; skipping GCS CI cache save" >&2
+  echo "info: GCS cache save skipped (TSZ_CI_CACHE_SAVE=0)"
 fi
 
 if [[ -f .ci-status/check-summary.md ]]; then

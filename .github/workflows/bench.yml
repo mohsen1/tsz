@@ -3,6 +3,14 @@ name: Bench
 on:
   push:
     branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/bench/**'
+      - '.github/workflows/bench.yml'
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 3am UTC (catches any drift without a push)
   workflow_dispatch:
 
 # Only one benchmark runs at a time.  If a run is already in progress when a
