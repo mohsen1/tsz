@@ -1,6 +1,6 @@
 # Implementation Claim: JSX multiple function children diagnostics
 
-Status: claim
+Status: ready
 
 Branch: `fix/jsx-multiple-function-children-diagnostics`
 
@@ -14,3 +14,7 @@ Scope:
 Verification plan:
 - Targeted checker regression test.
 - `./scripts/conformance/conformance.sh run --filter "checkJsxChildrenProperty4" --verbose`.
+
+Result:
+- Multiple JSX render-prop children in React-style components now route through the ReactNode child target and emit child-level TS2322 instead of collapsing to TS2746.
+- `checkJsxChildrenProperty4.tsx` moves from wrong-code to fingerprint-only (codes now match; remaining gap is ReactChild alias display).
