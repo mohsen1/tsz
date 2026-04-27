@@ -1022,6 +1022,7 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: tsz_solver::TypeParamVariance::None,
     });
     let c_atom = interner.intern_string("C");
     let c_param_info = TypeParamInfo {
@@ -1029,6 +1030,7 @@ fn test_constructor_with_infer_in_extends_renders_as_arrow_with_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: tsz_solver::TypeParamVariance::None,
     };
     let infer_c = interner.infer(c_param_info);
 

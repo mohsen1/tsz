@@ -330,6 +330,7 @@ impl<'a> CheckerState<'a> {
                     constraint: None,
                     default: None,
                     is_const,
+                    variance: tsz_solver::TypeParamVariance::None,
                 };
                 let type_id = factory.type_param(info);
 
@@ -372,6 +373,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default: None,
                 is_const,
+                variance: tsz_solver::TypeParamVariance::None,
             };
             let constrained_type_id = factory.type_param(info);
             self.ctx

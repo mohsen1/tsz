@@ -1097,6 +1097,7 @@ impl<'a> CheckerContext<'a> {
                             constraint: None,
                             default: None,
                             is_const: false,
+                            variance: tsz_solver::TypeParamVariance::None,
                         }
                     })
                     .collect()

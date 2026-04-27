@@ -234,6 +234,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                             constraint: tp.constraint.map(|c| self.canonicalize(c)),
                             default: tp.default.map(|d| self.canonicalize(d)),
                             is_const: tp.is_const,
+                            variance: crate::TypeParamVariance::None,
                         })
                         .collect();
 
@@ -569,6 +570,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 default: tp.default.map(|d| self.canonicalize(d)),
                 // Preserve other fields as-is
                 is_const: tp.is_const,
+                variance: crate::TypeParamVariance::None,
             })
             .collect();
 

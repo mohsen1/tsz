@@ -9,6 +9,7 @@ fn make_type_param(db: &TypeInterner, name: &str, constraint: Option<TypeId>) ->
         constraint,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }))
 }
 
@@ -27,6 +28,7 @@ fn computed_prop_name_valid_for_type_param_with_string_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let evaluator = BinaryOpEvaluator::new(&interner);
     assert!(evaluator.is_valid_computed_property_name_type(k));
@@ -43,6 +45,7 @@ fn computed_prop_name_valid_for_type_param_with_keyof_constraint() {
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let evaluator = BinaryOpEvaluator::new(&interner);
     assert!(evaluator.is_valid_computed_property_name_type(k));
@@ -57,6 +60,7 @@ fn computed_prop_name_invalid_for_unconstrained_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let evaluator = BinaryOpEvaluator::new(&interner);
     assert!(!evaluator.is_valid_computed_property_name_type(t));
@@ -71,6 +75,7 @@ fn computed_prop_name_invalid_for_type_param_with_object_constraint() {
         constraint: Some(TypeId::OBJECT),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let evaluator = BinaryOpEvaluator::new(&interner);
     assert!(!evaluator.is_valid_computed_property_name_type(t));

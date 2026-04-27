@@ -163,6 +163,7 @@ fn test_conditional_instantiated_param_distributes() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -199,6 +200,7 @@ fn test_conditional_instantiated_param_distributes_branch_substitution() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends string ? T : never, with T = string | number
@@ -233,6 +235,7 @@ fn test_conditional_distributive_nested_extends() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends string ? (T extends "a" ? 1 : 2) : 3, with T = "a" | "b"
@@ -280,6 +283,7 @@ fn test_conditional_distributive_infer_extends_nested() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -288,6 +292,7 @@ fn test_conditional_distributive_infer_extends_nested() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends infer R extends string ? (R extends "a" ? "yes" : "no") : "fallback"
@@ -337,6 +342,7 @@ fn test_conditional_infer_true_branch_substitution() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // "a" extends infer R extends string ? R : never
@@ -363,6 +369,7 @@ fn test_conditional_infer_false_branch_substitution() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // number extends infer R extends string ? string : R
@@ -388,6 +395,7 @@ fn test_conditional_infer_array_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -396,6 +404,7 @@ fn test_conditional_infer_array_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R)[] ? R : never, with T = string[] | number[].
@@ -435,6 +444,7 @@ fn test_conditional_infer_array_element_non_array_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -443,6 +453,7 @@ fn test_conditional_infer_array_element_non_array_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R)[] ? R : never, with T = string[] | number.
@@ -478,6 +489,7 @@ fn test_conditional_infer_array_element_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -486,6 +498,7 @@ fn test_conditional_infer_array_element_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R)[] ? R : never, with T = string[] | number[] (no distribution).
@@ -525,6 +538,7 @@ fn test_conditional_infer_array_element_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -533,6 +547,7 @@ fn test_conditional_infer_array_element_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R)[] ? R : never, with T = string[] | number (no distribution).
@@ -568,6 +583,7 @@ fn test_conditional_infer_array_element_from_tuple_rest() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -576,6 +592,7 @@ fn test_conditional_infer_array_element_from_tuple_rest() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R)[] ? R : never, with T = [string, ...number[]].
@@ -624,6 +641,7 @@ fn test_conditional_infer_array_element_from_tuple_rest_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -632,6 +650,7 @@ fn test_conditional_infer_array_element_from_tuple_rest_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R)[] ? R : never, with T = [string, ...[number, boolean]].
@@ -693,6 +712,7 @@ fn test_conditional_infer_array_element_from_optional_tuple_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -701,6 +721,7 @@ fn test_conditional_infer_array_element_from_optional_tuple_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R)[] ? R : never, with T = [string?].
@@ -740,6 +761,7 @@ fn test_conditional_infer_array_element_with_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -748,6 +770,7 @@ fn test_conditional_infer_array_element_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (infer R extends string)[] ? R : never, with T = number[] | string[].
@@ -789,6 +812,7 @@ fn test_conditional_infer_array_element_non_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -797,6 +821,7 @@ fn test_conditional_infer_array_element_non_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // (T[]) extends (infer R)[] ? R : never, with T = string | number (no distribution).
@@ -831,6 +856,7 @@ fn test_conditional_infer_array_element_non_distributive_tuple_wrapper() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -839,6 +865,7 @@ fn test_conditional_infer_array_element_non_distributive_tuple_wrapper() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(infer R)[]] ? R : never, with T = string[] | number[].
@@ -889,6 +916,7 @@ fn test_conditional_infer_object_property_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -897,6 +925,7 @@ fn test_conditional_infer_object_property_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: infer R } ? R : never, with T = { a: string } | { a: number } | { b: boolean }.
@@ -945,6 +974,7 @@ fn test_conditional_infer_object_property_with_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -953,6 +983,7 @@ fn test_conditional_infer_object_property_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: infer R extends string } ? R : never, with T = { a: string } | { a: number }.
@@ -998,6 +1029,7 @@ fn test_conditional_infer_object_property_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1006,6 +1038,7 @@ fn test_conditional_infer_object_property_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { readonly a: infer R } ? R : never, with T = { a: string } | { readonly a: number }.
@@ -1050,6 +1083,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_input(
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1058,6 +1092,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_input(
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { readonly a: infer R } ? R : never, with T = { readonly a: string } | { a: number } (no distribution).
@@ -1102,6 +1137,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_branch
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1110,6 +1146,7 @@ fn test_conditional_infer_object_property_readonly_non_distributive_union_branch
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { readonly a: infer R } ? R : never, with T = { readonly a: string } | number (no distribution).
@@ -1149,6 +1186,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1157,6 +1195,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends Readonly<{ a: infer R }> ? R : never,
@@ -1204,6 +1243,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1212,6 +1252,7 @@ fn test_conditional_infer_object_property_readonly_wrapper_non_distributive_unio
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends Readonly<{ a: infer R }> ? R : never,
@@ -1254,6 +1295,7 @@ fn test_conditional_infer_object_property_function_return_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1262,6 +1304,7 @@ fn test_conditional_infer_object_property_function_return_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: () => infer R } ? R : never, with T = { a: () => string } | { a: () => number }.
@@ -1333,6 +1376,7 @@ fn test_conditional_infer_template_literal_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1341,6 +1385,7 @@ fn test_conditional_infer_template_literal_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `${infer R}` ? R : never, with T = "foo" | "bar".
@@ -1376,6 +1421,7 @@ fn test_conditional_infer_template_literal_with_prefix_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1384,6 +1430,7 @@ fn test_conditional_infer_template_literal_with_prefix_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `foo${infer R}` ? R : never, with T = "foo1" | "bar".
@@ -1422,6 +1469,7 @@ fn test_conditional_infer_template_literal_with_suffix_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1430,6 +1478,7 @@ fn test_conditional_infer_template_literal_with_suffix_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `${infer R}bar` ? R : never, with T = "foobar" | "baz".
@@ -1468,6 +1517,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1476,6 +1526,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}`] ? R : never, with T = "foo1" | "foo2" (no distribution).
@@ -1527,6 +1578,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1535,6 +1587,7 @@ fn test_conditional_infer_template_literal_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}`] ? R : never, with T = "foo1" | "bar" (no distribution).
@@ -1582,6 +1635,7 @@ fn test_conditional_infer_template_literal_non_distributive_template_union_input
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1590,6 +1644,7 @@ fn test_conditional_infer_template_literal_non_distributive_template_union_input
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}`] ? R : never, with T = `foo${string}` | `bar${string}` (no distribution).
@@ -1643,6 +1698,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1651,6 +1707,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "foo2" (no distribution).
@@ -1702,6 +1759,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1710,6 +1768,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_non_distributi
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "bar" (no distribution).
@@ -1757,6 +1816,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1765,6 +1825,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}bar`] ? R : never, with T = "foobazbar" | "foobuzbar" (no distribution).
@@ -1817,6 +1878,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1825,6 +1887,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_non_distributive_un
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}bar`] ? R : never, with T = "foobazbar" | "bar" (no distribution).
@@ -1873,6 +1936,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1881,6 +1945,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R extends string}bar`] ? R : never,
@@ -1934,6 +1999,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -1942,6 +2008,7 @@ fn test_conditional_infer_template_literal_with_middle_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R extends string}bar`] ? R : never,
@@ -1992,6 +2059,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_matc
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2000,6 +2068,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_matc
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}bar`] ? R : never, with T = "foobazbar" | "bar" (no distribution).
@@ -2048,6 +2117,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2056,6 +2126,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}bar`] ? R : never, with T = "foobazbar" | number (no distribution).
@@ -2104,6 +2175,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2112,6 +2184,7 @@ fn test_conditional_infer_template_literal_with_middle_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}bar`] ? R : never, with T = `foo${string}bar` | number (no distribution).
@@ -2166,6 +2239,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_inp
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -2174,6 +2248,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_inp
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -2181,6 +2256,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_inp
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer A}-${infer B}`] ? A | B : never, with T = "foo-bar" | "baz-qux" (no distribution).
@@ -2235,6 +2311,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_non_match
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -2243,6 +2320,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_non_match
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -2250,6 +2328,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_non_match
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer A}-${infer B}`] ? A | B : never, with T = "foo-bar" | "baz" (no distribution).
@@ -2298,6 +2377,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_bra
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -2306,6 +2386,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_bra
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -2313,6 +2394,7 @@ fn test_conditional_infer_template_literal_two_infers_non_distributive_union_bra
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer A}-${infer B}`] ? A | B : never, with T = "foo-bar" | number (no distribution).
@@ -2360,6 +2442,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_in
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2368,6 +2451,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_in
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer R}bar`] ? R : never, with T = "foobar" | "bazbar" (no distribution).
@@ -2419,6 +2503,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_br
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2427,6 +2512,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_union_br
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer R}bar`] ? R : never, with T = "foobar" | "baz" (no distribution).
@@ -2475,6 +2561,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_matc
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2483,6 +2570,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_matc
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer R}bar`] ? R : never, with T = "foobar" | "baz" (no distribution).
@@ -2530,6 +2618,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2538,6 +2627,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer R}bar`] ? R : never, with T = "foobar" | number (no distribution).
@@ -2585,6 +2675,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2593,6 +2684,7 @@ fn test_conditional_infer_template_literal_with_suffix_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer R}bar`] ? R : never, with T = `${string}bar` | number (no distribution).
@@ -2645,6 +2737,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2653,6 +2746,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer R extends string}bar`] ? R : never, with T = "foobar" | "bazbar" (no distribution).
@@ -2704,6 +2798,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2712,6 +2807,7 @@ fn test_conditional_infer_template_literal_with_suffix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer R extends string}bar`] ? R : never, with T = "foobar" | "baz" (no distribution).
@@ -2759,6 +2855,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_in
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2767,6 +2864,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_in
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}`] ? R : never, with T = "foo1" | "foo2" (no distribution).
@@ -2818,6 +2916,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_br
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2826,6 +2925,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_union_br
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}`] ? R : never, with T = "foo1" | "bar" (no distribution).
@@ -2874,6 +2974,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_matc
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2882,6 +2983,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_matc
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}`] ? R : never, with T = "foo1" | "bar" (no distribution).
@@ -2929,6 +3031,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2937,6 +3040,7 @@ fn test_conditional_infer_template_literal_with_prefix_non_distributive_non_stri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R}`] ? R : never, with T = "foo1" | number (no distribution).
@@ -2983,6 +3087,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -2991,6 +3096,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "foo2" (no distribution).
@@ -3042,6 +3148,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3050,6 +3157,7 @@ fn test_conditional_infer_template_literal_with_prefix_constrained_non_distribut
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`foo${infer R extends string}`] ? R : never, with T = "foo1" | "bar" (no distribution).
@@ -3098,6 +3206,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -3106,6 +3215,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -3113,6 +3223,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer A extends string}-${infer B extends string}`] ? A | B : never,
@@ -3169,6 +3280,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -3177,6 +3289,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -3184,6 +3297,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer A extends string}-${infer B extends string}`] ? A | B : never,
@@ -3234,6 +3348,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -3242,6 +3357,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -3249,6 +3365,7 @@ fn test_conditional_infer_template_literal_two_infers_with_constraint_non_distri
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [`${infer A extends string}-${infer B extends string}`] ? A | B : never,
@@ -3297,6 +3414,7 @@ fn test_conditional_infer_template_literal_union_input_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3305,6 +3423,7 @@ fn test_conditional_infer_template_literal_union_input_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `foo${infer R}` ? R : never, with T = `foo${string}` | `bar${string}`.
@@ -3348,6 +3467,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3356,6 +3476,7 @@ fn test_conditional_infer_template_literal_from_string_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `${infer R}` ? R : never, with T = string.
@@ -3388,6 +3509,7 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3396,6 +3518,7 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `${infer R}` ? R : never, with T = `${string}`.
@@ -3429,6 +3552,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3437,6 +3561,7 @@ fn test_conditional_infer_template_literal_with_middle_infer_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `foo${infer R}bar` ? R : never, with T = "foobazbar" | "bar".
@@ -3476,6 +3601,7 @@ fn test_conditional_infer_template_literal_two_infers_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -3484,6 +3610,7 @@ fn test_conditional_infer_template_literal_two_infers_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b_name = interner.intern_string("B");
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -3491,6 +3618,7 @@ fn test_conditional_infer_template_literal_two_infers_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `${infer A}-${infer B}` ? A | B : never, with T = "foo-bar" | "baz-qux".
@@ -3535,6 +3663,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_distributive()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3543,6 +3672,7 @@ fn test_conditional_infer_template_literal_with_constrained_infer_distributive()
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `foo${infer R extends string}` ? R : never, with T = "foo1" | "foo2".
@@ -3584,6 +3714,7 @@ fn test_conditional_infer_nested_object_property_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3592,6 +3723,7 @@ fn test_conditional_infer_nested_object_property_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | { a: { b: number } }.
@@ -3648,6 +3780,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3656,6 +3789,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | { a: { b: number } } (no distribution).
@@ -3712,6 +3846,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3720,6 +3855,7 @@ fn test_conditional_infer_nested_object_property_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | number (no distribution).
@@ -3767,6 +3903,7 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3775,6 +3912,7 @@ fn test_conditional_infer_nested_object_property_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: { b: infer R extends string } } ? R : never, with T = { a: { b: string } } | { a: { b: number } }.
@@ -3832,6 +3970,7 @@ fn test_conditional_infer_nested_object_property_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3840,6 +3979,7 @@ fn test_conditional_infer_nested_object_property_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { readonly a: { b: infer R } } ? R : never, with T = { readonly a: { b: string } } | { a: { b: number } }.
@@ -3896,6 +4036,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3904,6 +4045,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: Readonly<{ b: infer R }> } ? R : never,
@@ -3963,6 +4105,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -3971,6 +4114,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: Readonly<{ b: infer R }> } ? R : never,
@@ -4030,6 +4174,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4038,6 +4183,7 @@ fn test_conditional_infer_nested_object_property_readonly_wrapper_non_distributi
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: Readonly<{ b: infer R }> } ? R : never,
@@ -4088,6 +4234,7 @@ fn test_conditional_infer_nested_object_property_non_matching_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4096,6 +4243,7 @@ fn test_conditional_infer_nested_object_property_non_matching_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string } } | { a: { c: number } }.
@@ -4153,6 +4301,7 @@ fn test_conditional_infer_nested_object_property_union_value() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4161,6 +4310,7 @@ fn test_conditional_infer_nested_object_property_union_value() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: { b: infer R } } ? R : never, with T = { a: { b: string | number } }.
@@ -4206,6 +4356,7 @@ fn test_conditional_infer_object_property_non_object_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4214,6 +4365,7 @@ fn test_conditional_infer_object_property_non_object_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: infer R } ? R : never, with T = { a: string } | number.
@@ -4255,6 +4407,7 @@ fn test_conditional_infer_object_property_non_distributive_non_object_union_bran
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4263,6 +4416,7 @@ fn test_conditional_infer_object_property_non_distributive_non_object_union_bran
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ a: infer R }] ? R : never, with T = { a: string } | number (no distribution).
@@ -4312,6 +4466,7 @@ fn test_conditional_infer_object_index_signature_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4320,6 +4475,7 @@ fn test_conditional_infer_object_index_signature_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | { b: number }.
@@ -4372,6 +4528,7 @@ fn test_conditional_infer_number_index_signature_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4380,6 +4537,7 @@ fn test_conditional_infer_number_index_signature_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | { 1: number }.
@@ -4432,6 +4590,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4440,6 +4599,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | { 1: number } (no distribution).
@@ -4492,6 +4652,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4500,6 +4661,7 @@ fn test_conditional_infer_number_index_signature_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { [key: number]: infer R } ? R : never, with T = { 0: string } | number (no distribution).
@@ -4547,6 +4709,7 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4555,6 +4718,7 @@ fn test_conditional_infer_object_index_signature_non_object_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | number.
@@ -4602,6 +4766,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4610,6 +4775,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | { b: number } (no distribution).
@@ -4662,6 +4828,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4670,6 +4837,7 @@ fn test_conditional_infer_object_index_signature_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { [key: string]: infer R } ? R : never, with T = { a: string } | number (no distribution).
@@ -4717,6 +4885,7 @@ fn test_conditional_infer_optional_property_missing_object() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4725,6 +4894,7 @@ fn test_conditional_infer_optional_property_missing_object() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a?: infer R } ? R : never, with T = {}.
@@ -4761,6 +4931,7 @@ fn test_conditional_infer_optional_property_present_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4769,6 +4940,7 @@ fn test_conditional_infer_optional_property_present_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a?: infer R } ? R : never, with T = { a?: string } | { a?: number }.
@@ -4813,6 +4985,7 @@ fn test_conditional_infer_optional_property_with_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4821,6 +4994,7 @@ fn test_conditional_infer_optional_property_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a?: infer R extends string } ? R : never, with T = { a?: string } | { a?: number }.
@@ -4864,6 +5038,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4872,6 +5047,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ a?: infer R }] ? R : never, with T = { a: string } | {} (no distribution).
@@ -4923,6 +5099,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4931,6 +5108,7 @@ fn test_conditional_infer_optional_property_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ a?: infer R }] ? R : never, with T = { a: string } | number (no distribution).
@@ -4980,6 +5158,7 @@ fn test_conditional_infer_object_property_intersection_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -4988,6 +5167,7 @@ fn test_conditional_infer_object_property_intersection_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { a: infer R } ? R : never, with T = { a: string } & { b: number }.
@@ -5032,6 +5212,7 @@ fn test_conditional_infer_function_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5040,6 +5221,7 @@ fn test_conditional_infer_function_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (arg: infer R) => void ? R : never, with T = ((arg: string) => void)
@@ -5100,6 +5282,7 @@ fn test_conditional_infer_function_optional_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5108,6 +5291,7 @@ fn test_conditional_infer_function_optional_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (arg?: infer R) => void ? R : never, with T = ((arg?: string) => void)
@@ -5183,6 +5367,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5191,6 +5376,7 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(arg?: infer R) => void] ? R : never, with T = ((arg?: string) => void)
@@ -5278,6 +5464,7 @@ fn test_conditional_infer_function_param_non_function_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5286,6 +5473,7 @@ fn test_conditional_infer_function_param_non_function_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (arg: infer R) => void ? R : never, with T = ((arg: string) => void) | number.
@@ -5335,6 +5523,7 @@ fn test_conditional_infer_function_param_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5343,6 +5532,7 @@ fn test_conditional_infer_function_param_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(arg: infer R) => void] ? R : never, with T = ((arg: string) => void)
@@ -5416,6 +5606,7 @@ fn test_conditional_infer_function_param_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5424,6 +5615,7 @@ fn test_conditional_infer_function_param_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(arg: infer R) => void] ? R : never, with T = ((arg: string) => void) | number.
@@ -5483,6 +5675,7 @@ fn test_conditional_infer_function_rest_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5491,6 +5684,7 @@ fn test_conditional_infer_function_rest_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (...args: infer R) => void ? R : never, with T = ((...args: string[]) => void)
@@ -5569,6 +5763,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5577,6 +5772,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(...args: infer R) => void] ? R : never, with T = ((...args: string[]) => void)
@@ -5667,6 +5863,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5675,6 +5872,7 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(...args: infer R) => void] ? R : never, with T = ((...args: string[]) => void)
@@ -5745,6 +5943,7 @@ fn test_conditional_infer_function_this_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5753,6 +5952,7 @@ fn test_conditional_infer_function_this_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (this: infer R) => void ? R : never, with T = ((this: string) => void)
@@ -5813,6 +6013,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5821,6 +6022,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(this: infer R) => void] ? R : never, with T = ((this: string) => void)
@@ -5891,6 +6093,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5899,6 +6102,7 @@ fn test_conditional_infer_function_this_param_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(this: infer R) => void] ? R : never, with T = ((this: string) => void)
@@ -5959,6 +6163,7 @@ fn test_conditional_infer_function_return_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -5967,6 +6172,7 @@ fn test_conditional_infer_function_return_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends () => infer R ? R : never, with T = (() => string) | (() => number).
@@ -6026,6 +6232,7 @@ fn test_conditional_infer_function_return_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6034,6 +6241,7 @@ fn test_conditional_infer_function_return_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [() => infer R] ? R : never, with T = (() => string) | (() => number).
@@ -6103,6 +6311,7 @@ fn test_conditional_infer_function_param_and_return_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let p_name = interner.intern_string("P");
@@ -6111,6 +6320,7 @@ fn test_conditional_infer_function_param_and_return_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let r_name = interner.intern_string("R");
@@ -6119,6 +6329,7 @@ fn test_conditional_infer_function_param_and_return_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends (arg: infer P) => infer R ? [P, R] : never, with T = ((arg: string) => number)
@@ -6224,6 +6435,7 @@ fn test_conditional_infer_function_return_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6232,6 +6444,7 @@ fn test_conditional_infer_function_return_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [() => infer R] ? R : never, with T = (() => string) | number.
@@ -6291,6 +6504,7 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let p_name = interner.intern_string("P");
@@ -6299,6 +6513,7 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let r_name = interner.intern_string("R");
@@ -6307,6 +6522,7 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [(arg: infer P) => infer R] ? [P, R] : never, with T = ((arg: string) => number)
@@ -6411,6 +6627,7 @@ fn test_conditional_infer_object_call_signature_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6419,6 +6636,7 @@ fn test_conditional_infer_object_call_signature_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { (x: infer R): void } ? R : never, with T = { (x: string): void }
@@ -6503,6 +6721,7 @@ fn test_conditional_infer_call_signature_param_from_function_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6511,6 +6730,7 @@ fn test_conditional_infer_call_signature_param_from_function_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { (x: infer R): void } ? R : never, with T = ((x: string) => void)
@@ -6578,6 +6798,7 @@ fn test_conditional_infer_call_signature_return_from_function_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6586,6 +6807,7 @@ fn test_conditional_infer_call_signature_return_from_function_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { (): infer R } ? R : never, with T = (() => string) | (() => number).
@@ -6652,6 +6874,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6660,6 +6883,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ (x: infer R): void }] ? R : never, with T = { (x: string): void }
@@ -6755,6 +6979,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6763,6 +6988,7 @@ fn test_conditional_infer_object_call_signature_optional_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { (x?: infer R): void } ? R : never, with T = { (x?: string): void }
@@ -6862,6 +7088,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6870,6 +7097,7 @@ fn test_conditional_infer_object_call_signature_optional_param_non_distributive_
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ (x?: infer R): void }] ? R : never, with T = { (x?: string): void }
@@ -6980,6 +7208,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -6988,6 +7217,7 @@ fn test_conditional_infer_object_call_signature_rest_param_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { (...args: infer R): void } ? R : never, with T = { (...args: string[]): void }
@@ -7090,6 +7320,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7098,6 +7329,7 @@ fn test_conditional_infer_object_call_signature_rest_param_non_distributive_unio
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ (...args: infer R): void }] ? R : never, with T = { (...args: string[]): void }
@@ -7211,6 +7443,7 @@ fn test_conditional_infer_object_call_signature_non_callable_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7219,6 +7452,7 @@ fn test_conditional_infer_object_call_signature_non_callable_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { (x: infer R): void } ? R : never, with T = { (x: string): void } | number.
@@ -7285,6 +7519,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_branch() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7293,6 +7528,7 @@ fn test_conditional_infer_object_call_signature_non_distributive_union_branch() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ (x: infer R): void }] ? R : never, with T = { (x: string): void } | number.
@@ -7369,6 +7605,7 @@ fn test_conditional_infer_object_call_signature_overload_source_non_distributive
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7377,6 +7614,7 @@ fn test_conditional_infer_object_call_signature_overload_source_non_distributive
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ (x: infer R): void }] ? R : never, with T = { (x: string): void; (x: number): void }.
@@ -7460,6 +7698,7 @@ fn test_conditional_infer_object_property_non_distributive_union_all_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7468,6 +7707,7 @@ fn test_conditional_infer_object_property_non_distributive_union_all_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ a: infer R }] ? R : never, with T = { a: string } | { a: number }.
@@ -7522,6 +7762,7 @@ fn test_conditional_infer_object_property_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7530,6 +7771,7 @@ fn test_conditional_infer_object_property_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // [T] extends [{ a: infer R }] ? R : never, with T = { a: string } | number.
@@ -7579,6 +7821,7 @@ fn test_conditional_infer_tuple_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7587,6 +7830,7 @@ fn test_conditional_infer_tuple_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R] ? R : never, with T = [string] | [number].
@@ -7641,6 +7885,7 @@ fn test_conditional_infer_tuple_optional_element_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7649,6 +7894,7 @@ fn test_conditional_infer_tuple_optional_element_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R?] ? R : never, with T = [string] | [].
@@ -7694,6 +7940,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7702,6 +7949,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R?] ? R : never, with T = [string] | [] (no distribution).
@@ -7747,6 +7995,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7755,6 +8004,7 @@ fn test_conditional_infer_tuple_optional_element_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R?] ? R : never, with T = [string] | number (no distribution).
@@ -7798,6 +8048,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7806,6 +8057,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R] ? R : never, with T = [string] | [number] (no distribution).
@@ -7860,6 +8112,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7868,6 +8121,7 @@ fn test_conditional_infer_tuple_element_non_distributive_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R] ? R : never, with T = [string] | number (no distribution).
@@ -7911,6 +8165,7 @@ fn test_conditional_infer_tuple_element_non_tuple_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7919,6 +8174,7 @@ fn test_conditional_infer_tuple_element_non_tuple_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R] ? R : never, with T = [string] | number.
@@ -7962,6 +8218,7 @@ fn test_conditional_infer_tuple_element_with_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -7970,6 +8227,7 @@ fn test_conditional_infer_tuple_element_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R extends string] ? R : never, with T = [number] | [string].
@@ -8023,6 +8281,7 @@ fn test_conditional_infer_optional_tuple_element_with_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8031,6 +8290,7 @@ fn test_conditional_infer_optional_tuple_element_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer R extends string] ? R : never, with T = [string?] | [number?].
@@ -8084,6 +8344,7 @@ fn test_conditional_infer_tuple_rest_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8092,6 +8353,7 @@ fn test_conditional_infer_tuple_rest_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [string, ...infer R] ? R : never, with T = [string, number] | [string].
@@ -8170,6 +8432,7 @@ fn test_conditional_infer_tuple_rest_with_head_infer_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_h_name = interner.intern_string("H");
@@ -8178,6 +8441,7 @@ fn test_conditional_infer_tuple_rest_with_head_infer_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r_name = interner.intern_string("R");
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -8185,6 +8449,7 @@ fn test_conditional_infer_tuple_rest_with_head_infer_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends [infer H, ...infer R] ? R : never, with T = [string, number] | [boolean].
@@ -8263,6 +8528,7 @@ fn test_conditional_infer_union_true_branch_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8271,6 +8537,7 @@ fn test_conditional_infer_union_true_branch_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends string ? R | number : never, with T = string | boolean.
@@ -8306,6 +8573,7 @@ fn test_conditional_infer_union_false_branch_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8314,6 +8582,7 @@ fn test_conditional_infer_union_false_branch_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends string ? never : R | number, with T = string | boolean.
@@ -8349,6 +8618,7 @@ fn test_conditional_infer_any_check_type_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // any extends string ? infer R : never
@@ -8375,6 +8645,7 @@ fn test_conditional_infer_readonly_array_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8383,6 +8654,7 @@ fn test_conditional_infer_readonly_array_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | readonly number[].
@@ -8423,6 +8695,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8431,6 +8704,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | readonly number[] (no distribution).
@@ -8471,6 +8745,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8479,6 +8754,7 @@ fn test_conditional_infer_readonly_array_element_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | number (no distribution).
@@ -8516,6 +8792,7 @@ fn test_conditional_infer_readonly_array_element_non_array_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8524,6 +8801,7 @@ fn test_conditional_infer_readonly_array_element_non_array_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | number.
@@ -8561,6 +8839,7 @@ fn test_conditional_infer_readonly_tuple_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8569,6 +8848,7 @@ fn test_conditional_infer_readonly_tuple_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | readonly [number].
@@ -8625,6 +8905,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8633,6 +8914,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_input() 
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | readonly [number] (no distribution).
@@ -8689,6 +8971,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8697,6 +8980,7 @@ fn test_conditional_infer_readonly_tuple_element_non_distributive_union_branch()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | number (no distribution).
@@ -8745,6 +9029,7 @@ fn test_conditional_infer_readonly_tuple_element_non_tuple_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8753,6 +9038,7 @@ fn test_conditional_infer_readonly_tuple_element_non_tuple_union_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly [infer R] ? R : never, with T = readonly [string] | number.
@@ -8801,6 +9087,7 @@ fn test_conditional_infer_readonly_array_mixed_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -8809,6 +9096,7 @@ fn test_conditional_infer_readonly_array_mixed_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends readonly (infer R)[] ? R : never, with T = readonly string[] | number[].
@@ -8848,6 +9136,7 @@ fn test_conditional_instantiated_param_tuple_wrapper_no_distribution() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -8952,6 +9241,7 @@ fn test_conditional_deferred_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -8983,6 +9273,7 @@ fn test_conditional_deferred_type_parameter_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -9012,6 +9303,7 @@ fn test_conditional_deferred_type_parameter_constraint_not_satisfying() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let yes = interner.literal_string("yes");
@@ -9042,6 +9334,7 @@ fn test_conditional_infer_direct_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // string extends infer R ? R : never -> string
@@ -9067,6 +9360,7 @@ fn test_conditional_infer_constraint_mismatch() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let no = interner.literal_string("no");
 
@@ -9093,6 +9387,7 @@ fn test_conditional_distributive_infer_array_extends() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let r_name = interner.intern_string("R");
@@ -9101,6 +9396,7 @@ fn test_conditional_distributive_infer_array_extends() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends Array<infer R> ? R : never
@@ -9137,6 +9433,7 @@ fn test_conditional_nested_distributive_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let r_name = interner.intern_string("R");
@@ -9145,6 +9442,7 @@ fn test_conditional_nested_distributive_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let yes = interner.literal_string("yes");
@@ -9191,6 +9489,7 @@ fn test_conditional_infer_object_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let prop_name = interner.intern_string("a");
@@ -9220,6 +9519,7 @@ fn test_conditional_infer_object_string_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let source = interner.object_with_index(ObjectShape {
@@ -9696,6 +9996,7 @@ fn test_index_access_type_param_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let key_x = interner.literal_string("x");
@@ -9712,6 +10013,7 @@ fn test_index_access_type_param_no_constraint_deferred() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let key_x = interner.literal_string("x");
@@ -10488,6 +10790,7 @@ fn test_keyof_type_param_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result = evaluate_keyof(&interner, type_param);
@@ -10512,6 +10815,7 @@ fn test_base_constraint_assignability_evaluate_keyof() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let key_of = interner.intern(TypeData::KeyOf(type_param));
@@ -10532,6 +10836,7 @@ fn test_keyof_type_param_no_constraint_deferred() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result = evaluate_keyof(&interner, type_param);
@@ -10553,6 +10858,7 @@ fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let b_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -10560,6 +10866,7 @@ fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
         constraint: Some(a_param), // B extends A
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let keyof_a = evaluate_keyof(&interner, a_param);
@@ -11370,6 +11677,7 @@ fn test_keyof_mapped_type_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -11407,6 +11715,7 @@ fn test_keyof_mapped_type_remapped_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -11908,6 +12217,7 @@ fn test_mapped_type_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -11937,6 +12247,7 @@ fn test_mapped_type_over_string_keys() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -11991,6 +12302,7 @@ fn test_mapped_type_over_number_keys() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -12046,6 +12358,7 @@ fn test_mapped_type_over_number_keys_evaluate_type() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -12087,6 +12400,7 @@ fn test_mapped_type_over_boolean_keys() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -12142,6 +12456,7 @@ fn test_mapped_type_over_symbol_keys() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -12197,6 +12512,7 @@ fn test_mapped_type_over_bigint_keys() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -12251,6 +12567,7 @@ fn test_mapped_type_string_index_signature() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -12291,6 +12608,7 @@ fn test_mapped_type_number_index_signature() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::NUMBER,
         name_type: None,
@@ -12334,6 +12652,7 @@ fn test_mapped_type_single_key() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_foo,
         name_type: None,
@@ -12367,6 +12686,7 @@ fn test_mapped_type_with_optional_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -12399,6 +12719,7 @@ fn test_mapped_type_with_readonly_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_x,
         name_type: None,
@@ -12432,6 +12753,7 @@ fn test_mapped_type_with_template_substitution() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let mapped = MappedType {
@@ -12440,6 +12762,7 @@ fn test_mapped_type_with_template_substitution() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -12475,6 +12798,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -12526,6 +12850,7 @@ fn test_mapped_type_deferred() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let mapped = MappedType {
@@ -12534,6 +12859,7 @@ fn test_mapped_type_deferred() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: type_param_t,
         name_type: None,
@@ -12567,6 +12893,7 @@ fn test_mapped_type_remove_readonly_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -12618,6 +12945,7 @@ fn test_mapped_type_remove_optional_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -12669,6 +12997,7 @@ fn test_mapped_type_add_readonly_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -12720,6 +13049,7 @@ fn test_mapped_type_add_optional_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -12769,6 +13099,7 @@ fn test_mapped_type_both_modifiers() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_id,
         name_type: None,
@@ -12814,6 +13145,7 @@ fn test_mapped_type_both_remove_modifiers() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_data,
         name_type: None,
@@ -12859,6 +13191,7 @@ fn test_mapped_type_add_readonly_remove_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_value,
         name_type: None,
@@ -12904,6 +13237,7 @@ fn test_mapped_type_remove_readonly_add_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_config,
         name_type: None,
@@ -12954,6 +13288,7 @@ fn test_mapped_type_minus_readonly_on_readonly_source() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -13004,6 +13339,7 @@ fn test_mapped_type_plus_optional_on_required_source() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -13056,6 +13392,7 @@ fn test_mapped_type_key_remap_uppercase() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13116,6 +13453,7 @@ fn test_mapped_type_key_remap_with_prefix() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13172,6 +13510,7 @@ fn test_mapped_type_add_both_modifiers_on_source() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_value,
         name_type: None,
@@ -13216,6 +13555,7 @@ fn test_mapped_type_remove_both_modifiers_required_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_data,
         name_type: None,
@@ -13251,6 +13591,7 @@ fn test_mapped_type_key_remap_filter_out_key() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13302,6 +13643,7 @@ fn test_mapped_type_preserves_source_types() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13353,6 +13695,7 @@ fn test_mapped_type_basic_as_clause() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13415,6 +13758,7 @@ fn test_mapped_type_as_extract_specific_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13470,6 +13814,7 @@ fn test_mapped_type_as_template_literal() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13543,6 +13888,7 @@ fn test_mapped_type_as_conditional_transformation() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13602,6 +13948,7 @@ fn test_mapped_type_as_exclude_key() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13652,6 +13999,7 @@ fn test_mapped_type_as_identity() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -13694,6 +14042,7 @@ fn test_mapped_type_as_never_all_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     // as never (filter out all keys)
@@ -13729,6 +14078,7 @@ fn test_mapped_type_as_single_key() {
         constraint: Some(key_only),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -14022,6 +14372,7 @@ fn test_conditional_infer_extract_state_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // AnyAction = { type: string }
@@ -14111,6 +14462,7 @@ fn test_conditional_infer_extract_action_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: Reducer<any, infer A> - function (state: any | undefined, action: A) => any
@@ -14203,6 +14555,7 @@ fn test_conditional_infer_extract_state_non_matching() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // AnyAction = { type: string }
@@ -14267,6 +14620,7 @@ fn test_conditional_infer_extract_state_union_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_s_name = interner.intern_string("S");
@@ -14275,6 +14629,7 @@ fn test_conditional_infer_extract_state_union_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Simple function pattern for testing: (x: infer S) => S
@@ -14373,6 +14728,7 @@ fn test_application_ref_expansion_box_string() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14425,12 +14781,14 @@ fn test_application_ref_expansion_reducer_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let a_param = TypeParamInfo {
         name: a_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let s_type = interner.intern(TypeData::TypeParameter(s_param));
     let a_type = interner.intern(TypeData::TypeParameter(a_param));
@@ -14510,6 +14868,7 @@ fn test_application_ref_expansion_nested() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14571,12 +14930,14 @@ fn test_application_ref_expansion_with_defaults() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let d_param = TypeParamInfo {
         name: d_name,
         constraint: None,
         default: Some(TypeId::UNDEFINED), // D = undefined
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let d_type = interner.intern(TypeData::TypeParameter(d_param));
@@ -14641,6 +15002,7 @@ fn test_application_ref_expansion_with_constraints() {
         constraint: Some(TypeId::NUMBER), // T extends number
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14710,6 +15072,7 @@ fn test_application_ref_expansion_with_never_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14757,6 +15120,7 @@ fn test_application_ref_expansion_with_unknown_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14804,6 +15168,7 @@ fn test_application_ref_expansion_with_any_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14851,6 +15216,7 @@ fn test_application_ref_expansion_with_union_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14929,6 +15295,7 @@ fn test_application_ref_expansion_recursive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -14992,6 +15359,7 @@ fn test_application_ref_expansion_with_intersection_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15043,6 +15411,7 @@ fn test_application_ref_expansion_multi_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
 
@@ -15053,6 +15422,7 @@ fn test_application_ref_expansion_multi_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let v_type = interner.intern(TypeData::TypeParameter(v_param));
 
@@ -15108,6 +15478,7 @@ fn test_application_ref_expansion_with_conditional_body() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15173,6 +15544,7 @@ fn test_application_ref_expansion_with_tuple_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15235,6 +15607,7 @@ fn test_application_ref_expansion_with_array_body() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15281,6 +15654,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15340,6 +15714,7 @@ fn test_application_ref_expansion_with_optional_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15399,6 +15774,7 @@ fn test_application_ref_expansion_with_method() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15468,6 +15844,7 @@ fn test_application_ref_expansion_with_rest_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15539,6 +15916,7 @@ fn test_application_ref_expansion_with_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15607,6 +15985,7 @@ fn test_application_ref_expansion_with_number_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15675,6 +16054,7 @@ fn test_application_ref_expansion_with_literal_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15725,6 +16105,7 @@ fn test_application_ref_expansion_with_numeric_literal_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15772,6 +16153,7 @@ fn test_application_ref_expansion_with_multiple_refs_to_same_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15826,6 +16208,7 @@ fn test_application_ref_expansion_with_boolean_literal_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -15877,12 +16260,14 @@ fn test_application_ref_expansion_with_union_body() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let r_param = TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let l_type = interner.intern(TypeData::TypeParameter(l_param));
     let r_type = interner.intern(TypeData::TypeParameter(r_param));
@@ -15932,12 +16317,14 @@ fn test_application_ref_expansion_with_intersection_body() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let b_param = TypeParamInfo {
         name: b_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let a_type = interner.intern(TypeData::TypeParameter(a_param));
     let b_type = interner.intern(TypeData::TypeParameter(b_param));
@@ -15991,6 +16378,7 @@ fn test_application_ref_expansion_with_this_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -16057,6 +16445,7 @@ fn test_application_ref_expansion_with_optional_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -16125,6 +16514,7 @@ fn test_application_ref_expansion_with_readonly_array_body() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -16173,6 +16563,7 @@ fn test_application_ref_expansion_with_mixed_modifiers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -16252,12 +16643,14 @@ fn test_application_ref_expansion_with_callable_body() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let r_param = TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let r_type = interner.intern(TypeData::TypeParameter(r_param));
@@ -16337,6 +16730,7 @@ fn test_application_ref_expansion_with_construct_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -16417,6 +16811,7 @@ fn test_application_ref_expansion_with_deeply_nested_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -16656,12 +17051,14 @@ fn test_conditional_infer_tuple_multiple_positions() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: b_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create extends pattern: [infer A, infer B]
@@ -16850,6 +17247,7 @@ fn test_conditional_infer_constraint_mismatch_edge() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create pattern { x: infer T extends string }
@@ -16891,6 +17289,7 @@ fn test_template_literal_hyphen_prefix_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -16899,6 +17298,7 @@ fn test_template_literal_hyphen_prefix_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `hello-${infer R}` ? R : never
@@ -16939,6 +17339,7 @@ fn test_template_literal_hyphen_two_part_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_first = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -16946,12 +17347,14 @@ fn test_template_literal_hyphen_two_part_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("Rest"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `${infer First}-${infer Rest}` ? [First, Rest] : never
@@ -17022,6 +17425,7 @@ fn test_template_literal_hyphen_suffix_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -17030,6 +17434,7 @@ fn test_template_literal_hyphen_suffix_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `${infer R}-handler` ? R : never
@@ -17070,6 +17475,7 @@ fn test_template_literal_hyphen_distributive_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -17078,6 +17484,7 @@ fn test_template_literal_hyphen_distributive_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `event-${infer R}` ? R : never
@@ -17123,6 +17530,7 @@ fn test_template_literal_hyphen_no_match_returns_never() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -17131,6 +17539,7 @@ fn test_template_literal_hyphen_no_match_returns_never() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `prefix-${infer R}` ? R : never
@@ -17171,6 +17580,7 @@ fn test_template_literal_prefix_infer_suffix_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("M");
@@ -17179,6 +17589,7 @@ fn test_template_literal_prefix_infer_suffix_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `start-${infer M}-end` ? M : never
@@ -17221,6 +17632,7 @@ fn test_template_literal_prefix_infer_suffix_multiple_hyphens() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("Route");
@@ -17229,6 +17641,7 @@ fn test_template_literal_prefix_infer_suffix_multiple_hyphens() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `api-${infer Route}-handler` ? Route : never
@@ -17271,6 +17684,7 @@ fn test_template_literal_prefix_infer_suffix_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("E");
@@ -17279,6 +17693,7 @@ fn test_template_literal_prefix_infer_suffix_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `on-${infer E}-event` ? E : never
@@ -17331,6 +17746,7 @@ fn test_template_literal_extract_numeric_id() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("Id");
@@ -17339,6 +17755,7 @@ fn test_template_literal_extract_numeric_id() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `user-${infer Id}` ? Id : never
@@ -17381,6 +17798,7 @@ fn test_template_literal_extract_version_numbers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_major = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -17388,12 +17806,14 @@ fn test_template_literal_extract_version_numbers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_minor = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("Minor"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `v${infer Major}.${infer Minor}` ? [Major, Minor] : never
@@ -17466,6 +17886,7 @@ fn test_template_literal_extract_index_from_array_key() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("Index");
@@ -17474,6 +17895,7 @@ fn test_template_literal_extract_index_from_array_key() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `item[${infer Index}]` ? Index : never
@@ -17524,6 +17946,7 @@ fn test_template_literal_extract_port_number() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("Port");
@@ -17532,6 +17955,7 @@ fn test_template_literal_extract_port_number() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `localhost:${infer Port}` ? Port : never
@@ -17573,6 +17997,7 @@ fn test_template_literal_extract_coordinates() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -17580,12 +18005,14 @@ fn test_template_literal_extract_coordinates() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_y = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("Y"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends `(${infer X},${infer Y})` ? [X, Y] : never
@@ -17723,6 +18150,7 @@ fn test_variadic_tuple_infer_rest_elements() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -17730,6 +18158,7 @@ fn test_variadic_tuple_infer_rest_elements() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [string, ...infer Rest]
@@ -17818,6 +18247,7 @@ fn test_variadic_tuple_infer_first_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_first = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -17825,6 +18255,7 @@ fn test_variadic_tuple_infer_first_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -17832,6 +18263,7 @@ fn test_variadic_tuple_infer_first_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [infer First, ...infer Rest]
@@ -17905,6 +18337,7 @@ fn test_variadic_tuple_empty_rest() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -17912,6 +18345,7 @@ fn test_variadic_tuple_empty_rest() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [string, ...infer R]
@@ -18376,6 +18810,7 @@ fn test_generator_function_return_type_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -18384,6 +18819,7 @@ fn test_generator_function_return_type_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: () => infer R
@@ -18439,6 +18875,7 @@ fn test_generator_function_yield_type_simulation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("Y");
@@ -18447,6 +18884,7 @@ fn test_generator_function_yield_type_simulation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern function returning: { value: infer Y; done: boolean }
@@ -18494,6 +18932,7 @@ fn test_generator_function_async_return() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -18502,6 +18941,7 @@ fn test_generator_function_async_return() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { then: (resolve: (value: infer R) => void) => void }
@@ -18566,6 +19006,7 @@ fn test_generator_function_next_param_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("A");
@@ -18574,6 +19015,7 @@ fn test_generator_function_next_param_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (arg: infer A) => any
@@ -18631,6 +19073,7 @@ fn test_generator_function_multiple_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("P");
@@ -18639,6 +19082,7 @@ fn test_generator_function_multiple_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (...args: infer P) => any
@@ -18713,6 +19157,7 @@ fn test_module_augmentation_object_merge() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // First object: { x: string }
@@ -18763,6 +19208,7 @@ fn test_module_augmentation_function_overload() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -18771,6 +19217,7 @@ fn test_module_augmentation_function_overload() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: () => infer R
@@ -18867,6 +19314,7 @@ fn test_module_augmentation_class_extension() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Class static: { new (): Instance }
@@ -18927,6 +19375,7 @@ fn test_module_augmentation_global_interface() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("E");
@@ -18935,6 +19384,7 @@ fn test_module_augmentation_global_interface() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: Array-like with custom method
@@ -18980,6 +19430,7 @@ fn test_array_covariance_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("E");
@@ -18988,6 +19439,7 @@ fn test_array_covariance_element_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: Array<infer E> - using array type
@@ -19026,6 +19478,7 @@ fn test_array_covariance_union_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("E");
@@ -19034,6 +19487,7 @@ fn test_array_covariance_union_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: Array<infer E>
@@ -19073,6 +19527,7 @@ fn test_array_covariance_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("E");
@@ -19081,6 +19536,7 @@ fn test_array_covariance_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: readonly E[] represented as array
@@ -19119,6 +19575,7 @@ fn test_array_covariance_nested() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("E");
@@ -19127,6 +19584,7 @@ fn test_array_covariance_nested() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: Array<Array<infer E>>
@@ -19167,6 +19625,7 @@ fn test_array_covariance_non_array() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("E");
@@ -19175,6 +19634,7 @@ fn test_array_covariance_non_array() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: Array<infer E>
@@ -19218,6 +19678,7 @@ fn test_return_type_generic_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (...args: any[]) => infer R
@@ -19243,6 +19704,7 @@ fn test_return_type_generic_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let generic_fn = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -19250,6 +19712,7 @@ fn test_return_type_generic_function() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -19290,6 +19753,7 @@ fn test_return_type_overloaded_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (...args: any[]) => infer R
@@ -19372,6 +19836,7 @@ fn test_return_type_type_predicate_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (...args: any[]) => infer R
@@ -19433,6 +19898,7 @@ fn test_parameters_rest_param_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern for Parameters: T extends (...args: infer P) => any ? P : never
@@ -19494,6 +19960,7 @@ fn test_parameters_optional_and_rest_combination() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (...args: infer P) => any
@@ -19580,6 +20047,7 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_fn = interner.function(FunctionShape {
@@ -19604,12 +20072,14 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let source_fn = interner.function(FunctionShape {
@@ -19619,12 +20089,14 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
         ],
         params: vec![
@@ -19678,6 +20150,7 @@ fn test_constructor_parameters_basic() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern for ConstructorParameters: T extends new (...args: infer P) => any ? P : never
@@ -19752,6 +20225,7 @@ fn test_constructor_parameters_callable_construct_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: new (...args: infer P) => any
@@ -19825,6 +20299,7 @@ fn test_constructor_parameters_callable_construct_signature_with_properties() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_ctor = interner.function(FunctionShape {
@@ -19899,6 +20374,7 @@ fn test_return_type_union_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -19907,6 +20383,7 @@ fn test_return_type_union_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: T extends (...args: any[]) => infer R ? R : never
@@ -20158,12 +20635,14 @@ fn test_infer_tuple_swap_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [infer A, infer B]
@@ -20226,12 +20705,14 @@ fn test_infer_tuple_swap_second_position() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [infer A, infer B]
@@ -20294,12 +20775,14 @@ fn test_infer_function_signature_param_and_return() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (x: infer P) => infer R
@@ -20370,12 +20853,14 @@ fn test_infer_function_multiple_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_b_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (a: infer A, b: infer B) => any
@@ -20625,6 +21110,7 @@ fn test_infer_contravariant_single_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (x: infer P) => any
@@ -20686,6 +21172,7 @@ fn test_infer_contravariant_intersection_from_multiple_candidates() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (a: infer T, b: infer T) => any
@@ -20762,6 +21249,7 @@ fn test_infer_contravariant_callback_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Inner callback pattern: (x: infer T) => void
@@ -20859,12 +21347,14 @@ fn test_tuple_spread_infer_first_rest() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [infer F, ...infer R]
@@ -20994,6 +21484,7 @@ fn test_tuple_spread_length_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { length: infer L }
@@ -21275,6 +21766,7 @@ fn test_readonly_nested_object_top_level_only() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let mapped = MappedType {
@@ -21283,6 +21775,7 @@ fn test_readonly_nested_object_top_level_only() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_outer,
         name_type: None,
@@ -21343,6 +21836,7 @@ fn test_readonly_multiple_properties_nested() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let mapped = MappedType {
@@ -21351,6 +21845,7 @@ fn test_readonly_multiple_properties_nested() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_outer,
         name_type: None,
@@ -21408,6 +21903,7 @@ fn test_deep_readonly_pattern_structure() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let mapped = MappedType {
@@ -21416,6 +21912,7 @@ fn test_deep_readonly_pattern_structure() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_obj,
         name_type: None,
@@ -21461,6 +21958,7 @@ fn test_deep_readonly_manual_nested_application() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let inner_mapped = MappedType {
@@ -21469,6 +21967,7 @@ fn test_deep_readonly_manual_nested_application() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_inner,
         name_type: None,
@@ -21493,6 +21992,7 @@ fn test_deep_readonly_manual_nested_application() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let outer_mapped = MappedType {
@@ -21501,6 +22001,7 @@ fn test_deep_readonly_manual_nested_application() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_outer,
         name_type: None,
@@ -21555,6 +22056,7 @@ fn test_deep_readonly_with_array_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let mapped = MappedType {
@@ -21563,6 +22065,7 @@ fn test_deep_readonly_with_array_property() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_obj,
         name_type: None,
@@ -21612,6 +22115,7 @@ fn test_awaited_simple_promise() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { then: infer R }
@@ -21652,6 +22156,7 @@ fn test_awaited_nested_promise_one_level() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
@@ -21708,6 +22213,7 @@ fn test_awaited_union_of_promises() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
@@ -21743,6 +22249,7 @@ fn test_awaited_non_promise_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
@@ -21782,6 +22289,7 @@ fn test_awaited_mixed_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
@@ -21821,6 +22329,7 @@ fn test_infer_mapped_type_value_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: object with infer V as value type
@@ -21860,6 +22369,7 @@ fn test_infer_mapped_type_mixed_values() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { a: infer V, b: infer V }
@@ -21905,6 +22415,7 @@ fn test_infer_mapped_type_key_and_value() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern with infer in value position
@@ -21947,6 +22458,7 @@ fn test_infer_with_extends_constraint() {
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (x: infer U extends string) => any
@@ -22006,6 +22518,7 @@ fn test_infer_with_constraint_violation() {
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (x: infer U extends string) => any
@@ -22064,6 +22577,7 @@ fn test_infer_multiple_same_name_covariant() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Getter method returning infer R
@@ -22127,6 +22641,7 @@ fn test_infer_template_literal_prefix() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `prefix${infer Rest}`
@@ -22164,6 +22679,7 @@ fn test_infer_template_literal_suffix() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer Prefix}Suffix`
@@ -22200,6 +22716,7 @@ fn test_infer_template_literal_middle() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `start${infer Middle}end`
@@ -22238,6 +22755,7 @@ fn test_infer_template_literal_no_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `prefix${infer Rest}`
@@ -22576,6 +23094,7 @@ fn test_exclude_basic_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -22642,6 +23161,7 @@ fn test_extract_basic_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -22819,6 +23339,7 @@ fn test_distributive_conditional_with_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends string ? "yes" : "no"
@@ -22849,6 +23370,7 @@ fn test_non_distributive_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Wrap in tuple to make non-distributive
@@ -23083,6 +23605,7 @@ fn test_noinfer_in_function_param_position() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let hello_lit = interner.literal_string("hello");
@@ -23122,6 +23645,7 @@ fn test_noinfer_inference_priority() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_hello = interner.literal_string("hello");
@@ -23238,6 +23762,7 @@ fn test_noinfer_preserves_constraints() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // NoInfer<T> should still have the constraint information
@@ -23312,6 +23837,7 @@ fn test_noinfer_default_parameter() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let t_param = interner.intern(TypeData::TypeParameter(t_with_default));
@@ -23349,6 +23875,7 @@ fn test_noinfer_multiple_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -23356,6 +23883,7 @@ fn test_noinfer_multiple_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result_tuple = interner.tuple(vec![
@@ -23380,12 +23908,14 @@ fn test_noinfer_multiple_type_params() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
         ],
         params: vec![
@@ -23450,6 +23980,7 @@ fn test_noinfer_in_return_position() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let func = interner.function(FunctionShape {
@@ -23458,6 +23989,7 @@ fn test_noinfer_in_return_position() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -23493,6 +24025,7 @@ fn test_noinfer_conditional_true_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // When check passes, return NoInfer<T> = T
@@ -23525,6 +24058,7 @@ fn test_noinfer_with_infer_keyword() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: NoInfer<infer U> = infer U for matching purposes
@@ -23944,6 +24478,7 @@ fn test_required_mapped_type() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING, // keyof T
         name_type: None,
@@ -24110,6 +24645,7 @@ fn test_readonly_mapped_type() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -24312,6 +24848,7 @@ fn test_template_infer_prefix_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `prefix${infer Rest}`
@@ -24347,6 +24884,7 @@ fn test_template_infer_suffix_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer Start}Suffix`
@@ -24381,6 +24919,7 @@ fn test_template_infer_middle_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `start${infer Middle}end`
@@ -24417,6 +24956,7 @@ fn test_template_infer_no_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `prefix${infer Rest}`
@@ -24451,6 +24991,7 @@ fn test_template_multiple_infers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -24459,6 +25000,7 @@ fn test_template_multiple_infers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer A}-${infer B}`
@@ -24511,6 +25053,7 @@ fn test_template_three_infers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -24519,6 +25062,7 @@ fn test_template_three_infers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_c_name = interner.intern_string("C");
@@ -24527,6 +25071,7 @@ fn test_template_three_infers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer A}/${infer B}/${infer C}`
@@ -24584,6 +25129,7 @@ fn test_template_union_distribution_simple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: just `${infer X}` (matches any string)
@@ -24618,6 +25164,7 @@ fn test_template_union_prefix_distribution() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `get${infer Name}`
@@ -24656,6 +25203,7 @@ fn test_template_union_all_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `on${infer Event}`
@@ -24693,6 +25241,7 @@ fn test_template_constrained_infer_string() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer S extends string}`
@@ -24728,6 +25277,7 @@ fn test_template_constrained_infer_literal_union() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer S extends "a" | "b"}`
@@ -24764,6 +25314,7 @@ fn test_template_constrained_infer_violation() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer S extends "a" | "b"}`
@@ -24796,6 +25347,7 @@ fn test_template_constrained_prefix_infer() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `prefix${infer S extends string}`
@@ -24925,6 +25477,7 @@ fn test_omit_this_preserves_generics() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // After OmitThisParameter, type params remain
@@ -24935,12 +25488,14 @@ fn test_omit_this_preserves_generics() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
         ],
         params: vec![ParamInfo {
@@ -25312,6 +25867,7 @@ fn test_instance_type_with_generics() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let container = interner.object(vec![PropertyInfo::new(
@@ -25325,6 +25881,7 @@ fn test_instance_type_with_generics() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -25507,6 +26064,7 @@ fn test_distributive_large_union_15_members() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -25669,6 +26227,7 @@ fn test_nested_distributive_with_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { a: infer A }
@@ -25881,6 +26440,7 @@ fn test_never_filtering_exclude_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -25992,6 +26552,7 @@ fn test_awaited_basic_promise() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26024,6 +26585,7 @@ fn test_awaited_promise_number() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26071,12 +26633,14 @@ fn test_awaited_thenable_matches_optional_onfulfilled_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
         name: infer_rest_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let pattern_then = interner.function(FunctionShape {
         params: vec![
@@ -26124,6 +26688,7 @@ fn test_awaited_nested_promise() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26166,6 +26731,7 @@ fn test_awaited_string_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26197,6 +26763,7 @@ fn test_awaited_number_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26226,6 +26793,7 @@ fn test_awaited_null_undefined_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26271,6 +26839,7 @@ fn test_awaited_promise_union_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26322,6 +26891,7 @@ fn test_awaited_mixed_promise_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26374,6 +26944,7 @@ fn test_awaited_promise_void() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26405,6 +26976,7 @@ fn test_awaited_promise_never() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26436,6 +27008,7 @@ fn test_awaited_promise_any() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26470,6 +27043,7 @@ fn test_awaited_promise_object() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26502,6 +27076,7 @@ fn test_awaited_promise_array() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26540,6 +27115,7 @@ fn test_awaited_triple_nested() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
@@ -26644,6 +27220,7 @@ fn test_recursive_type_linked_list() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -27009,6 +27586,7 @@ fn test_mutually_recursive_types_request_response() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -27431,6 +28009,7 @@ fn test_infer_optional_property_present() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { prop?: infer P }
@@ -27470,6 +28049,7 @@ fn test_infer_optional_property_missing() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { prop?: infer P }
@@ -27506,6 +28086,7 @@ fn test_infer_optional_property_with_undefined() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { prop?: infer P }
@@ -27546,6 +28127,7 @@ fn test_infer_with_default_type_used() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { prop: infer P = string }
@@ -27584,6 +28166,7 @@ fn test_infer_with_default_type_fallback() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { a: infer P = string }
@@ -27624,6 +28207,7 @@ fn test_infer_with_default_and_constraint() {
         constraint: Some(TypeId::OBJECT),
         default: Some(empty_object),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { prop: infer P extends object = {} }
@@ -27667,6 +28251,7 @@ fn test_infer_discriminated_union_kind() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { kind: infer K }
@@ -27715,6 +28300,7 @@ fn test_infer_discriminated_union_with_extra_props() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_d_name = interner.intern_string("D");
@@ -27723,6 +28309,7 @@ fn test_infer_discriminated_union_with_extra_props() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { type: infer T, data: infer D }
@@ -27820,6 +28407,7 @@ fn test_multiple_infers_both_constrained() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -27828,6 +28416,7 @@ fn test_multiple_infers_both_constrained() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (a: infer A extends string, b: infer B extends number) => any
@@ -27921,6 +28510,7 @@ fn test_multiple_infers_constraint_violation() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -27929,6 +28519,7 @@ fn test_multiple_infers_constraint_violation() {
         constraint: Some(TypeId::STRING), // Constraint: string
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (a: infer A extends string, b: infer B extends string) => any
@@ -28020,6 +28611,7 @@ fn test_multiple_infers_same_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_y_name = interner.intern_string("Y");
@@ -28028,6 +28620,7 @@ fn test_multiple_infers_same_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { a: infer X extends string, b: infer Y extends string }
@@ -28083,6 +28676,7 @@ fn test_multiple_infers_different_constraints() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_n_name = interner.intern_string("N");
@@ -28091,6 +28685,7 @@ fn test_multiple_infers_different_constraints() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -28099,6 +28694,7 @@ fn test_multiple_infers_different_constraints() {
         constraint: Some(TypeId::BOOLEAN),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern
@@ -28855,6 +29451,7 @@ fn test_string_template_infer_prefix_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.template_literal(vec![
@@ -28888,6 +29485,7 @@ fn test_string_template_infer_suffix_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.template_literal(vec![
@@ -28921,6 +29519,7 @@ fn test_string_template_infer_middle_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.template_literal(vec![
@@ -28955,6 +29554,7 @@ fn test_string_template_infer_no_match_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.template_literal(vec![
@@ -28987,6 +29587,7 @@ fn test_template_infer_two_parts() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -28995,6 +29596,7 @@ fn test_template_infer_two_parts() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.template_literal(vec![
@@ -29042,6 +29644,7 @@ fn test_template_infer_union_distributive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.template_literal(vec![
@@ -29098,6 +29701,7 @@ fn test_template_multi_segment_extraction() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern = interner.template_literal(vec![
@@ -29277,6 +29881,7 @@ fn test_literal_matches_template_via_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let template = interner.template_literal(vec![
@@ -29361,6 +29966,7 @@ fn test_mapped_type_uppercase_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -29420,6 +30026,7 @@ fn test_mapped_type_template_literal_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -29870,6 +30477,7 @@ fn test_satisfies_with_generic_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let source_func = interner.function(FunctionShape {
@@ -29878,6 +30486,7 @@ fn test_satisfies_with_generic_function() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo::required(x_name, t_param)],
         this_type: None,
@@ -29893,6 +30502,7 @@ fn test_satisfies_with_generic_function() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo::required(x_name, t_param)],
         this_type: None,
@@ -29985,6 +30595,7 @@ fn test_noinfer_blocks_inference_in_target() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let hello_lit = interner.literal_string("hello");
@@ -30105,6 +30716,7 @@ fn test_noinfer_contains_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
@@ -31338,6 +31950,7 @@ fn test_pick_basic() {
         constraint: Some(pick_keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31386,6 +31999,7 @@ fn test_pick_single_key() {
         constraint: Some(lit_x),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31441,6 +32055,7 @@ fn test_pick_preserves_optional() {
         constraint: Some(lit_a),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31503,6 +32118,7 @@ fn test_omit_basic() {
         constraint: Some(remaining_keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31558,6 +32174,7 @@ fn test_omit_union_keys() {
         constraint: Some(remaining_keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31605,6 +32222,7 @@ fn test_omit_single_key() {
         constraint: Some(lit_x),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31654,6 +32272,7 @@ fn test_pick_with_conditional_keys() {
         constraint: Some(extracted_keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31809,6 +32428,7 @@ fn test_omit_all_keys() {
         constraint: Some(TypeId::NEVER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31850,6 +32470,7 @@ fn test_pick_no_keys() {
         constraint: Some(TypeId::NEVER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31892,6 +32513,7 @@ fn test_pick_with_readonly() {
         constraint: Some(lit_a),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -31953,6 +32575,7 @@ fn test_omit_preserves_readonly() {
         constraint: Some(lit_a),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -32038,6 +32661,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -32577,6 +33201,7 @@ fn test_deferred_unresolved_type_param_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_true = interner.literal_string("true");
@@ -32608,6 +33233,7 @@ fn test_deferred_unresolved_type_param_extends() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_true = interner.literal_string("true");
@@ -32639,6 +33265,7 @@ fn test_deferred_constrained_type_param() {
         constraint: Some(TypeId::STRING), // T extends string
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_true = interner.literal_string("true");
@@ -32670,6 +33297,7 @@ fn test_deferred_nested_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let u_name = interner.intern_string("U");
@@ -32678,6 +33306,7 @@ fn test_deferred_nested_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_1 = interner.literal_number(1.0);
@@ -32718,6 +33347,7 @@ fn test_partially_deferred_outer_resolves() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_1 = interner.literal_number(1.0);
@@ -32758,6 +33388,7 @@ fn test_deferred_with_default_type_param() {
         constraint: None,
         default: Some(TypeId::STRING), // default to string
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_true = interner.literal_string("true");
@@ -32794,6 +33425,7 @@ fn test_distributive_large_union_basic() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_true = interner.literal_boolean(true);
@@ -32842,6 +33474,7 @@ fn test_distributive_large_union_all_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -32882,6 +33515,7 @@ fn test_distributive_large_union_none_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -32920,6 +33554,7 @@ fn test_distributive_nested_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -32975,6 +33610,7 @@ fn test_distributive_with_infer_filter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -32983,6 +33619,7 @@ fn test_distributive_with_infer_filter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_array = interner.array(infer_r);
@@ -33027,6 +33664,7 @@ fn test_distributive_with_mapped_branches() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -33081,6 +33719,7 @@ fn test_distributive_with_infer_in_true_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("V");
@@ -33089,6 +33728,7 @@ fn test_distributive_with_infer_in_true_branch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let value_atom = interner.intern_string("value");
@@ -33136,6 +33776,7 @@ fn test_distributive_exclude_utility() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -33175,6 +33816,7 @@ fn test_distributive_extract_utility() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -33215,6 +33857,7 @@ fn test_distributive_non_nullable_utility() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let null_or_undefined = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
@@ -33262,6 +33905,7 @@ fn test_distributive_deeply_nested_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_s = interner.literal_string("s");
@@ -33330,6 +33974,7 @@ fn test_distributive_with_never_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_fallback = interner.literal_string("fallback");
@@ -33365,6 +34010,7 @@ fn test_distributive_with_any_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_1 = interner.literal_number(1.0);
@@ -33402,6 +34048,7 @@ fn test_distributive_single_member_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -33438,6 +34085,7 @@ fn test_distributive_with_duplicate_results() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -33486,6 +34134,7 @@ fn test_distributive_preserves_tuple_structure() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -33494,6 +34143,7 @@ fn test_distributive_preserves_tuple_structure() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_tuple = interner.tuple(vec![TupleElement {
@@ -33549,6 +34199,7 @@ fn test_distributive_with_constrained_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -33557,6 +34208,7 @@ fn test_distributive_with_constrained_infer() {
         constraint: Some(TypeId::STRING), // R extends string constraint
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_array = interner.array(infer_r);
@@ -33600,6 +34252,7 @@ fn test_distributive_intrinsic_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_obj = interner.literal_string("obj");
@@ -33646,6 +34299,7 @@ fn test_distributive_function_types() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_func = interner.literal_string("func");
@@ -33722,6 +34376,7 @@ fn test_distributive_readonly_array() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -33730,6 +34385,7 @@ fn test_distributive_readonly_array() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_array = interner.intern(TypeData::ReadonlyType(interner.array(infer_r)));
@@ -33779,6 +34435,7 @@ fn test_distributive_literal_union_exhaustive() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -33843,6 +34500,7 @@ fn test_distributive_multiple_arrays() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -33851,6 +34509,7 @@ fn test_distributive_multiple_arrays() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // R[][] = Array<Array<R>>
@@ -33898,6 +34557,7 @@ fn test_distributive_keyof_filter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -33945,6 +34605,7 @@ fn test_distributive_mixed_primitive_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_primitive = interner.literal_string("primitive");
@@ -33998,6 +34659,7 @@ fn test_distributive_very_large_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_yes = interner.literal_string("yes");
@@ -34048,6 +34710,7 @@ fn test_distributive_all_to_same_result() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_primitive = interner.literal_string("primitive");
@@ -34090,6 +34753,7 @@ fn test_distributive_identity_preservation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -34129,6 +34793,7 @@ fn test_distributive_two_infers_different_positions() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -34137,6 +34802,7 @@ fn test_distributive_two_infers_different_positions() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -34145,6 +34811,7 @@ fn test_distributive_two_infers_different_positions() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let prop_a = interner.intern_string("a");
@@ -34242,6 +34909,7 @@ fn test_distributive_infer_return_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -34250,6 +34918,7 @@ fn test_distributive_infer_return_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -34318,6 +34987,7 @@ fn test_distributive_union_of_unions() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_1 = interner.literal_number(1.0);
@@ -34365,6 +35035,7 @@ fn test_distributive_boolean_literals() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_true = interner.literal_boolean(true);
@@ -34418,6 +35089,7 @@ fn test_distributive_with_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -34453,6 +35125,7 @@ fn test_distributive_partial_object_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let x_atom = interner.intern_string("x");
@@ -34503,6 +35176,7 @@ fn test_distributive_hundred_member_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_match = interner.literal_string("match");
@@ -34553,6 +35227,7 @@ fn test_distributive_triple_nested_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -34627,6 +35302,7 @@ fn test_distributive_no_false_branch_matches() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond = ConditionalType {
@@ -34665,6 +35341,7 @@ fn test_distributive_empty_object_match() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_object_like = interner.literal_string("object-like");
@@ -34715,6 +35392,7 @@ fn test_distributive_literal_type_filter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_a = interner.literal_string("a");
@@ -34760,6 +35438,7 @@ fn test_distributive_numeric_literal_filter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_low = interner.literal_string("low");
@@ -34826,6 +35505,7 @@ fn test_distributive_with_void() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_void = interner.literal_string("void");
@@ -34870,6 +35550,7 @@ fn test_distributive_chained_conditionals() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_str = interner.literal_string("str");
@@ -34921,6 +35602,7 @@ fn test_distributive_with_intersection_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let a_prop = interner.intern_string("a");
@@ -34973,6 +35655,7 @@ fn test_distributive_with_bigint_literals() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_bigint = interner.literal_string("bigint");
@@ -35012,6 +35695,7 @@ fn test_distributive_filter_nullables() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
@@ -35055,6 +35739,7 @@ fn test_distributive_with_symbol() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_sym = interner.literal_string("symbol");
@@ -35090,6 +35775,7 @@ fn test_distributive_with_object_keyword() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_obj = interner.literal_string("object");
@@ -35138,6 +35824,7 @@ fn test_distributive_infer_with_fallback() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let v_infer = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -35145,6 +35832,7 @@ fn test_distributive_infer_with_fallback() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let value_prop = interner.intern_string("value");
@@ -35188,6 +35876,7 @@ fn test_distributive_tuple_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let first_infer = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -35195,6 +35884,7 @@ fn test_distributive_tuple_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let rest_infer = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -35202,6 +35892,7 @@ fn test_distributive_tuple_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_tuple = interner.tuple(vec![
@@ -35275,6 +35966,7 @@ fn test_distributive_with_literal_numbers() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let one = interner.literal_number(1.0);
@@ -35318,6 +36010,7 @@ fn test_distributive_with_boolean_literal_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_true = interner.literal_boolean(true);
@@ -35359,6 +36052,7 @@ fn test_distributive_readonly_array_unwrap() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let u_infer = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -35366,6 +36060,7 @@ fn test_distributive_readonly_array_unwrap() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let readonly_array = interner.intern(TypeData::ReadonlyType(interner.array(u_infer)));
@@ -35413,6 +36108,7 @@ fn test_distributive_promise_like_unwrap() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let v_infer = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -35420,6 +36116,7 @@ fn test_distributive_promise_like_unwrap() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Callback type: (value: V) => any
@@ -35653,6 +36350,7 @@ fn test_return_type_conditional_return() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let cond_return = interner.conditional(ConditionalType {
@@ -35669,6 +36367,7 @@ fn test_return_type_conditional_return() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -35947,6 +36646,7 @@ fn test_return_type_with_infer_in_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -35954,6 +36654,7 @@ fn test_return_type_with_infer_in_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let _any_array = interner.array(TypeId::ANY);
@@ -36010,6 +36711,7 @@ fn test_parameters_with_infer_in_conditional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let func_pattern = interner.function(FunctionShape {
@@ -36091,6 +36793,7 @@ fn test_return_type_generic_with_constraint() {
         constraint: Some(func_type),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T has constraint to function type
@@ -36114,6 +36817,7 @@ fn test_parameters_variadic_tuple_type() {
         constraint: Some(t_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Variadic tuple: [...T, string]
@@ -36262,6 +36966,7 @@ fn test_return_type_mapped_type_method() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let keyof_t = interner.intern(TypeData::KeyOf(t_param));
@@ -36270,6 +36975,7 @@ fn test_return_type_mapped_type_method() {
         constraint: Some(keyof_t),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_param = interner.intern(TypeData::TypeParameter(k_param_info));
 
@@ -36448,6 +37154,7 @@ fn test_constructor_parameters_with_generics() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let container = interner.object(vec![PropertyInfo::new(
@@ -36465,6 +37172,7 @@ fn test_constructor_parameters_with_generics() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             }],
             params: vec![ParamInfo {
                 name: Some(interner.intern_string("value")),
@@ -36568,6 +37276,7 @@ fn test_nonnullable_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let null_or_undefined = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
@@ -36846,6 +37555,7 @@ fn test_non_distributive_wrapped_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let wrapped_t = interner.tuple(vec![TupleElement {
@@ -36959,6 +37669,7 @@ fn test_distributive_infer_in_extends() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let array_pattern = interner.array(infer_u);
@@ -36994,6 +37705,7 @@ fn test_distributive_multiple_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -37001,6 +37713,7 @@ fn test_distributive_multiple_type_params() {
         constraint: Some(TypeId::STRING), // U extends string
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let lit_yes = interner.literal_string("yes");
@@ -37166,6 +37879,7 @@ fn test_infer_variadic_tuple_head() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_t_name = interner.intern_string("T");
@@ -37174,6 +37888,7 @@ fn test_infer_variadic_tuple_head() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [infer H, ...infer T]
@@ -37238,6 +37953,7 @@ fn test_infer_variadic_tuple_tail() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_l_name = interner.intern_string("L");
@@ -37246,6 +37962,7 @@ fn test_infer_variadic_tuple_tail() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [...infer H, infer L]
@@ -37310,6 +38027,7 @@ fn test_infer_variadic_tuple_middle() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_m_name = interner.intern_string("M");
@@ -37318,6 +38036,7 @@ fn test_infer_variadic_tuple_middle() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_l_name = interner.intern_string("L");
@@ -37326,6 +38045,7 @@ fn test_infer_variadic_tuple_middle() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [infer F, ...infer M, infer L]
@@ -37406,6 +38126,7 @@ fn test_infer_from_overloaded_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (...args: any[]) => infer R
@@ -37487,6 +38208,7 @@ fn test_infer_from_construct_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { new (): infer T }
@@ -37553,6 +38275,7 @@ fn test_infer_with_index_access_result() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { prop: infer P }
@@ -37597,6 +38320,7 @@ fn test_infer_from_index_signature_value() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { [k: string]: infer V }
@@ -37655,6 +38379,7 @@ fn test_infer_promise_like_unwrap() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { then: (onfulfilled: (value: infer T) => any) => any }
@@ -37757,6 +38482,7 @@ fn test_infer_from_mapped_type_output() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { a: infer V; b: infer V }
@@ -37795,6 +38521,7 @@ fn test_infer_same_name_different_values() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { a: infer V; b: infer V }
@@ -37837,6 +38564,7 @@ fn test_infer_with_keyof_constraint() {
         constraint: Some(TypeId::STRING), // K extends string
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { [key: infer K]: number } where K extends string
@@ -37895,6 +38623,7 @@ fn test_infer_from_branded_intersection() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { __brand: infer B }
@@ -37939,6 +38668,7 @@ fn test_infer_ignores_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { readonly prop: infer T }
@@ -37986,6 +38716,7 @@ fn test_infer_optional_tuple_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -37994,6 +38725,7 @@ fn test_infer_optional_tuple_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: [infer A, infer B?]
@@ -38240,6 +38972,7 @@ fn test_template_literal_pattern_infer_numeric() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_template = interner.template_literal(vec![
@@ -38761,12 +39494,14 @@ fn test_callable_param_infer_union_of_signatures() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: (x: infer P) => any
@@ -38836,12 +39571,14 @@ fn test_callable_param_infer_overloaded_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: { (x: infer P): any }
@@ -38927,12 +39664,14 @@ fn test_callable_param_infer_mixed_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -38991,18 +39730,21 @@ fn test_callable_return_and_param_infer_separately() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
         name: p_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -39089,18 +39831,21 @@ fn test_callable_multiple_params_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
         name: a_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: b_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -39199,6 +39944,7 @@ fn test_mapped_type_homomorphic_preserves_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_source,
         name_type: None,
@@ -39229,6 +39975,7 @@ fn test_mapped_type_homomorphic_preserves_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_source,
         name_type: None,
@@ -39261,6 +40008,7 @@ fn test_mapped_type_key_remap_to_getter_setter() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: Some(remapped_keys),
@@ -39289,6 +40037,7 @@ fn test_mapped_type_key_remap_filter_by_type() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: Some(key_name),
@@ -39318,6 +40067,7 @@ fn test_mapped_type_nested_mapped() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: outer_keys,
         name_type: None,
@@ -39354,6 +40104,7 @@ fn test_mapped_type_with_conditional_template() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -39390,6 +40141,7 @@ fn test_mapped_type_union_key_constraint() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_union,
         name_type: None,
@@ -39426,6 +40178,7 @@ fn test_mapped_type_intersection_source() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_intersection,
         name_type: None,
@@ -39453,6 +40206,7 @@ fn test_mapped_type_key_remap_exclude_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: Some(key_public),
@@ -39480,6 +40234,7 @@ fn test_mapped_type_deep_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -39505,6 +40260,7 @@ fn test_mapped_type_pick_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key_a,
         name_type: None,
@@ -39538,6 +40294,7 @@ fn test_mapped_type_record_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -39571,6 +40328,7 @@ fn test_mapped_type_mutable_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -39603,6 +40361,7 @@ fn test_mapped_type_required_pattern() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keys,
         name_type: None,
@@ -39631,6 +40390,7 @@ fn test_mapped_type_empty_keys() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::NEVER,
         name_type: None,
@@ -39657,6 +40417,7 @@ fn test_mapped_type_single_literal_key() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: key,
         name_type: None,
@@ -39690,12 +40451,14 @@ fn test_infer_return_void_vs_undefined() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -39751,12 +40514,14 @@ fn test_infer_return_promise_like() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -39828,12 +40593,14 @@ fn test_infer_return_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -39892,12 +40659,14 @@ fn test_infer_return_never() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
         name: r_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let pattern_fn = interner.function(FunctionShape {
@@ -41003,6 +41772,7 @@ fn test_conditional_infer_template_with_keyof_result() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("K");
@@ -41011,6 +41781,7 @@ fn test_conditional_infer_template_with_keyof_result() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `get${infer K}Done`
@@ -41090,6 +41861,7 @@ fn test_nested_conditional_template_literal_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_r_name = interner.intern_string("R");
@@ -41098,6 +41870,7 @@ fn test_nested_conditional_template_literal_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_s_name = interner.intern_string("S");
@@ -41106,6 +41879,7 @@ fn test_nested_conditional_template_literal_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Outer pattern: `prefix${infer R}`
@@ -41163,6 +41937,7 @@ fn test_template_literal_conditional_extends_template() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `prefix${infer R}`
@@ -41229,6 +42004,7 @@ fn test_template_literal_infer_with_special_chars() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern with special character
@@ -41265,6 +42041,7 @@ fn test_complex_keyof_template_infer_composition() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_k_name = interner.intern_string("K");
@@ -41273,6 +42050,7 @@ fn test_complex_keyof_template_infer_composition() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `get${infer K}`
@@ -41348,6 +42126,7 @@ fn test_template_literal_two_infers_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -41356,6 +42135,7 @@ fn test_template_literal_two_infers_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -41364,6 +42144,7 @@ fn test_template_literal_two_infers_union_input() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer A}-${infer B}`
@@ -41420,6 +42201,7 @@ fn test_template_literal_constrained_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_name = interner.intern_string("R");
@@ -41428,6 +42210,7 @@ fn test_template_literal_constrained_infer() {
         constraint: Some(TypeId::STRING), // Constrained to string
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `prefix${infer R extends string}`
@@ -41574,6 +42357,7 @@ fn test_distributive_conditional_template_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer R}x`
@@ -41619,6 +42403,7 @@ fn test_non_distributive_conditional_template_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `${infer R}x`
@@ -41739,6 +42524,7 @@ fn test_template_literal_mapped_type_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create a template literal pattern like `get${infer S}`
@@ -41768,6 +42554,7 @@ fn test_template_literal_multiple_infers_complex_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_a_name = interner.intern_string("A");
@@ -41776,6 +42563,7 @@ fn test_template_literal_multiple_infers_complex_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let infer_b_name = interner.intern_string("B");
@@ -41784,6 +42572,7 @@ fn test_template_literal_multiple_infers_complex_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `start${infer A}-middle${infer B}-end`
@@ -41867,6 +42656,7 @@ fn test_template_literal_matches_template_literal() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Pattern: `foo${infer R}`
@@ -42079,6 +42869,7 @@ fn test_homomorphic_mapped_keyof_preserves_optional() {
         constraint: Some(keyof_source),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -42153,6 +42944,7 @@ fn test_homomorphic_mapped_post_instantiation_preserves_optional() {
         constraint: Some(union_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -42203,6 +42995,7 @@ fn test_homomorphic_mapped_keyof_preserves_readonly() {
         constraint: Some(keyof_source),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
     let index_access = interner.intern(TypeData::IndexAccess(source, key_param_id));
@@ -42240,6 +43033,7 @@ fn test_application_homomorphic_mapped_type_primitive_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -42250,6 +43044,7 @@ fn test_application_homomorphic_mapped_type_primitive_passthrough() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
     let keyof_t = interner.intern(TypeData::KeyOf(t_type));
@@ -42319,6 +43114,7 @@ fn test_application_homomorphic_mapped_type_object_expands() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -42329,6 +43125,7 @@ fn test_application_homomorphic_mapped_type_object_expands() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
     let keyof_t = interner.intern(TypeData::KeyOf(t_type));
@@ -42450,6 +43247,7 @@ fn test_tuple_evaluates_index_access_element() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,

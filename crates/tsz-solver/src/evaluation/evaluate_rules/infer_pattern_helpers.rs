@@ -1907,6 +1907,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.bind_infer(
                     &TypeParamInfo {
                         is_const: false,
+                        variance: crate::TypeParamVariance::None,
                         name: infer_name,
                         constraint: infer_constraint,
                         default: None,
@@ -1926,6 +1927,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.bind_infer(
                             &TypeParamInfo {
                                 is_const: false,
+                                variance: crate::TypeParamVariance::None,
                                 name: infer_name,
                                 constraint: infer_constraint,
                                 default: None,
@@ -1940,6 +1942,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.bind_infer(
                     &TypeParamInfo {
                         is_const: false,
+                        variance: crate::TypeParamVariance::None,
                         name: infer_name,
                         constraint: infer_constraint,
                         default: None,

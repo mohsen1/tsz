@@ -38,6 +38,7 @@ fn test_mapped_type_simple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     // Create mapped type: { [K in Keys]: number }
@@ -86,6 +87,7 @@ fn test_mapped_type_with_keyof() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let mapped_type = MappedType {
@@ -136,6 +138,7 @@ fn test_homomorphic_mapped_preserves_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -192,6 +195,7 @@ fn test_homomorphic_mapped_preserves_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -251,6 +255,7 @@ fn test_mapped_type_add_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -300,6 +305,7 @@ fn test_mapped_type_remove_optional() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -353,6 +359,7 @@ fn test_mapped_type_add_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -402,6 +409,7 @@ fn test_mapped_type_remove_readonly() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -451,6 +459,7 @@ fn test_mapped_type_key_remap_with_template_literal() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -507,6 +516,7 @@ fn test_mapped_type_empty_object() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let mapped_type = MappedType {
@@ -548,6 +558,7 @@ fn test_mapped_type_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -603,6 +614,7 @@ fn test_mapped_type_preserves_property_order() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let mapped_type = MappedType {
@@ -672,6 +684,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_type = interner.type_param(k_info);
     let t_param = TypeParamInfo {
@@ -679,6 +692,7 @@ fn test_mapped_type_array_remap_preserves_array_base_display_order() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.type_param(t_param);
 
@@ -833,6 +847,7 @@ fn test_mapped_type_enum_union_constraint_with_overlapping_keys() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let mapped_type = MappedType {
@@ -899,6 +914,7 @@ fn test_identity_name_type_preserves_array_structure() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -951,6 +967,7 @@ fn test_non_identity_name_type_degrades_to_object() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -962,6 +979,7 @@ fn test_non_identity_name_type_degrades_to_object() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let other_param = interner.intern(TypeData::TypeParameter(other_param_info));
 
@@ -1001,6 +1019,7 @@ fn test_mapped_type_property_is_readonly_with_add_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let mapped_type = MappedType {
@@ -1033,6 +1052,7 @@ fn test_mapped_type_property_is_not_readonly_without_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let mapped_type = MappedType {
@@ -1062,6 +1082,7 @@ fn test_mapped_type_property_is_not_readonly_with_remove_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let mapped_type = MappedType {
@@ -1090,6 +1111,7 @@ fn test_is_mapped_type_with_readonly_modifier() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     // With +readonly
@@ -1146,6 +1168,7 @@ fn test_is_readonly_index_signature_on_mapped_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     let readonly_mapped = MappedType {

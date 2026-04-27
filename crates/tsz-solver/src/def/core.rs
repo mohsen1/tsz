@@ -1572,6 +1572,7 @@ impl DefinitionStore {
                             constraint: None,
                             default: None,
                             is_const: false,
+                            variance: crate::TypeParamVariance::None,
                         }
                     })
                     .collect()

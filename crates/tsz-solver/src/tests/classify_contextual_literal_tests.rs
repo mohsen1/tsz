@@ -17,6 +17,7 @@ fn type_param(interner: &TypeInterner, name: &str, constraint: Option<TypeId>) -
         constraint,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }))
 }
 

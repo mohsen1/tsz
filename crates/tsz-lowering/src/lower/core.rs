@@ -1221,6 +1221,7 @@ impl<'a> TypeLowering<'a> {
             // self-referential constraints like `Exclude<keyof P, ...>` can resolve P.
             let placeholder = TypeParamInfo {
                 is_const,
+                variance: tsz_solver::TypeParamVariance::None,
                 name,
                 constraint: None,
                 default: None,
@@ -1279,6 +1280,7 @@ impl<'a> TypeLowering<'a> {
 
         Some(TypeParamInfo {
             is_const,
+            variance: tsz_solver::TypeParamVariance::None,
             name,
             constraint,
             default,

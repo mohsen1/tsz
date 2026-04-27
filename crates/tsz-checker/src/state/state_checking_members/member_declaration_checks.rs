@@ -567,6 +567,7 @@ impl<'a> CheckerState<'a> {
                             constraint: None,
                             default: None,
                             is_const: false,
+                            variance: tsz_solver::TypeParamVariance::None,
                         });
                         let previous = self
                             .ctx
@@ -657,6 +658,7 @@ impl<'a> CheckerState<'a> {
                             constraint: None,
                             default: None,
                             is_const: false,
+                            variance: tsz_solver::TypeParamVariance::None,
                         });
                         let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
                         param_binding = Some((name, previous));
@@ -767,6 +769,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: tsz_solver::TypeParamVariance::None,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, false));

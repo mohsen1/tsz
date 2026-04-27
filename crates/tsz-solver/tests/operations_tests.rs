@@ -243,6 +243,7 @@ fn test_generic_call_resets_constraint_step_budget() {
     let tp_name = interner.intern_string("T");
     let tp = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: tp_name,
         constraint: None,
         default: None,
@@ -301,6 +302,7 @@ fn test_generic_call_widening_falls_back_when_constraint_violated() {
     let tp_name = interner.intern_string("T");
     let tp = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: tp_name,
         constraint: Some(constraint),
         default: None,
@@ -371,6 +373,7 @@ fn test_generic_call_widening_applies_when_constraint_satisfied() {
     let tp_name = interner.intern_string("T");
     let tp = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: tp_name,
         constraint: Some(constraint),
         default: None,
@@ -437,6 +440,7 @@ fn test_generic_call_widens_fresh_object_union_inferred_type() {
 
     let t_param = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
@@ -538,12 +542,14 @@ fn test_generic_call_uninferred_callback_param_mismatch_uses_unknown() {
 
     let t_param = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: interner.intern_string("T"),
         constraint: None,
         default: None,
     };
     let u_param = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
@@ -856,6 +862,7 @@ fn test_binary_equality_generic_constraint_disjoint_still_boolean() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
@@ -872,6 +879,7 @@ fn test_binary_overlap_generic_constraint_overlap() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::STRING, "===");
@@ -891,6 +899,7 @@ fn test_binary_overlap_unconstrained_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
@@ -912,6 +921,7 @@ fn test_binary_equality_union_constraint_disjoint_still_boolean() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::BOOLEAN, "===");
@@ -929,6 +939,7 @@ fn test_binary_overlap_union_constraint_overlap() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let result = evaluator.evaluate(type_param, TypeId::NUMBER, "===");
@@ -1578,6 +1589,7 @@ fn make_array_test_env(
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -1590,6 +1602,7 @@ fn make_array_test_env(
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
     let map_callback = interner.function(FunctionShape {
@@ -2038,6 +2051,7 @@ fn test_property_access_array_indexof_preserves_nullable_element_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2098,6 +2112,7 @@ fn test_property_access_callable_array_indexof_preserves_nullable_element_type()
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2520,6 +2535,7 @@ fn test_call_generic_function_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2559,6 +2575,7 @@ fn test_call_generic_function_with_string() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2597,6 +2614,7 @@ fn test_call_generic_argument_type_mismatch_with_default() {
         constraint: None,
         default: Some(TypeId::NUMBER),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let param_type = interner.union(vec![t_type, TypeId::NUMBER]);
@@ -2640,6 +2658,7 @@ fn test_call_generic_direct_param_candidate_keeps_first_for_conflicting_literals
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2690,6 +2709,7 @@ fn test_call_generic_argument_count_mismatch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2747,6 +2767,7 @@ fn test_call_generic_rest_tuple_constraint_count_mismatch() {
         constraint: Some(tuple_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2805,6 +2826,7 @@ fn test_call_generic_default_rest_tuple_count_mismatch() {
         constraint: None,
         default: Some(tuple_default),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -2857,6 +2879,7 @@ fn test_call_generic_rest_excess_args_detected_when_shared_type_param() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let ts_type = interner.intern(TypeData::TypeParameter(ts_param));
 
@@ -2968,6 +2991,7 @@ fn test_call_generic_default_rest_tuple_optional_allows_empty() {
         constraint: None,
         default: Some(tuple_default),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3004,6 +3028,7 @@ fn test_call_generic_argument_type_mismatch_non_generic_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3058,6 +3083,7 @@ fn test_call_generic_callable_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3101,6 +3127,7 @@ fn test_call_generic_array_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -3140,6 +3167,7 @@ fn test_infer_call_signature_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3171,6 +3199,7 @@ fn test_infer_generic_function_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3204,6 +3233,7 @@ fn test_generic_call_resets_fixed_union_member_cache() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.type_param(t_param);
     let identity = interner.function(FunctionShape {
@@ -3240,6 +3270,7 @@ fn test_infer_generic_function_identity_widens_non_const_literal() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3273,6 +3304,7 @@ fn test_infer_generic_function_identity_preserves_const_type_param() {
         constraint: None,
         default: None,
         is_const: true,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3306,6 +3338,7 @@ fn test_infer_generic_function_this_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3358,6 +3391,7 @@ fn test_infer_generic_callable_param_from_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3426,6 +3460,7 @@ fn test_infer_generic_function_param_from_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3494,6 +3529,7 @@ fn test_infer_generic_function_param_from_overloaded_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3594,6 +3630,7 @@ fn test_infer_generic_function_from_union_call_or_construct_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3678,6 +3715,7 @@ fn test_infer_generic_final_argument_check_uses_non_strict_assignability() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3774,6 +3812,7 @@ fn test_infer_generic_object_with_contextual_callbacks_prefers_schema_property_t
         constraint: Some(schema_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -3890,6 +3929,7 @@ fn test_infer_generic_mixed_object_argument_infers_from_non_contextual_property(
         constraint: Some(schema_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4008,6 +4048,7 @@ fn test_infer_generic_callable_param_from_callable() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4082,6 +4123,7 @@ fn test_infer_generic_construct_signature_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4156,6 +4198,7 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let keyof_param = interner.intern(TypeData::KeyOf(t_type));
@@ -4195,12 +4238,14 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_param = TypeParamInfo {
         name: interner.intern_string("K"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
@@ -4245,6 +4290,7 @@ fn test_infer_generic_index_access_param_from_object_property_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4281,6 +4327,7 @@ fn test_infer_generic_template_literal_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4325,6 +4372,7 @@ fn test_infer_generic_conditional_param_from_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4366,6 +4414,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4374,6 +4423,7 @@ fn test_infer_generic_mapped_param_from_object_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_x = interner.literal_string("x");
     let key_y = interner.literal_string("y");
@@ -4423,12 +4473,14 @@ fn test_infer_generic_array_map() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
@@ -4509,6 +4561,7 @@ fn test_infer_generic_array_param_from_tuple_arg() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -4557,6 +4610,7 @@ fn test_infer_generic_readonly_array_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let readonly_array_t = interner.intern(TypeData::ReadonlyType(interner.array(t_type)));
@@ -4592,6 +4646,7 @@ fn test_infer_generic_readonly_tuple_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let readonly_tuple_t =
@@ -4638,6 +4693,7 @@ fn test_infer_generic_constructor_instantiation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4674,6 +4730,7 @@ fn test_infer_generic_application_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4711,6 +4768,7 @@ fn test_generic_call_uses_contextual_return_inference_for_application() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -4796,6 +4854,7 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let callback_t_type = interner.intern(TypeData::TypeParameter(callback_t_param));
     let generic_callback = interner.function(FunctionShape {
@@ -4826,6 +4885,7 @@ fn test_generic_callback_instantiation_preserves_parameter_conflicts() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let outer_t_type = interner.intern(TypeData::TypeParameter(outer_t_param));
     let expected_callback = interner.function(FunctionShape {
@@ -4900,6 +4960,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: Some(interner.array(TypeId::UNKNOWN)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tuple_t_type = interner.intern(TypeData::TypeParameter(tuple_t_param));
 
@@ -4908,6 +4969,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let return_t_type = interner.intern(TypeData::TypeParameter(return_t_param));
 
@@ -4954,6 +5016,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let a_type = interner.intern(TypeData::TypeParameter(a_param));
     let b_param = TypeParamInfo {
@@ -4961,6 +5024,7 @@ fn test_generic_rest_callback_instantiation_accepts_generic_binary_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let b_type = interner.intern(TypeData::TypeParameter(b_param));
     let generic_binary = interner.function(FunctionShape {
@@ -5049,6 +5113,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
         constraint: Some(c_type),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5154,6 +5219,7 @@ fn test_infer_generic_object_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5195,6 +5261,7 @@ fn test_infer_generic_optional_property_value() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5232,6 +5299,7 @@ fn test_infer_generic_optional_property_undefined_value() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5269,6 +5337,7 @@ fn test_infer_generic_optional_property_missing() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5307,6 +5376,7 @@ fn test_infer_generic_required_property_from_optional_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5345,6 +5415,7 @@ fn test_infer_generic_object_literal_repeated_property_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5389,6 +5460,7 @@ fn test_resolve_call_generic_object_literal_repeated_property_uses_first_propert
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5438,6 +5510,7 @@ fn test_infer_generic_required_property_missing_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5473,6 +5546,7 @@ fn test_infer_generic_readonly_property_mismatch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5511,6 +5585,7 @@ fn test_infer_generic_readonly_property_mismatch_with_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5571,6 +5646,7 @@ fn test_infer_generic_readonly_index_signature_mismatch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5629,6 +5705,7 @@ fn test_infer_generic_readonly_number_index_signature_mismatch() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5687,6 +5764,7 @@ fn test_infer_generic_method_property_bivariant_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5758,6 +5836,7 @@ fn test_infer_generic_function_property_contravariant_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5830,6 +5909,7 @@ fn test_infer_generic_method_property_bivariant_optional_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5912,6 +5992,7 @@ fn test_infer_generic_tuple_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -5974,6 +6055,7 @@ fn test_infer_generic_tuple_rest_elements() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let t_array = interner.array(t_type);
@@ -6038,6 +6120,7 @@ fn test_infer_generic_tuple_rest_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6092,6 +6175,7 @@ fn test_infer_generic_tuple_rest_from_rest_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let t_array = interner.array(t_type);
@@ -6157,6 +6241,7 @@ fn test_infer_generic_index_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6215,6 +6300,7 @@ fn test_infer_generic_index_signature_from_object_literal() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6265,6 +6351,7 @@ fn test_infer_generic_index_signature_from_optional_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6317,6 +6404,7 @@ fn test_infer_generic_number_index_from_optional_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6375,6 +6463,7 @@ fn test_infer_generic_number_index_from_numeric_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6425,6 +6514,7 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6477,6 +6567,7 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6529,6 +6620,7 @@ fn test_infer_generic_number_index_from_nan_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6579,6 +6671,7 @@ fn test_infer_generic_number_index_from_exponent_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6629,6 +6722,7 @@ fn test_infer_generic_number_index_from_negative_infinity_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6679,12 +6773,14 @@ fn test_infer_generic_index_signatures_from_mixed_properties() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
@@ -6769,12 +6865,14 @@ fn test_infer_generic_index_signatures_from_optional_mixed_properties() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
@@ -6850,12 +6948,14 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
@@ -6935,6 +7035,7 @@ fn test_infer_generic_union_source() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -6983,6 +7084,7 @@ fn test_infer_generic_union_target_with_placeholder_member() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let union_target = interner.union(vec![t_type, TypeId::STRING]);
@@ -7016,6 +7118,7 @@ fn test_infer_generic_union_target_with_placeholder_and_optional_member() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let union_target = interner.union(vec![t_type, TypeId::STRING, TypeId::UNDEFINED]);
@@ -7049,6 +7152,7 @@ fn test_infer_generic_optional_union_target() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7082,6 +7186,7 @@ fn test_infer_generic_optional_union_target_with_null() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7116,6 +7221,7 @@ fn test_infer_generic_rest_parameters() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -7156,6 +7262,7 @@ fn test_infer_generic_rest_tuple_type_param() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7207,6 +7314,7 @@ fn test_infer_generic_tuple_rest_type_param() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7274,6 +7382,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7357,6 +7466,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7433,6 +7543,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_from_rest_argument_with_fixed_ta
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7516,6 +7627,7 @@ fn test_infer_generic_tuple_rest_in_tuple_param_empty_tail() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7571,6 +7683,7 @@ fn test_infer_generic_default_type_param() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7603,6 +7716,7 @@ fn test_infer_generic_default_depends_on_prior_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7611,6 +7725,7 @@ fn test_infer_generic_default_depends_on_prior_param() {
         constraint: None,
         default: Some(t_type),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
@@ -7643,6 +7758,7 @@ fn test_infer_generic_constraint_fallback() {
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7675,6 +7791,7 @@ fn test_infer_generic_constraint_violation() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7708,6 +7825,7 @@ fn test_infer_generic_constraint_depends_on_prior_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -7716,6 +7834,7 @@ fn test_infer_generic_constraint_depends_on_prior_param() {
         constraint: Some(t_type),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
@@ -7767,6 +7886,7 @@ fn test_rest_param_spreading_homogeneous_args() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -7809,6 +7929,7 @@ fn test_rest_param_spreading_heterogeneous_args() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -7850,6 +7971,7 @@ fn test_rest_param_nullable_prefix_reports_later_incompatible_argument() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -7911,6 +8033,7 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -8012,6 +8135,7 @@ fn test_rest_param_with_leading_fixed() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -8020,6 +8144,7 @@ fn test_rest_param_with_leading_fixed() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
     let array_u = interner.array(u_type);
@@ -8102,6 +8227,7 @@ fn test_tuple_rest_captures_remaining() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -8172,6 +8298,7 @@ fn test_tuple_rest_with_multiple_prefix() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -8254,6 +8381,7 @@ fn test_tuple_rest_single_capture() {
         constraint: Some(interner.array(TypeId::ANY)),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -8321,6 +8449,7 @@ fn test_variadic_with_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -8363,6 +8492,7 @@ fn test_variadic_zip_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -8371,6 +8501,7 @@ fn test_variadic_zip_pattern() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_type = interner.intern(TypeData::TypeParameter(u_param));
 
@@ -8485,6 +8616,7 @@ fn test_variadic_empty_args_uses_constraint() {
         constraint: Some(TypeId::UNKNOWN),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let array_t = interner.array(t_type);
@@ -8591,6 +8723,7 @@ fn test_solve_generic_instantiation_success() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // <string> - satisfies the constraint
@@ -8612,6 +8745,7 @@ fn test_solve_generic_instantiation_constraint_violation() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // <number> - does NOT satisfy the constraint
@@ -8646,6 +8780,7 @@ fn test_solve_generic_instantiation_unconstrained_success() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // <any type> - should always succeed when unconstrained
@@ -8668,12 +8803,14 @@ fn test_solve_generic_instantiation_multiple_params() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(TypeId::NUMBER),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
     ];
 
@@ -8715,6 +8852,7 @@ fn test_solve_generic_instantiation_literal_satisfies_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // "hello" literal should satisfy string constraint
@@ -8738,6 +8876,7 @@ fn test_solve_generic_instantiation_union_satisfies_constraint() {
         constraint: Some(union_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // string should satisfy string | number constraint
@@ -8765,6 +8904,7 @@ fn test_solve_generic_instantiation_task_example() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // Explicit type argument <string>
@@ -8787,6 +8927,7 @@ fn test_solve_generic_instantiation_number_not_string() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // number does NOT extend string
@@ -8824,6 +8965,7 @@ fn test_solve_generic_instantiation_object_constraint() {
         constraint: Some(object_type),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // { x: number; y: string; } should satisfy constraint (has at least x: number)
@@ -9094,6 +9236,7 @@ fn test_generic_function_tuple_to_array_constraint() {
         constraint: Some(string_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // [string, string] should satisfy string[] constraint
@@ -9135,6 +9278,7 @@ fn test_generic_function_heterogeneous_tuple_fails_homogeneous_array_constraint(
         constraint: Some(string_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // [string, number] should NOT satisfy string[] constraint
@@ -9179,6 +9323,7 @@ fn test_generic_function_tuple_to_union_array_constraint() {
         constraint: Some(union_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // [string, number] should satisfy (string | number)[] constraint
@@ -9222,6 +9367,7 @@ fn test_generic_function_tuple_with_rest_to_array_constraint() {
         constraint: Some(union_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // [string, ...number[]] should satisfy (string | number)[] constraint
@@ -9263,6 +9409,7 @@ fn test_generic_function_empty_tuple_to_any_array_constraint() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // [] should satisfy any[] constraint
@@ -9291,6 +9438,7 @@ fn test_generic_function_single_element_tuple_to_array_constraint() {
         constraint: Some(number_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // [number] should satisfy number[] constraint
@@ -9324,6 +9472,7 @@ fn test_generic_function_tuple_with_optional_to_array_constraint() {
         constraint: Some(string_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }];
 
     // [string, string?] should satisfy string[] constraint
@@ -9364,6 +9513,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // <T, U extends T>
@@ -9373,12 +9523,14 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(t_type), // U extends T
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
     ];
 
@@ -9406,6 +9558,7 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // <T, U extends T>
@@ -9415,12 +9568,14 @@ fn test_solve_generic_instantiation_constraint_with_earlier_param_violation() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(t_type), // U extends T
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
     ];
 
@@ -9631,6 +9786,7 @@ fn test_property_access_array_push_with_env_resolver() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -9703,6 +9859,7 @@ fn test_property_access_array_push_with_query_cache_resolver() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -9757,6 +9914,7 @@ fn test_property_access_array_push_with_intersection_array_base() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -9823,6 +9981,7 @@ fn test_array_mapped_type_method_resolution() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -9832,6 +9991,7 @@ fn test_array_mapped_type_method_resolution() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let p_type = interner.intern(TypeData::TypeParameter(p_param));
     let index_access = interner.intern(TypeData::IndexAccess(t_type, p_type));
@@ -9859,6 +10019,7 @@ fn test_array_mapped_type_method_resolution() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let array_t = interner.intern(TypeData::TypeParameter(array_t_param));
     let pop_return_type = interner.union2(array_t, TypeId::UNDEFINED);
@@ -9921,18 +10082,21 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let s_param = TypeParamInfo {
         name: interner.intern_string("S"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let s_type = interner.intern(TypeData::TypeParameter(s_param));
@@ -9989,6 +10153,7 @@ fn test_generic_call_contextual_instantiation_does_not_leak_source_placeholders(
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let id_t = interner.intern(TypeData::TypeParameter(id_t_param));
     let id = interner.function(FunctionShape {
@@ -10443,6 +10608,7 @@ fn test_infer_application_to_mapped_type_direct_arg_unification() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
 
@@ -10452,6 +10618,7 @@ fn test_infer_application_to_mapped_type_direct_arg_unification() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     // Build mapped type body: { [K in keyof T]: T[K] }
@@ -11032,6 +11199,7 @@ fn test_union_generic_single_signature_members_require_shared_call_signature() {
             constraint: Some(TypeId::NUMBER),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         type_predicate: None,
         is_constructor: false,
@@ -11050,6 +11218,7 @@ fn test_union_generic_single_signature_members_require_shared_call_signature() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         type_predicate: None,
         is_constructor: false,
@@ -11088,6 +11257,7 @@ fn test_call_index_access_on_mapped_type_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
 
@@ -11119,6 +11289,7 @@ fn test_call_index_access_on_mapped_type_constraint() {
         constraint: Some(mapped),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create IndexAccess: T[K]
@@ -11150,6 +11321,7 @@ fn test_generic_call_evaluates_conditional_constraint_to_never() {
     let tp_name = interner.intern_string("T");
     let tp = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: tp_name,
         constraint: None,
         default: None,
@@ -11168,6 +11340,7 @@ fn test_generic_call_evaluates_conditional_constraint_to_never() {
     // Now create the type param with the conditional constraint
     let tp_with_constraint = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: tp_name,
         constraint: Some(cond),
         default: None,
@@ -11211,6 +11384,7 @@ fn test_generic_call_infers_type_param_from_this_parameter() {
     let t_name = interner.intern_string("T");
     let t_info = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: t_name,
         constraint: None,
         default: None,
@@ -11256,6 +11430,7 @@ fn test_generic_call_conditional_constraint_accepts_nullable() {
     let tp_name = interner.intern_string("T");
     let tp = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: tp_name,
         constraint: None,
         default: None,
@@ -11273,6 +11448,7 @@ fn test_generic_call_conditional_constraint_accepts_nullable() {
 
     let tp_with_constraint = TypeParamInfo {
         is_const: false,
+        variance: crate::TypeParamVariance::None,
         name: tp_name,
         constraint: Some(cond),
         default: None,
@@ -11478,6 +11654,7 @@ fn test_call_generic_intersection_param_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let own_props_type = interner.intern(TypeData::TypeParameter(own_props_param));
 
@@ -11579,6 +11756,7 @@ fn test_trivial_identity_preserves_literal_with_contextual_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.type_param(t_param);
     let identity = interner.function(FunctionShape {
@@ -11634,6 +11812,7 @@ fn test_trivial_identity_widens_literal_without_contextual_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.type_param(t_param);
     let identity = interner.function(FunctionShape {

@@ -418,6 +418,7 @@ impl<'a> CheckerState<'a> {
                     constraint: None,
                     default: None,
                     is_const,
+                    variance: tsz_solver::TypeParamVariance::None,
                 };
                 let ty = factory.type_param(info);
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
@@ -439,6 +440,7 @@ impl<'a> CheckerState<'a> {
                         constraint: None,
                         default: None,
                         is_const,
+                        variance: tsz_solver::TypeParamVariance::None,
                     };
                     let ty = factory.type_param(info);
                     jsdoc_type_params.push(info);

@@ -108,6 +108,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             infer_ctx.register_type_param(placeholder_atom, var, tp.is_const);
             let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
                 is_const: tp.is_const,
+                variance: crate::TypeParamVariance::None,
                 name: placeholder_atom,
                 constraint: tp.constraint,
                 default: None,

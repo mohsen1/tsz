@@ -42,6 +42,7 @@ fn exposes_state_checking_boundary_queries() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: tsz_solver::TypeParamVariance::None,
     });
     let query_union = types.union(vec![types.type_query(SymbolRef(42)), TypeId::STRING]);
 

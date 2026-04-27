@@ -66,12 +66,14 @@ fn test_type_kind_classification() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let inter = interner.intersection(vec![t_param, u_param]);
     assert_eq!(
@@ -225,12 +227,14 @@ fn test_is_intersection_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let inter = interner.intersection(vec![t_param, u_param]);
     assert!(is_intersection_type(&interner, inter));
@@ -269,6 +273,7 @@ fn test_is_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     assert!(is_type_parameter(&interner, param));
     assert!(!is_type_parameter(&interner, TypeId::STRING));
@@ -359,6 +364,7 @@ fn test_contains_type_parameters() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Array<T>
@@ -476,12 +482,14 @@ fn test_type_list_extractors_for_union_and_intersection() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let union = interner.union(vec![t_param, u_param]);
@@ -619,6 +627,7 @@ fn test_type_param_ref_and_lazy_extractors() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let param_type = interner.intern(TypeData::TypeParameter(param_info));
     assert_eq!(type_param_info(&interner, param_type), Some(param_info));
@@ -651,6 +660,7 @@ fn test_application_mapped_and_conditional_extractors() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -760,6 +770,7 @@ fn test_contains_infer_types() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let union = interner.union(vec![TypeId::STRING, infer_type]);
 
@@ -801,6 +812,7 @@ fn test_meta_type_predicates() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -969,6 +981,7 @@ fn test_references_any_type_param_named_direct() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let mut names = rustc_hash::FxHashSet::default();
     names.insert(interner.intern_string("T"));
@@ -983,6 +996,7 @@ fn test_references_any_type_param_named_nested_in_union() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let union = interner.union(vec![TypeId::STRING, tp]);
     let mut names = rustc_hash::FxHashSet::default();
@@ -998,6 +1012,7 @@ fn test_references_any_type_param_named_not_found() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let union = interner.union(vec![TypeId::STRING, tp]);
     let mut names = rustc_hash::FxHashSet::default();

@@ -1205,6 +1205,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                         let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
                             is_const: tp.is_const,
+                            variance: crate::TypeParamVariance::None,
                             name: placeholder_atom,
                             constraint: tp.constraint,
                             default: None,

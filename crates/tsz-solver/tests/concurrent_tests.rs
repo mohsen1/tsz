@@ -111,6 +111,7 @@ fn test_concurrent_function_creation() {
                     constraint: None,
                     default: None,
                     is_const: false,
+                    variance: crate::TypeParamVariance::None,
                 }],
                 params: vec![
                     ParamInfo {

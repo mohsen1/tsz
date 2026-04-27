@@ -2334,6 +2334,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const,
+                variance: tsz_solver::TypeParamVariance::None,
             };
             let ty = factory.type_param(info);
             type_params.push(info);

@@ -392,6 +392,7 @@ fn test_interner_intersection_type_param_with_string_literal_union_constraint_an
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.type_param(t);
     let intersection = interner.intersection(vec![type_param, TypeId::UNDEFINED]);
@@ -408,6 +409,7 @@ fn test_interner_intersection_type_param_with_primitive_union_constraint_and_nul
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.type_param(t);
     let intersection = interner.intersection(vec![type_param, TypeId::NULL]);
@@ -425,6 +427,7 @@ fn test_interner_intersection_type_param_with_nullable_union_constraint_and_unde
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.type_param(t);
     let intersection = interner.intersection(vec![type_param, TypeId::UNDEFINED]);

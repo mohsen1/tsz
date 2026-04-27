@@ -87,6 +87,7 @@ fn readonly_spread_tuple_prints_spread_syntax() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: tsz_solver::TypeParamVariance::None,
     }));
 
     let spread_tuple = interner.tuple(vec![TupleElement {
@@ -329,6 +330,7 @@ fn mapped_type_multiline_format_with_indent() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: tsz_solver::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,

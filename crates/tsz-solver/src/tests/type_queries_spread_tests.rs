@@ -144,6 +144,7 @@ fn spread_unconstrained_type_param_is_valid() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tp_id = db.type_param(tp);
     assert!(is_valid_spread_type(&db, tp_id));
@@ -159,6 +160,7 @@ fn spread_type_param_constrained_to_object_is_valid() {
         constraint: Some(obj),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tp_id = db.type_param(tp);
     assert!(is_valid_spread_type(&db, tp_id));
@@ -173,6 +175,7 @@ fn spread_type_param_constrained_to_string_is_invalid() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tp_id = db.type_param(tp);
     assert!(!is_valid_spread_type(&db, tp_id));
@@ -220,6 +223,7 @@ fn spread_index_access_uses_base_constraint_before_validation() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tp_id = db.type_param(tp);
 
@@ -253,6 +257,7 @@ fn spread_keyof_type_param_is_invalid() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tp_id = db.type_param(tp);
     let keyof_tp = db.keyof(tp_id);
@@ -384,6 +389,7 @@ fn spread_union_with_intersection_containing_undefined_is_valid() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tp_id = db.type_param(tp);
     let intersection = db.intersection(vec![tp_id, TypeId::UNDEFINED]);
@@ -400,6 +406,7 @@ fn spread_intersection_with_undefined_is_invalid_on_its_own() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tp_id = db.type_param(tp);
     let intersection = db.intersection(vec![tp_id, TypeId::UNDEFINED]);

@@ -18,6 +18,7 @@ fn test_intersection_with_empty_object_assignable_to_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create {} (empty object type)
@@ -46,6 +47,7 @@ fn test_intersection_with_type_param_and_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create T & string
@@ -89,6 +91,7 @@ fn test_intersection_with_mapped_type_member_matches_target() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create type parameter P (for the mapped type iteration variable)
@@ -98,6 +101,7 @@ fn test_intersection_with_mapped_type_member_matches_target() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     // Create keyof T
@@ -145,6 +149,7 @@ fn test_intersection_member_check_with_application_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create Application<T> (like Readonly<T>)
@@ -214,6 +219,7 @@ fn test_intersection_type_params_assignable_to_constraint_union_intersection() {
         constraint: Some(a_type),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // U extends B
@@ -222,6 +228,7 @@ fn test_intersection_type_params_assignable_to_constraint_union_intersection() {
         constraint: Some(b_type),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Source: T & U
@@ -256,6 +263,7 @@ fn test_indexed_access_intersection_with_unconstrained_type_param() {
         constraint: Some(TypeId::UNKNOWN),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create T (constrained type parameter, e.g., extends Foo)
@@ -266,6 +274,7 @@ fn test_indexed_access_intersection_with_unconstrained_type_param() {
         constraint: Some(foo),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create State<T> = { a?: T }

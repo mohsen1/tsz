@@ -87,6 +87,7 @@ fn classify_source_type_param_with_array_constraint() {
         constraint: Some(arr_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     match classify_mapped_source(&interner, tp) {
         MappedSourceKind::TypeParamWithArrayConstraint(_) => {} // expected
@@ -103,6 +104,7 @@ fn classify_source_type_param_with_object_constraint() {
         constraint: Some(obj_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     assert_eq!(
         classify_mapped_source(&interner, tp),
@@ -123,6 +125,7 @@ fn modifiers_add_optional_and_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -144,6 +147,7 @@ fn modifiers_remove_optional_and_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -165,6 +169,7 @@ fn modifiers_homomorphic_preserves_source() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -196,6 +201,7 @@ fn identity_no_name_type() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -215,6 +221,7 @@ fn identity_name_type_same_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -222,6 +229,7 @@ fn identity_name_type_same_param() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: Some(k_param),
@@ -241,6 +249,7 @@ fn non_identity_name_type_different_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -248,6 +257,7 @@ fn non_identity_name_type_different_param() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: Some(other_param),
@@ -318,6 +328,7 @@ fn expand_simple_mapped_type() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -351,6 +362,7 @@ fn expand_mapped_with_add_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -381,6 +393,7 @@ fn expand_homomorphic_with_remove_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -435,6 +448,7 @@ fn mapped_type_over_tuple_preserves_structure() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_tuple,
         name_type: None,
@@ -475,6 +489,7 @@ fn mapped_type_over_array_preserves_structure() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_array,
         name_type: None,
@@ -527,6 +542,7 @@ fn mapped_type_over_tuple_with_rest() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_tuple,
         name_type: None,
@@ -566,6 +582,7 @@ fn mapped_type_over_type_param_with_array_constraint() {
         constraint: Some(arr_constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     let keyof_tp = interner.keyof(tp);
@@ -576,6 +593,7 @@ fn mapped_type_over_type_param_with_array_constraint() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_tp,
         name_type: None,

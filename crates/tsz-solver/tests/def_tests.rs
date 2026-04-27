@@ -431,6 +431,7 @@ fn test_find_type_alias_by_body_ignores_generic_aliases() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let info = DefinitionInfo::type_alias(name, vec![tp], body_type);
     store.register(info);
@@ -1058,12 +1059,14 @@ fn estimated_size_bytes_accounts_for_type_params() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         crate::TypeParamInfo {
             name: interner.intern_string("U"),
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
     ];
     let info = DefinitionInfo::type_alias(name_b, params, TypeId::NUMBER);
@@ -1697,6 +1700,7 @@ fn test_type_environment_get_lazy_type_params_definition_store_fallback() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let info = DefinitionInfo::type_alias(name, vec![t_param], TypeId::NUMBER);
     let def_id = store.register(info);

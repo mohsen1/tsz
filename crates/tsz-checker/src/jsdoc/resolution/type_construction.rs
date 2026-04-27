@@ -913,6 +913,7 @@ impl<'a> CheckerState<'a> {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            variance: tsz_solver::TypeParamVariance::None,
         };
         let type_param_id = self.ctx.types.factory().type_param(type_param);
         let previous = self
@@ -1368,6 +1369,7 @@ impl<'a> CheckerState<'a> {
                 constraint,
                 default: None,
                 is_const: false,
+                variance: tsz_solver::TypeParamVariance::None,
             };
             let type_id = factory.type_param(param);
             let previous = self

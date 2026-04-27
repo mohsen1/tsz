@@ -106,6 +106,7 @@ fn test_inference_occurs_check() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let array_t = interner.array(t_type);
 
@@ -125,6 +126,7 @@ fn test_inference_occurs_check_function_this_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let func = interner.function(FunctionShape {
         type_params: Vec::new(),
@@ -605,6 +607,7 @@ fn test_resolve_circular_upper_bound_defaults_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let name_next = interner.intern_string("next");
     let upper = interner.object(vec![PropertyInfo::new(name_next, t_type)]);
@@ -634,6 +637,7 @@ fn test_resolve_self_upper_bound_with_concrete() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     ctx.add_upper_bound(var, t_type);
@@ -658,12 +662,14 @@ fn test_resolve_mutual_circular_upper_bounds_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     ctx.add_upper_bound(var_t, u_type);
@@ -691,12 +697,14 @@ fn test_resolve_mutual_circular_upper_bounds_with_concrete() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     ctx.add_upper_bound(var_t, u_type);
@@ -725,12 +733,14 @@ fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let name_next = interner.intern_string("next");
 
@@ -770,12 +780,14 @@ fn test_resolve_mutual_recursive_object_bounds_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let name_next = interner.intern_string("next");
 
@@ -5395,6 +5407,7 @@ fn test_infer_union_target_with_placeholder_member() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
 
@@ -5404,6 +5417,7 @@ fn test_infer_union_target_with_placeholder_member() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -5433,6 +5447,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let param_type = interner.union(vec![t_type, TypeId::NEVER]);
 
@@ -5442,6 +5457,7 @@ fn test_infer_union_target_with_placeholder_and_never_member() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -5475,12 +5491,14 @@ fn test_resolve_circular_extends_with_concrete_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Simulate: <T extends U, U extends T, U extends string>
@@ -5510,12 +5528,14 @@ fn test_resolve_circular_extends_bound_order() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Same cycle, but add concrete bound before the cyclic one.
@@ -5545,12 +5565,14 @@ fn test_resolve_usage_based_inference_from_bound_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Simulate: <T extends U, U extends T> with usage-based lower bound on U.
@@ -5689,12 +5711,14 @@ fn test_resolve_all_with_circular_extends_unknown() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Simulate: <T extends U, U extends T>
@@ -5730,18 +5754,21 @@ fn test_circular_extends_three_way_cycle() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends V, V extends T
@@ -5772,6 +5799,7 @@ fn test_circular_extends_self_reference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends T (self-reference)
@@ -5801,12 +5829,14 @@ fn test_circular_extends_with_lower_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -5841,12 +5871,14 @@ fn test_circular_extends_both_have_lower_bounds() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -5882,12 +5914,14 @@ fn test_circular_extends_unify_propagates() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -5923,12 +5957,14 @@ fn test_circular_extends_conflicting_lower_bounds() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -5967,18 +6003,21 @@ fn test_circular_extends_three_way_with_one_lower_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends V, V extends T
@@ -6017,12 +6056,14 @@ fn test_circular_extends_with_union_lower_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -6058,12 +6099,14 @@ fn test_circular_extends_with_literal_types() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -6105,24 +6148,28 @@ fn test_circular_extends_four_way_cycle() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let w_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: w_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends V, V extends W, W extends T
@@ -6157,12 +6204,14 @@ fn test_circular_extends_with_concrete_upper_and_lower() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -6202,12 +6251,14 @@ fn test_circular_extends_chain_with_endpoint_bound() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let v_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: v_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends V (chain, not cycle)
@@ -6252,12 +6303,14 @@ fn test_circular_extends_multiple_lower_bounds_same_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends U, U extends T
@@ -6936,6 +6989,7 @@ fn test_method_return_type_inference_basic() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Method signature: () => T
@@ -6945,6 +6999,7 @@ fn test_method_return_type_inference_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![],
         this_type: None,
@@ -6974,6 +7029,7 @@ fn test_method_parameter_type_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Method signature: (x: T) => void
@@ -6983,6 +7039,7 @@ fn test_method_parameter_type_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -7017,6 +7074,7 @@ fn test_method_this_type_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Method signature: (this: This) => This
@@ -7026,6 +7084,7 @@ fn test_method_this_type_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![],
         this_type: Some(this_type),
@@ -7061,6 +7120,7 @@ fn test_method_generic_parameter_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Method signature: <T>(x: T) => Array<T>
@@ -7071,6 +7131,7 @@ fn test_method_generic_parameter_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -13103,12 +13164,14 @@ fn test_mapped_type_template_union_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let t_type = interner.type_param(TypeParamInfo {
         name: t_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     let source = interner.object(vec![
@@ -13122,6 +13185,7 @@ fn test_mapped_type_template_union_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: interner.keyof(t_type),
         name_type: None,
@@ -14721,6 +14785,7 @@ fn test_conditional_type_inference_basic() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let object_t = interner.object(vec![PropertyInfo::new(
@@ -14759,6 +14824,7 @@ fn test_variance_computation_covariant() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let box_type = interner.object(vec![PropertyInfo {
@@ -14796,6 +14862,7 @@ fn test_variance_computation_contravariant() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let func = interner.function(FunctionShape {
@@ -14834,6 +14901,7 @@ fn test_variance_computation_invariant() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let get_func = interner.function(FunctionShape {
@@ -14886,6 +14954,7 @@ fn test_variance_string() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let array_type = interner.array(t_type);
@@ -14929,12 +14998,14 @@ fn test_strengthen_constraints() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let _u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Add constraints: T has lower bound string, U extends T
@@ -15507,6 +15578,7 @@ fn test_union_inference_prefers_structural_match_over_naked_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create Foo<T> interface as an object with a `prop: T` property
@@ -15516,6 +15588,7 @@ fn test_union_inference_prefers_structural_match_over_naked_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Build Foo<U> and Foo<V> as objects with `prop: U` and `prop: V`
@@ -15534,6 +15607,7 @@ fn test_union_inference_prefers_structural_match_over_naked_type_param() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("value")),
@@ -15584,6 +15658,7 @@ fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     // Parameter: T | string
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
@@ -15594,6 +15669,7 @@ fn test_union_inference_naked_param_still_receives_unmatched_candidates() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -15631,6 +15707,7 @@ fn test_union_inference_multiple_unmatched_candidates() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     // Parameter: T | string
     let param_type = interner.union(vec![t_type, TypeId::STRING]);
@@ -15641,6 +15718,7 @@ fn test_union_inference_multiple_unmatched_candidates() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -15766,6 +15844,7 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Parameter shape: (x: U) => U
@@ -15807,6 +15886,7 @@ fn test_callback_plus_value_arg_does_not_leak_any_into_direct_param() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![
             ParamInfo {
