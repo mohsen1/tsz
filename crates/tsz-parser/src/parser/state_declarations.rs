@@ -2668,6 +2668,19 @@ impl ParserState {
                     let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
                     consumed_closing_brace = true;
                     leave_closing_brace_for_statement_recovery = false;
+                    // tsc-parity: after consuming `{ * }`, treat the next
+                    // `from` as unexpected — tsc's parser doesn't recover
+                    // the rest of the import clause cleanly when the brace
+                    // group is `{ * }`. Emits TS1434 ("Unexpected keyword or
+                    // identifier") at the `from` keyword. See conformance
+                    // test `es6ImportNamedImportParsingError.ts` line 1.
+                    if self.is_token(SyntaxKind::FromKeyword) {
+                        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.parse_error_at_current_token(
+                            diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                            diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        );
+                    }
                     break;
                 }
             }
