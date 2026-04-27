@@ -272,12 +272,20 @@ jobs:
     needs: [gate, conformance]
     if: needs.gate.outputs.should_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 15
+    # Aggregate just downloads N shard JSONs from GCS, jq-sums them, and
+    # compares to a snapshot file. ~30s of real work, no Rust compile, no
+    # TypeScript submodule. 5 min cap is generous; previous 15 was overkill.
+    timeout-minutes: 5
     env:
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 8
       TSZ_CI_CONFORMANCE_SHARDS: 8
       TSZ_CI_CACHE_SAVE: "0"
+      # Skip the github-suite.sh cache restore — aggregates don't compile
+      # Rust, don't read any cached artifact, and don't need the TypeScript
+      # source tree. main() in gcp-full-ci.sh also skips run_common_setup
+      # for *-aggregate suites.
+      TSZ_CI_CACHE_RESTORE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -330,11 +338,12 @@ jobs:
     needs: [gate, emit]
     if: needs.gate.outputs.should_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 15
+    timeout-minutes: 5
     env:
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_EMIT_SHARD_COUNT: 1
       TSZ_CI_CACHE_SAVE: "0"
+      TSZ_CI_CACHE_RESTORE: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -392,11 +401,12 @@ jobs:
     needs: [gate, fourslash]
     if: needs.gate.outputs.should_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 15
+    timeout-minutes: 5
     env:
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
       TSZ_CI_CACHE_SAVE: "0"
+      TSZ_CI_CACHE_RESTORE: "0"
     steps:
       - uses: actions/checkout@v4
         with:

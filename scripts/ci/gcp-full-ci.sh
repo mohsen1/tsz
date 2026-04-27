@@ -1399,7 +1399,17 @@ run_all_suites() {
 main() {
   local suite="${1:-${TSZ_CI_SUITE:-all}}"
 
-  run_common_setup "$suite"
+  # Aggregate suites only need GCS access (gsutil) and jq to merge shard
+  # JSONs. Skip the common setup — installing host tools, ensuring git
+  # context, and downloading the TypeScript submodule (~50 MB) are pure
+  # waste for a job that finishes in under a minute of real work.
+  case "$suite" in
+    conformance-aggregate|emit-aggregate|fourslash-aggregate)
+      ;;
+    *)
+      run_common_setup "$suite"
+      ;;
+  esac
 
   case "$suite" in
     all|full)
