@@ -8483,10 +8483,10 @@ var e: Date = c.b();
         crate::binder::state::BinderStateScopeInputs {
             scopes: file1_bound.scopes.clone(),
             node_scope_ids: file1_bound.node_scope_ids.clone(),
-            global_augmentations: std::sync::Arc::new(file1_bound.global_augmentations.clone()),
-            module_augmentations: std::sync::Arc::new(file1_bound.module_augmentations.clone()),
-            augmentation_target_modules: std::sync::Arc::new(
-                file1_bound.augmentation_target_modules.clone(),
+            global_augmentations: std::sync::Arc::clone(&file1_bound.global_augmentations),
+            module_augmentations: std::sync::Arc::clone(&file1_bound.module_augmentations),
+            augmentation_target_modules: std::sync::Arc::clone(
+                &file1_bound.augmentation_target_modules,
             ),
             module_exports: program.module_exports.clone(),
             module_declaration_exports_publicly: file1_bound
@@ -8495,7 +8495,7 @@ var e: Date = c.b();
             reexports: program.reexports.clone(),
             wildcard_reexports: program.wildcard_reexports.clone(),
             wildcard_reexports_type_only: program.wildcard_reexports_type_only.clone(),
-            symbol_arenas: std::sync::Arc::new(file1_bound.symbol_arenas.clone()),
+            symbol_arenas: std::sync::Arc::clone(&file1_bound.symbol_arenas),
             declaration_arenas,
             sym_to_decl_indices,
             cross_file_node_symbols: program.cross_file_node_symbols.clone(),
