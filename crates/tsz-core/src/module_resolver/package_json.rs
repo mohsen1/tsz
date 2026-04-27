@@ -63,15 +63,33 @@ impl ModuleResolver {
         None
     }
 
-    /// Read and parse package.json
+    /// Read and parse package.json, with a per-resolver cache.
+    ///
+    /// The same `package.json` (typically in `node_modules/<pkg>/`) is read
+    /// for multiple distinct purposes during one specifier's resolution
+    /// (package_type lookup, exports map, main field, types field, self-
+    /// reference). Without a cache each role re-stat'd, re-read, and
+    /// re-parsed the file. The cache is populated on first read and reused
+    /// for the rest of the resolver's lifetime.
+    ///
+    /// Both Ok and Err results are cached so missing-file / invalid-JSON
+    /// failure paths also don't re-stat or re-parse on subsequent visits.
     ///
     /// Returns a String error for flexibility - callers can convert to `ResolutionFailure`
     /// with appropriate span/file information at the call site.
     pub(super) fn read_package_json(&self, path: &Path) -> Result<PackageJson, String> {
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+        if let Some(cached) = self.package_json_cache.borrow().get(path) {
+            return cached.clone();
+        }
+        let result = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))
+            .and_then(|content| {
+                serde_json::from_str::<PackageJson>(&content)
+                    .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+            });
+        self.package_json_cache
+            .borrow_mut()
+            .insert(path.to_path_buf(), result.clone());
+        result
     }
 }
