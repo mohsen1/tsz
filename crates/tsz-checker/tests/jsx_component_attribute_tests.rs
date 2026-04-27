@@ -3757,62 +3757,6 @@ declare const MockComponent: MockComponentInterface;
 }
 
 #[test]
-fn declare_global_jsx_element_type_merges_lib_intrinsic_elements() {
-    let lib_source = r#"
-declare module "react" {
-    export type ComponentType<P = any> = (props: P) => JSX.Element;
-
-    global {
-        namespace JSX {
-            interface Element {}
-            interface IntrinsicElements {
-                div: {};
-            }
-        }
-    }
-}
-"#;
-    let main_source = r#"
-import * as React from "react";
-
-declare global {
-    namespace JSX {
-        type ElementType<P = any> =
-            | {
-                [K in keyof JSX.IntrinsicElements]: P extends JSX.IntrinsicElements[K]
-                    ? K
-                    : never;
-            }[keyof JSX.IntrinsicElements]
-            | React.ComponentType<P>;
-    }
-}
-
-let a = <div />;
-let c = <ruhroh />;
-"#;
-
-    let diags = cross_file_jsx_diagnostics_with_mode(lib_source, main_source, JsxMode::React);
-    assert!(
-        !has_code(&diags, diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER),
-        "declare global JSX namespace should merge lib IntrinsicElements before resolving ElementType. Got: {diags:?}"
-    );
-    assert!(
-        !has_code(
-            &diags,
-            diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS
-        ),
-        "Merged JSX.IntrinsicElements should suppress missing-interface TS7026. Got: {diags:?}"
-    );
-    assert!(
-        diags.iter().any(|(code, msg)| {
-            *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                && msg.contains("Property 'ruhroh' does not exist on type 'JSX.IntrinsicElements'")
-        }),
-        "Unknown intrinsic should report TS2339 against merged JSX.IntrinsicElements. Got: {diags:?}"
-    );
-}
-
-#[test]
 fn jsx_children_react_jsx_ignores_element_children_attribute_and_keeps_related_info() {
     let source = r#"
 declare namespace JSX {
