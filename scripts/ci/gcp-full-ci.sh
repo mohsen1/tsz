@@ -214,13 +214,13 @@ suite_needs_group() {
       [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
       ;;
     wasm)
-      [[ "$suite" == "wasm" ]]
+      [[ "$suite" == "wasm" || "$suite" == "wasm-web" ]]
       ;;
     node)
       [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
       ;;
     rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
       ;;
     *)
       return 1
@@ -596,13 +596,22 @@ build_test_binaries() {
 }
 
 build_wasm() {
-  ci_section "WASM build"
+  ci_section "WASM build (nodejs target)"
   (
     cd crates/tsz-wasm
     wasm-pack build --target nodejs --out-dir ../../pkg --no-opt
   )
   mkdir -p pkg/lib
   cp -R TypeScript/src/lib/. pkg/lib/
+}
+
+build_wasm_web() {
+  ci_section "WASM build (web target for website playground)"
+  cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
+  (
+    cd crates/tsz-wasm
+    wasm-pack build --target web --out-dir ../../pkg/web --no-opt
+  )
 }
 
 prep_node_artifacts() {
@@ -1414,6 +1423,9 @@ main() {
     wasm)
       timed build_wasm build_wasm
       ;;
+    wasm-web)
+      timed build_wasm_web build_wasm_web
+      ;;
     conformance)
       timed build_test_binaries build_test_binaries
       timed run_conformance run_conformance
@@ -1451,7 +1463,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac
