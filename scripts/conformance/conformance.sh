@@ -246,12 +246,19 @@ ensure_binaries() {
     # Re-enable only after the server protocol carries fingerprints (or
     # gate it behind an opt-in env var that's off in CI).
 
-# Ensure scripts/node_modules is installed (provides TypeScript lib files for type checking)
+# Ensure scripts/node_modules is installed for TSC-backed cache generation.
 ensure_scripts_deps() {
     if [ ! -d "$REPO_ROOT/scripts/node_modules/typescript" ]; then
         echo -e "${YELLOW}Installing scripts dependencies (TypeScript libs)...${NC}"
         (cd "$REPO_ROOT/scripts" && npm install --silent 2>/dev/null || npm install)
     fi
+}
+
+running_in_ci() {
+    [ "${CI:-}" = "true" ] ||
+        [ "${GITHUB_ACTIONS:-}" = "true" ] ||
+        [ -n "${TSZ_CI_SUITE:-}" ] ||
+        [ -n "${_TSZ_CI_SUITE:-}" ]
 }
 
 generate_cache() {
@@ -377,8 +384,9 @@ EOF
 }
 
 run_tests() {
-    # TypeScript lib files are needed for type checking (resolved via scripts/node_modules/typescript/lib)
-    ensure_scripts_deps
+    if ! running_in_ci; then
+        ensure_scripts_deps
+    fi
 
     echo -e "${GREEN}Running conformance tests...${NC}"
     echo "Cache file: $CACHE_FILE"
