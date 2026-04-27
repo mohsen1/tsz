@@ -41,8 +41,10 @@ jobs:
       - name: Install pnpm
         run: |
           if ! command -v pnpm &>/dev/null; then
-            curl -fsSL https://get.pnpm.io/install.sh | PNPM_HOME="$HOME/.local/share/pnpm" sh -
-            echo "$HOME/.local/share/pnpm" >> "$GITHUB_PATH"
+            mkdir -p "$HOME/.npm-global"
+            npm config set prefix "$HOME/.npm-global"
+            npm install -g pnpm --silent
+            echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
           fi
 
       - name: Run benchmarks
