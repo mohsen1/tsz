@@ -1034,6 +1034,31 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
+        let mut guard = tsz_solver::recursion::RecursionGuard::with_profile(
+            tsz_solver::recursion::RecursionProfile::ShallowTraversal,
+        );
+        self.const_literal_initializer_text_deep_guarded(expr_idx, &mut guard)
+    }
+
+    fn const_literal_initializer_text_deep_guarded(
+        &self,
+        expr_idx: NodeIndex,
+        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
+    ) -> Option<String> {
+        use tsz_solver::recursion::RecursionResult;
+        if !matches!(guard.enter(expr_idx), RecursionResult::Entered) {
+            return None;
+        }
+        let result = self.const_literal_initializer_text_deep_inner(expr_idx, guard);
+        guard.leave(expr_idx);
+        result
+    }
+
+    fn const_literal_initializer_text_deep_inner(
+        &self,
+        expr_idx: NodeIndex,
+        guard: &mut tsz_solver::recursion::RecursionGuard<NodeIndex>,
+    ) -> Option<String> {
         // Try the normal path first
         if let Some(text) = self.const_literal_initializer_text(expr_idx) {
             return Some(text);
@@ -1047,7 +1072,7 @@ impl<'a> DeclarationEmitter<'a> {
             || expr_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
         {
             let assertion = self.arena.get_type_assertion(expr_node)?;
-            return self.const_literal_initializer_text_deep(assertion.expression);
+            return self.const_literal_initializer_text_deep_guarded(assertion.expression, guard);
         }
 
         // Chase identifiers to their const declaration initializer, matching
@@ -1088,7 +1113,8 @@ impl<'a> DeclarationEmitter<'a> {
                             && self.get_identifier_text(decl.name).as_deref() == Some(&name)
                             && decl.initializer.is_some()
                         {
-                            return self.const_literal_initializer_text_deep(decl.initializer);
+                            return self
+                                .const_literal_initializer_text_deep_guarded(decl.initializer, guard);
                         }
                     }
                 }
