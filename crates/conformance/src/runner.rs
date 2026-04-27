@@ -416,33 +416,42 @@ impl Runner {
         let concurrency_limit = self.args.workers;
         let semaphore = Arc::new(Semaphore::new(concurrency_limit));
 
-        // Create batch process pool (unless --no-batch)
-        let pool: Option<Arc<ProcessPool>> = if self.args.no_batch {
-            info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
-            None
-        } else {
-            info!(
-                "Creating batch process pool with {} workers",
-                concurrency_limit
-            );
-            match ProcessPool::new(
-                &self.tsz_binary,
-                concurrency_limit,
-                self.args.max_compilations_per_worker,
-                self.args.max_worker_rss_mb * 1024 * 1024,
-            )
-            .await
-            {
-                Ok(pool) => Some(Arc::new(pool)),
-                Err(e) => {
-                    warn!(
-                        "Failed to create batch pool: {}. Falling back to subprocess mode.",
-                        e
-                    );
-                    None
+        // Create batch process pool unless either:
+        //   --no-batch was passed (caller wants per-test subprocesses), OR
+        //   --mode server is active (server pool handles every test, the CLI
+        //   batch pool would only sit there holding open tsz processes that
+        //   never receive work — wasted RAM + runner-pool oversubscription).
+        let pool: Option<Arc<ProcessPool>> =
+            if self.args.no_batch || self.args.mode == RunMode::Server {
+                if self.args.mode == RunMode::Server {
+                    info!("Skipping CLI batch pool: server mode owns every test");
+                } else {
+                    info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
                 }
-            }
-        };
+                None
+            } else {
+                info!(
+                    "Creating batch process pool with {} workers",
+                    concurrency_limit
+                );
+                match ProcessPool::new(
+                    &self.tsz_binary,
+                    concurrency_limit,
+                    self.args.max_compilations_per_worker,
+                    self.args.max_worker_rss_mb * 1024 * 1024,
+                )
+                .await
+                {
+                    Ok(pool) => Some(Arc::new(pool)),
+                    Err(e) => {
+                        warn!(
+                            "Failed to create batch pool: {}. Falling back to subprocess mode.",
+                            e
+                        );
+                        None
+                    }
+                }
+            };
 
         // Create server pool if mode is Server
         let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
