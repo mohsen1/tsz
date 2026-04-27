@@ -1379,11 +1379,34 @@ run_build() {
   fi
 }
 
+# Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
+# Keep these in sync — if you add a suite that reads TypeScript/ source,
+# update both here and there.
+suite_needs_typescript_source() {
+  local suite="$1"
+  case "$suite" in
+    all|full|build) return 0 ;;
+    conformance|conformance-shard) return 0 ;;
+    emit|emit-shard) return 0 ;;
+    fourslash|fourslash-shard) return 0 ;;
+    node-harness-prep) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 run_common_setup() {
   local suite="${1:-all}"
   timed ensure_host_tools ensure_host_tools "$suite"
   timed ensure_source_git_context ensure_source_git_context
-  timed init_typescript_submodule init_typescript_submodule
+  if suite_needs_typescript_source "$suite"; then
+    timed init_typescript_submodule init_typescript_submodule
+  else
+    # lint, dist-binaries, unit-archive, unit*, wasm, wasm-web don't read
+    # TypeScript/ at compile time. Skipping the submodule init avoids
+    # downloading ~50 MB of source and avoids the gitlink-vs-ref-file
+    # staleness check that's only relevant when the tree is actually used.
+    echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
+  fi
   if suite_needs_group "$suite" rust_compile; then
     configure_sccache
   fi
