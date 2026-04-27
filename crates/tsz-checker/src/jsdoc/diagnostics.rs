@@ -516,17 +516,38 @@ impl<'a> CheckerState<'a> {
             let trimmed = rest.trim_start();
             let has_type = trimmed.starts_with('{');
 
-            // Check if there are @property, @member, or @type tags
-            // Note: "@typedef" itself contains "@type" as substring, so we
-            // check for "@type " or "@type{" (with space or brace following).
-            let has_type_tag = comment_text.contains("@type ") || comment_text.contains("@type{");
-            let has_property = comment_text.contains("@property")
-                || comment_text.contains("@prop ")
-                || comment_text.contains("@prop{")
-                || has_type_tag
-                || comment_text.contains("@member")
-                    && !comment_text.contains("@memberOf")
-                    && !comment_text.contains("@memberof");
+            let mut has_property = false;
+            let mut after_this_typedef = false;
+            for raw_line in comment_text.lines() {
+                let mut line = raw_line
+                    .trim()
+                    .trim_start_matches("/**")
+                    .trim_start_matches("/*")
+                    .trim_start_matches('*')
+                    .trim();
+                line = line.trim_end_matches("*/").trim();
+                if line.starts_with("@typedef") {
+                    after_this_typedef = true;
+                    continue;
+                }
+                if !after_this_typedef {
+                    continue;
+                }
+                if line.starts_with("@template") {
+                    break;
+                }
+                if line.starts_with("@property")
+                    || line.starts_with("@prop ")
+                    || line.starts_with("@prop{")
+                    || line.starts_with("@type ")
+                    || line.starts_with("@type{")
+                    || line.starts_with("@member ") && !line.starts_with("@memberOf")
+                    || line.starts_with("@member{") && !line.starts_with("@memberof")
+                {
+                    has_property = true;
+                    break;
+                }
+            }
 
             if !has_type && !has_property {
                 // Emit TS8021 at the typedef name position (TSC points at the name, not @typedef)
@@ -1019,292 +1040,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS8039: Check for `@template` tags that follow a `@typedef`, `@callback`,
-    /// or `@overload` tag within the same JSDoc comment.
-    ///
-    /// In tsc, `@template` tags must appear BEFORE `@typedef`/`@callback`/`@overload`.
-    /// When `@template` appears after, it's scoped to the preceding tag and is invalid.
-    pub(crate) fn check_template_after_typedef_callback(&mut self) {
-        use tsz_common::comments::is_jsdoc_comment;
-
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
-
-        for comment in comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-
-            let _comment_text =
-                &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
-
-            // tsc 6.0: @template after @typedef/@callback/@overload in the same
-            // comment is valid — it defines the type parameters for the typedef.
-            // The previous check emitted TS8039 here but tsc 6.0 accepts this pattern.
-        }
-    }
-
-    /// TS1273/TS1277: Check for invalid modifiers on JSDoc `@template` type parameters.
-    ///
-    /// In tsc, certain modifier keywords before a `@template` type parameter name
-    /// are always invalid (e.g. `private`, `public`, `protected`, `static` -> TS1273),
-    /// while others like `const` are only valid on function/method/class type params
-    /// (TS1277 when used on a `@typedef`/`@callback`).
-    pub(crate) fn check_jsdoc_template_modifiers(&mut self) {
-        use crate::diagnostics::diagnostic_codes;
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-        let source_text: String = sf.text.to_string();
-        let comments = sf.comments.clone();
-
-        // Modifier keywords that can NEVER appear on a type parameter (TS1273).
-        const NEVER_VALID_MODIFIERS: &[&str] = &[
-            "private",
-            "public",
-            "protected",
-            "static",
-            "override",
-            "abstract",
-            "readonly",
-            "async",
-            "declare",
-            "default",
-            "export",
-        ];
-
-        // `const` -> only on function/method/class type params (TS1277 otherwise)
-        const CONST_MODIFIER: &str = "const";
-
-        for comment in &comments {
-            if !is_jsdoc_comment(comment, &source_text) {
-                continue;
-            }
-            let comment_text =
-                &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
-            let content = get_jsdoc_content(comment, &source_text);
-
-            // Check if comment contains @typedef or @callback (typedef-like host).
-            // For `const` modifier, TS1277 only fires when the host is a typedef/callback
-            // (where const type params are invalid). For comments on functions, methods,
-            // classes, or constructors, `const` is valid and we skip the diagnostic.
-            let has_typedef = content.contains("@typedef") || content.contains("@callback");
-
-            for raw_line in content.lines() {
-                let trimmed = raw_line.trim().trim_start_matches('*').trim();
-                let Some(rest) = trimmed.strip_prefix("@template") else {
-                    continue;
-                };
-                let rest = rest.trim();
-                if rest.is_empty() {
-                    continue;
-                }
-
-                // Skip past optional constraint `{...}`
-                let after_constraint = if let Some(inner) = rest.strip_prefix('{') {
-                    let mut depth = 1usize;
-                    let mut close_idx = None;
-                    for (idx, ch) in inner.char_indices() {
-                        match ch {
-                            '{' => depth += 1,
-                            '}' => {
-                                depth = depth.saturating_sub(1);
-                                if depth == 0 {
-                                    close_idx = Some(idx);
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Some(ci) = close_idx {
-                        inner[ci + 1..].trim()
-                    } else {
-                        continue;
-                    }
-                } else {
-                    rest
-                };
-
-                // Extract the first word (potential modifier or type param name)
-                let first_word_end = after_constraint
-                    .find(|c: char| c.is_ascii_whitespace() || c == ',')
-                    .unwrap_or(after_constraint.len());
-                let first_word = &after_constraint[..first_word_end];
-                if first_word.is_empty() {
-                    continue;
-                }
-
-                // Check if followed by another identifier (if it's a modifier, a name should follow)
-                let after_first = after_constraint[first_word_end..].trim_start();
-                let has_following_name = !after_first.is_empty()
-                    && after_first
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$');
-
-                if !has_following_name {
-                    // Not a modifier pattern (e.g. `@template T`), skip
-                    continue;
-                }
-
-                // Find position of the modifier in the source text for error squiggle
-                let find_modifier_pos = |modifier: &str| -> (u32, u32) {
-                    // Search for `@template <ws> modifier` pattern in the comment
-                    if let Some(template_offset) = comment_text.find("@template") {
-                        let after_template = &comment_text[template_offset + "@template".len()..];
-                        if let Some(mod_offset) = after_template.find(modifier) {
-                            let abs_pos = comment.pos
-                                + template_offset as u32
-                                + "@template".len() as u32
-                                + mod_offset as u32;
-                            return (abs_pos, modifier.len() as u32);
-                        }
-                    }
-                    (comment.pos, 0)
-                };
-
-                // Check never-valid modifiers (TS1273)
-                if NEVER_VALID_MODIFIERS.contains(&first_word) {
-                    let (pos, len) = find_modifier_pos(first_word);
-                    let message =
-                        format!("'{first_word}' modifier cannot appear on a type parameter");
-                    self.error_at_position(
-                        pos,
-                        len,
-                        &message,
-                        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_PARAMETER,
-                    );
-                    continue;
-                }
-
-                // Check `const` modifier (TS1277 only when on typedef/callback)
-                if first_word == CONST_MODIFIER {
-                    if has_typedef {
-                        let (pos, len) = find_modifier_pos(CONST_MODIFIER);
-                        let message =
-                            "'const' modifier can only appear on a type parameter of a function, method or class".to_string();
-                        self.error_at_position(
-                            pos,
-                            len,
-                            &message,
-                            diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_FUNCTION_METHOD_OR_CLASS,
-                        );
-                    }
-                    continue;
-                }
-            }
-        }
-    }
-
-    /// TS2300: Check for duplicate `@import` names across JSDoc comments.
-    ///
-    /// When the same name is imported via `@import` in multiple JSDoc comments,
-    /// tsc emits TS2300 "Duplicate identifier 'X'" at each occurrence.
-    pub(crate) fn check_jsdoc_duplicate_imports(&mut self) {
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-        let source_text: String = sf.text.to_string();
-        let comments = sf.comments.clone();
-
-        // Collect all @import names with their source positions.
-        // Each entry is (name, absolute_position_of_name, name_length).
-        let mut import_names: Vec<(String, u32, u32)> = Vec::new();
-
-        for comment in &comments {
-            if !is_jsdoc_comment(comment, &source_text) {
-                continue;
-            }
-            let comment_text =
-                &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
-            let content = get_jsdoc_content(comment, &source_text);
-
-            // Scan for @import tags in this comment
-            for line in content.lines() {
-                let trimmed = line.trim_start_matches('*').trim();
-                if let Some(rest) = trimmed.strip_prefix("@import") {
-                    let imports = Self::parse_jsdoc_import_tag(rest);
-                    for (local_name, _specifier, _import_name) in imports {
-                        // Find the position of the local name in the comment text.
-                        // For `@import { Foo } from "..."`, `Foo` appears after `{`.
-                        // We search for the name in the comment text to get its absolute position.
-                        if let Some(name_offset) =
-                            Self::find_import_name_in_comment(comment_text, &local_name)
-                        {
-                            let abs_pos = comment.pos + name_offset as u32;
-                            import_names.push((
-                                local_name, abs_pos, 0, // placeholder, will use name length
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Check for duplicates
-        let mut seen: std::collections::HashMap<String, Vec<(u32, u32)>> =
-            std::collections::HashMap::new();
-        for (name, pos, _) in &import_names {
-            seen.entry(name.clone())
-                .or_default()
-                .push((*pos, name.len() as u32));
-        }
-
-        for (name, positions) in &seen {
-            if positions.len() > 1 {
-                use crate::diagnostics::{diagnostic_codes, format_message};
-                let message = format_message("Duplicate identifier '{0}'.", &[name]);
-                for &(pos, len) in positions {
-                    self.error_at_position(
-                        pos,
-                        len,
-                        &message,
-                        diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    );
-                }
-            }
-        }
-    }
-
-    /// Find the position of an import name within a JSDoc comment text.
-    /// Returns the byte offset from the start of the comment.
-    fn find_import_name_in_comment(comment_text: &str, name: &str) -> Option<usize> {
-        // Look for the name after @import
-        let import_idx = comment_text.find("@import")?;
-        let after_import = import_idx + "@import".len();
-        let rest = &comment_text[after_import..];
-
-        // For `@import { Foo } from "..."`, find `Foo` after `{`
-        if let Some(brace_pos) = rest.find('{') {
-            let after_brace = &rest[brace_pos + 1..];
-            if let Some(name_offset) = after_brace.find(name) {
-                // Verify it's a word boundary (not part of a longer name)
-                let before_ok = name_offset == 0
-                    || !after_brace.as_bytes()[name_offset - 1].is_ascii_alphanumeric();
-                let after_ok = name_offset + name.len() >= after_brace.len()
-                    || !after_brace.as_bytes()[name_offset + name.len()].is_ascii_alphanumeric();
-                if before_ok && after_ok {
-                    return Some(after_import + brace_pos + 1 + name_offset);
-                }
-            }
-        }
-
-        // For `@import * as Name from "..."` or `@import Name from "..."`
-        if let Some(name_offset) = rest.find(name) {
-            return Some(after_import + name_offset);
-        }
-
-        None
-    }
-
     /// Eagerly validate base types of all `@typedef` declarations in the file.
     /// Emits TS2304 "Cannot find name" for unresolvable simple-name base types.
     pub(crate) fn check_jsdoc_typedef_base_types(&mut self) {
@@ -1574,14 +1309,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Collect @template names defined in this comment so we can skip them
-            // when checking callback param types.
-            let template_names: Vec<String> = Self::jsdoc_template_constraints(&content)
-                .into_iter()
-                .map(|(name, _)| name)
-                .collect();
-
             for (_name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
+                let template_names: Vec<String> = typedef_info
+                    .template_params
+                    .iter()
+                    .map(|param| param.name.clone())
+                    .collect();
                 if let Some(ref cb) = typedef_info.callback {
                     // Check callback param types for unresolvable references (TS2304)
                     for param in &cb.params {
@@ -1811,6 +1544,13 @@ impl<'a> CheckerState<'a> {
             // Check for @type {Name} where Name is a simple identifier
             if let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&content) {
                 let expr = type_expr.trim();
+                let comment_text = comment.get_text(&source_text);
+                let type_expr_start = comment_text
+                    .find(expr)
+                    .map(|offset| comment.pos + offset as u32)
+                    .unwrap_or(comment.pos);
+                self.report_jsdoc_param_generic_instantiation_errors(expr, type_expr_start);
+
                 let prev_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
                 self.ctx.jsdoc_typedef_anchor_pos.set(comment.pos);
                 let resolved = self.resolve_jsdoc_type_str(expr);
@@ -1976,109 +1716,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.error_cannot_find_name_at_position(name, start, length);
-    }
-
-    /// Return `true` if `name` matches an `@template` declaration whose
-    /// scope contains the reference at `ref_pos`.
-    ///
-    /// "Scope contains" means: the JSDoc comment carrying the `@template`
-    /// declaration is the leading comment of an AST node whose source
-    /// range covers `ref_pos`. This narrows the cross-comment lookup so a
-    /// class-level `@template T` covers references in its members'
-    /// JSDoc, but a standalone function's `@template T` does NOT cover
-    /// references in an unrelated standalone typedef elsewhere in the
-    /// file (which the conformance test
-    /// `jsdocTemplateConstructorFunction2.ts` legitimately expects to
-    /// emit TS2304 for).
-    ///
-    /// Implementation: walk all JSDoc comments and, for each one with an
-    /// `@template <name>` matching `name`, find the AST statement whose
-    /// `pos` is at or after the comment's `end` (the node the comment
-    /// leads). If `ref_pos` falls within that statement's source range,
-    /// the template is in scope.
-    pub(crate) fn source_file_declares_jsdoc_template_at(&self, name: &str, ref_pos: u32) -> bool {
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let source_text: &str = &sf.text;
-
-        // Strategy: find any top-level CLASS declaration whose source range
-        // contains `ref_pos`. If the class's leading JSDoc has
-        // `@template <name>`, that name is in scope for any reference
-        // within the class body (matching tsc's "class @template T is
-        // in scope for class member JSDoc" rule).
-        //
-        // Function- and typedef-level @template declarations are NOT
-        // file-wide: they only apply to their own JSDoc comment, which is
-        // already handled by the existing local-comment skip in
-        // `check_jsdoc_typedef_base_types` (lines 1605/1627). Suppressing
-        // those file-wide regresses tests like `jsdocTemplateConstructor
-        // Function2.ts` and `typedefTagTypeResolution.ts` where a
-        // standalone typedef legitimately fails to find a name declared
-        // by an unrelated function's `@template`.
-        for &stmt_idx in &sf.statements.nodes {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION
-                && stmt_node.kind != syntax_kind_ext::CLASS_EXPRESSION
-            {
-                continue;
-            }
-            // ref_pos must be inside the class's source range.
-            if !(ref_pos >= stmt_node.pos && ref_pos < stmt_node.end) {
-                continue;
-            }
-            // Find the class's leading JSDoc and check for @template <name>.
-            for comment in &sf.comments {
-                if !is_jsdoc_comment(comment, source_text) {
-                    continue;
-                }
-                if comment.end > stmt_node.pos {
-                    continue;
-                }
-                // Use the closest comment that immediately precedes the
-                // class — heuristic, but matches the leading-JSDoc convention.
-                // We accept any comment with `end <= stmt.pos` whose
-                // `@template <name>` matches.
-                let content = get_jsdoc_content(comment, source_text);
-                if Self::jsdoc_template_type_params(&content)
-                    .into_iter()
-                    .any(|(decl_name, _)| decl_name == name)
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// Backwards-compatible wrapper: when no `ref_pos` is available
-    /// (callers haven't been threaded through), use the legacy
-    /// file-wide check. This is intentionally narrower than the
-    /// fully-scoped `_at` variant — call sites should prefer the `_at`
-    /// version where the reference's source position is known.
-    pub(crate) fn source_file_declares_jsdoc_template(&self, name: &str) -> bool {
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let source_text: &str = &sf.text;
-        for comment in &sf.comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            let content = get_jsdoc_content(comment, source_text);
-            for (decl_name, _is_const) in Self::jsdoc_template_type_params(&content) {
-                if decl_name == name {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     /// Check whether a JSDoc type expression is a simple identifier name
