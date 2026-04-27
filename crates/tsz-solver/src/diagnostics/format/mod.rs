@@ -896,7 +896,8 @@ impl<'a> TypeFormatter<'a> {
             && let Some(ns_names) = self.namespace_module_names
             && let Some(module_name) = ns_names.get(&type_id)
         {
-            let display_name = module_name.strip_prefix("./").unwrap_or(module_name);
+            let display_name =
+                Self::strip_module_extension(module_name.strip_prefix("./").unwrap_or(module_name));
             return format!("typeof import(\"{display_name}\")").into();
         }
 
@@ -1313,10 +1314,12 @@ impl<'a> TypeFormatter<'a> {
                     && symbol.import_name.as_deref() == Some("*")
                     && let Some(ref module_specifier) = symbol.import_module
                 {
-                    let display_name = module_specifier
-                        .strip_prefix("./")
-                        .or_else(|| module_specifier.strip_prefix("../"))
-                        .unwrap_or(module_specifier);
+                    let display_name = Self::strip_module_extension(
+                        module_specifier
+                            .strip_prefix("./")
+                            .or_else(|| module_specifier.strip_prefix("../"))
+                            .unwrap_or(module_specifier),
+                    );
                     return format!("typeof import(\"{display_name}\")").into();
                 }
                 if let Some(arena) = self.symbol_arena
@@ -1486,10 +1489,27 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     format!("module({})", sym.0)
                 };
+                let name = Self::strip_module_extension(&name);
                 format!("typeof import(\"{name}\")").into()
             }
             TypeData::Error => Cow::Borrowed("error"),
         }
+    }
+
+    /// Strip TypeScript/JavaScript file extensions from module specifier
+    /// display names. TSC omits extensions in `typeof import("mod")` output.
+    fn strip_module_extension(module_name: &str) -> &str {
+        // Check `.d.{ts,mts,cts}` before shorter extensions
+        const EXTS: &[&str] = &[
+            ".d.ts", ".d.mts", ".d.cts", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts",
+            ".cts",
+        ];
+        for ext in EXTS {
+            if let Some(stripped) = module_name.strip_suffix(ext) {
+                return stripped;
+            }
+        }
+        module_name
     }
 
     const fn format_intrinsic(&self, kind: IntrinsicKind) -> &'static str {

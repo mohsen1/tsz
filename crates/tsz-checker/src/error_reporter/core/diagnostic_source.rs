@@ -619,7 +619,10 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn format_property_receiver_type_for_diagnostic(&mut self, ty: TypeId) -> String {
         if let Some(module_name) = self.ctx.namespace_module_names.get(&ty) {
-            return format!("typeof import(\"{module_name}\")");
+            return format!(
+                "typeof import(\"{}\")",
+                strip_module_specifier_extension(module_name)
+            );
         }
         let application_display =
             crate::query_boundaries::common::type_application(self.ctx.types, ty)
@@ -1645,4 +1648,18 @@ impl<'a> CheckerState<'a> {
         }
         Some(reduced)
     }
+}
+
+/// Strip file extensions from module specifiers for display.
+/// TSC omits extensions in `typeof import("mod")` output.
+fn strip_module_specifier_extension(module_name: &str) -> &str {
+    const EXTS: &[&str] = &[
+        ".d.ts", ".d.mts", ".d.cts", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
+    ];
+    for ext in EXTS {
+        if let Some(stripped) = module_name.strip_suffix(ext) {
+            return stripped;
+        }
+    }
+    module_name
 }
