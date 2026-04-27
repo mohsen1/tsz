@@ -1188,28 +1188,21 @@ impl<'a> CheckerContext<'a> {
 
         let arenas = self.all_arenas.as_ref()?;
 
-        // Direct-match fast path: the specifier IS an exact project file
-        // name (or differs only in extension). Very cheap linear scan over
-        // arenas with no path allocation.
-        let normalized_specifier = specifier.replace('\\', "/");
-        let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
-        if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
-            arena.source_files.first().is_some_and(|sf| {
-                let file_name = sf.file_name.replace('\\', "/");
-                file_name == normalized_specifier
-                    || Self::strip_ts_extension(&file_name) == stripped_specifier
-            })
-        }) {
-            return Some(target_idx);
-        }
-
-        // Specifier-to-target fallback. Historically this rebuilt the full
-        // O(N²) `(src_idx, specifier) -> tgt_idx` map on every miss, which
-        // dominated the CPU profile for large projects (>40% in Path::
-        // Components iteration). We now consult a pre-built reverse index
-        // from normalized file name to file index and probe the small
-        // candidate set the specifier could address (direct hit, TS/JS
-        // extension fan-out, directory-index fallback) in O(1) each.
+        // Prefer the O(1) reverse index (`global_file_name_index`) when one
+        // is wired in — this is the common case for any parallel project
+        // check via `ProjectEnv`. The previous "Direct-match fast path"
+        // linear scan over `all_arenas` was unconditionally allocating a
+        // `.replace('\\', "/")` String per arena on every call. For large
+        // projects (~6000 files) with bare imports like `@shared/foo` that
+        // never match a project file name verbatim, the scan visited all
+        // arenas and allocated thousands of strings before falling through
+        // to the index. Profile (samply, 1429-file slice of large-ts-repo):
+        // this function was the #1 hot leaf at 22.46% self-time, with
+        // `HashMap::insert` and `resolve_namespace_member_from_all_binders`
+        // as downstream consequences of the wasted work. The index already
+        // handles direct file-name matches as one of its candidate forms
+        // (see `resolve_specifier_via_file_index`), so skipping the scan
+        // when an index is available is semantically a no-op.
         let source_file_name = arenas
             .get(source_file_idx)
             .and_then(|arena| arena.source_files.first())
@@ -1223,9 +1216,23 @@ impl<'a> CheckerContext<'a> {
             );
         }
 
-        // No pre-built index (legacy contexts with no ProjectEnv wiring).
-        // Build the reverse index on-demand from `all_arenas` — still O(N)
-        // per call, but without the catastrophic O(N²) cross-product.
+        // No pre-built index (legacy single-context paths with no ProjectEnv
+        // wiring). Try the cheap direct-match scan first — this only matters
+        // here, where `all_arenas` is bounded by the much smaller per-file
+        // context. Then fall back to building a one-shot reverse index for
+        // richer specifier resolution.
+        let normalized_specifier = specifier.replace('\\', "/");
+        let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
+        if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
+            arena.source_files.first().is_some_and(|sf| {
+                let file_name = sf.file_name.replace('\\', "/");
+                file_name == normalized_specifier
+                    || Self::strip_ts_extension(&file_name) == stripped_specifier
+            })
+        }) {
+            return Some(target_idx);
+        }
+
         let fallback_idx = crate::module_resolution::build_file_name_index(arenas);
         crate::module_resolution::resolve_specifier_via_file_index(
             source_file_name,
