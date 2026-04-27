@@ -506,11 +506,7 @@ impl<'a> CheckerState<'a> {
     /// Best-effort resolution of an imported symbol's non-local meanings.
     /// Returns `(has_type, has_value)` for the target of `import { name } from module_spec`.
     /// Used by TS1292 / TS2865 isolatedModules checks.
-    fn lookup_imported_target_flags(
-        &self,
-        module_spec: &str,
-        import_name: &str,
-    ) -> (bool, bool) {
+    fn lookup_imported_target_flags(&self, module_spec: &str, import_name: &str) -> (bool, bool) {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
         let mut has_type = false;
@@ -537,9 +533,7 @@ impl<'a> CheckerState<'a> {
                     if target_sym.has_any_flags(symbol_flags::TYPE) {
                         has_type = true;
                     }
-                    if target_sym
-                        .has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE)
-                    {
+                    if target_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE) {
                         has_value = true;
                     }
                     if has_value {
@@ -550,37 +544,33 @@ impl<'a> CheckerState<'a> {
         }
 
         // Try regular file exports — follow re-export chains.
-        if !has_value
-            && let Some(target_idx) = self.ctx.resolve_import_target(module_spec)
-        {
+        if !has_value && let Some(target_idx) = self.ctx.resolve_import_target(module_spec) {
             let mut visited = rustc_hash::FxHashSet::default();
             if let Some((resolved_sym_id, resolved_file_idx)) =
                 self.resolve_export_in_file(target_idx, import_name, &mut visited)
-                && let Some(resolved_binder) =
-                    self.ctx.get_binder_for_file(resolved_file_idx)
+                && let Some(resolved_binder) = self.ctx.get_binder_for_file(resolved_file_idx)
                 && let Some(resolved_sym) = resolved_binder.symbols.get(resolved_sym_id)
             {
                 // Skip namespace pseudo-symbols (`namespace foo { ... }` with
                 // only type members) — they appear in exports but don't
                 // introduce a runtime value.
-                let mut sym_has_value = resolved_sym
-                    .has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
+                let mut sym_has_value =
+                    resolved_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
                 if sym_has_value
                     && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
                     && !resolved_sym
                         .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)
                 {
+                    // declarations carry file-local NodeIndex into the resolved
+                    // file's arena, not the current file's arena.
+                    let resolved_arena = self.ctx.get_arena_for_file(resolved_file_idx as u32);
                     let any_instantiated = resolved_sym.declarations.iter().any(|&decl_idx| {
-                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        let Some(decl_node) = resolved_arena.get(decl_idx) else {
                             return false;
                         };
-                        if decl_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                            // Without project-wide arenas we conservatively
-                            // assume any namespace block adds runtime value.
-                            true
-                        } else {
-                            true
-                        }
+                        // Only namespace declarations contribute runtime value;
+                        // type-only declarations (interface/type alias) do not.
+                        decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
                     });
                     sym_has_value = any_instantiated;
                 }
