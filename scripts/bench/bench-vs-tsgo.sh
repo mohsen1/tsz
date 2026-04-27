@@ -645,15 +645,15 @@ run_project_benchmark() {
         tsz_prefix+=(env "TSZ_LIB_DIR=$TSZ_LIB_DIR")
     fi
 
-    # For project fixtures (except nextjs, which is currently tsgo-only), require
+    # For project fixtures (except nextjs and large-ts-repo), require
     # a clean tsc pass before benchmarking.
-    if [ "$name" != "nextjs" ]; then
+    # large-ts-repo skips the tsc fixture gate: tsconfig.flat.bench.json
+    # extends the workspace's own base config (with JSX packages) which tsc
+    # 6.x rejects due to --jsx not being set in the flat override. tsgo
+    # handles it fine, and the benchmark is tsgo-only for this fixture anyway.
+    if [ "$name" != "nextjs" ] && [ "$name" != "large-ts-repo" ]; then
         local project_tsc_timeout
-        if [ "$name" = "large-ts-repo" ]; then
-            project_tsc_timeout=$((BENCH_TIMEOUT * 6))
-        else
-            project_tsc_timeout=$((BENCH_TIMEOUT * 2))
-        fi
+        project_tsc_timeout=$((BENCH_TIMEOUT * 2))
         local tsc_check=0
     run_with_timeout "$project_tsc_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSC" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsc_check=$?
         if [ "$tsc_check" -ne 0 ]; then
