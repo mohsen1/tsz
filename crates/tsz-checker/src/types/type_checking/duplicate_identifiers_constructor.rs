@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
 
         // Iterate over all class scopes in the binder
-        for scope in &self.ctx.binder.scopes {
+        for scope in self.ctx.binder.scopes.iter() {
             if scope.kind != tsz_binder::ContainerKind::Class {
                 continue;
             }
