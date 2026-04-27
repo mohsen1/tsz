@@ -416,18 +416,34 @@ impl ParserState {
                 previous_statement_was_block = false;
             } else {
                 previous_statement_was_block = self.arena.get(stmt).is_some_and(|node| {
-                    node.kind == syntax_kind_ext::BLOCK
-                        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        || node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || node.kind == syntax_kind_ext::IF_STATEMENT
-                        || node.kind == syntax_kind_ext::FOR_STATEMENT
-                        || node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                        || node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                        || node.kind == syntax_kind_ext::WHILE_STATEMENT
-                        || node.kind == syntax_kind_ext::DO_STATEMENT
-                        || node.kind == syntax_kind_ext::SWITCH_STATEMENT
-                        || node.kind == syntax_kind_ext::TRY_STATEMENT
-                        || node.kind == syntax_kind_ext::WITH_STATEMENT
+                    let kind = node.kind;
+                    if kind == syntax_kind_ext::BLOCK
+                        || kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || kind == syntax_kind_ext::CLASS_DECLARATION
+                        || kind == syntax_kind_ext::IF_STATEMENT
+                        || kind == syntax_kind_ext::FOR_STATEMENT
+                        || kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || kind == syntax_kind_ext::FOR_OF_STATEMENT
+                        || kind == syntax_kind_ext::WHILE_STATEMENT
+                        || kind == syntax_kind_ext::DO_STATEMENT
+                        || kind == syntax_kind_ext::SWITCH_STATEMENT
+                        || kind == syntax_kind_ext::TRY_STATEMENT
+                        || kind == syntax_kind_ext::WITH_STATEMENT
+                    {
+                        return true;
+                    }
+                    // ExpressionStatement whose expression is an arrow
+                    // function or function expression with a block body —
+                    // tsc treats `() => { } = value;` and
+                    // `(function () { }) = value;` like a block-following-`=`
+                    // and emits TS2809 instead of TS1005.
+                    if kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                        && let Some(expr_stmt) = self.arena.get_expression_statement(node)
+                        && let Some(inner) = self.arena.get(expr_stmt.expression)
+                    {
+                        return inner.is_function_expression_or_arrow();
+                    }
+                    false
                 });
                 statements.push(stmt);
             }
@@ -556,18 +572,26 @@ impl ParserState {
                 previous_statement_was_block = false;
             } else {
                 previous_statement_was_block = self.arena.get(stmt).is_some_and(|node| {
-                    node.kind == syntax_kind_ext::BLOCK
-                        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        || node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        || node.kind == syntax_kind_ext::IF_STATEMENT
-                        || node.kind == syntax_kind_ext::FOR_STATEMENT
-                        || node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                        || node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                        || node.kind == syntax_kind_ext::WHILE_STATEMENT
-                        || node.kind == syntax_kind_ext::DO_STATEMENT
-                        || node.kind == syntax_kind_ext::SWITCH_STATEMENT
-                        || node.kind == syntax_kind_ext::TRY_STATEMENT
-                        || node.kind == syntax_kind_ext::WITH_STATEMENT
+                    let kind = node.kind;
+                    if kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                        && let Some(expr_stmt) = self.arena.get_expression_statement(node)
+                        && let Some(inner) = self.arena.get(expr_stmt.expression)
+                        && inner.is_function_expression_or_arrow()
+                    {
+                        return true;
+                    }
+                    kind == syntax_kind_ext::BLOCK
+                        || kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        || kind == syntax_kind_ext::CLASS_DECLARATION
+                        || kind == syntax_kind_ext::IF_STATEMENT
+                        || kind == syntax_kind_ext::FOR_STATEMENT
+                        || kind == syntax_kind_ext::FOR_IN_STATEMENT
+                        || kind == syntax_kind_ext::FOR_OF_STATEMENT
+                        || kind == syntax_kind_ext::WHILE_STATEMENT
+                        || kind == syntax_kind_ext::DO_STATEMENT
+                        || kind == syntax_kind_ext::SWITCH_STATEMENT
+                        || kind == syntax_kind_ext::TRY_STATEMENT
+                        || kind == syntax_kind_ext::WITH_STATEMENT
                 });
                 statements.push(stmt);
             }
