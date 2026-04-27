@@ -1014,6 +1014,81 @@ fn test_jsdoc_unwrapped_multiline_typedef_reports_ts1110() {
 }
 
 #[test]
+fn test_jsdoc_unwrapped_multiline_typedef_does_not_leak_to_sibling_files() {
+    // Regression: `check_jsdoc_unwrapped_multiline_typedefs` previously walked
+    // every arena's comments while `error_at_position` attaches diagnostics
+    // to the current file's name. With mod1.js as the entry file (well-formed
+    // typedef) and mod7.js as a sibling (malformed wrapping), TS1110s for
+    // mod7.js's comment offsets were re-anchored onto mod1.js. The check now
+    // operates strictly on the current file's arena, so checking mod1.js as
+    // entry must yield zero TS1110 diagnostics regardless of sibling content.
+    let mod1 = r#"
+/**
+ * @typedef {function(string): boolean}
+ * Type1
+ */
+function callIt(func, arg) {
+  return func(arg);
+}
+"#;
+
+    let mod7 = r#"
+/**
+   Multiline type expressions in comments without leading * are not supported.
+   @typedef {{
+     foo:
+     *,
+     bar:
+     *
+   }} Type7
+ */
+"#;
+
+    let files: &[(&str, &str)] = &[("mod1.js", mod1), ("mod7.js", mod7)];
+
+    let entry_diagnostics = compile_named_files_get_diagnostics_with_options(
+        files,
+        "mod1.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let entry_ts1110 = entry_diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 1110)
+        .count();
+    assert_eq!(
+        entry_ts1110, 0,
+        "mod1.js (well-formed @typedef) should not receive TS1110 from sibling mod7.js. \
+         Actual diagnostics: {entry_diagnostics:#?}"
+    );
+
+    // Conversely, mod7.js as the entry must still report exactly two TS1110s.
+    let sibling_diagnostics = compile_named_files_get_diagnostics_with_options(
+        files,
+        "mod7.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let sibling_ts1110 = sibling_diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 1110)
+        .count();
+    assert_eq!(
+        sibling_ts1110, 2,
+        "mod7.js (unwrapped multiline @typedef) should still emit two TS1110 diagnostics \
+         when checked alongside mod1.js. Actual diagnostics: {sibling_diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_deep_exports_assignment_reports_ts2339_against_current_module_surface() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
