@@ -1014,7 +1014,7 @@ impl BinderState {
                 Arc::make_mut(&mut self.node_symbols).insert(idx.0, sym_id);
                 self.declare_in_persistent_scope(name.to_string(), sym_id);
                 // Record partnership: TYPE_ALIAS → ALIAS
-                self.alias_partners.insert(sym_id, alias_id);
+                Arc::make_mut(&mut self.alias_partners).insert(sym_id, alias_id);
                 let tp_count = alias
                     .type_parameters
                     .as_ref()
