@@ -41,7 +41,8 @@ jobs:
       - name: Install pnpm
         run: |
           if ! command -v pnpm &>/dev/null; then
-            npm install -g pnpm --silent
+            curl -fsSL https://get.pnpm.io/install.sh | PNPM_HOME="$HOME/.local/share/pnpm" sh -
+            echo "$HOME/.local/share/pnpm" >> "$GITHUB_PATH"
           fi
 
       - name: Run benchmarks

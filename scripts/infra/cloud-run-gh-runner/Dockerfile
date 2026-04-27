@@ -36,6 +36,7 @@ RUN apt-get update -qq \
     && su runner -c '/home/runner/.cargo/bin/rustup target add wasm32-unknown-unknown' \
     && curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C /usr/local/bin \
     && curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh \
+    && npm install -g pnpm \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
