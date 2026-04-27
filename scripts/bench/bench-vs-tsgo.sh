@@ -671,17 +671,21 @@ run_project_benchmark() {
 
     # Pre-validate with timeout: record errors/timeouts in summary table.
     # Project-level benchmarks get a longer timeout since they check many files.
-    # large-ts-repo skips tsz pre-validation entirely — tsz currently OOMs on
-    # 6000+ file projects so we only benchmark tsgo and record tsz as pending.
+    # large-ts-repo skips both tsz and tsgo pre-validation:
+    #   - tsz: OOMs on 6000+ file projects
+    #   - tsgo: cold check of the full workspace takes >120s even for tsgo;
+    #     pre-validation would always timeout and block the hyperfine run.
+    # Both are verified during the actual hyperfine run instead.
     local project_timeout=$((BENCH_TIMEOUT * 2))
     local tsz_check=0
+    local tsgo_check=0
     if [ "$name" != "large-ts-repo" ]; then
         run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
+        run_with_timeout "$project_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
     else
         tsz_check=1  # treat as failed so we enter the partial-data path below
+        # tsgo_check stays 0: we proceed directly to the hyperfine run
     fi
-    local tsgo_check=0
-    run_with_timeout "$project_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
 
     # For large-ts-repo: tsz is expected to fail (OOM); still benchmark tsgo.
     # For other projects: any failure is an error, skip.
@@ -742,12 +746,12 @@ run_project_benchmark() {
     local proj_min
     local proj_max
     if [ "$name" = "large-ts-repo" ]; then
-        run_timeout=300
-        # Few runs are enough for a 6000-file project — variance is small in
-        # absolute % terms and total wall-clock matters for CI budget.
+        # tsgo cold-checks 6000+ files; give it up to 10 min per run.
+        # 1 warmup + 1 measured run keeps total wall-clock under 20 min.
+        run_timeout=600
         proj_warmup=1
-        proj_min=3
-        proj_max=5
+        proj_min=1
+        proj_max=2
     else
         run_timeout=120
         proj_warmup="$WARMUP"
