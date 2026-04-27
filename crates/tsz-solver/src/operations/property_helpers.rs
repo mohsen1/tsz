@@ -1026,6 +1026,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return PropertyAccessResult::simple(literal);
         }
 
+        if prop_name == "toLocaleString" {
+            return self.method_result(TypeId::STRING);
+        }
+
         let element_type = self.array_element_type(array_type);
 
         // Try to use the Array<T> interface from lib.d.ts
