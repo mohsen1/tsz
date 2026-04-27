@@ -768,6 +768,17 @@ run_conformance() {
         "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null \
         && echo "Uploaded shard result: shard-${shard_index}.json" \
         || echo "warning: failed to upload shard result (non-fatal)" >&2
+
+      # Upload per-shard FAIL list so aggregate can show which tests regressed.
+      local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
+      grep -a '^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) ' "$log_file" \
+        | sed 's/^\(FAIL\|XFAIL\|CRASH\|TIMEOUT\) \([^ |]*\).*/\2/' \
+        | sort -u > "$failures_file" 2>/dev/null || true
+      if [[ -s "$failures_file" ]]; then
+        gsutil -q cp "$failures_file" \
+          "${bucket%/}/conformance-runs/${run_key}/failures-shard-${shard_index}.txt" 2>/dev/null \
+          || echo "warning: failed to upload failure list (non-fatal)" >&2
+      fi
     fi
     return 0
   fi
@@ -836,9 +847,76 @@ run_conformance_aggregate() {
   fi
   if [[ "$baseline" -gt 0 && "$total_passed" -lt "$baseline" ]]; then
     echo "error: conformance regression: ${total_passed} < ${baseline}" >&2
+    _show_conformance_regressions "$tmp_dir" "$prefix" "$baseline"
     return 1
   fi
   echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
+}
+
+# Download per-shard failure lists and show which tests are newly failing vs snapshot.
+_show_conformance_regressions() {
+  local tmp_dir="$1" prefix="$2" baseline_passed="$3"
+  local snapshot="scripts/conformance/conformance-detail.json"
+
+  # Download all per-shard failure lists (best-effort; non-fatal if missing).
+  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+    echo "(no per-shard failure lists available — upload may have been skipped)" >&2
+    return
+  fi
+
+  # Union all FAIL paths across shards.
+  local all_failures_file="$tmp_dir/all-failures.txt"
+  cat "$tmp_dir"/failures-shard-*.txt 2>/dev/null | sort -u > "$all_failures_file" || true
+  local fail_count
+  fail_count="$(wc -l < "$all_failures_file" | tr -d ' ')"
+
+  if [[ "$fail_count" -eq 0 ]]; then
+    echo "(no failure detail available)" >&2
+    return
+  fi
+
+  # Cross-reference with snapshot to identify newly failing tests.
+  if [[ -f "$snapshot" ]]; then
+    echo ""
+    echo "=== Conformance regressions (tests passing in snapshot but failing now) ==="
+    python3 - "$all_failures_file" "$snapshot" <<'PYEOF'
+import json, sys, os
+
+def normalize(path):
+    """Strip machine-specific prefix, keep TypeScript/tests/... or similar suffix."""
+    parts = path.replace("\\", "/").split("/")
+    for i, p in enumerate(parts):
+        if p == "TypeScript":
+            return "/".join(parts[i:])
+    return os.path.basename(path)
+
+raw_failing = [l for l in open(sys.argv[1]).read().splitlines() if l]
+failing_now = {normalize(p): p for p in raw_failing}
+
+with open(sys.argv[2]) as f:
+    detail = json.load(f)
+snapshot_failures = {normalize(k) for k in detail.get("failures", {}).keys()}
+
+newly_failing = sorted(k for k in failing_now if k not in snapshot_failures)
+still_failing = sorted(k for k in failing_now if k in snapshot_failures)
+
+if newly_failing:
+    print(f"\nNewly failing ({len(newly_failing)} tests):")
+    for t in newly_failing:
+        print(f"  REGRESSED: {t}")
+else:
+    print("\nNo newly failing tests found (all failures were already in snapshot).")
+
+if still_failing:
+    print(f"\nAlready failing in snapshot ({len(still_failing)} tests) — not regressions.")
+PYEOF
+    echo "==================================================================="
+  else
+    echo ""
+    echo "=== Failing tests this run (${fail_count} total) ==="
+    cat "$all_failures_file"
+    echo "==================================================================="
+  fi
 }
 
 run_emit_shard() {
