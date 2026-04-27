@@ -1096,35 +1096,25 @@ impl ParserState {
             self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
             return;
         }
-        // Mirror tsc's `lastError` slot exactly: a previous error at the same
-        // position (via either parser- or scanner-side dedup below) suppresses
-        // this one too. The `parse_diagnostics.last()` check above only catches
-        // the common "consecutive parser push" case; this catches the
-        // cross-side case where a scanner-dedup claimed the slot earlier.
-        if start != 0 && self.last_error_pos == start {
-            self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
-            return;
-        }
         // tsc routes scanner errors through the same `parseErrorAtPosition`
         // path via `scanError`, so they share the same `lastError` slot. We
         // mirror that here: any scanner diagnostics emitted *after* our most
         // recent parser push are the effective "lastError" tail. If the very
         // last such scanner diagnostic shares this start, dedup applies.
-        // (Earlier scanner diagnostics are not relevant: a parser push or
-        // a later scanner push past their position has already moved the
-        // effective `lastError` past them.)
+        //
+        // Crucially, scanner-side dedup does NOT advance the high-water mark
+        // — multiple parser errors at the same scanner-claimed position
+        // (e.g. malformed `0b21010;` triggers both a `,'` expected and a `;'`
+        // expected at the bad-digit position) all dedup against the same
+        // scanner diag. Advancing the mark here would consume the slot and
+        // leak the second parser error. We only advance the mark when
+        // actually pushing a parser diagnostic (below), at which point the
+        // scanner diag has been "absorbed" into our lastError tail.
         let scanner_diags = self.scanner.get_scanner_diagnostics();
         if scanner_diags.len() > self.scanner_diagnostics_high_water_mark
             && let Some(last_scanner) = scanner_diags.last()
             && self.u32_from_usize(last_scanner.pos) == start
         {
-            self.scanner_diagnostics_high_water_mark = scanner_diags.len();
-            // Mirror tsc's `lastError` slot: scanner-dedup means an error at
-            // this position has been "claimed" by the scanner. Track it so
-            // subsequent same-position parser errors also dedup, matching
-            // tsc's `parseErrorAtPosition` which suppresses by exact start
-            // regardless of which side (scanner or parser) emitted first.
-            self.last_error_pos = start;
             return;
         }
         // Track the position of this error to prevent cascading errors at same position
