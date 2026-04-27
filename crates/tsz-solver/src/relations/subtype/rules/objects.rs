@@ -754,14 +754,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // tsc: `indexSignaturesRelatedTo` short-circuit (checker.ts ~24828):
         //   if THIS target index info maps to `any` AND the target ALSO has a
         //   string index signature, the source need not declare a matching
-        //   number index. This permits `{ [s: string]: any, [n: number]: any }`
-        //   targets to accept any source -- including class/interface sources
-        //   without explicit index signatures. The "target has string index"
-        //   gate is what distinguishes this from a number-only `{ [n: number]: any }`
-        //   target, which still requires a numeric-compatible source.
+        //   number index. Gated on a NAMED target (`target.symbol.is_some()`)
+        //   so we don't loosen merged-intersection synthetic shapes whose
+        //   indexes come from distinct intersection members; tsc relates each
+        //   intersection member separately, while our interner eagerly merges
+        //   them. Without this gate, `Obj <: StringTo<any> & NumberTo<any>`
+        //   would incorrectly succeed.
         if !self.disable_method_bivariance
             && t_number_idx.value_type.is_any()
             && target.string_index.is_some()
+            && target.symbol.is_some()
         {
             return SubtypeResult::True;
         }
