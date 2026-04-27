@@ -84,6 +84,50 @@ pub(crate) enum MemberVisibility {
     Private,
 }
 
+/// Build the elaboration line tsc appends to TS2415 (class incorrectly extends
+/// base class) when the conflict is purely a visibility/branding mismatch on a
+/// single member.
+///
+/// Returns `None` when the conflict is not a pure visibility one (callers fall
+/// back to the bare TS2415 message).
+///
+/// tsc message catalog:
+/// - both Private (different declarations): "Types have separate declarations of a private property '{name}'."
+/// - base Private, derived Public/Protected: "Property '{name}' is private in type '{base}' but not in type '{derived}'."
+/// - base Public, derived Private/Protected: "Property '{name}' is {vis} in type '{derived}' but not in type '{base}'."
+/// - base Public, derived Protected: "Property '{name}' is protected in type '{derived}' but public in type '{base}'."
+/// - both Protected (different declarations): "Types have separate declarations of a protected property '{name}'."
+pub(crate) fn visibility_conflict_elaboration(
+    derived_visibility: MemberVisibility,
+    base_visibility: MemberVisibility,
+    display_name: &str,
+    derived_class_name: &str,
+    base_class_name: &str,
+) -> Option<String> {
+    use MemberVisibility::*;
+    match (derived_visibility, base_visibility) {
+        (Private, Private) => Some(format!(
+            "Types have separate declarations of a private property '{display_name}'."
+        )),
+        (Protected, Protected) => Some(format!(
+            "Types have separate declarations of a protected property '{display_name}'."
+        )),
+        (_, Private) => Some(format!(
+            "Property '{display_name}' is private in type '{base_class_name}' but not in type '{derived_class_name}'."
+        )),
+        (Private, _) => Some(format!(
+            "Property '{display_name}' is private in type '{derived_class_name}' but not in type '{base_class_name}'."
+        )),
+        (Protected, Public) => Some(format!(
+            "Property '{display_name}' is protected in type '{derived_class_name}' but public in type '{base_class_name}'."
+        )),
+        (Public, Protected) => Some(format!(
+            "Property '{display_name}' is protected in type '{base_class_name}' but public in type '{derived_class_name}'."
+        )),
+        (Public, Public) => None,
+    }
+}
+
 // =============================================================================
 // Class and Interface Checking Methods
 // =============================================================================
@@ -1718,20 +1762,40 @@ impl<'a> CheckerState<'a> {
                 }
                 self.pop_type_parameters(base_scope.1);
                 if !class_extends_error_reported {
+                    let display_name = format_property_name_for_diagnostic(&member_name);
+                    let elaboration = visibility_conflict_elaboration(
+                        member_visibility,
+                        base_any_info.visibility,
+                        &display_name,
+                        &derived_class_name,
+                        &base_class_name,
+                    );
                     if is_static {
-                        self.error_at_node(
-                            class_data.name,
-                            &format!(
+                        let message = match elaboration {
+                            Some(detail) => format!(
+                                "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'.\n  {detail}"
+                            ),
+                            None => format!(
                                 "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
                             ),
+                        };
+                        self.error_at_node(
+                            class_data.name,
+                            &message,
                             diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
                         );
                     } else {
-                        self.error_at_node(
-                            class_data.name,
-                            &format!(
+                        let message = match elaboration {
+                            Some(detail) => format!(
+                                "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'.\n  {detail}"
+                            ),
+                            None => format!(
                                 "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'."
                             ),
+                        };
+                        self.error_at_node(
+                            class_data.name,
+                            &message,
                             diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
                         );
                     }
