@@ -1179,3 +1179,73 @@ const r = foo({ transform: (x: string) => x.length });
             .collect::<Vec<_>>()
     );
 }
+
+/// Object-literal property elaboration: when a numeric literal property is
+/// passed to a parameter expecting a boolean literal, tsc reports the source
+/// as the widened primitive (`number`) rather than the AST literal (`1`).
+/// Mirrors `getWidenedLiteralLikeTypeForContextualType`: literal `1` is not a
+/// "literal of contextual type" against `true`, so its display widens.
+///
+/// Direct literal-to-literal assignments (`let x: 1 = "abc"`) are unaffected
+/// because the source carries its own literal TypeId rather than being
+/// pre-widened by property elaboration.
+#[test]
+fn ts2322_property_elaboration_widens_cross_primitive_literal_source() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+const fn1 = (s: { a: true }) => {};
+fn1({ a: 1 });
+fn1({ a: 1 } satisfies unknown);
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .all(|m| m.contains("Type 'number' is not assignable to type 'true'.")),
+        "Expected widened source display 'number' for cross-primitive-kind \
+         property elaboration (`a: 1` against `a: true`), got: {messages:#?}"
+    );
+    assert_eq!(
+        messages.len(),
+        2,
+        "Expected exactly two TS2322 diagnostics (one per call), got: {messages:#?}"
+    );
+}
+
+/// Direct literal-to-literal assignment must keep the literal display:
+/// `let x: 1 = "abc"` reports `Type '"abc"'`, not `Type 'string'`.
+/// `let literal2: true = 1 satisfies number` keeps `Type '1'` because
+/// `satisfies` preserves the inner literal type.
+#[test]
+fn ts2322_direct_literal_assignment_preserves_ast_literal_display() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+const a: 1 = "abc";
+const b: 1 = true;
+const c: true = 1 satisfies number;
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    let has = |needle: &str| messages.iter().any(|m| m.contains(needle));
+    assert!(
+        has("Type '\"abc\"' is not assignable to type '1'."),
+        "Expected literal `\"abc\"` for direct string-to-1 assignment, got: {messages:#?}"
+    );
+    assert!(
+        has("Type 'true' is not assignable to type '1'."),
+        "Expected literal `true` for direct boolean-to-1 assignment, got: {messages:#?}"
+    );
+    assert!(
+        has("Type '1' is not assignable to type 'true'."),
+        "Expected literal `1` for `let c: true = 1 satisfies number`, got: {messages:#?}"
+    );
+}

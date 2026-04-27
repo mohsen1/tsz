@@ -219,6 +219,18 @@ impl<'a> CheckerState<'a> {
                         // is not assignable to type 'T'". Preserve literals only
                         // for complex generic targets like indexed access types.
                         && !self.target_is_bare_type_parameter(target)))
+                // For pre-widened property-elaboration sources, mirror tsc's
+                // `getWidenedLiteralLikeTypeForContextualType`: only resurrect
+                // the AST literal display when the source's primitive kind has
+                // a matching literal kind in the target. Cross-primitive cases
+                // (e.g. numeric literal `1` against boolean literal `true`)
+                // widen the source so the diagnostic shows
+                // `Type 'number' is not assignable to type 'true'.` instead of
+                // `Type '1' ...`. Direct same-primitive mismatches like
+                // `"bar"` vs `"foo"` keep the literal display.
+                && !self.property_elaboration_widening_required_for_display(
+                    expr_idx, source, target,
+                )
             {
                 return display;
             }
@@ -834,4 +846,95 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    /// Whether to suppress the AST-literal short-circuit for an
+    /// object-literal-property elaboration when the property elaboration has
+    /// already widened the source (e.g. `1` → `number`). Mirrors tsc's
+    /// `getWidenedLiteralLikeTypeForContextualType`: keep the literal display
+    /// when the source's primitive kind appears as a literal kind somewhere in
+    /// the target, otherwise widen.
+    pub(in crate::error_reporter) fn property_elaboration_widening_required_for_display(
+        &self,
+        expr_idx: NodeIndex,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if !self.is_property_assignment_initializer(expr_idx) {
+            return false;
+        }
+        // Only fire when the caller passed in a non-literal primitive source
+        // (i.e. the property elaboration already widened the literal). For
+        // direct `let x: 1 = "abc"` style mismatches the source is still the
+        // literal type, so this guard short-circuits.
+        if !crate::query_boundaries::common::is_primitive_type(self.ctx.types, source) {
+            return false;
+        }
+        if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some() {
+            return false;
+        }
+        let primitive_kind = source;
+        !target_accepts_literal_primitive_kind(self.ctx.types, target, primitive_kind)
+    }
+}
+
+/// Whether `target` accepts a literal whose widened primitive kind is
+/// `source_primitive` for "literal-of-contextual-type" purposes. Mirrors
+/// `isLiteralOfContextualType` from TypeScript: returns true when any
+/// literal-typed member of the target shares the same primitive kind, or
+/// when the target is a structural literal-shaped type (template/symbol)
+/// compatible with the source's primitive kind.
+fn target_accepts_literal_primitive_kind(
+    db: &dyn tsz_solver::TypeDatabase,
+    target: TypeId,
+    source_primitive: TypeId,
+) -> bool {
+    target_accepts_literal_primitive_kind_inner(db, target, source_primitive, 0)
+}
+
+fn target_accepts_literal_primitive_kind_inner(
+    db: &dyn tsz_solver::TypeDatabase,
+    target: TypeId,
+    source_primitive: TypeId,
+    depth: u32,
+) -> bool {
+    use crate::query_boundaries::common;
+    // Recursion guard for self-referential aliases (e.g. `type T = string |
+    // Promise<T>`) and similarly deep unions/intersections. Returning `true`
+    // when we bail keeps the literal-display short-circuit's pre-existing
+    // behavior intact for unfamiliar shapes.
+    if depth > 32 {
+        return true;
+    }
+    if let Some(members) = common::union_members(db, target) {
+        return members.iter().any(|&m| {
+            target_accepts_literal_primitive_kind_inner(db, m, source_primitive, depth + 1)
+        });
+    }
+    if let Some(members) = common::intersection_members(db, target) {
+        return members.iter().any(|&m| {
+            target_accepts_literal_primitive_kind_inner(db, m, source_primitive, depth + 1)
+        });
+    }
+    if let Some(value) = common::literal_value(db, target) {
+        return value.primitive_type_id() == source_primitive;
+    }
+    if source_primitive == TypeId::STRING
+        && (common::is_template_literal_type(db, target)
+            || common::is_string_intrinsic_type(db, target))
+    {
+        return true;
+    }
+    if target == TypeId::UNDEFINED || target == TypeId::NULL {
+        // tsc preserves the AST literal display for `undefined`/`null` targets
+        // (e.g., `var u: typeof undefined = 1` → `Type '1' is not assignable`).
+        return true;
+    }
+    if target == TypeId::NEVER {
+        return true;
+    }
+    // For type parameters, lazy refs, and other non-literal shapes that are
+    // still classified as "literal-sensitive" (e.g. unique symbols), keep the
+    // AST literal display compatible by default. We only widen when the target
+    // is concretely a literal of a different primitive kind.
+    true
 }
