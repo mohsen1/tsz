@@ -976,7 +976,22 @@ pub(super) fn collect_diagnostics(
         checker.prime_boxed_types();
     }
 
-    let baseline_lib_diagnostics = if !options.no_check && !checker_libs.files.is_empty() {
+    // PERF: the post-merge default-lib recheck (collect baseline + per-lib
+    // check + subtract) only produces diagnostics when user code merges into
+    // a global lib interface OR extends a lib interface that contributes
+    // user-relevant members. When both `affected_lib_interfaces` and
+    // `affected_lib_extension_interfaces` are empty, the per-lib check
+    // diagnostic set equals the baseline set: their subtraction is empty
+    // and no user-induced diagnostics can surface. Skip the baseline pass
+    // entirely in that case — and skip the per-lib check loops below by
+    // gating them on the same condition. For typical single-file or
+    // module-only TS files (no `declare global`, no interface that augments
+    // a lib type) this removes a fixed ~30-lib-file recheck tax that was
+    // dominating the per-invocation floor (~380–430ms on tiny files).
+    let needs_lib_recheck = !options.no_check
+        && !checker_libs.files.is_empty()
+        && (!affected_lib_interfaces.is_empty() || !affected_lib_extension_interfaces.is_empty());
+    let baseline_lib_diagnostics = if needs_lib_recheck {
         collect_checker_lib_baseline_fingerprints(
             program,
             options,
@@ -1226,7 +1241,12 @@ pub(super) fn collect_diagnostics(
                 }
             }
         }
-        if !options.no_check {
+        // PERF: see `needs_lib_recheck` above — when no user-defined global
+        // interface merges into a lib interface and no user interface extends a
+        // lib interface that contributes user-relevant members, the per-lib
+        // check produces only baseline diagnostics that get subtracted away.
+        // Skip the loop entirely.
+        if needs_lib_recheck {
             for lib_idx in 0..checker_libs.files.len() {
                 let query_cache = if let Some(shared) = shared_query_cache.as_ref() {
                     QueryCache::new_with_shared(&program.type_interner, shared)
@@ -1543,7 +1563,10 @@ pub(super) fn collect_diagnostics(
             }
             request_cache_counters.merge(checker_counters);
         }
-        if !options.no_check {
+        // PERF: same gating as the parallel path above — skip the per-lib
+        // post-merge recheck loop when there are no user-induced lib
+        // augmentations to validate.
+        if needs_lib_recheck {
             for lib_idx in 0..checker_libs.files.len() {
                 let (lib_diags, lib_counters, _lib_ds_stats) =
                     check_checker_lib_file(&checker_lib_file_env, lib_idx, &query_cache, None);
