@@ -18,11 +18,11 @@ on:
         type: boolean
         default: false
 
-# Push runs (quick smoke tests) can be cancelled by newer pushes.
-# Full benchmark runs (manual/nightly) are not in-progress cancelled.
+# Push smoke-test runs share a group and cancel each other (only latest matters).
+# Nightly/manual full runs get a unique group so they are never cancelled mid-flight.
 concurrency:
-  group: bench
-  cancel-in-progress: true
+  group: bench-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
@@ -103,10 +103,14 @@ jobs:
           TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
-          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          if [[ "${BENCH_FULL:-0}" == "1" ]]; then
+            gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+            echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          else
+            echo "Skipping latest.json update (quick smoke-test run)"
+          fi
 
       - name: Trigger website redeploy
         if: env.BENCH_FULL == '1'
