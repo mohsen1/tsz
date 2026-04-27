@@ -149,8 +149,26 @@ suite_needs_rust_compile() {
   local suite
   suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
   case "$suite" in
-    all|full|build|lint|unit|wasm|dist-binaries|unit-archive) return 0 ;;
+    all|full|build|lint|unit|wasm|wasm-web|dist-binaries|unit-archive) return 0 ;;
     *) return 1 ;;
+  esac
+}
+
+# Which cargo-target-* GCS archives a suite actually needs.
+# Restoring archives a job will not use is pure overhead — the cargo-target-debug
+# archive alone takes ~90s to download. Each suite lists only the profile(s) it
+# compiles into. "all"/"full" runs do everything, so they restore everything.
+suite_target_caches() {
+  local suite
+  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
+  case "$suite" in
+    all|full)              echo "cargo-target-deps cargo-target-unit cargo-target-debug cargo-target-wasm" ;;
+    build)                 echo "cargo-target-deps cargo-target-unit" ;;
+    dist-binaries)         echo "cargo-target-deps" ;;
+    unit-archive|unit)     echo "cargo-target-unit" ;;
+    lint)                  echo "cargo-target-debug" ;;
+    wasm|wasm-web)         echo "cargo-target-wasm" ;;
+    *)                     echo "" ;;
   esac
 }
 
@@ -221,13 +239,14 @@ restore_caches() {
 
     # Per-profile Cargo target caches, each keyed by Cargo.lock hash.
     # External dep artifacts are valid across commits (same lock = same versions)
-    # and let Cargo skip those crates entirely. Workspace crate artifacts inside
-    # are stale after any source change but get recompiled via sccache.
-    # Separate archives per profile so each job only saves what it built.
-    _restore_cargo_target_profile "cargo-target-deps"  "$cargo_hash"   # .target/dist-fast (dist-binaries, build_test_binaries)
-    _restore_cargo_target_profile "cargo-target-unit"  "$cargo_hash"   # .target/ci-unit  (unit-archive, run_unit_tests)
-    _restore_cargo_target_profile "cargo-target-debug" "$cargo_hash"   # .target/debug   (lint: cargo clippy / cargo fmt)
-    _restore_cargo_target_profile "cargo-target-wasm"  "$cargo_hash"   # .target/wasm32-unknown-unknown (wasm-pack)
+    # and let Cargo skip those crates entirely.
+    # Each suite only restores the profile(s) it actually compiles into —
+    # restoring archives we don't use is pure overhead (cargo-target-debug alone
+    # is ~90s to download).
+    local target_cache
+    for target_cache in $(suite_target_caches); do
+      _restore_cargo_target_profile "$target_cache" "$cargo_hash"
+    done
     if [[ -d .target/dist-fast || -d .target/ci-unit || -d .target/debug || -d .target/wasm32-unknown-unknown ]]; then
       normalize_rust_source_mtimes
     fi
