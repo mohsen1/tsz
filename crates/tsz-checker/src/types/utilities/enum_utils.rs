@@ -1274,11 +1274,34 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         other: TypeId,
     ) -> Option<TypeId> {
-        let members = query::get_intersection_members(self.ctx.types, type_id)?;
         if !self.is_non_nullish_primitive_or_literal(other) {
             return None;
         }
 
+        // Direct intersection case: `T & ({} | null)` vs `42`
+        if let Some(members) = query::get_intersection_members(self.ctx.types, type_id) {
+            return self.ts2367_type_param_from_intersection_members(&members);
+        }
+
+        // Union-of-intersections case: `(T & null) | (T & {})` vs `42`.
+        // tsc distributes the intersection before checking, so we look for a type param
+        // with explicit unknown/undefined constraint in any member intersection.
+        if let Some(u_members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            for &member in &u_members {
+                if let Some(int_members) = query::get_intersection_members(self.ctx.types, member)
+                    && let Some(tp) = self.ts2367_type_param_from_intersection_members(&int_members)
+                {
+                    return Some(tp);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn ts2367_type_param_from_intersection_members(&self, members: &[TypeId]) -> Option<TypeId> {
         let type_param = members.iter().copied().find(|&member| {
             is_type_parameter_like(self.ctx.types, member)
                 && self.type_param_has_explicit_unknown_or_undefined_constraint(member)
@@ -1287,7 +1310,6 @@ impl<'a> CheckerState<'a> {
             !is_type_parameter_like(self.ctx.types, member)
                 && self.is_object_or_nullish_only_type(member)
         });
-
         has_object_nullish_member.then_some(type_param)
     }
 
