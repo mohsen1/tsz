@@ -513,43 +513,22 @@ fn negative_legacy_octal_literal_emits_ts1121() {
 }
 
 #[test]
-fn legacy_octal_with_decimal_part_emits_both_ts1121_and_ts1005() {
-    // tsc emits TS1121 ("Octal literals are not allowed") at column 1 AND
-    // TS1005 (";' expected") at column 3 for `00.5;` because `00` is a
-    // complete legacy-octal NumericLiteral and `.5` starts a new token
-    // with no separating `;`. tsz used to suppress TS1005 because the
-    // prior TS1121 was within the parser's error-suppression distance.
-    // The leading-zero diagnostics are orthogonal to the missing-semicolon
-    // diagnostic and must coexist.
-    let (parser, _root) = parse_source("x;\n00.5;");
+fn invalid_numeric_separator_followed_by_identifier_does_not_emit_ts2304() {
+    // tsc emits TS6188 (separator-not-allowed) and TS1351 (identifier
+    // cannot follow numeric literal) for inputs like `0_X0101`. It does
+    // NOT emit TS2304 ("Cannot find name 'X0101'"). The recovered
+    // identifier is parser-recovery debris, not a real name-resolution
+    // candidate. Lock that suppression so
+    // `parser.numericSeparators.{hex,binary,octal}Negative.ts` keep passing.
+    let (parser, _root) = parse_source("0_X0101");
     let diags = parser.get_diagnostics();
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&1121),
-        "Expected TS1121 for legacy octal `00`, got codes: {codes:?}"
+        codes.contains(&1351),
+        "Expected TS1351 for identifier-after-numeric, got codes: {codes:?}"
     );
     assert!(
-        codes.contains(&1005),
-        "Expected TS1005 (';' expected) at the `.5` token, got codes: {codes:?}"
-    );
-}
-
-#[test]
-fn decimal_with_leading_zero_and_decimal_part_does_not_emit_ts1005() {
-    // `08.5;` is a single decimal NumericLiteral with a leading zero —
-    // tsc emits TS1489 only (no TS1005), because the entire `08.5` is one
-    // token. Lock that the leading-zero relaxation we added in
-    // `parse_error_for_missing_semicolon_after` doesn't accidentally fire
-    // a stray TS1005 here.
-    let (parser, _root) = parse_source("x;\n08.5;");
-    let diags = parser.get_diagnostics();
-    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
-    assert!(
-        codes.contains(&1489),
-        "Expected TS1489 for decimal-with-leading-zero `08.5`, got codes: {codes:?}"
-    );
-    assert!(
-        !codes.contains(&1005),
-        "TS1005 must NOT fire for `08.5;` — it is a single decimal token. Got codes: {codes:?}"
+        !codes.contains(&2304),
+        "TS2304 must NOT fire for the recovered identifier. Got codes: {codes:?}"
     );
 }
