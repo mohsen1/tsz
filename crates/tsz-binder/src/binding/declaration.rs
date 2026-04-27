@@ -2487,7 +2487,7 @@ impl BinderState {
         // `F.prototype[sym] = val`). TSC's late-bound assignment
         // declarations are unsupported for prototype chains, so we
         // should emit TS7053 rather than suppress it.
-        let is_prototype_element_access = obj_key.contains(".prototype")
+        let is_prototype_element_access = obj_key.split('.').any(|segment| segment == "prototype")
             && lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
         if (symbol.flags
             & (symbol_flags::FUNCTION
