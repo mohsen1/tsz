@@ -1351,4 +1351,84 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && shape.properties.iter().any(|p| p.name == has_own)
             && shape.properties.iter().any(|p| p.name == is_proto)
     }
+
+    /// `ObjectWithIndex` source vs `Tuple` target.
+    ///
+    /// Matches tsc's behavior for array-like interfaces assigned to a tuple
+    /// type, e.g.
+    /// ```ts
+    /// interface StrNum extends Array<string|number> {
+    ///   0: string;
+    ///   1: number;
+    ///   length: 2;
+    /// }
+    /// declare let x: [string, number];
+    /// declare let y: StrNum;
+    /// x = y;  // OK
+    /// ```
+    ///
+    /// Iterates the target tuple's elements and looks up each by its numeric
+    /// property name (`"0"`, `"1"`, ...) on the source shape. Optional/rest
+    /// elements use the source's number index signature as a fallback.
+    /// `length` is also checked when the tuple has a fixed arity and the
+    /// source declares a numeric `length`.
+    pub(crate) fn check_object_with_index_to_tuple(
+        &mut self,
+        source: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        t_list: crate::types::TupleListId,
+        target_type: TypeId,
+    ) -> SubtypeResult {
+        use crate::types::PropertyInfo;
+        let target_elems = self.interner.tuple_list(t_list);
+        let source_receiver =
+            source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+
+        for (i, t_elem) in target_elems.iter().enumerate() {
+            // Variadic / rest elements aren't structurally implementable by
+            // a fixed-property interface — bail out conservatively.
+            if t_elem.rest {
+                return SubtypeResult::False;
+            }
+            let prop_name = self.interner.intern_string(&i.to_string());
+            let s_prop_opt = PropertyInfo::find_in_slice(&source.properties, prop_name);
+
+            // Optional tuple slot can be satisfied by either a (matching) source
+            // property OR by the source's number index signature.
+            let s_type = if let Some(sp) = s_prop_opt {
+                self.bind_property_receiver_this(source_receiver, self.optional_property_type(sp))
+            } else if let Some(idx) = &source.number_index {
+                self.bind_property_receiver_this(source_receiver, idx.value_type)
+            } else if t_elem.optional {
+                continue;
+            } else {
+                return SubtypeResult::False;
+            };
+
+            let t_type = t_elem.type_id;
+            if !self.check_subtype(s_type, t_type).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+
+        // Length check: when the target tuple has a fixed arity (no rest), the
+        // source's `length` property type must be assignable to the literal
+        // target length. tsc applies this strictly — `length: 2` is not
+        // assignable to `length: 1`, and `length: number` is not assignable
+        // to `length: 1` either.
+        let length_atom = self.interner.intern_string("length");
+        if let Some(s_length) = PropertyInfo::find_in_slice(&source.properties, length_atom)
+            && target_elems.iter().all(|e| !e.rest)
+        {
+            let s_length_type = self.bind_property_receiver_this(source_receiver, s_length.type_id);
+            let target_len = target_elems.len();
+            let target_len_type = self.interner.literal_number(target_len as f64);
+            if !self.check_subtype(s_length_type, target_len_type).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+
+        let _ = target_type;
+        SubtypeResult::True
+    }
 }
