@@ -107,6 +107,8 @@ impl<'a> CheckerState<'a> {
         // TS1042: async modifier cannot be used on class declarations
         self.check_async_modifier_on_declaration(&class.modifiers);
 
+        let mut experimental_class_decorators = Vec::new();
+
         // Evaluate class-level decorator expressions to trigger definite-assignment
         // checks (TS2454) and other diagnostics. tsc evaluates decorator expressions
         // even if the class has other errors.
@@ -123,13 +125,12 @@ impl<'a> CheckerState<'a> {
 
                     // TS1238: Validate class decorator call signature.
                     if self.ctx.compiler_options.experimental_decorators {
-                        // Experimental decorators: tsc anchors TS1238 at the expression (after @).
-                        self.check_class_decorator_call_signature(
-                            decorator.expression,
-                            decorator_type,
-                            stmt_idx,
-                            class,
-                        );
+                        // Experimental class decorators receive the class constructor
+                        // value. Save the expression type and validate it after the
+                        // class value side has been refreshed; doing it here can see a
+                        // provisional/re-entrant constructor shape and miss TS1238.
+                        experimental_class_decorators
+                            .push((decorator.expression, decorator_type));
                     } else {
                         // ES decorators: tsc anchors TS1238 at the whole decorator
                         // (including `@`) when the factory requires too many args, but
@@ -832,6 +833,16 @@ impl<'a> CheckerState<'a> {
         for sym_id in refresh_symbols {
             self.ctx.symbol_types.remove(&sym_id);
             let _ = self.get_type_of_symbol(sym_id);
+        }
+
+        for (decorator_expression, decorator_type) in experimental_class_decorators {
+            // Experimental decorators: tsc anchors TS1238 at the expression (after @).
+            self.check_class_decorator_call_signature(
+                decorator_expression,
+                decorator_type,
+                stmt_idx,
+                class,
+            );
         }
     }
 
