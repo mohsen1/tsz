@@ -619,12 +619,20 @@ fn test_named_source_assignable_to_string_index_any_target() {
     );
 }
 
-/// When the target has both string and number indexes that map to `any`, a
-/// source class/interface with NO index signatures (only properties) should be
-/// assignable. Mirrors tsc behavior for
-/// `interface Obj { hello: string }` -> `{ [s: string]: any, [n: number]: any }`.
+/// When the target is a NAMED interface with both string and number indexes
+/// that map to `any`, a source class/interface with NO index signatures (only
+/// properties) should be assignable. Mirrors tsc behavior for
+/// `interface StringAndNumberTo<any> extends StringTo<any>, NumberTo<any> {}`
+/// where `Obj <: StringAndNumberTo<any>` succeeds.
+///
+/// The `target.symbol.is_some()` gate distinguishes a NAMED interface target
+/// (where the indexes belong to a single declared interface) from the merged
+/// intersection synthetic shape produced by our interner for
+/// `StringTo<any> & NumberTo<any>` (where `target.symbol = None`). tsc keeps
+/// intersection members separate; we eagerly merge them. The next test locks
+/// in the merged-intersection rejection.
 #[test]
-fn test_named_source_with_props_assignable_to_dual_any_index_target() {
+fn test_named_source_with_props_assignable_to_dual_any_index_named_target() {
     use tsz_binder::SymbolId;
 
     let interner = TypeInterner::new();
@@ -641,6 +649,58 @@ fn test_named_source_with_props_assignable_to_dual_any_index_target() {
         Some(SymbolId(8)),
     );
 
+    // Target is a NAMED interface like `StringAndNumberTo<any>`.
+    let target = interner.object_with_index(ObjectShape {
+        symbol: Some(SymbolId(80)),
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "Named class with only properties must be assignable to a NAMED dual-index \
+         target where both index values are `any` (tsc short-circuit)"
+    );
+}
+
+/// Anonymous synthetic targets (e.g. shape produced by interner-side intersection
+/// merging of `StringTo<any> & NumberTo<any>`) must NOT trigger the number-index
+/// short-circuit. The shape has `target.symbol == None` and its two indexes
+/// originated from distinct intersection members. tsc would relate the source
+/// against each intersection member independently, and the `NumberTo<any>`
+/// member alone (no string index) rejects a class/interface source without a
+/// number index.
+#[test]
+fn test_anonymous_dual_any_index_target_still_rejects_named_source() {
+    use tsz_binder::SymbolId;
+
+    let interner = TypeInterner::new();
+    let class_symbols = [crate::SymbolRef(81)];
+    let is_class = |s: crate::SymbolRef| class_symbols.contains(&s);
+    let mut checker = SubtypeChecker::new(&interner).with_class_check(&is_class);
+
+    let source = interner.object_with_flags_and_symbol(
+        vec![
+            PropertyInfo::new(interner.intern_string("hello"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("world"), TypeId::NUMBER),
+        ],
+        ObjectFlags::empty(),
+        Some(SymbolId(81)),
+    );
+
+    // Anonymous merged-intersection shape (target.symbol = None).
     let target = interner.object_with_index(ObjectShape {
         symbol: None,
         flags: ObjectFlags::empty(),
@@ -660,9 +720,9 @@ fn test_named_source_with_props_assignable_to_dual_any_index_target() {
     });
 
     assert!(
-        checker.is_subtype_of(source, target),
-        "Named class with only properties must be assignable to a dual-index target \
-         where both index values are `any` (tsc short-circuit)"
+        !checker.is_subtype_of(source, target),
+        "Named class without numeric members must NOT satisfy an anonymous synthetic \
+         dual-index `any` target (preserves tsc's per-member intersection behavior)"
     );
 }
 
