@@ -416,53 +416,22 @@ impl Runner {
         let concurrency_limit = self.args.workers;
         let semaphore = Arc::new(Semaphore::new(concurrency_limit));
 
-        // Order matters: try ServerPool first when --mode server is requested,
-        // then decide whether to also create the CLI batch ProcessPool. The
-        // batch pool is the documented fallback when the server pool fails
-        // to come up — the warn at line 'Falling back to CLI batch mode' has
-        // to actually reach a working CLI batch pool, not silently degrade
-        // to subprocess-per-test (the slowest path).
-        let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
-            let server_bin = self.args.resolved_server_binary();
-            match ServerPool::new(
-                &server_bin,
-                concurrency_limit,
-                self.args.max_compilations_per_worker,
-                self.args.max_worker_rss_mb * 1024 * 1024,
-            )
-            .await
-            {
-                Ok(sp) => {
-                    info!(
-                        "Server pool ready: {} workers using {}",
-                        concurrency_limit, server_bin
-                    );
-                    Some(Arc::new(sp))
-                }
-                Err(e) => {
-                    warn!("Failed to create server pool: {e}. Falling back to CLI batch mode.");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // Create CLI batch process pool unless either:
-        //   --no-batch was passed (caller wants per-test subprocesses), OR
-        //   --mode server is active AND the server pool came up cleanly
-        //     (the server pool handles every test, so the CLI batch pool
-        //     would only sit there holding open tsz processes that never
-        //     receive work — wasted RAM + runner-pool oversubscription).
-        // If --mode server was requested but ServerPool::new failed above,
-        // we DO create the CLI pool so the warn-logged fallback is actually
-        // CLI batch mode (cheaper than per-test subprocess spawning).
-        let server_active = server_pool.is_some();
+        // Server mode does NOT own every test: tests whose directives match
+        // has_unsupported_server_options (jsx, moduleResolution, paths,
+        // baseUrl, types, typeRoots — see options_convert.rs) set
+        // use_server = false in run_test() and fall through to the CLI path.
+        // If we skip the batch pool, those tests degrade to per-test
+        // subprocess spawning, which is much slower than the batch pool they
+        // would have used otherwise.
+        //
+        // So always create the batch pool unless --no-batch is set. When
+        // server mode is also active, the two pools coexist: server-eligible
+        // tests use the server pool, server-incompatible tests use the batch
+        // pool. The cost (idle batch processes when most tests run on the
+        // server) is small compared to the subprocess-per-test cost it
+        // avoids.
         let pool: Option<Arc<ProcessPool>> = if self.args.no_batch {
             info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
-            None
-        } else if self.args.mode == RunMode::Server && server_active {
-            info!("Skipping CLI batch pool: server mode owns every test");
             None
         } else {
             info!(
@@ -486,6 +455,35 @@ impl Runner {
                     None
                 }
             }
+        };
+
+        // Server pool is additive: it handles tests whose options are all
+        // server-compatible. The batch pool created above stays available
+        // for tests with unsupported server options.
+        let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
+            let server_bin = self.args.resolved_server_binary();
+            match ServerPool::new(
+                &server_bin,
+                concurrency_limit,
+                self.args.max_compilations_per_worker,
+                self.args.max_worker_rss_mb * 1024 * 1024,
+            )
+            .await
+            {
+                Ok(sp) => {
+                    info!(
+                        "Server pool ready: {} workers using {}",
+                        concurrency_limit, server_bin
+                    );
+                    Some(Arc::new(sp))
+                }
+                Err(e) => {
+                    warn!("Failed to create server pool: {e}. CLI batch pool handles all tests.");
+                    None
+                }
+            }
+        } else {
+            None
         };
 
         // Process tests in parallel
