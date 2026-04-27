@@ -1855,14 +1855,244 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        // For property accesses (obj.x, this.x, obj[0]), also check function-wide
-        // assignments. Property accesses can be affected by mutations in other
-        // branches that aren't on the current flow path.
-        if self.reference_base(target).is_some() {
-            return self.has_base_assignment_after_pos(target, alias_pos);
+        // Mirrors tsc's `isConstantReference` (checker.ts ~28978):
+        //   * `this`/`super` are constant.
+        //   * An identifier is constant iff it is a const variable, or a
+        //     parameter/mutable local that has no reassignments.
+        //   * A property access is constant iff the base is constant AND the
+        //     accessed property is readonly.
+        //
+        // Alias-based narrowing is gated on the target being a constant
+        // reference (tsc applies the alias initializer only when the
+        // reference is constant). When the target is *not* a constant
+        // reference, we invalidate alias narrowing entirely — independent of
+        // whether a function-wide assignment is observable. This matches
+        // tsc's behavior on cases like `f27`, where `outer.obj` is never
+        // reassigned but `obj` is mutable so the alias is not projected.
+        if !self.is_constant_alias_target(target) {
+            return true;
         }
 
         false
+    }
+
+    /// Determine whether `target` is a constant reference for the purposes of
+    /// alias-based narrowing. See `is_alias_reference_mutated` for the rules.
+    pub(crate) fn is_constant_alias_target(&self, target: NodeIndex) -> bool {
+        let target = self.skip_parenthesized(target);
+        let Some(node) = self.arena.get(target) else {
+            return false;
+        };
+
+        let kind = node.kind;
+        if kind == SyntaxKind::ThisKeyword as u16 || kind == SyntaxKind::SuperKeyword as u16 {
+            return true;
+        }
+
+        if kind == SyntaxKind::Identifier as u16 {
+            // Mirror tsc's `isConstantReference` for identifiers:
+            //   isConstantVariable(s) || isParameterOrMutableLocal(s) && !isSymbolAssigned(s)
+            //
+            // tsc's `isSymbolAssigned` is "any reassignment exists" —
+            // independent of whether the assignment is before or after the
+            // use site. So:
+            //   * Const variables are always constant references.
+            //   * Parameter / non-exported let are constant only when no
+            //     reassignment exists anywhere in the containing function.
+            let Some(symbol_id) = self.binder.resolve_identifier(self.arena, target) else {
+                return false;
+            };
+            let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+                return false;
+            };
+            let decl_id = symbol.value_declaration;
+            if self.declaration_is_const(decl_id) {
+                return true;
+            }
+            // Catch clause variables behave as constant references in tsc
+            // (`isParameterOrMutableLocalVariable` accepts
+            // `isVariableDeclaration(d) && isCatchClause(d.parent)`), but our
+            // `is_effectively_const_for_narrowing` helper does not cover
+            // them. Honor the rule here, gated on no reassignments.
+            if self.is_catch_clause_variable(decl_id) {
+                return self.get_last_assignment_pos(symbol_id, target) == 0;
+            }
+            // For non-const identifiers, require parameter/let-style local
+            // (`is_effectively_const_for_narrowing` enforces the eligibility
+            // gate) AND zero reassignments anywhere in the function. The
+            // narrower's existing helper allows assignments strictly before
+            // the reference; here we tighten it to tsc's "no assignments".
+            if !self.is_effectively_const_for_narrowing(target) {
+                return false;
+            }
+            return self.get_last_assignment_pos(symbol_id, target) == 0;
+        }
+
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let Some(access) = self.arena.get_access_expr(node) else {
+                return false;
+            };
+            if access.question_dot_token {
+                return false;
+            }
+            // Recursively check the base.
+            if !self.is_constant_alias_target(access.expression) {
+                return false;
+            }
+            // Property must be readonly on the base type.
+            return self.is_access_property_readonly(access);
+        }
+
+        // NonNull / type-assertion / parenthesized wrappers should be
+        // transparent. Recurse through them to mirror tsc's behavior, where
+        // these wrappers don't affect `isConstantReference`.
+        if kind == syntax_kind_ext::NON_NULL_EXPRESSION
+            || kind == syntax_kind_ext::TYPE_ASSERTION
+            || kind == syntax_kind_ext::AS_EXPRESSION
+            || kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                return self.is_constant_alias_target(unary.expression);
+            }
+            if let Some(assertion) = self.arena.get_type_assertion(node) {
+                return self.is_constant_alias_target(assertion.expression);
+            }
+        }
+
+        false
+    }
+
+    /// True iff `decl_id` is (or is contained within) the variable
+    /// declaration directly belonging to a `try { } catch (e) { }` clause.
+    /// tsc treats such variables as constant references inside the catch
+    /// block when they are not reassigned.
+    fn is_catch_clause_variable(&self, decl_id: NodeIndex) -> bool {
+        if decl_id.is_none() {
+            return false;
+        }
+        // Walk up to find a VARIABLE_DECLARATION (catch's variableDeclaration
+        // wraps any binding pattern). Then check whether its direct parent is
+        // a CATCH_CLAUSE.
+        let mut current = decl_id;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let Some(ext) = self.arena.get_extended(current) else {
+                    return false;
+                };
+                if ext.parent.is_none() {
+                    return false;
+                }
+                let Some(parent) = self.arena.get(ext.parent) else {
+                    return false;
+                };
+                return parent.kind == syntax_kind_ext::CATCH_CLAUSE;
+            }
+            if node.kind != syntax_kind_ext::BINDING_ELEMENT
+                && node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+                && node.kind != SyntaxKind::Identifier as u16
+            {
+                return false;
+            }
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    /// True iff `decl_id` is (or is contained within) a `const` variable
+    /// declaration. Mirrors tsc's `isConstantVariable` lookup
+    /// (`getDeclarationNodeFlagsFromSymbol & NodeFlags.Constant`).
+    ///
+    /// Symbols for destructured bindings store the *binding element identifier*
+    /// as their `value_declaration`, so checking the identifier directly via
+    /// `is_const_variable_declaration` would miss the `const` keyword on the
+    /// enclosing `VariableDeclarationList`. Walk up through binding patterns
+    /// until we reach a `VariableDeclaration`.
+    fn declaration_is_const(&self, decl_id: NodeIndex) -> bool {
+        if decl_id.is_none() {
+            return false;
+        }
+        // Direct hit (simple `const x = ...` declarations).
+        if self.arena.is_const_variable_declaration(decl_id) {
+            return true;
+        }
+        let mut current = decl_id;
+        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+            let Some(node) = self.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return self.arena.is_const_variable_declaration(current);
+            }
+            // Only walk through binding-pattern wrappers; bail at anything
+            // else so we don't accidentally claim other `const` ancestors.
+            if node.kind != syntax_kind_ext::BINDING_ELEMENT
+                && node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                && node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+                && node.kind != SyntaxKind::Identifier as u16
+            {
+                return false;
+            }
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
+    /// Check whether the property accessed by `access` is a readonly member of
+    /// the base expression's type. Falls back to `false` (i.e. the property is
+    /// treated as mutable, which makes `is_constant_alias_target` reject the
+    /// access) if we cannot resolve a property name or base type.
+    fn is_access_property_readonly(
+        &self,
+        access: &tsz_parser::parser::node::AccessExprData,
+    ) -> bool {
+        // Resolve the property name.
+        let name_idx = access.name_or_argument;
+        let name_atom = if let Some(ident) = self.arena.get_identifier_at(name_idx) {
+            self.interner.intern_string(&ident.escaped_text)
+        } else if let Some(atom) = self.literal_atom_from_node_or_type(name_idx) {
+            atom
+        } else {
+            // Computed/dynamic key — conservatively report as non-readonly.
+            return false;
+        };
+
+        // Resolve the base type. Prefer the cached node type; for a bare `this`
+        // expression with no cached entry, fall back to `concrete_this_type`.
+        let Some(node_types) = self.node_types else {
+            return false;
+        };
+        let base_type = if let Some(&t) = node_types.get(&access.expression.0) {
+            t
+        } else if let Some(t) = self.concrete_this_type
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::ThisKeyword as u16
+        {
+            t
+        } else {
+            return false;
+        };
+
+        let prop_text = self.interner.resolve_atom_ref(name_atom);
+        self.interner
+            .is_property_readonly(base_type, prop_text.as_ref())
     }
 
     /// Check if any assignment flow node in the containing function targets
