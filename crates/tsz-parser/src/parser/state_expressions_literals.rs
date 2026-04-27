@@ -477,42 +477,12 @@ impl ParserState {
             }
         }
 
-        // Check for missing exponent digits (e.g., 1e+, 1e-, 1e) - TS1124
-        // If there's a Scientific flag but the exponent has no actual digits.
-        //
-        // Note: a misplaced separator like `0e_0` or `0e_` is NOT a missing
-        // digit — the scanner emits TS6188 for the underscore, and tsc does
-        // not also emit TS1124 when at least one digit is present in the
-        // exponent. We only emit TS1124 when the exponent is genuinely empty
-        // of digits (e.g. `1e+`, `1e_`, `1e+_`).
-        if (token_flags & TokenFlags::Scientific as u32) != 0 {
-            let bytes = text.as_bytes();
-            let missing_digit = if let Some(exp_offset) = bytes
-                .iter()
-                .rposition(|byte| *byte == b'e' || *byte == b'E')
-            {
-                let mut after_idx = exp_offset + 1;
-                if after_idx < bytes.len() && (bytes[after_idx] == b'+' || bytes[after_idx] == b'-')
-                {
-                    after_idx += 1;
-                }
-                // Genuine missing-digit only when no digit appears after the
-                // exponent prefix (`e`/`E` and an optional sign).
-                !bytes[after_idx..].iter().any(|b| b.is_ascii_digit())
-            } else {
-                false
-            };
-            if missing_digit {
-                use tsz_common::diagnostics::diagnostic_codes;
-                // Find position of the missing digit (at the end)
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Digit expected.",
-                    diagnostic_codes::DIGIT_EXPECTED,
-                );
-            }
-        }
+        // TS1124 ("Digit expected") for empty exponents (`1e+`, `1e`, `1ee`,
+        // `3en`, etc.) is emitted by the scanner inline during
+        // `scan_decimal_number` so the position matches tsc (right after the
+        // `e`/sign) and the same-start dedup in
+        // `check_for_identifier_start_after_numeric_literal` can suppress a
+        // colliding TS1351 the same way tsc's `parseErrorAtPosition` does.
 
         // Check for missing hex digits (e.g., 0x, 0X) - TS1125
         if (token_flags & TokenFlags::HexSpecifier as u32) != 0 {

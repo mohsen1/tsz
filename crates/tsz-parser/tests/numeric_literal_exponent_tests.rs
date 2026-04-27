@@ -78,6 +78,51 @@ fn underscore_only_exponent_emits_both() {
 }
 
 #[test]
+fn parser_state_reset_clears_scanner_diagnostics_and_high_water_mark() {
+    // Devin review on PR #1521: ParserState::reset must clear both the
+    // scanner's accumulated diagnostics vec AND the high-water mark used by
+    // parse_error_at's dedup. Otherwise a reused parser (LSP `update_source`
+    // path) carries stale entries; if a new-parse parser error happens to
+    // share a `start` with the LAST stale scanner diagnostic, dedup wrongly
+    // suppresses the new error.
+
+    // Parse 1 — produce some scanner diagnostics (e.g. TS1124 on `1e+`).
+    let mut parser = ParserState::new("first.ts".to_string(), "1e+".to_string());
+    let _ = parser.parse_source_file();
+    let scan_count_after_first = parser.scanner.get_scanner_diagnostics().len();
+    assert!(
+        scan_count_after_first > 0,
+        "first parse must produce at least one scanner diagnostic"
+    );
+
+    // Reset for parse 2 — must wipe scanner diagnostics and HWM.
+    parser.reset("second.ts".to_string(), "let x = 1.5e+10;".to_string());
+    assert_eq!(
+        parser.scanner.get_scanner_diagnostics().len(),
+        0,
+        "reset must clear scanner_diagnostics so reused-parser callers don't see stale entries"
+    );
+    assert_eq!(
+        parser.scanner_diagnostics_high_water_mark, 0,
+        "reset must clear the high-water mark (otherwise the parser-side dedup at parse_error_at sees a non-zero floor)"
+    );
+
+    // Parse 2 — well-formed source, must produce zero scanner diagnostics.
+    let _ = parser.parse_source_file();
+    let codes: Vec<u32> = parser
+        .scanner
+        .get_scanner_diagnostics()
+        .iter()
+        .map(|d| d.code)
+        .chain(parser.parse_diagnostics.iter().map(|d| d.code))
+        .collect();
+    assert!(
+        !codes.contains(&1124) && !codes.contains(&6188),
+        "second parse of clean source must not surface stale-scanner-diagnostic codes, got: {codes:?}"
+    );
+}
+
+#[test]
 fn well_formed_decimal_with_exponent_emits_no_diagnostics() {
     // Sanity: `1.5e+10` is fully well-formed.
     let codes = parse_codes("let x = 1.5e+10;");
