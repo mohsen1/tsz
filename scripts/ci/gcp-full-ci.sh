@@ -476,89 +476,259 @@ _UNIT_TEST_PACKAGES=(
   -p tsz-core
 )
 
-run_unit_tests() {
-  ci_section "Workspace nextest suites"
-  cargo nextest run --profile ci --cargo-profile ci-unit \
+# ----------------------------------------------------------------------------
+# Exact-commit unit nextest archive reuse
+# ----------------------------------------------------------------------------
+#
+# Goal: a same-SHA CI rerun (or a separate downstream job for the same commit)
+# does NOT recompile the unit test binaries. We publish a write-once,
+# immutable .tar.zst keyed by:
+#   <bucket>/unit-archive-v2/<contract-hash>/<git-sha>.tar.zst
+#
+# - The git SHA partitions blobs per commit (immutable per commit).
+# - The contract hash bundles all inputs that affect the archive's validity
+#   (rustc version + target triple + Cargo.lock + workspace Cargo.toml +
+#   .cargo/config.toml + cargo-nextest version + package list + schema marker).
+#   Bumping any of these rolls the key automatically; readers from a stale
+#   contract get a miss and rebuild.
+# - The schema marker (`unit-nextest-v2`) is bumped manually if the archive
+#   format itself changes.
+# - Uploads use a write-once precondition (x-goog-if-generation-match:0) so
+#   two CI runners building the same commit don't trample each other.
+#
+# Bypass via TSZ_CI_UNIT_ARCHIVE_REUSE=0 (run direct cargo nextest).
+
+current_git_sha_for_artifact() {
+  local sha="${COMMIT_SHA:-${GITHUB_SHA:-${REVISION_ID:-}}}"
+  if [[ -z "$sha" || "$sha" == "HEAD" ]]; then
+    sha="$(git rev-parse HEAD 2>/dev/null || true)"
+  fi
+  if [[ -z "$sha" ]]; then
+    sha="unknown"
+  fi
+  printf '%s\n' "$sha"
+}
+
+unit_archive_contract_hash() {
+  local rustc_v target_triple nextest_v files_hash schema pkglist
+  rustc_v="$(rustc -Vv 2>&1 | sha256sum | awk '{print $1}')"
+  target_triple="$(rustc -vV 2>&1 | awk '/^host:/ { print $2 }')"
+  nextest_v="$(cargo-nextest --version 2>&1 || cargo nextest --version 2>&1 || echo unknown)"
+
+  local files=(Cargo.lock Cargo.toml)
+  if [[ -f .cargo/config.toml ]]; then
+    files+=(.cargo/config.toml)
+  fi
+  files_hash="$(sha256sum "${files[@]}" | sha256sum | awk '{print $1}')"
+
+  # Bump this marker when the archive format/CLI shape changes.
+  schema="unit-nextest-v2"
+  pkglist="$(printf '%s ' "${_UNIT_TEST_PACKAGES[@]}")"
+
+  printf '%s|%s|%s|%s|%s|%s\n' \
+    "$schema" "$rustc_v" "$target_triple" "$nextest_v" "$files_hash" "$pkglist" \
+    | sha256sum | awk '{print $1}'
+}
+
+unit_archive_uri() {
+  local bucket contract sha
+  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  if [[ -z "$bucket" ]]; then
+    return 1
+  fi
+  contract="$(unit_archive_contract_hash)"
+  sha="$(current_git_sha_for_artifact)"
+  if [[ "$sha" == "unknown" ]]; then
+    return 1
+  fi
+  printf '%s/unit-archive-v2/%s/%s.tar.zst\n' "${bucket%/}" "$contract" "$sha"
+}
+
+download_unit_archive() {
+  local uri="$1" dest="$2"
+  if ! gsutil -q stat "$uri" 2>/dev/null; then
+    return 1
+  fi
+  gsutil -q cp "$uri" "$dest"
+}
+
+build_unit_archive() {
+  local archive="$1"
+  cargo nextest archive \
+    --cargo-profile ci-unit \
+    --archive-file "$archive" \
     "${_UNIT_TEST_PACKAGES[@]}"
 }
 
-build_unit_test_archive() {
-  ci_section "Build unit test archive"
-  local bucket run_key archive_uri tmp_archive
-  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-
-  if [[ -z "$bucket" ]]; then
-    echo "No GCS bucket configured, skipping unit test archive"
+# Write-once upload. The x-goog-if-generation-match:0 header asks GCS to fail
+# the upload if the object already exists. If we lose the race against another
+# runner, treat that as success after confirming the object is there.
+upload_unit_archive_write_once() {
+  local archive="$1" uri="$2"
+  if gsutil -h "x-goog-if-generation-match:0" -q cp "$archive" "$uri" 2>/dev/null; then
     return 0
   fi
-
-  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
-
-  if gsutil -q stat "$archive_uri" 2>/dev/null; then
-    echo "Unit test archive already exists for ${run_key}: ${archive_uri}"
+  if gsutil -q stat "$uri" 2>/dev/null; then
+    echo "Unit archive already uploaded by another runner: $uri"
     return 0
   fi
-
-  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
-  echo "Building unit test archive → ${tmp_archive}"
-  local archive_rc=0
-  cargo nextest archive \
-    --cargo-profile ci-unit \
-    --archive-file "$tmp_archive" \
-    "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
-  if [[ "$archive_rc" -ne 0 ]]; then
-    echo "error: cargo nextest archive failed (rc=${archive_rc}); sharding unavailable" >&2
-    rm -f "$tmp_archive"
-    return "$archive_rc"
-  fi
-  if [[ ! -f "$tmp_archive" ]]; then
-    echo "error: archive file not created at ${tmp_archive}; sharding unavailable" >&2
-    return 1
-  fi
-
-  echo "Uploading unit test archive → ${archive_uri}"
-  local upload_rc=0
-  gsutil -q cp "$tmp_archive" "$archive_uri" || upload_rc=$?
-  rm -f "$tmp_archive"
-  if [[ "$upload_rc" -ne 0 ]]; then
-    echo "error: gsutil upload failed (rc=${upload_rc}); sharding unavailable" >&2
-    return "$upload_rc"
-  fi
-  echo "Unit test archive uploaded: ${archive_uri}"
+  return 1
 }
 
+# Run all unit tests from a prebuilt nextest archive. Workspace-remap is
+# critical here: it points archived test binaries at the live workspace so
+# tests that read CARGO_MANIFEST_DIR at runtime (e.g. file-size ratchet
+# guards) see the actual source tree instead of the build-time path. Without
+# remap, several tests early-return and silently pass (the bug that motivated
+# this redesign).
+run_unit_archive() {
+  local archive="$1"
+  cargo nextest run \
+    --archive-file "$archive" \
+    --profile ci \
+    --workspace-remap "$ROOT_DIR"
+}
+
+run_unit_tests() {
+  ci_section "Workspace nextest suites"
+
+  if [[ "${TSZ_CI_UNIT_ARCHIVE_REUSE:-1}" != "1" ]]; then
+    echo "TSZ_CI_UNIT_ARCHIVE_REUSE=0; running direct cargo nextest"
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      "${_UNIT_TEST_PACKAGES[@]}"
+    return
+  fi
+
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  if [[ -z "$bucket" ]] || ! command -v gsutil >/dev/null 2>&1; then
+    echo "No GCS unit archive reuse available; running direct cargo nextest"
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      "${_UNIT_TEST_PACKAGES[@]}"
+    return
+  fi
+
+  local uri tmp_dir archive
+  if ! uri="$(unit_archive_uri)"; then
+    echo "No GCS unit archive reuse available (no bucket / no SHA); running direct cargo nextest"
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      "${_UNIT_TEST_PACKAGES[@]}"
+    return
+  fi
+  tmp_dir="$(mktemp -d)"
+  archive="${tmp_dir}/unit-tests.tar.zst"
+
+  if download_unit_archive "$uri" "$archive"; then
+    echo "Unit archive hit: $uri"
+    echo "Running unit tests from archive with workspace remap: $ROOT_DIR"
+    run_unit_archive "$archive"
+    rm -rf "$tmp_dir"
+    return
+  fi
+
+  echo "Unit archive miss: $uri"
+  echo "Building unit nextest archive"
+  if ! build_unit_archive "$archive"; then
+    echo "error: cargo nextest archive failed; falling back to direct run" >&2
+    rm -rf "$tmp_dir"
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      "${_UNIT_TEST_PACKAGES[@]}"
+    return
+  fi
+
+  if upload_unit_archive_write_once "$archive" "$uri"; then
+    echo "Uploaded unit archive: $uri"
+  else
+    echo "warning: failed to upload unit archive (continuing)" >&2
+  fi
+
+  echo "Running unit tests from archive with workspace remap: $ROOT_DIR"
+  run_unit_archive "$archive"
+  rm -rf "$tmp_dir"
+}
+
+# Legacy archive-build entry point kept for the unit-archive suite name.
+# Delegates to the new exact-commit upload pathway. Kept so anything that
+# still calls scripts/ci/github-suite.sh unit-archive lands at the same blob
+# the new run_unit_tests reads, avoiding double-builds.
+build_unit_test_archive() {
+  ci_section "Build unit test archive (exact-commit)"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  if [[ -z "$bucket" ]] || ! command -v gsutil >/dev/null 2>&1; then
+    echo "No GCS bucket / gsutil; nothing to publish"
+    return 0
+  fi
+
+  local uri
+  if ! uri="$(unit_archive_uri)"; then
+    echo "No SHA available; cannot publish unit archive"
+    return 0
+  fi
+
+  if gsutil -q stat "$uri" 2>/dev/null; then
+    echo "Unit archive already published: $uri"
+    return 0
+  fi
+
+  local tmp_dir archive
+  tmp_dir="$(mktemp -d)"
+  archive="${tmp_dir}/unit-tests.tar.zst"
+  echo "Building unit nextest archive → $archive"
+  if ! build_unit_archive "$archive"; then
+    echo "error: cargo nextest archive failed" >&2
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  if upload_unit_archive_write_once "$archive" "$uri"; then
+    echo "Uploaded unit archive: $uri"
+  else
+    echo "warning: upload failed and object not present at $uri" >&2
+    rm -rf "$tmp_dir"
+    return 1
+  fi
+  rm -rf "$tmp_dir"
+}
+
+# Legacy shard runner kept for local debug / future re-shard. CI no longer
+# uses this — the single 'unit' suite now reads from the same exact-commit
+# archive. This shard runner ALWAYS passes --workspace-remap so it shares
+# the no-silent-pass guarantee with run_unit_tests; the previous behavior
+# (no remap → tests early-return when source isn't on disk) is gone.
 run_unit_shard() {
   ci_section "Unit shard"
-  local bucket run_key shard_index shard_count archive_uri tmp_archive
+  local bucket shard_index shard_count tmp_dir archive uri
   bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
   shard_index="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_INDEX:-0}")"
   shard_count="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_COUNT:-8}")"
 
   echo "Unit shard $((shard_index + 1))/${shard_count}"
 
-  if [[ -z "$bucket" ]]; then
+  if [[ -z "$bucket" ]] || ! command -v gsutil >/dev/null 2>&1; then
     echo "No GCS bucket — running all unit tests without sharding"
     run_unit_tests
     return
   fi
 
-  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
-  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
+  if ! uri="$(unit_archive_uri)"; then
+    echo "No SHA available — running all unit tests without sharding"
+    run_unit_tests
+    return
+  fi
 
-  echo "Downloading unit test archive: ${archive_uri}"
-  if ! gsutil -q cp "$archive_uri" "$tmp_archive"; then
-    echo "error: unit test archive not found for ${run_key} — build job must have failed to upload it" >&2
-    echo "error: refusing to fall back to full unsharded run (would defeat sharding and inflate CI cost)" >&2
+  tmp_dir="$(mktemp -d)"
+  archive="${tmp_dir}/unit-tests.tar.zst"
+  echo "Downloading unit archive: $uri"
+  if ! download_unit_archive "$uri" "$archive"; then
+    echo "error: unit archive not found at $uri — the unit job must run first to publish it" >&2
+    rm -rf "$tmp_dir"
     return 1
   fi
 
   cargo nextest run \
-    --archive-file "$tmp_archive" \
+    --archive-file "$archive" \
     --profile ci \
+    --workspace-remap "$ROOT_DIR" \
     --partition "count:$((shard_index + 1))/${shard_count}"
-  rm -f "$tmp_archive"
+  rm -rf "$tmp_dir"
 }
 
 build_test_binaries() {
