@@ -1437,6 +1437,65 @@ mod error_detection_tests {
     }
 }
 
+#[cfg(test)]
+mod property_access_conformance_tests {
+    use super::*;
+
+    #[test]
+    fn typed_array_to_locale_string_accepts_locale_arguments() {
+        let interner = TypeInterner::new();
+        let narrow_locale_method = interner.function(FunctionShape::new(
+            vec![ParamInfo::required(
+                interner.intern_string("locale"),
+                TypeId::NUMBER,
+            )],
+            TypeId::STRING,
+        ));
+
+        let typed_array = interner.object_with_index(ObjectShape {
+            symbol: None,
+            flags: ObjectFlags::empty(),
+            properties: vec![
+                PropertyInfo::new(interner.intern_string("length"), TypeId::NUMBER),
+                PropertyInfo::new(interner.intern_string("buffer"), TypeId::ANY),
+                PropertyInfo::new(interner.intern_string("byteLength"), TypeId::NUMBER),
+                PropertyInfo::new(interner.intern_string("byteOffset"), TypeId::NUMBER),
+                PropertyInfo::method(
+                    interner.intern_string("toLocaleString"),
+                    narrow_locale_method,
+                ),
+            ],
+            string_index: None,
+            number_index: Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: TypeId::NUMBER,
+                readonly: false,
+                param_name: None,
+            }),
+        });
+
+        let result = crate::operations::property::PropertyAccessEvaluator::new(&interner)
+            .resolve_property_access(typed_array, "toLocaleString")
+            .success_type()
+            .expect("typed-array-like toLocaleString should resolve");
+
+        let Some(TypeData::Function(shape_id)) = interner.lookup(result) else {
+            panic!("toLocaleString should resolve to a function type");
+        };
+        let shape = interner.function_shape(shape_id);
+        assert_eq!(shape.return_type, TypeId::STRING);
+        assert_eq!(shape.params.len(), 1);
+        assert!(
+            shape.params[0].rest,
+            "typed array toLocaleString must accept locales/options arguments"
+        );
+        assert!(matches!(
+            interner.lookup(shape.params[0].type_id),
+            Some(TypeData::Array(TypeId::ANY))
+        ));
+    }
+}
+
 /// Test suite for Unknown fallback strictness
 /// Verifies that the solver uses Unknown instead of Any for stricter type checking
 #[cfg(test)]
