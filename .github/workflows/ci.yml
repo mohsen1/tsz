@@ -191,6 +191,18 @@ jobs:
           compression-level: 1
 
   unit:
+    # NOTE: this is over-sharded for what unit tests actually do (~5 min of
+    # work split across 4 shards each paying ~40s of setup overhead). The
+    # natural fix is to deshard into a single 'unit' job that calls the
+    # 'unit' suite directly. That fix is blocked on 4 pre-existing test
+    # failures that the shard architecture silently masks: the shards
+    # download a nextest archive without workspace source, so tests that
+    # do `if !some_workspace_path.exists() { return }` (e.g.,
+    # test_binder_file_size_ceiling in tsz-solver) early-return as a
+    # non-failure. A single unit job has the workspace checkout, runs the
+    # tests for real, and they fail. See follow-up for the test fixes;
+    # this PR keeps the over-sharding as-is to avoid expanding scope into
+    # unrelated test debt.
     name: unit-${{ matrix.shard }}
     needs: [gate, unit-archive]
     if: needs.gate.outputs.should_run == 'true'

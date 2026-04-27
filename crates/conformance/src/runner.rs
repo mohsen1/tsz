@@ -416,7 +416,20 @@ impl Runner {
         let concurrency_limit = self.args.workers;
         let semaphore = Arc::new(Semaphore::new(concurrency_limit));
 
-        // Create batch process pool (unless --no-batch)
+        // Server mode does NOT own every test: tests whose directives match
+        // has_unsupported_server_options (jsx, moduleResolution, paths,
+        // baseUrl, types, typeRoots — see options_convert.rs) set
+        // use_server = false in run_test() and fall through to the CLI path.
+        // If we skip the batch pool, those tests degrade to per-test
+        // subprocess spawning, which is much slower than the batch pool they
+        // would have used otherwise.
+        //
+        // So always create the batch pool unless --no-batch is set. When
+        // server mode is also active, the two pools coexist: server-eligible
+        // tests use the server pool, server-incompatible tests use the batch
+        // pool. The cost (idle batch processes when most tests run on the
+        // server) is small compared to the subprocess-per-test cost it
+        // avoids.
         let pool: Option<Arc<ProcessPool>> = if self.args.no_batch {
             info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
             None
@@ -444,7 +457,9 @@ impl Runner {
             }
         };
 
-        // Create server pool if mode is Server
+        // Server pool is additive: it handles tests whose options are all
+        // server-compatible. The batch pool created above stays available
+        // for tests with unsupported server options.
         let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
             let server_bin = self.args.resolved_server_binary();
             match ServerPool::new(
@@ -463,7 +478,7 @@ impl Runner {
                     Some(Arc::new(sp))
                 }
                 Err(e) => {
-                    warn!("Failed to create server pool: {e}. Falling back to CLI batch mode.");
+                    warn!("Failed to create server pool: {e}. CLI batch pool handles all tests.");
                     None
                 }
             }
