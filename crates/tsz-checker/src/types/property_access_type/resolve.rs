@@ -493,14 +493,7 @@ impl<'a> CheckerState<'a> {
             // results (double-narrowing through instanceof conditions). Only
             // apply additional narrowing when the property access has a distinct
             // flow node that may carry extra narrowing information.
-            let expr_flow = self.ctx.binder.get_node_flow(access.expression);
-            let is_redundant_identifier_narrow = self
-                .ctx
-                .arena
-                .get(access.expression)
-                .is_some_and(|expr| expr.kind == SyntaxKind::Identifier as u16)
-                && expr_flow == Some(flow_node);
-            if !is_redundant_identifier_narrow {
+            if !self.is_redundant_receiver_narrow(access.expression, flow_node) {
                 object_type = self.flow_analyzer_for_property_reads().get_flow_type(
                     access.expression,
                     object_type,
