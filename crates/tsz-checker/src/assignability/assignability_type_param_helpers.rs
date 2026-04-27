@@ -32,11 +32,11 @@ impl<'a> CheckerState<'a> {
 
         let evaluated_constraint = self.evaluate_type_with_env(constraint);
         let (non_nullish, nullish_cause) = self.split_nullish_type(evaluated_constraint);
-        if non_nullish.is_some_and(|ty| {
-            ty == TypeId::OBJECT
-                || crate::query_boundaries::common::is_empty_object_type(self.ctx.types, ty)
-        }) && !nullish_cause
-            .is_some_and(|cause| self.nullish_cause_includes_undefined_like(cause))
+        // Only reduce to OBJECT when the constraint is the `object` built-in type.
+        // `{}` (empty object type) is NOT the same as `object` — it includes primitives
+        // (e.g., `T extends {}` allows `T = 42`), so we must NOT map it to OBJECT here.
+        if non_nullish.is_some_and(|ty| ty == TypeId::OBJECT)
+            && !nullish_cause.is_some_and(|cause| self.nullish_cause_includes_undefined_like(cause))
         {
             return TypeId::OBJECT;
         }
