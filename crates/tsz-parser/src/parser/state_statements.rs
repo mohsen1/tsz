@@ -2631,11 +2631,8 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
-        // Clear STATIC_BLOCK before parsing parameters — function parameters create a
-        // new scope where 'await' is a valid identifier (unless the function is async).
-        // The function name was already parsed above in the static block context.
-        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
-
+        // Keep STATIC_BLOCK during parameter parsing — inside a static block,
+        // 'await' is reserved even in function parameters, matching tsc behavior.
         // Parse parameters. If `(` is missing and we're already at `{`, recover
         // straight into the body instead of parsing the body as a destructuring
         // parameter list.
@@ -2665,6 +2662,10 @@ impl ParserState {
         } else {
             NodeIndex::NONE
         };
+        // Clear STATIC_BLOCK before body — the body is a new scope where
+        // 'await' is a valid identifier (unless the function is async).
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
+
         // Push a new label scope for the function body
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -2758,10 +2759,8 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
-        // Clear STATIC_BLOCK before parsing parameters — function parameters create a
-        // new scope where 'await' is a valid identifier (unless the function is async).
-        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
-
+        // Keep STATIC_BLOCK flag during parameter parsing — inside a static block,
+        // 'await' is reserved even in function parameters, matching tsc behavior.
         let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if !has_open_paren && self.is_token(SyntaxKind::OpenBraceToken) {
             NodeList::new()
