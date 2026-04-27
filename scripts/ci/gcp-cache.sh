@@ -325,11 +325,18 @@ suite_caches() {
     all|full)
       echo "cargo-home typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
       ;;
-    lint|build|dist-binaries|unit-archive|unit|wasm|wasm-web)
-      # Pure Rust suites: cargo state only. lint specifically does not
-      # need TypeScript source, npm, or harness — sccache + cargo-home
-      # are the only cache layers that touch its compile path.
+    lint)
+      # Only `cargo clippy` on workspace crates. Doesn't run cargo build,
+      # doesn't read TypeScript/ at compile time, doesn't run any Node
+      # tooling. cargo-home (registry) is the only useful restore.
       echo "cargo-home"
+      ;;
+    build|dist-binaries|unit-archive|unit|wasm|wasm-web)
+      # cargo build / cargo nextest: workspace crates and tests reference
+      # TypeScript/src/lib (and tests/cases for some integration tests),
+      # and the wasm post-build step copies TypeScript/src/lib into the
+      # pkg output. Need TS source even though no Node tooling is run.
+      echo "cargo-home typescript-source"
       ;;
     unit-shard)
       # Downloads the nextest archive directly from GCS. No cache restore.

@@ -1382,15 +1382,19 @@ run_build() {
 # Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
 # Keep these in sync — if you add a suite that reads TypeScript/ source,
 # update both here and there.
+#
+# Default is "needs TS source" because most cargo build / cargo test
+# invocations reference TypeScript/src/lib (and test fixtures pull from
+# tests/cases). The exceptions are explicit:
+#   - lint runs only `cargo clippy`, no build/test.
+#   - unit-shard runs nextest from a pre-built archive, no compilation.
+# Aggregate suites bypass run_common_setup() entirely (see main()).
 suite_needs_typescript_source() {
   local suite="$1"
   case "$suite" in
-    all|full|build) return 0 ;;
-    conformance|conformance-shard) return 0 ;;
-    emit|emit-shard) return 0 ;;
-    fourslash|fourslash-shard) return 0 ;;
-    node-harness-prep) return 0 ;;
-    *) return 1 ;;
+    lint) return 1 ;;
+    unit-shard) return 1 ;;
+    *) return 0 ;;
   esac
 }
 
