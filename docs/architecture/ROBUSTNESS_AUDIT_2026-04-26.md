@@ -46,7 +46,7 @@ status emoji at the start of the title:
 - ✅ landed
 - ❌ abandoned
 
-### 1. 🚧 Silent `try_borrow_mut` failures during semantic registration
+### 1. ✅ Silent `try_borrow_mut` failures during semantic registration
 
 **Files**
 
@@ -353,7 +353,7 @@ distinction.
 
 ---
 
-### 13. 🚧 Identifier/interner fallback leaks into LSP/navigation
+### 13. ✅ Identifier/interner fallback leaks into LSP/navigation
 
 **Files**
 
@@ -398,7 +398,7 @@ frontends may resolve modules differently. Compatibility shim
 
 ---
 
-### 15. ⏳ Hardcoded apparent members for primitives/Function
+### 15. ✅ Hardcoded apparent members for primitives/Function
 
 **Files**
 
@@ -519,7 +519,14 @@ invariant.
   redesign with stable key tracked under follow-up.
 - ✅ #16 (#P) "Add Missing Imports" stub no longer advertised — PR #1375
   (merged 2026-04-26).
-- 🚧 #1 (#A) silent `try_borrow_mut` failures — PR #1369 [WIP], tracing-only
-  variant landing first; redesign to transactional dual-env writes follows.
-- 🚧 #13 (#M) LSP identifier text bypass — PR #1378 (open) delegates to a
-  total `resolve_identifier_text` on `NodeArena`.
+- ✅ #1 (#A) silent `try_borrow_mut` failures — tracing variant merged via
+  PR #1369 (2026-04-26). Redesign to transactional dual-env writes is a
+  follow-up tracked separately.
+- ✅ #13 (#M) LSP identifier text bypass — PR #1378 (merged 2026-04-26)
+  delegates to a total `resolve_identifier_text` on `NodeArena`; downstream
+  LSP rename / implementation no longer reach into raw arena state.
+- ✅ #15 (#O) hardcoded `Function` apparent-member fallback —
+  PR #1507 (merged 2026-04-26) adds a `tracing::trace!` event when the
+  no-lib hardcoded ladder fires (`apply`/`call`/`bind`/`toString`/`name`/
+  `length`/`prototype`/`arguments`/`caller`). Behaviour preserved; surfaces
+  drift when the boxed `Function` interface fails to provide the property.
