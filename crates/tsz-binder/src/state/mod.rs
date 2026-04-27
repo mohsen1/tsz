@@ -350,8 +350,21 @@ pub struct BinderState {
     pub(crate) hoisted_functions: Vec<NodeIndex>,
 
     // ===== Persistent Scope System (for stateless checking) =====
-    /// Persistent scopes - enables querying scope information without traversal order
-    pub scopes: Vec<Scope>,
+    /// Persistent scopes - enables querying scope information without traversal order.
+    ///
+    /// `Arc`-wrapped so per-file binders constructed by the CLI driver share
+    /// via `Arc::clone` instead of deep-cloning the underlying `Vec<Scope>`.
+    /// Mutated heavily during binding (in `state/core.rs::enter_persistent_scope`,
+    /// `exit_persistent_scope`, `bind_source_file`) via `Arc::make_mut`, which
+    /// is free during binding (refcount=1) and copy-on-writes only when the
+    /// scope vec is genuinely shared. Same pattern as `node_scope_ids` above
+    /// and the recently-merged `BoundFile` field Arc-wraps (PRs #1399/1404/
+    /// 1409/1416/1428/1535).
+    ///
+    /// Each `Scope` holds an `Arc<FxHashMap>` symbol table internally (since
+    /// PR #1535) so even the per-`Scope` clone done by `Arc::make_mut`'s
+    /// copy-on-write fallback is cheap.
+    pub scopes: Arc<Vec<Scope>>,
     /// Map from AST node (that creates a scope) to its `ScopeId`.
     ///
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver
@@ -924,7 +937,7 @@ pub struct ResolutionStats {
 
 #[derive(Debug, Default)]
 pub struct BinderStateScopeInputs {
-    pub scopes: Vec<Scope>,
+    pub scopes: Arc<Vec<Scope>>,
     pub node_scope_ids: Arc<FxHashMap<u32, ScopeId>>,
     pub global_augmentations: Arc<FxHashMap<String, Vec<GlobalAugmentation>>>,
     pub module_augmentations: Arc<FxHashMap<String, Vec<ModuleAugmentation>>>,

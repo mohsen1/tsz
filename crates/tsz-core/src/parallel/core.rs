@@ -497,8 +497,15 @@ pub struct BindResult {
     /// `Arc`-wrapped end-to-end so merging the per-file `BinderState.declaration_arenas`
     /// (also `Arc`) into the final `MergedProgram` does not require deep cloning.
     pub declaration_arenas: Arc<DeclarationArenaMap>,
-    /// Persistent scopes for stateless checking
-    pub scopes: Vec<Scope>,
+    /// Persistent scopes for stateless checking.
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.scopes` (same field) so per-file
+    /// binders constructed by the CLI driver share via `Arc::clone` instead
+    /// of deep-cloning the underlying `Vec<Scope>`. Each `Scope` already
+    /// holds an `Arc<FxHashMap>` symbol table internally (PR #1535) so even
+    /// if `Arc::make_mut` ever has to copy-on-write, the per-`Scope` clone
+    /// stays cheap.
+    pub scopes: Arc<Vec<Scope>>,
     /// Map from AST node to scope ID.
     ///
     /// `Arc`-wrapped to mirror `BinderState.node_scope_ids` so per-file
@@ -658,7 +665,7 @@ impl BindResult {
 
         // scopes
         size += self.scopes.capacity() * std::mem::size_of::<Scope>();
-        for scope in &self.scopes {
+        for scope in self.scopes.iter() {
             size += scope.table.len() * (32 + std::mem::size_of::<SymbolId>());
         }
 
@@ -1444,8 +1451,14 @@ pub struct BoundFile {
     pub declaration_arenas: DeclarationArenaMap,
     /// Export visibility of namespace/module declaration nodes after binder rules.
     pub module_declaration_exports_publicly: Arc<FxHashMap<u32, bool>>,
-    /// Persistent scopes (symbol IDs are global after merge)
-    pub scopes: Vec<Scope>,
+    /// Persistent scopes (symbol IDs are global after merge).
+    ///
+    /// `Arc`-wrapped to mirror `BinderState.scopes` so per-file binders
+    /// constructed in the cross-file lookup pipeline share via
+    /// `Arc::clone` instead of deep-cloning. Same pattern as the recently-
+    /// merged BoundFile field Arc-wraps (#1399 / #1404 / #1409 / #1416 /
+    /// #1428 / #1535).
+    pub scopes: Arc<Vec<Scope>>,
     /// Map from AST node to scope ID.
     ///
     /// `Arc`-wrapped to mirror `BinderState.node_scope_ids` so per-file
@@ -1554,7 +1567,7 @@ impl BoundFile {
 
         // scopes
         size += self.scopes.capacity() * std::mem::size_of::<Scope>();
-        for scope in &self.scopes {
+        for scope in self.scopes.iter() {
             size += scope.table.len() * (32 + std::mem::size_of::<SymbolId>());
         }
 
@@ -3271,7 +3284,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         let mut remapped_scopes = Vec::with_capacity(result.scopes.len());
-        for scope in &result.scopes {
+        for scope in result.scopes.iter() {
             let mut table = SymbolTable::with_capacity(scope.table.len());
             for (name, old_sym_id) in scope.table.iter() {
                 if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
@@ -3362,7 +3375,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             symbol_arenas: remapped_symbol_arenas,
             declaration_arenas: remapped_declaration_arenas,
             module_declaration_exports_publicly: result.module_declaration_exports_publicly.clone(),
-            scopes: remapped_scopes,
+            scopes: Arc::new(remapped_scopes),
             node_scope_ids: result.node_scope_ids.clone(),
             parse_diagnostics: result.parse_diagnostics.clone(),
             global_augmentations: (*result.global_augmentations).clone(),
@@ -4135,7 +4148,7 @@ fn build_lib_bound_file_for_interface_checks(
         symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: Arc::new(FxHashMap::default()),
-        scopes: Vec::new(),
+        scopes: Arc::new(Vec::new()),
         node_scope_ids: Arc::new(FxHashMap::default()),
         parse_diagnostics: Vec::new(),
         global_augmentations: FxHashMap::default(),

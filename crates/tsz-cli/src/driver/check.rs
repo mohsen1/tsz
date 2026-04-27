@@ -2841,7 +2841,7 @@ fn build_lib_bound_file_for_interface_checks(
         symbol_arenas: (*program.symbol_arenas).clone(),
         declaration_arenas,
         module_declaration_exports_publicly: std::sync::Arc::new(FxHashMap::default()),
-        scopes: Vec::new(),
+        scopes: std::sync::Arc::new(Vec::new()),
         node_scope_ids: std::sync::Arc::new(FxHashMap::default()),
         parse_diagnostics: Vec::new(),
         global_augmentations: FxHashMap::default(),
