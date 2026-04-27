@@ -394,7 +394,7 @@ impl ProjectFile {
 
         // scopes
         size += b.scopes.capacity() * std::mem::size_of::<tsz_binder::Scope>();
-        for scope in &b.scopes {
+        for scope in b.scopes.iter() {
             size += scope.table.len() * (32 + std::mem::size_of::<SymbolId>());
         }
 

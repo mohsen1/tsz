@@ -337,9 +337,12 @@ function fx4<T extends {} | null>(value: T & ({} | null)) {
         ts2536_count, 1,
         "Expected exactly one TS2536 for indexing raw T with keyof (T & {{}}), got: {relevant:#?}"
     );
+    // `T extends {}` and `T extends {} | null` can both be instantiated with
+    // a number literal (since `{}` includes primitives), so there IS potential
+    // overlap with `42`. tsc does NOT emit TS2367 for these; we must not either.
     assert_eq!(
-        ts2367_count, 2,
-        "Expected TS2367 for the constrained generic comparisons only, got: {relevant:#?}"
+        ts2367_count, 0,
+        "Expected no TS2367 for T extends {{}} comparisons ({{}} includes primitives), got: {relevant:#?}"
     );
 }
 
