@@ -3645,7 +3645,7 @@ fn skeleton_validate_against_merged_declared_modules() {
         idx.declared_modules
     );
     assert_eq!(
-        idx.declared_modules, program.declared_modules,
+        idx.declared_modules, *program.declared_modules,
         "skeleton and legacy declared_modules must match"
     );
 }

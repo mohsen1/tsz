@@ -899,7 +899,7 @@ pub(super) fn collect_diagnostics(
     let program_cross_file_node_symbols = Arc::new(program.cross_file_node_symbols.clone());
     // Same rationale for `program.alias_partners`: a single shared
     // FxHashMap<SymbolId, SymbolId> beats N per-binder deep-clones.
-    let program_alias_partners = Arc::new(program.alias_partners.clone());
+    let program_alias_partners = Arc::clone(&program.alias_partners);
 
     let mut project_env = tsz::checker::context::ProjectEnv {
         lib_contexts: std::sync::Arc::new(checker_libs.contexts.clone()),
