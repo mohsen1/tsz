@@ -2393,10 +2393,7 @@ impl<'a> CheckerState<'a> {
         // Look at merged decls on the import's own symbol.
         if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
             for &decl_idx in &sym.declarations {
-                if decl_idx == binding_node_idx
-                    || decl_idx == clause_idx
-                    || decl_idx == stmt_idx
-                {
+                if decl_idx == binding_node_idx || decl_idx == clause_idx || decl_idx == stmt_idx {
                     continue;
                 }
                 if !self.ctx.binder.node_symbols.contains_key(&decl_idx.0) {
@@ -2439,19 +2436,20 @@ impl<'a> CheckerState<'a> {
                             .find_enclosing_scope(self.ctx.arena, decl_idx)
                     }
                 });
-                let in_same_scope = match (import_scope, decl_containing_scope) {
-                    (Some(a), Some(b)) if a == b => true,
-                    (Some(a), Some(b)) => {
-                        let sym_a = self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
-                            self.ctx.binder.node_symbols.get(&s.container_node.0)
-                        });
-                        let sym_b = self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
-                            self.ctx.binder.node_symbols.get(&s.container_node.0)
-                        });
-                        sym_a.is_some() && sym_a == sym_b
-                    }
-                    _ => true,
-                };
+                let in_same_scope =
+                    match (import_scope, decl_containing_scope) {
+                        (Some(a), Some(b)) if a == b => true,
+                        (Some(a), Some(b)) => {
+                            let sym_a = self.ctx.binder.scopes.get(a.0 as usize).and_then(|s| {
+                                self.ctx.binder.node_symbols.get(&s.container_node.0)
+                            });
+                            let sym_b = self.ctx.binder.scopes.get(b.0 as usize).and_then(|s| {
+                                self.ctx.binder.node_symbols.get(&s.container_node.0)
+                            });
+                            sym_a.is_some() && sym_a == sym_b
+                        }
+                        _ => true,
+                    };
                 if !in_same_scope {
                     continue;
                 }
@@ -2480,14 +2478,8 @@ impl<'a> CheckerState<'a> {
         // Look at separate same-name symbols (binder may keep them split
         // across imports vs locals via alias_partners).
         if !local_has_value || !local_has_pure_type {
-            let all_symbols: Vec<tsz_binder::SymbolId> = self
-                .ctx
-                .binder
-                .symbols
-                .find_all_by_name(name)
-                .iter()
-                .copied()
-                .collect();
+            let all_symbols: Vec<tsz_binder::SymbolId> =
+                self.ctx.binder.symbols.find_all_by_name(name).to_vec();
             for other_sym_id in all_symbols {
                 if other_sym_id == sym_id {
                     continue;
@@ -2503,17 +2495,16 @@ impl<'a> CheckerState<'a> {
                 }
                 // Same-scope filter.
                 let other_in_same_scope = other_sym.declarations.iter().any(|&decl_idx| {
-                    let decl_containing =
-                        self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
-                            let parent = ext.parent;
-                            if parent.is_some() {
-                                self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
-                            } else {
-                                self.ctx
-                                    .binder
-                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
-                            }
-                        });
+                    let decl_containing = self.ctx.arena.get_extended(decl_idx).and_then(|ext| {
+                        let parent = ext.parent;
+                        if parent.is_some() {
+                            self.ctx.binder.find_enclosing_scope(self.ctx.arena, parent)
+                        } else {
+                            self.ctx
+                                .binder
+                                .find_enclosing_scope(self.ctx.arena, decl_idx)
+                        }
+                    });
                     match (import_scope, decl_containing) {
                         (Some(a), Some(b)) => a == b,
                         _ => true,
