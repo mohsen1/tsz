@@ -83,8 +83,8 @@ pub mod type_handles {
         MappedModifier, MappedType, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
         OrderedFloat, ParamInfo, PropertyInfo, PropertyLookup, SymbolRef, TemplateSpan,
         TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId,
-        TypeListId, TypeParamInfo, TypePredicate, TypePredicateTarget, Variance, Visibility,
-        is_compiler_managed_type,
+        TypeListId, TypeParamInfo, TypeParamVariance, TypePredicate, TypePredicateTarget, Variance,
+        Visibility, is_compiler_managed_type,
     };
 }
 
@@ -255,7 +255,7 @@ pub use types::{
     FunctionShapeId, IndexSignature, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     OrderedFloat, ParamInfo, RelationCacheConfig, RelationCacheKey, RelationCacheKind,
     RelationFlags, StringIntrinsicKind, TemplateSpan, TupleElement, TupleListId, TypeParamInfo,
-    TypePredicate, TypePredicateTarget,
+    TypeParamVariance, TypePredicate, TypePredicateTarget,
 };
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,

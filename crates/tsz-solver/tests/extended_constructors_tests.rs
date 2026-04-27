@@ -44,6 +44,7 @@ fn fresh_type_param(interner: &TypeInterner, name: &str) -> TypeId {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     })
 }
 
@@ -258,6 +259,7 @@ fn constructor_check_type_parameter_carries_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     match classify_for_constructor_check(&interner, tp) {
         ConstructorCheckKind::TypeParameter { constraint: c } => assert_eq!(c, Some(constraint)),
@@ -273,6 +275,7 @@ fn constructor_check_infer_shares_type_parameter_arm() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     assert!(
         matches!(
@@ -465,6 +468,7 @@ fn instance_type_type_parameter_carries_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     match classify_for_instance_type(&interner, tp) {
         InstanceTypeKind::TypeParameter { constraint: c } => assert_eq!(c, Some(constraint)),
@@ -480,6 +484,7 @@ fn instance_type_infer_shares_type_parameter_arm() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     assert!(matches!(
         classify_for_instance_type(&interner, infer_ty),

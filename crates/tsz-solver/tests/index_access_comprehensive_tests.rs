@@ -497,6 +497,7 @@ fn test_index_access_mapped_with_intersection_index() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     // { [K in keyof source]: boolean }
@@ -531,6 +532,7 @@ fn test_index_access_mapped_keyof_preserves_per_key_template_relation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param));
     let keyof_t = interner.keyof(t_type);
@@ -540,6 +542,7 @@ fn test_index_access_mapped_keyof_preserves_per_key_template_relation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_type = interner.intern(TypeData::TypeParameter(k_param));
 
@@ -660,12 +663,14 @@ fn test_index_access_literal_on_concrete_conditional_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
         name: interner.intern_string("B"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_tuple = interner.tuple(vec![
@@ -759,6 +764,7 @@ fn test_index_access_length_on_concrete_conditional_tuple() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let extends_fn = interner.function(FunctionShape {

@@ -1663,6 +1663,7 @@ impl<'a> CheckerState<'a> {
                                     constraint,
                                     default: None,
                                     is_const: false,
+                                    variance: tsz_solver::TypeParamVariance::None,
                                 };
                                 let type_id = factory.type_param(param);
                                 let previous = self

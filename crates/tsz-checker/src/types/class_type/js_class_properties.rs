@@ -124,6 +124,7 @@ impl CheckerState<'_> {
                                 constraint: None,
                                 default: None,
                                 is_const,
+                                variance: tsz_solver::TypeParamVariance::None,
                             })
                     });
                 }
@@ -187,6 +188,7 @@ impl CheckerState<'_> {
                             constraint: None,
                             default: None,
                             is_const,
+                            variance: tsz_solver::TypeParamVariance::None,
                         })
                 });
             }
@@ -401,6 +403,7 @@ impl CheckerState<'_> {
                                     constraint: None,
                                     default: None,
                                     is_const,
+                                    variance: tsz_solver::TypeParamVariance::None,
                                 },
                             ));
                         }
@@ -472,6 +475,7 @@ impl CheckerState<'_> {
                             constraint: None,
                             default: None,
                             is_const,
+                            variance: tsz_solver::TypeParamVariance::None,
                         }));
                     }
                 }

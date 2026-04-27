@@ -21,6 +21,7 @@ fn classify_array_like_type_param_with_array_constraint() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     assert!(matches!(
         classify_array_like(&interner, t),
@@ -36,6 +37,7 @@ fn classify_array_like_unconstrained_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     assert!(matches!(
         classify_array_like(&interner, t),
@@ -55,6 +57,7 @@ fn classify_array_like_mapped_over_array_type_param() {
         constraint: Some(readonly_unknown_arr),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     // keyof T
     let keyof_t = interner.intern(TypeData::KeyOf(t));
@@ -65,6 +68,7 @@ fn classify_array_like_mapped_over_array_type_param() {
             constraint: Some(keyof_t),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_t,
         name_type: None,
@@ -92,6 +96,7 @@ fn classify_array_like_mapped_non_keyof_constraint() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,

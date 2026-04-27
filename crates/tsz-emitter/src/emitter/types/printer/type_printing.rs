@@ -1172,6 +1172,13 @@ impl<'a> TypePrinter<'a> {
             result.push_str("const ");
         }
 
+        match param_info.variance {
+            tsz_solver::TypeParamVariance::In => result.push_str("in "),
+            tsz_solver::TypeParamVariance::Out => result.push_str("out "),
+            tsz_solver::TypeParamVariance::InOut => result.push_str("in out "),
+            tsz_solver::TypeParamVariance::None => {}
+        }
+
         result.push_str(&self.resolve_type_param_name(param_info.name));
 
         if let Some(constraint) = param_info.constraint {

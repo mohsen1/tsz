@@ -411,6 +411,7 @@ impl<'a> TypeInstantiator<'a> {
             .iter()
             .map(|tp| TypeParamInfo {
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
                 name: tp.name,
                 constraint: tp.constraint.map(|c| self.instantiate(c)),
                 default: tp.default.map(|d| self.instantiate(d)),
@@ -1266,6 +1267,7 @@ impl<'a> TypeInstantiator<'a> {
                 let instantiated = MappedType {
                     type_param: TypeParamInfo {
                         is_const: false,
+                        variance: crate::TypeParamVariance::None,
                         name: mapped.type_param.name,
                         constraint: new_param_constraint,
                         default: new_param_default,

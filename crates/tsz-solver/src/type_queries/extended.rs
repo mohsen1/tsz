@@ -1310,6 +1310,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),
@@ -1329,6 +1330,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),
@@ -1364,6 +1366,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),
@@ -1383,6 +1386,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             }],
             params: vec![ParamInfo {
                 name: Some(Atom(20)),

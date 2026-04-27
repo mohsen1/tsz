@@ -493,6 +493,7 @@ fn test_constraint_infer_from_array() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Target: T[] (array of T)
@@ -521,6 +522,7 @@ fn test_constraint_infer_from_object_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let name_value = interner.intern_string("value");
@@ -552,12 +554,14 @@ fn test_constraint_infer_from_function() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Target: (x: T) => U
@@ -623,6 +627,7 @@ fn test_constraint_recursive_self_referential() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // T extends { compareTo: (other: T) => number }
@@ -669,6 +674,7 @@ fn test_constraint_recursive_with_concrete_lower() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let name_next = interner.intern_string("next");
@@ -725,6 +731,7 @@ fn test_constraint_call_generic_identity() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let func = interner.function(FunctionShape {
@@ -733,6 +740,7 @@ fn test_constraint_call_generic_identity() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -773,6 +781,7 @@ fn test_constraint_call_generic_with_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let func = interner.function(FunctionShape {
@@ -781,6 +790,7 @@ fn test_constraint_call_generic_with_constraint() {
             constraint: Some(constraint),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -820,12 +830,14 @@ fn test_constraint_call_generic_two_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: u_name,
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let return_type = interner.tuple(vec![
@@ -850,12 +862,14 @@ fn test_constraint_call_generic_two_params() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             TypeParamInfo {
                 name: u_name,
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
         ],
         params: vec![
@@ -905,6 +919,7 @@ fn test_constraint_call_generic_array_element() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let func = interner.function(FunctionShape {
@@ -913,6 +928,7 @@ fn test_constraint_call_generic_array_element() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("arr")),
@@ -1247,6 +1263,7 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let param_obj = interner.object_with_index(ObjectShape {
@@ -1268,6 +1285,7 @@ fn test_eopt_preserves_explicit_undefined_in_index_signature_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -1322,6 +1340,7 @@ fn test_no_eopt_strips_optional_undefined_in_index_signature_inference() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let param_obj = interner.object_with_index(ObjectShape {
@@ -1343,6 +1362,7 @@ fn test_no_eopt_strips_optional_undefined_in_index_signature_inference() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),

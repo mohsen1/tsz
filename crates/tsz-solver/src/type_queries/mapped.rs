@@ -830,12 +830,14 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let k_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let constraint = interner.keyof(t_param);
         let template = interner.index_access(t_param, k_param);
@@ -845,6 +847,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint,
             name_type: None,
@@ -885,12 +888,14 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let k_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let mapped = MappedType {
             type_param: TypeParamInfo {
@@ -898,6 +903,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: interner.keyof(t_param),
             name_type: None,
@@ -941,12 +947,14 @@ mod tests {
             constraint: Some(array_constraint),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let k_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let mapped = MappedType {
             type_param: TypeParamInfo {
@@ -954,6 +962,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: interner.keyof(t_param),
             name_type: None,
@@ -986,6 +995,7 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let mapped = MappedType {
             type_param: TypeParamInfo {
@@ -993,6 +1003,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: interner.keyof(t_param),
             name_type: None,
@@ -1027,18 +1038,21 @@ mod tests {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let t_param = interner.type_param(TypeParamInfo {
             name: t_name,
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let key_param = interner.type_param(TypeParamInfo {
             name: k_name,
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
 
         let state = interner.object(vec![crate::types::PropertyInfo::opt(a_name, t_param)]);
@@ -1049,6 +1063,7 @@ mod tests {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: interner.literal_string("a"),
             name_type: None,

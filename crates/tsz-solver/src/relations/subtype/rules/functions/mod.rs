@@ -779,6 +779,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 constraint: None,
                 default: None,
                 is_const: tp.is_const,
+                variance: crate::TypeParamVariance::None,
             });
             rename_substitution.insert(tp.name, fresh_type);
             renamed_type_params.push(TypeParamInfo {
@@ -790,6 +791,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .default
                     .map(|default| instantiate_type(self.interner, default, &rename_substitution)),
                 is_const: tp.is_const,
+                variance: crate::TypeParamVariance::None,
             });
         }
         let renamed_source = FunctionShape {

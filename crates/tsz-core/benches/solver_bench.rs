@@ -138,12 +138,14 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
         constraint: None,
         default: None,
         is_const: false,
+        variance: tsz_solver::TypeParamVariance::None,
     };
     let u_param = TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        variance: tsz_solver::TypeParamVariance::None,
     };
     let t_type = interner.type_param(t_param);
     let u_type = interner.type_param(u_param);

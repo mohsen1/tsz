@@ -325,6 +325,7 @@ impl<'a> CheckerState<'a> {
             .map(|tp| TypeParamInfo {
                 name: tp.name,
                 is_const: tp.is_const,
+                variance: tsz_solver::TypeParamVariance::None,
                 constraint: tp
                     .constraint
                     .map(|c| instantiate_type(self.ctx.types, c, &substitution)),

@@ -1606,6 +1606,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: tsz_solver::TypeParamVariance::None,
             };
             let mut shadowed_class_param = false;
             if let Some(ref mut c) = self.ctx.enclosing_class
@@ -1695,11 +1696,26 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+                let has_in = self
+                    .ctx
+                    .arena
+                    .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::InKeyword);
+                let has_out = self
+                    .ctx
+                    .arena
+                    .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::OutKeyword);
+                let variance = match (has_in, has_out) {
+                    (true, true) => tsz_solver::TypeParamVariance::InOut,
+                    (true, false) => tsz_solver::TypeParamVariance::In,
+                    (false, true) => tsz_solver::TypeParamVariance::Out,
+                    (false, false) => tsz_solver::TypeParamVariance::None,
+                };
                 let info = tsz_solver::TypeParamInfo {
                     name: atom,
                     constraint,
                     default,
                     is_const,
+                    variance,
                 };
 
                 let constrained_type_id = factory.type_param(info);

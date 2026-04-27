@@ -265,6 +265,7 @@ fn test_generic_class_instantiation() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 
@@ -286,12 +287,14 @@ fn test_class_with_multiple_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let v_info = crate::types::TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let k_param = interner.intern(TypeData::TypeParameter(k_info));
     let v_param = interner.intern(TypeData::TypeParameter(v_info));

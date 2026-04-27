@@ -626,12 +626,14 @@ fn test_concrete_tuple_not_assignable_to_double_type_param_spread() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let p_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("P"),
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Source: [any, any]
@@ -685,6 +687,7 @@ fn test_concrete_tuple_not_assignable_to_single_type_param_spread() {
         constraint: Some(any_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Source: [any, any]
@@ -772,6 +775,7 @@ fn test_spread_tuple_assignable_to_type_param() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Source: [...T]
@@ -800,6 +804,7 @@ fn test_type_param_assignable_to_spread_tuple() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Target: [...T]
@@ -828,6 +833,7 @@ fn test_type_param_assignable_to_readonly_spread_tuple() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Target: readonly [...T]
@@ -857,6 +863,7 @@ fn test_spread_tuple_subtype_preserves_type_param_relation() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     // S extends T (constraint is T itself)
     let s_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
@@ -864,6 +871,7 @@ fn test_spread_tuple_subtype_preserves_type_param_relation() {
         constraint: Some(t_param),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let source = interner.tuple(vec![TupleElement {
@@ -897,12 +905,14 @@ fn test_spread_tuple_not_assignable_to_unrelated_spread() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let source = interner.tuple(vec![TupleElement {

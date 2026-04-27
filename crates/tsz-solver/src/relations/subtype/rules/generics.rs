@@ -1165,6 +1165,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 constraint: Some(mapped.constraint),
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             });
             let source_value_type = self.interner.index_access(constraint_source, k_type_id);
             self.check_subtype(mapped.template, source_value_type)
@@ -1353,6 +1354,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             constraint: Some(mapped.constraint),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let source_value_type = self.interner.index_access(constraint_source, k_type_id);
         if self
@@ -1413,6 +1415,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 constraint: Some(member_constraint),
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             });
             let member_template = self.interner.index_access(member, member_k);
             let member_mapped = self.interner.mapped(MappedType {

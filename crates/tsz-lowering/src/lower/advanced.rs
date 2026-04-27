@@ -133,6 +133,7 @@ impl<'a> TypeLowering<'a> {
                 return (
                     TypeParamInfo {
                         is_const: false,
+                        variance: tsz_solver::TypeParamVariance::None,
                         name,
                         constraint: None,
                         default: None,
@@ -166,6 +167,7 @@ impl<'a> TypeLowering<'a> {
             (
                 TypeParamInfo {
                     is_const: false,
+                    variance: tsz_solver::TypeParamVariance::None,
                     name,
                     constraint,
                     default,
@@ -177,6 +179,7 @@ impl<'a> TypeLowering<'a> {
             (
                 TypeParamInfo {
                     is_const: false,
+                    variance: tsz_solver::TypeParamVariance::None,
                     name,
                     constraint: None,
                     default: None,
@@ -908,6 +911,7 @@ impl<'a> TypeLowering<'a> {
 
             self.interner.infer(TypeParamInfo {
                 is_const: false,
+                variance: tsz_solver::TypeParamVariance::None,
                 name,
                 constraint: None,
                 default: None,

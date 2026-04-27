@@ -446,6 +446,7 @@ fn test_generic_promise() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
 

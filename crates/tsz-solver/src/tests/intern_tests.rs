@@ -53,6 +53,7 @@ fn test_interner_lazy_and_type_param_constructors() {
         constraint: Some(TypeId::STRING),
         default: Some(TypeId::NUMBER),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let type_param = interner.type_param(t.clone());
     assert_eq!(

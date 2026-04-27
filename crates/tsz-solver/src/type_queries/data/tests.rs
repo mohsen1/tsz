@@ -176,6 +176,7 @@ fn test_union_has_direct_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     // Not a union — returns false
     assert!(!union_has_direct_type_parameter(&interner, tp));
@@ -373,6 +374,7 @@ fn test_extract_type_params_for_call() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
 
     // Function with 1 type param
@@ -640,12 +642,14 @@ fn classify_body_for_arg_preservation_conditional_with_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let infer_type = interner.infer(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     // Conditional with infer in extends: T extends infer U ? T : never
@@ -684,12 +688,14 @@ fn classify_body_for_arg_preservation_conditional_application_infer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let infer_v = interner.infer(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     // Application(Lazy(42), [T, infer V]) — represents Synthetic<T, infer V>

@@ -792,6 +792,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         constraint: None,
                         default: None,
                         is_const: false,
+                        variance: tsz_solver::TypeParamVariance::None,
                     };
                     bindings.push((atom, factory.type_param(placeholder)));
                 }
@@ -828,6 +829,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         constraint,
                         default,
                         is_const,
+                        variance: tsz_solver::TypeParamVariance::None,
                     };
                     bindings[binding_idx] = (atom, factory.type_param(info));
                     params.push(info);

@@ -121,6 +121,7 @@ fn dedup_mapped_type() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -171,6 +172,7 @@ fn dedup_type_param() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let a = i.type_param(info);
     let b = i.type_param(info);
@@ -412,6 +414,7 @@ fn union_with_type_param_not_reduced() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     // T | string should NOT reduce T away
     let u = i.union(vec![tp, TypeId::STRING]);
@@ -870,6 +873,7 @@ fn intersection_with_type_param_not_reduced() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     // T & string: Lazy/TypeParameter types abort reduction
     let obj = i.object(vec![PropertyInfo::new(
@@ -1218,6 +1222,7 @@ fn function_with_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let f = i.function(FunctionShape {
         type_params: vec![tp],
@@ -1287,6 +1292,7 @@ fn type_param_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     match i.lookup(tp) {
         Some(TypeData::TypeParameter(info)) => {
@@ -1304,6 +1310,7 @@ fn type_param_with_default() {
         constraint: None,
         default: Some(TypeId::NUMBER),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     match i.lookup(tp) {
         Some(TypeData::TypeParameter(info)) => {
@@ -1321,6 +1328,7 @@ fn type_param_const() {
         constraint: None,
         default: None,
         is_const: true,
+        variance: crate::TypeParamVariance::None,
     });
     match i.lookup(tp) {
         Some(TypeData::TypeParameter(info)) => {
@@ -1338,12 +1346,14 @@ fn type_param_different_names_differ() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let tp_u = i.type_param(TypeParamInfo {
         name: i.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     assert_ne!(tp_t, tp_u);
 }
@@ -1408,6 +1418,7 @@ fn mapped_type_lookup() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -1435,6 +1446,7 @@ fn mapped_type_different_modifiers_differ() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: TypeId::STRING,
             name_type: None,
@@ -1933,6 +1945,7 @@ fn infer_type_construction() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let inf = i.infer(info);
     match i.lookup(inf) {
@@ -2117,6 +2130,7 @@ fn array_base_type_set_and_get() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
     );
     assert_eq!(i.get_array_base_type(), Some(arr_type));

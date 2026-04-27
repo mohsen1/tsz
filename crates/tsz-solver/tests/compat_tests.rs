@@ -194,18 +194,21 @@ fn test_base_constraint_assignability_compat() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     let v_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("V"),
         constraint: Some(TypeId::NUMBER),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     assert!(checker.is_assignable(t_param, TypeId::STRING));
@@ -2697,6 +2700,7 @@ fn test_mapped_type_over_number_keys_assignable() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -2726,6 +2730,7 @@ fn test_mapped_type_over_string_keys_assignable() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -2755,6 +2760,7 @@ fn test_mapped_type_over_boolean_keys_assignable() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint,
         name_type: None,
@@ -2790,6 +2796,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         constraint: Some(keys),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
 
@@ -2830,6 +2837,7 @@ fn test_conditional_tuple_wrapper_no_distribution_assignable() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let tuple_check = interner.tuple(vec![TupleElement {
@@ -5013,6 +5021,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // Create keyof T
@@ -5029,6 +5038,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         })),
     ));
 
@@ -5039,6 +5049,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_t,
         name_type: None,
@@ -5054,6 +5065,7 @@ fn test_mapped_to_mapped_readonly_assignable_to_partial() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: keyof_t,
         name_type: None,
@@ -5392,6 +5404,7 @@ fn test_readonly_spread_tuple_to_type_param_is_ts2322() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let spread_tuple = interner.tuple(vec![TupleElement {
@@ -5434,6 +5447,7 @@ fn test_readonly_to_type_param_with_array_constraint_still_ts4104() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let readonly_source = interner.readonly_array(TypeId::UNKNOWN);
@@ -5463,6 +5477,7 @@ fn test_readonly_to_unconstrained_type_param_no_ts4104() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let readonly_source = interner.readonly_array(TypeId::NUMBER);
@@ -5494,6 +5509,7 @@ fn test_readonly_spread_tuple_to_mutable_spread_tuple_is_ts4104() {
         constraint: Some(unknown_array),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     let spread_tuple = interner.tuple(vec![TupleElement {
@@ -5614,6 +5630,7 @@ fn test_explain_normalized_mapped_application_missing_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_param = interner.intern(crate::TypeData::TypeParameter(t_param_info));
 
@@ -5644,6 +5661,7 @@ fn test_explain_normalized_mapped_application_missing_property() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let key_param = interner.intern(crate::TypeData::TypeParameter(key_param_info));
     let gen_t = interner.application(interner.lazy(gen_def), vec![t_param]);
@@ -5729,6 +5747,7 @@ fn test_null_assignable_to_unconstrained_type_param_without_strict() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
 
     // With strictNullChecks (default for CompatChecker::new): null/undefined
@@ -5775,6 +5794,7 @@ fn test_generic_callable_return_type_mismatch_compat_layer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let s_type = interner.type_param(s_param);
     let s_array = interner.array(s_type);
@@ -5797,6 +5817,7 @@ fn test_generic_callable_return_type_mismatch_compat_layer() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = interner.type_param(t_param);
     let target = interner.callable(CallableShape {

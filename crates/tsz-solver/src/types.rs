@@ -1547,6 +1547,16 @@ impl ParamInfo {
     }
 }
 
+/// Variance annotation for type parameters (TS 4.7+)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum TypeParamVariance {
+    #[default]
+    None,
+    In,
+    Out,
+    InOut,
+}
+
 /// Type parameter information
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TypeParamInfo {
@@ -1556,6 +1566,8 @@ pub struct TypeParamInfo {
     /// Whether this is a const type parameter (TS 5.0+)
     /// Const type parameters preserve literal types and infer readonly modifiers
     pub is_const: bool,
+    /// Variance annotation: `in`, `out`, `in out`, or none (TS 4.7+)
+    pub variance: TypeParamVariance,
 }
 
 /// Reference to a symbol (for named types)

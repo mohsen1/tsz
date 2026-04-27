@@ -41,6 +41,7 @@ mod generic_strictness_tests {
             constraint: Some(identifiable_constraint),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }));
 
         // Create an instance WITHOUT the required property
@@ -69,6 +70,7 @@ mod generic_strictness_tests {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }));
 
         // When checking against unconstrained generic, use Unknown (not Any)
@@ -108,6 +110,7 @@ mod generic_strictness_tests {
             constraint: Some(identifiable_constraint),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }));
 
         let obj_param = interner.object(vec![PropertyInfo::new(
@@ -836,6 +839,7 @@ mod function_variance_tests {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }));
 
         let generic_func = interner.function(FunctionShape {
@@ -860,6 +864,7 @@ mod function_variance_tests {
             constraint: Some(number_constraint),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }));
 
         let constrained_func = interner.function(FunctionShape {
@@ -1556,6 +1561,7 @@ mod unknown_fallback_tests {
             constraint: None, // No constraint - should use Unknown
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }));
 
         // Create an object with number type
@@ -2583,6 +2589,7 @@ mod homomorphic_mapped_type_tests {
             constraint: Some(keyof_tp),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         };
         let key_param_id = interner.intern(TypeData::TypeParameter(key_param));
         let index_access = interner.intern(TypeData::IndexAccess(tp, key_param_id));

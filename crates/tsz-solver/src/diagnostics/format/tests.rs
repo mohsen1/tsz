@@ -150,6 +150,7 @@ fn mapped_type_preserves_param_name() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: db.keyof(TypeId::STRING),
         template: TypeId::NUMBER,
@@ -174,6 +175,7 @@ fn mapped_type_shows_optional_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -198,6 +200,7 @@ fn mapped_type_shows_readonly_modifier() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -440,12 +443,14 @@ fn format_intersection_two_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let inter = db.intersection2(t, u);
     let result = fmt.format(inter);
@@ -468,6 +473,7 @@ fn format_intersection_uses_display_properties_for_anonymous_object_member() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     let intersection = db.intersection2(fresh, t);
@@ -523,6 +529,7 @@ fn format_intersection_preserves_named_types() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     let intersection = db.intersection2(obj_a, t);
@@ -1037,6 +1044,7 @@ fn format_function_with_type_params() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1044,6 +1052,7 @@ fn format_function_with_type_params() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1074,6 +1083,7 @@ fn format_function_type_param_with_constraint() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1081,6 +1091,7 @@ fn format_function_type_param_with_constraint() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1112,6 +1123,7 @@ fn format_function_type_param_with_default() {
         constraint: None,
         default: Some(TypeId::STRING),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1119,6 +1131,7 @@ fn format_function_type_param_with_default() {
             constraint: None,
             default: Some(TypeId::STRING),
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -1371,6 +1384,7 @@ fn format_mapped_type_basic() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -1393,6 +1407,7 @@ fn format_mapped_type_with_remove_optional() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -1418,6 +1433,7 @@ fn format_mapped_type_with_remove_readonly() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -1443,6 +1459,7 @@ fn format_mapped_string_index_signature_like() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: TypeId::NUMBER,
@@ -1464,6 +1481,7 @@ fn format_mapped_preserves_key_dependent_template() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let mapped = db.mapped(MappedType {
         type_param: TypeParamInfo {
@@ -1471,6 +1489,7 @@ fn format_mapped_preserves_key_dependent_template() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: key_param,
@@ -1672,6 +1691,7 @@ fn format_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     assert_eq!(fmt.format(tp), "MyType");
 }
@@ -1695,12 +1715,14 @@ fn format_keyof_intersection_distributes() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let u = db.type_param(TypeParamInfo {
         name: db.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let intersection = db.intersection2(t, u);
     let keyof = db.keyof(intersection);
@@ -1745,6 +1767,7 @@ fn format_infer_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     assert_eq!(fmt.format(infer), "infer R");
 }
@@ -1807,18 +1830,21 @@ fn format_application_pads_missing_args_with_param_defaults() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let treturn_param = TypeParamInfo {
         name: db.intern_string("TReturn"),
         constraint: None,
         default: Some(TypeId::ANY),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let tnext_param = TypeParamInfo {
         name: db.intern_string("TNext"),
         constraint: None,
         default: Some(TypeId::ANY),
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let iter_body = db.object(vec![]); // structural body isn't relevant to the display test
     let iter_def = crate::def::DefinitionInfo::type_alias(
@@ -1862,6 +1888,7 @@ fn display_alias_does_not_repaint_preexisting_structural_type() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let app = db.application(db.lazy(crate::def::DefId(1)), vec![type_param]);
 
@@ -1962,18 +1989,21 @@ fn empty_object_interface_application_preserves_type_args() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             TypeParamInfo {
                 name: db.intern_string("TReturn"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             TypeParamInfo {
                 name: db.intern_string("TNext"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
         ],
         vec![],
@@ -2058,6 +2088,7 @@ fn string_intrinsic_display_alias_keeps_resolved_intrinsic_surface() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         vec![],
     ));
@@ -2086,6 +2117,7 @@ fn template_literal_display_alias_keeps_resolved_pattern_surface() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         vec![],
     ));
@@ -2153,6 +2185,7 @@ fn format_callable_generic_single_call_signature_arrow_syntax() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let s_type = db.type_param(s_param);
 
@@ -2211,6 +2244,7 @@ fn format_callable_single_construct_signature() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t_type = db.type_param(type_param);
 
@@ -2521,6 +2555,7 @@ fn format_const_type_param() {
         constraint: None,
         default: None,
         is_const: true,
+        variance: crate::TypeParamVariance::None,
     });
     let func = db.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -2528,6 +2563,7 @@ fn format_const_type_param() {
             constraint: None,
             default: None,
             is_const: true,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(db.intern_string("x")),
@@ -2581,6 +2617,7 @@ fn generic_class_type_shows_type_params() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         body: Some(instance_type),
         instance_shape: None,
@@ -2633,12 +2670,14 @@ fn application_lazy_shows_type_args() {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             TypeParamInfo {
                 name: db.intern_string("U"),
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
         ],
         body: None,
@@ -2690,12 +2729,14 @@ fn resolved_indexed_access_alias_bodies_stay_structural_without_repainting_writt
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let f_param = TypeParamInfo {
         name: db.intern_string("F"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t = db.type_param(t_param);
     let f = db.type_param(f_param);
@@ -2714,6 +2755,7 @@ fn resolved_indexed_access_alias_bodies_stay_structural_without_repainting_writt
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let vehicle_t = db.type_param(vehicle_t_param);
     let vehicle_body = db.index_access(db.lazy(data_fetch_def), vehicle_t);
@@ -3038,6 +3080,7 @@ fn build_distributive_foo_alias(
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     };
     let t = db.type_param(t_param);
 

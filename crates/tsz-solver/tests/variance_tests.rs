@@ -28,6 +28,7 @@ fn type_param(interner: &TypeInterner, name: &str) -> TypeParamInfo {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }
 }
 
@@ -1238,6 +1239,7 @@ fn test_variance_infer_does_not_contribute() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     let t_atom = interner.intern_string("T");
@@ -1265,6 +1267,7 @@ fn test_variance_type_param_with_constraint() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     // U extends T - the constraint references T at covariant position
@@ -1273,6 +1276,7 @@ fn test_variance_type_param_with_constraint() {
         constraint: Some(t_param_type),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     let t_atom = interner.intern_string("T");

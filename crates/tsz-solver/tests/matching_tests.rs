@@ -23,6 +23,7 @@ fn make_type_param(interner: &TypeInterner, name: &str) -> (tsz_common::interner
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     (atom, ty)
 }

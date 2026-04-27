@@ -291,12 +291,14 @@ fn canonicalize_intersection_sorts_structural_members() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let u = interner.type_param(TypeParamInfo {
         name: interner.intern_string("U"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
 
     // T & U vs U & T — both should produce the same canonical intersection
@@ -366,6 +368,7 @@ fn canonicalize_function_with_type_params_uses_bound_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let func_t = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -373,6 +376,7 @@ fn canonicalize_function_with_type_params_uses_bound_parameter() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -433,6 +437,7 @@ fn canonicalize_function_type_params_name_preserved_in_shape() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let func_t = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -440,6 +445,7 @@ fn canonicalize_function_type_params_name_preserved_in_shape() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -460,6 +466,7 @@ fn canonicalize_function_type_params_name_preserved_in_shape() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let func_u = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -467,6 +474,7 @@ fn canonicalize_function_type_params_name_preserved_in_shape() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -625,6 +633,7 @@ fn canonicalize_string_intrinsic_in_function_uses_bound_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let upper_t = interner.string_intrinsic(StringIntrinsicKind::Uppercase, t_param);
     let func_t = interner.function(FunctionShape {
@@ -633,6 +642,7 @@ fn canonicalize_string_intrinsic_in_function_uses_bound_parameter() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         }],
         params: vec![ParamInfo {
             name: Some(interner.intern_string("x")),
@@ -691,6 +701,7 @@ fn canonicalize_mapped_type_alpha_equivalence() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let mapped_k = interner.mapped(MappedType {
         type_param: TypeParamInfo {
@@ -698,6 +709,7 @@ fn canonicalize_mapped_type_alpha_equivalence() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: k_param,
@@ -713,6 +725,7 @@ fn canonicalize_mapped_type_alpha_equivalence() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let mapped_p = interner.mapped(MappedType {
         type_param: TypeParamInfo {
@@ -720,6 +733,7 @@ fn canonicalize_mapped_type_alpha_equivalence() {
             constraint: None,
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         template: p_param,

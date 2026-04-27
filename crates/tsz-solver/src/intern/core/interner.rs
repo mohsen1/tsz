@@ -968,6 +968,7 @@ impl TypeInterner {
         self.mapped_types.get_copy(id.0).unwrap_or(MappedType {
             type_param: TypeParamInfo {
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
                 name: self.intern_string("_"),
                 constraint: None,
                 default: None,
@@ -999,6 +1000,7 @@ impl TypeInterner {
             Arc::new(MappedType {
                 type_param: TypeParamInfo {
                     is_const: false,
+                    variance: crate::TypeParamVariance::None,
                     name: self.intern_string("_"),
                     constraint: None,
                     default: None,

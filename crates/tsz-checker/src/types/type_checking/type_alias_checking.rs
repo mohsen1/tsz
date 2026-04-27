@@ -163,6 +163,7 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     default,
                     is_const: false,
+                    variance: tsz_solver::TypeParamVariance::None,
                 });
                 self.ctx
                     .type_parameter_scope
@@ -233,6 +234,7 @@ impl<'a> CheckerState<'a> {
                                     constraint: None,
                                     default: None,
                                     is_const: false,
+                                    variance: tsz_solver::TypeParamVariance::None,
                                 })
                             })
                             .collect()
@@ -802,6 +804,7 @@ impl<'a> CheckerState<'a> {
                                     constraint: Some(constraint_type),
                                     default: None,
                                     is_const: false,
+                                    variance: tsz_solver::TypeParamVariance::None,
                                 });
                         let previous = self
                             .ctx

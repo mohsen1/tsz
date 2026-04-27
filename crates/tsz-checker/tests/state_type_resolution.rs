@@ -21,6 +21,7 @@ fn classifies_resolution_and_signature_paths() {
         constraint: Some(TypeId::STRING),
         default: None,
         is_const: false,
+        variance: tsz_solver::TypeParamVariance::None,
     });
 
     assert!(callable_shape_for_type(&types, callable).is_some());

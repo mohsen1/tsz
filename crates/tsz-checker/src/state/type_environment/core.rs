@@ -464,6 +464,7 @@ impl<'a> CheckerState<'a> {
                     constraint: None,
                     default: None,
                     is_const: false,
+                    variance: tsz_solver::TypeParamVariance::None,
                 });
                 subst.insert(mapped.type_param.name, k_unconstrained);
 
@@ -1394,6 +1395,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const,
+                variance: tsz_solver::TypeParamVariance::None,
             });
         }
 
@@ -1652,6 +1654,7 @@ impl<'a> CheckerState<'a> {
                 constraint: None,
                 default: None,
                 is_const: false,
+                variance: tsz_solver::TypeParamVariance::None,
             })
             .collect()
     }

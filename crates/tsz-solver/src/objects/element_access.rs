@@ -236,6 +236,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let mapped_with_as = interner.mapped(MappedType {
             type_param: TypeParamInfo {
@@ -243,6 +244,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: type_param,
             name_type: Some(TypeId::STRING), // has as-clause
@@ -267,6 +269,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let mapped_no_as = interner.mapped(MappedType {
             type_param: TypeParamInfo {
@@ -274,6 +277,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: type_param,
             name_type: None, // no as-clause
@@ -298,6 +302,7 @@ mod tests {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         });
         let mapped = interner.mapped(MappedType {
             type_param: TypeParamInfo {
@@ -305,6 +310,7 @@ mod tests {
                 constraint: Some(TypeId::STRING),
                 default: None,
                 is_const: false,
+                variance: crate::TypeParamVariance::None,
             },
             constraint: type_param,
             name_type: Some(TypeId::STRING),

@@ -100,12 +100,14 @@ fn full_iterable_intersection_returns_intersection_members() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let tp_b = interner.type_param(TypeParamInfo {
         name: interner.intern_string("B"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let isect = interner.intersection(vec![tp_a, tp_b]);
     match classify_full_iterable_type(&interner, isect) {
@@ -151,6 +153,7 @@ fn full_iterable_type_parameter_carries_constraint() {
         constraint: Some(constraint),
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     match classify_full_iterable_type(&interner, tp) {
         FullIterableTypeKind::TypeParameter { constraint: c } => assert_eq!(c, Some(constraint)),
@@ -166,6 +169,7 @@ fn full_iterable_type_parameter_without_constraint_yields_none() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     match classify_full_iterable_type(&interner, tp) {
         FullIterableTypeKind::TypeParameter { constraint } => assert_eq!(constraint, None),
@@ -181,6 +185,7 @@ fn full_iterable_infer_type_carries_constraint_like_type_parameter() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     }));
     assert!(
         matches!(
@@ -411,6 +416,7 @@ fn full_iterable_mapped_is_complex() {
             constraint: Some(TypeId::STRING),
             default: None,
             is_const: false,
+            variance: crate::TypeParamVariance::None,
         },
         constraint: TypeId::STRING,
         name_type: None,
@@ -624,12 +630,14 @@ fn for_of_intersection_returns_intersection_members() {
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let tp_b = interner.type_param(TypeParamInfo {
         name: interner.intern_string("B"),
         constraint: None,
         default: None,
         is_const: false,
+        variance: crate::TypeParamVariance::None,
     });
     let isect = interner.intersection(vec![tp_a, tp_b]);
     match classify_for_of_element_type(&interner, isect) {
