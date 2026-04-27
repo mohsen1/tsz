@@ -467,9 +467,18 @@ impl<'a> CheckerState<'a> {
             // Check symbol flags to detect type-only usage.
             // First try the main binder (fast path for local symbols).
             let (flags, value_decl, symbol_declarations, is_umd_export) = {
-                let local_symbol = self
-                    .get_cross_file_symbol(sym_id)
-                    .or_else(|| self.ctx.binder.get_symbol(sym_id));
+                let current_file_symbol = self.ctx.binder.get_symbol(sym_id);
+                let prefer_current_file_symbol = current_file_symbol.is_some_and(|symbol| {
+                    symbol.escaped_name.as_str() == name.as_str()
+                        && symbol.has_any_flags(
+                            symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                        )
+                });
+                let local_symbol = if prefer_current_file_symbol {
+                    current_file_symbol
+                } else {
+                    self.get_cross_file_symbol(sym_id).or(current_file_symbol)
+                };
                 let flags = local_symbol.map_or(0, |s| s.flags);
                 let value_decl = local_symbol.map_or(NodeIndex::NONE, |s| s.value_declaration);
                 let symbol_declarations = local_symbol
@@ -683,13 +692,39 @@ impl<'a> CheckerState<'a> {
                             // If the local uninstantiated namespace shadows a global VALUE
                             // (e.g., `namespace Symbol {}` shadowing global `Symbol`),
                             // fall through to the global value so property access works.
-                            let value_type = self.type_of_value_symbol_by_name(name);
-                            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                                return value_type;
+                            if self.is_known_global_value_name(name) {
+                                let value_type = self.type_of_value_symbol_by_name(name);
+                                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                                    return value_type;
+                                }
                             }
-                            // Defer diagnostics for `Ns.Member` to member-access handling so
-                            // type-only member access can report TS2693 at the member site.
-                            return self.get_type_of_symbol(sym_id);
+                            let namespace_type = self.get_type_of_symbol(sym_id);
+                            if self.is_js_file()
+                                && self.ctx.compiler_options.check_js
+                                && self.property_access_is_write_target_or_base(parent_ext.parent)
+                            {
+                                return namespace_type;
+                            }
+                            if let Some(member_name) = self
+                                .ctx
+                                .arena
+                                .get_identifier_at(access.name_or_argument)
+                                .map(|ident| ident.escaped_text.clone())
+                                && self.namespace_has_type_only_member(namespace_type, &member_name)
+                            {
+                                // Defer diagnostics for `Ns.TypeOnlyMember` to
+                                // member-access handling so it can also report the
+                                // member-side type/value error.
+                                return namespace_type;
+                            }
+                            self.report_wrong_meaning(
+                                name,
+                                idx,
+                                sym_id,
+                                crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                                crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            );
+                            return TypeId::ERROR;
                         }
                         if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                             || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION

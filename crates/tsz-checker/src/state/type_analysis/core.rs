@@ -335,7 +335,6 @@ impl<'a> CheckerState<'a> {
         } else {
             return TypeId::ERROR; // Missing right node - propagate error
         };
-
         // Resolve the left side (could be Identifier or another QualifiedName)
         let left_type = if let Some(left_node) = self.ctx.arena.get(qn.left) {
             let left_name = self.entity_name_text(qn.left).unwrap_or_default();
@@ -395,6 +394,38 @@ impl<'a> CheckerState<'a> {
                     let lib_binders = self.get_lib_binders();
                     if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     {
+                        if symbol.has_any_flags(symbol_flags::ALIAS)
+                            && symbol.has_any_flags(
+                                symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                            )
+                            && symbol
+                                .exports
+                                .as_ref()
+                                .is_some_and(|exports| !exports.is_empty())
+                            && !symbol
+                                .exports
+                                .as_ref()
+                                .is_some_and(|exports| exports.has(&right_name))
+                        {
+                            let export_names: Vec<String> = symbol
+                                .exports
+                                .as_ref()
+                                .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
+                                .unwrap_or_default();
+                            let req = crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
+                                &right_name,
+                                qn.right,
+                                sym_id,
+                                export_names,
+                            );
+                            let failure = match self.resolve_name_structured(&req) {
+                                Err(f) => f,
+                                Ok(_) => return TypeId::ERROR,
+                            };
+                            self.report_name_resolution_failure(&req, &failure);
+                            return TypeId::ERROR;
+                        }
+
                         let valid_namespace_flags = symbol_flags::MODULE
                             | symbol_flags::NAMESPACE_MODULE
                             | symbol_flags::VALUE_MODULE
