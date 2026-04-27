@@ -209,16 +209,6 @@ restore_typescript() {
   test -f TypeScript/src/lib/es5.d.ts
 }
 
-normalize_rust_source_mtimes() {
-  local stamp="${TSZ_CI_CARGO_SOURCE_MTIME:-200001010000.00}"
-  {
-    printf '%s\0' Cargo.lock Cargo.toml .cargo/config.toml
-    find crates -type f \
-      \( -name '*.rs' -o -name Cargo.toml -o -name build.rs \) \
-      -print0
-  } | xargs -0 touch -t "$stamp"
-}
-
 restore_caches() {
   local cargo_hash node_hash ts_ref ts_deps_hash commit
   cargo_hash="$(cargo_lock_hash)"
@@ -247,9 +237,15 @@ restore_caches() {
     for target_cache in $(suite_target_caches); do
       _restore_cargo_target_profile "$target_cache" "$cargo_hash"
     done
-    if [[ -d .target/dist-fast || -d .target/ci-unit || -d .target/debug || -d .target/wasm32-unknown-unknown ]]; then
-      normalize_rust_source_mtimes
-    fi
+    # NOTE: we deliberately do NOT backdate source-file mtimes. A previous
+    # version of this script ran "touch -t 200001010000" over every .rs and
+    # Cargo.toml after a target-dir restore, on the theory that mtimes older
+    # than the cached fingerprints would let Cargo skip recompilation.
+    # That is exactly the case where Cargo's content-hash safety net is
+    # supposed to catch real source changes — and bypassing the mtime input
+    # to that check can mask genuine staleness. Correctness > cache hits.
+    # sccache handles cross-commit reuse via content-keyed lookups, which is
+    # the right tool for "same source, same compile flags, skip rustc."
   else
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
   fi
