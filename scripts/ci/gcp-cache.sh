@@ -64,36 +64,75 @@ cargo_lock_hash() {
 # across rustc versions is unsafe — every rustc fingerprint encodes the
 # compiler version, so a cached blob built with rustc 1.95 must not be
 # restored into a workspace running 1.96.
+#
+# Returns either a hex sha256 (rustc available) or the literal "norustc"
+# (no internal dash, so the warm-fallback's `${hash##*-}` parser cleanly
+# returns the marker as-is rather than splitting on an interior dash).
+# Also guards against `rustc -Vv` succeeding the binary check but exiting
+# non-zero or producing empty output — in that case we'd otherwise hash
+# stderr text and store under a bogus stable-looking key.
 rustc_version_hash() {
   if command -v rustc >/dev/null 2>&1; then
-    rustc -Vv 2>&1 | sha256sum | awk '{print $1}'
-  else
-    # Called before host tools install: refuse to share blobs across
-    # unknown compilers. Caller's stat will miss; safer than colliding
-    # with the rustc-aware blob.
-    printf 'no-rustc\n'
+    local out rc=0
+    out="$(rustc -Vv 2>&1)" || rc=$?
+    if [[ "$rc" -eq 0 && -n "$out" ]]; then
+      printf '%s' "$out" | sha256sum | awk '{print $1}'
+      return 0
+    fi
   fi
+  printf 'norustc\n'
+}
+
+# Hash of profile-affecting workspace inputs. Two workspaces with the
+# same Cargo.lock + rustc but different .cargo/config.toml or different
+# [profile.*] sections in the workspace Cargo.toml would otherwise share
+# a blob and cargo's fingerprint would invalidate every artifact —
+# guaranteed cold rebuild that we'd silently pay for. Folding these into
+# the cache key isolates the cache automatically when profile shape
+# changes.
+profile_config_hash() {
+  local files=(Cargo.toml)
+  if [[ -f .cargo/config.toml ]]; then
+    files+=(.cargo/config.toml)
+  fi
+  hash_files "${files[@]}"
 }
 
 # Composite cache key for Rust target caches.
-#   <cargo_lock_hash>-<rustc_version_hash>
+#   <cargo_lock_hash>-<profile_config_hash>-<rustc_version_hash>
 # Independent of branch and commit. main and PRs read the same blob;
 # only main writes (see cache_writes_allowed below).
+# Order matters for the warm-fallback parser: the rustc hash MUST be the
+# trailing segment, since the parser at _restore_cargo_target_profile
+# extracts it via `${hash##*-}`.
 cargo_target_cache_key() {
-  printf '%s-%s\n' "$(cargo_lock_hash)" "$(rustc_version_hash)"
+  printf '%s-%s-%s\n' \
+    "$(cargo_lock_hash)" \
+    "$(profile_config_hash)" \
+    "$(rustc_version_hash)"
 }
 
 # Decide whether this CI run is allowed to write back to the GCS cache.
 #
-# Only `push` events on main update the cache. PRs and merge_group runs
-# read main's latest blob, recompile their delta locally, but never
-# publish their own (stale-relative-to-main) target dirs as the new
-# shared blob. This eliminates the "first PR to ever populate this lock
-# hash owns it forever" trap that the prior `skip if exists` policy
-# created.
+# Writes are gated on the workflow ref, not the event name. Any run
+# whose GITHUB_REF is refs/heads/main may publish — that includes:
+#   - push to main
+#   - schedule (cron jobs against main)
+#   - workflow_dispatch dispatched against main
+#   - merge_group runs (GitHub sets GITHUB_REF to refs/heads/<base>
+#     for the merge queue)
+# PRs and feature branches always have a non-main ref so they're
+# automatically read-only against the shared cache. This eliminates the
+# "first PR to ever populate this lock hash owns it forever" trap of
+# the prior `skip if exists` policy.
 #
-# TSZ_CI_CACHE_OVERWRITE=1 escapes the gate (e.g., emergency
-# workflow_dispatch repair).
+# TSZ_CI_CACHE_OVERWRITE=1 escapes the gate (emergency
+# workflow_dispatch repair from a feature branch, etc.).
+#
+# Note: writes still happen even when the suite that produced the
+# target dir failed. github-suite.sh skips save when its run rc != 0
+# precisely so a half-failed build doesn't get published to main as
+# the new shared baseline.
 cache_writes_allowed() {
   if [[ "${TSZ_CI_CACHE_OVERWRITE:-0}" == "1" ]]; then
     return 0
@@ -262,6 +301,79 @@ suite_needs_rust_compile() {
   esac
 }
 
+# Per-suite list of "cache feature" tags this suite needs restored.
+# Restoring features the suite doesn't use is pure runner-minute and GCS
+# bandwidth cost. Lint, for instance, never reads the TypeScript source
+# tree, npm cache, or scripts/node_modules — only its Rust state.
+#
+# Recognized tags:
+#   cargo-home               — Cargo registry/git cache (.ci-cache/cargo-home)
+#   typescript-source        — TypeScript source tree (lib + tests/cases)
+#   npm                      — global npm cache (.ci-cache/npm)
+#   scripts-node-modules     — scripts/node_modules
+#   typescript-harness       — TypeScript/built/local
+#   typescript-node-modules  — TypeScript/node_modules
+#   dist-fast-commit         — commit-keyed dist-fast binary tarball
+#
+# Per-profile cargo target-dir caches (cargo-target-deps, etc.) are
+# selected separately via suite_target_caches() and gated implicitly by
+# cargo-home (no point restoring a target without registry).
+suite_caches() {
+  local suite
+  suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
+  case "$suite" in
+    all|full)
+      echo "cargo-home typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
+      ;;
+    lint|build|dist-binaries|unit-archive|unit|wasm|wasm-web)
+      # Pure Rust suites: cargo state only. lint specifically does not
+      # need TypeScript source, npm, or harness — sccache + cargo-home
+      # are the only cache layers that touch its compile path.
+      echo "cargo-home"
+      ;;
+    unit-shard)
+      # Downloads the nextest archive directly from GCS. No cache restore.
+      echo ""
+      ;;
+    conformance)
+      # tsz-conformance binary comes from the dist-fast-commit blob, the
+      # corpus comes from TypeScript source. No npm/harness needed.
+      echo "typescript-source dist-fast-commit"
+      ;;
+    conformance-aggregate|emit-aggregate|fourslash-aggregate)
+      # Aggregates pull per-shard JSONs from GCS via gsutil only.
+      echo ""
+      ;;
+    emit|fourslash)
+      # Full Node-driven test run: TypeScript source + harness + tsz binary.
+      echo "typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
+      ;;
+    emit-shard|fourslash-shard)
+      # Shards get TS harness via the node-harness artifact and tsz via
+      # the dist-fast-binaries artifact, so no harness/dist-fast restore
+      # is needed beyond TS source for path resolution + scripts deps for
+      # Node tooling.
+      echo "typescript-source npm scripts-node-modules"
+      ;;
+    node-harness-prep)
+      # Builds TypeScript/built/local + scripts/emit/dist for downstream
+      # shards.
+      echo "typescript-source npm scripts-node-modules typescript-harness typescript-node-modules"
+      ;;
+    *)
+      # Unknown suite: conservative default is empty. Caller should
+      # extend this case if a new suite is added.
+      echo ""
+      ;;
+  esac
+}
+
+suite_has_cache() {
+  local needle="$1"
+  local needles=" $(suite_caches) "
+  [[ "$needles" == *" $needle "* ]]
+}
+
 # Which cargo-target-* GCS archives a suite actually needs.
 # Restoring archives a job will not use is pure overhead. Each suite lists
 # only the profile(s) it compiles into; sccache GCS handles cross-commit
@@ -332,21 +444,31 @@ restore_caches() {
   ts_ref="$(typescript_ref)"
   commit="$(commit_key)"
 
-  restore_typescript
-  ts_deps_hash="$(typescript_deps_hash)"
+  echo "Cache features for suite '${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}': $(suite_caches)"
+
+  if suite_has_cache typescript-source; then
+    restore_typescript
+    ts_deps_hash="$(typescript_deps_hash)"
+  else
+    echo "Cache restore skipped: TypeScript source (suite does not need TS corpus)"
+    ts_deps_hash="not-needed"
+  fi
 
   mkdir -p .ci-cache/cargo-home .ci-cache/npm .target scripts
 
-  if suite_needs_rust_compile; then
+  if suite_has_cache cargo-home; then
     restore_archive \
       "cargo-home-${cargo_hash}" \
       "$(cache_uri "cargo-home/${cargo_hash}.tar.gz")" \
       ".ci-cache/cargo-home"
 
-    # Per-profile Cargo target caches keyed by (Cargo.lock + rustc version).
+    # Per-profile Cargo target caches keyed by
+    # (Cargo.lock + Cargo.toml/.cargo/config.toml + rustc version).
     # External dep artifacts are valid across commits (same lock = same
     # versions) and let Cargo skip those crates entirely. Cross-rustc
-    # mixing is unsafe so a rustc upgrade rolls the key.
+    # mixing is unsafe so a rustc upgrade rolls the key, and profile
+    # config changes also roll the key so a [profile.*] tweak doesn't
+    # silently reuse mismatched .rlib metadata.
     cargo_target_key="$(cargo_target_cache_key)"
     echo "Cargo target cache key: ${cargo_target_key}"
     local target_cache
@@ -366,30 +488,44 @@ restore_caches() {
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
   fi
 
-  restore_archive \
-    "npm-${node_hash}" \
-    "$(cache_uri "npm/${node_hash}.tar.gz")" \
-    ".ci-cache/npm"
+  if suite_has_cache npm; then
+    restore_archive \
+      "npm-${node_hash}" \
+      "$(cache_uri "npm/${node_hash}.tar.gz")" \
+      ".ci-cache/npm"
+  else
+    echo "Cache restore skipped: npm (suite does not run Node tooling)"
+  fi
 
-  restore_archive \
-    "scripts-node-modules-${node_hash}" \
-    "$(cache_uri "scripts-node-modules/${node_hash}.tar.gz")" \
-    "scripts"
+  if suite_has_cache scripts-node-modules; then
+    restore_archive \
+      "scripts-node-modules-${node_hash}" \
+      "$(cache_uri "scripts-node-modules/${node_hash}.tar.gz")" \
+      "scripts"
+  else
+    echo "Cache restore skipped: scripts/node_modules (suite does not run Node tooling)"
+  fi
 
-  if [[ "${TSZ_CI_SKIP_TS_HARNESS_RESTORE:-0}" != "1" ]]; then
+  if suite_has_cache typescript-harness && [[ "${TSZ_CI_SKIP_TS_HARNESS_RESTORE:-0}" != "1" ]]; then
     restore_archive \
       "typescript-harness-${ts_ref}" \
       "$(cache_uri "typescript-harness/${ts_ref}.tar.gz")" \
       "TypeScript"
+  else
+    echo "Cache restore skipped: typescript-harness"
+  fi
 
+  if suite_has_cache typescript-node-modules && [[ "${TSZ_CI_SKIP_TS_HARNESS_RESTORE:-0}" != "1" ]]; then
     restore_archive \
       "typescript-node-modules-${ts_ref}-${ts_deps_hash}" \
       "$(cache_uri "typescript-node-modules/${ts_ref}-${ts_deps_hash}.tar.gz")" \
       "TypeScript" \
       node_modules
+  else
+    echo "Cache restore skipped: typescript-node-modules"
   fi
 
-  if [[ "${TSZ_CI_SKIP_DIST_RESTORE:-0}" != "1" && "$commit" != "unknown" ]]; then
+  if suite_has_cache dist-fast-commit && [[ "${TSZ_CI_SKIP_DIST_RESTORE:-0}" != "1" && "$commit" != "unknown" ]]; then
     local dist_cache
     dist_cache="$(cache_uri "dist-fast/${commit}.tar.gz")"
     if gsutil -q stat "$dist_cache"; then

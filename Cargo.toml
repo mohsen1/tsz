@@ -154,12 +154,11 @@ codegen-units = 8
 #                          can't cache work that depends on the per-target
 #                          incremental session) and CI runners are ephemeral
 #                          so the on-disk incremental cache is dead weight
-#   codegen-units = 256 → max parallelism. Clippy's per-crate work is
-#                          dominated by frontend/borrowck, which parallelizes
-#                          across CGUs cleanly when LLVM codegen is light.
 #   opt-level = 0      → inherited from dev; clippy doesn't need optimisation
+#   codegen-units      → inherits dev's 256 (set in .cargo/config.toml).
+#                          No reason to override here; if the dev default
+#                          changes we want ci-lint to follow it.
 # Goal: clippy in <2 min warm, with sccache shouldering cross-commit reuse.
 inherits = "dev"
 debug = false
 incremental = false
-codegen-units = 256
