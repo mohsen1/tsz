@@ -238,6 +238,26 @@ x(1);
     );
 }
 
+/// JSDoc `@type {Object<K, V>}` is a record-shaped indexed type; it must not
+/// emit TS2315 ("Type 'Object' is not generic") in JS files even though the
+/// lib `interface Object` declaration has no type parameters.
+#[test]
+fn test_jsdoc_object_record_does_not_emit_ts2315() {
+    let source = r#"
+/** @type {Object<string, number>} */
+const tagCounts = {};
+tagCounts["x"] = 1;
+"#;
+    let diagnostics = check_js(source);
+    let ts2315 = diagnostics.iter().filter(|d| d.code == 2315).count();
+    assert_eq!(
+        ts2315,
+        0,
+        "Object<K, V> must not emit TS2315 in JS, got codes: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// Broad @type {function} should not suppress implicit-any on function expressions.
 #[test]
 fn test_jsdoc_type_lowercase_function_does_not_contextually_type_params() {
