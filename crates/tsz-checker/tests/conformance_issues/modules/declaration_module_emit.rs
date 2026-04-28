@@ -38,6 +38,53 @@ Example.answer();
     );
 }
 
+/// Importing a named member from an `export = X` module where the imported
+/// name matches `X`'s declaration name should NOT emit TS2459 ("declares
+/// locally but is not exported") or TS2460 ("declares locally but is exported
+/// as 'export='"). The TS2497 + TS2616/TS2595/TS2597 path already reports the
+/// import-style mismatch; the additional TS2459/TS2460 is a duplicate.
+#[test]
+fn test_named_import_of_export_equals_target_skips_ts2459_ts2460() {
+    let files = [
+        (
+            "/a.ts",
+            r#"
+class Foo {}
+export = Foo;
+"#,
+        ),
+        (
+            "/b.ts",
+            r#"
+import { Foo } from "./a";
+"#,
+        ),
+    ];
+
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/b.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            es_module_interop: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let codes: Vec<u32> = diagnostics.iter().map(|(c, _)| *c).collect();
+    assert!(
+        !codes.contains(&2459) && !codes.contains(&2460),
+        "TS2459/TS2460 must not fire for named import of export-equals target. Codes: {codes:?}"
+    );
+    // The TS2616 (or TS2595/TS2597 depending on module/file kind) is the
+    // canonical diagnostic for this mismatch and must still fire.
+    assert!(
+        codes.contains(&2616) || codes.contains(&2595) || codes.contains(&2597),
+        "Expected TS2616/TS2595/TS2597 for named import of export-equals target. Codes: {codes:?}"
+    );
+}
+
 #[test]
 fn test_named_default_reexport_from_export_equals_class_uses_default_import_rules() {
     let files = [
