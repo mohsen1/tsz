@@ -22,8 +22,9 @@ const TEST_TIMEOUT_MS = 15000;
 const MEMORY_THRESHOLD_BYTES = 512 * 1024 * 1024; // 512MB
 // Check memory every N tests
 const MEMORY_CHECK_INTERVAL = 25;
-// Prevent cross-test contamination in tsz-server open file state.
-const RESTART_BRIDGE_EVERY_TEST = true;
+// Reset tsz-server session state after each test. Restart only when the bridge
+// itself looks unhealthy; process startup dominates fourslash CI wall time.
+const RESTART_BRIDGE_EVERY_TEST = false;
 // Temporary parity allowlist for known stragglers in the current campaign slice.
 // Keep this list narrow and remove entries as real parity fixes land.
 const TEMP_PARITY_ALLOWLIST = new Set([
@@ -4509,6 +4510,19 @@ async function main() {
                     type: "error", workerId,
                     error: `Bridge restart failed: ${restartErr.message}`,
                 });
+            }
+        } else {
+            try {
+                bridge.resetSession();
+            } catch (resetErr) {
+                try {
+                    await restartBridge(`reset recovery after ${testName}: ${resetErr.message}`);
+                } catch (restartErr) {
+                    process.send({
+                        type: "error", workerId,
+                        error: `Bridge restart failed after reset failure: ${restartErr.message}`,
+                    });
+                }
             }
         }
 

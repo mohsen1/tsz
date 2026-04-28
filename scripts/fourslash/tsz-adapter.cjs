@@ -55,6 +55,7 @@ class TszServerBridge {
         this._ready = false;
         this._exited = false;
         this._exitInfo = null;
+        this._requestSeq = 0;
     }
 
     /**
@@ -165,6 +166,26 @@ class TszServerBridge {
         Atomics.store(this.controlArray, 0, STATE_IDLE);
 
         return responseBody;
+    }
+
+    resetSession() {
+        const requestBody = JSON.stringify({
+            seq: ++this._requestSeq,
+            type: "request",
+            command: "tsz/reset",
+            arguments: {},
+        });
+        const responseBody = this.sendRequest(requestBody);
+        let response;
+        try {
+            response = JSON.parse(responseBody);
+        } catch (err) {
+            throw new Error(`Invalid reset response: ${err.message}`);
+        }
+        if (!response || response.success !== true) {
+            const message = response && response.message ? response.message : responseBody;
+            throw new Error(`tsz-server reset failed: ${message}`);
+        }
     }
 
     /**
