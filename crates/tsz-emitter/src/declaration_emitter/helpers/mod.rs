@@ -31,7 +31,13 @@ type JsFoldedNamedExports = (
     FxHashMap<NodeIndex, Vec<NodeIndex>>,
     FxHashSet<NodeIndex>,
 );
-type JsNamespaceExportAliases = FxHashMap<String, Vec<(String, String)>>;
+#[derive(Clone)]
+pub(crate) struct JsNamespaceExportAlias {
+    pub(crate) export_name: String,
+    pub(crate) local_name: String,
+    pub(crate) use_import_alias: bool,
+}
+type JsNamespaceExportAliases = FxHashMap<String, Vec<JsNamespaceExportAlias>>;
 type JsCommonjsSyntheticStatements = FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>;
 type JsCommonjsNamedExports = (
     FxHashSet<String>,
