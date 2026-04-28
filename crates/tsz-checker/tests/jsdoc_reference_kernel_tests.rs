@@ -145,7 +145,8 @@ var c = { value: "hello" };
 // TS8039: @template after @typedef/@callback
 // =============================================================================
 
-/// tsc 6.0: @template after @typedef is valid (defines typedef type params).
+/// A bare @template after @typedef does not produce TS8039; TS8021 covers
+/// the malformed typedef instead.
 #[test]
 fn template_after_typedef_no_ts8039() {
     let codes = check_js(
@@ -158,13 +159,30 @@ fn template_after_typedef_no_ts8039() {
     );
     assert!(
         !codes.contains(&8039),
-        "tsc 6.0 allows @template after @typedef, should not emit TS8039, got: {codes:?}"
+        "Expected no TS8039 when @template immediately follows @typedef, got: {codes:?}"
     );
 }
 
-/// tsc 6.0: @template after @callback is valid.
 #[test]
-fn template_after_callback_no_ts8039() {
+fn template_after_typedef_property_emits_ts8039() {
+    let codes = check_js(
+        r#"
+/**
+ * @typedef {Object} Foo
+ * @property {number} value
+ * @template T
+ */
+"#,
+    );
+    assert!(
+        codes.contains(&8039),
+        "Expected TS8039 when @template follows a typedef child tag, got: {codes:?}"
+    );
+}
+
+/// @template after @callback is invalid and does not define callback params.
+#[test]
+fn template_after_callback_emits_ts8039() {
     let codes = check_js(
         r#"
 /**
@@ -175,8 +193,8 @@ fn template_after_callback_no_ts8039() {
 "#,
     );
     assert!(
-        !codes.contains(&8039),
-        "tsc 6.0 allows @template after @callback, should not emit TS8039, got: {codes:?}"
+        codes.contains(&8039),
+        "Expected TS8039 when @template follows @callback, got: {codes:?}"
     );
 }
 
@@ -214,6 +232,42 @@ fn template_before_callback_no_ts8039() {
     assert!(
         !codes.contains(&8039),
         "Expected no TS8039 when @template is before @callback, got: {codes:?}"
+    );
+}
+
+#[test]
+fn template_inside_callback_reports_invalid_template_and_fallout() {
+    let codes = check_js_strict(
+        r#"
+/**
+ * @callback Call
+ * @template T
+ * @param {T} x
+ * @returns {T}
+ */
+/**
+ * @template T
+ * @type {Call<T>}
+ */
+const identity = x => x;
+"#,
+    );
+
+    assert!(
+        codes.contains(&8039),
+        "Expected invalid @template placement TS8039, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2304),
+        "Expected unresolved T after invalid callback template, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2315),
+        "Expected non-generic callback alias TS2315, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&7006),
+        "Expected implicit-any fallout TS7006, got: {codes:?}"
     );
 }
 

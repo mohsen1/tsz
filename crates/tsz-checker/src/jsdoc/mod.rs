@@ -36,6 +36,8 @@
 //! - New data structures → `types.rs`
 
 pub(crate) mod diagnostics;
+pub(crate) mod diagnostics_imports;
+pub(crate) mod diagnostics_templates;
 pub(crate) mod lookup;
 pub(crate) mod params;
 pub(crate) mod params_generic_instantiation;
