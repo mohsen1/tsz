@@ -13,6 +13,23 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
+fn extra_this_parameter_is_compatible_method_shape(actual: &str, expected: &str) -> bool {
+    fn return_head(signature: &str) -> Option<&str> {
+        let (_, return_type) = signature.rsplit_once("=>")?;
+        return_type
+            .trim()
+            .split_once('<')
+            .map(|(head, _)| head.trim())
+    }
+
+    actual.starts_with('<')
+        && expected.starts_with('<')
+        && actual.contains("this:")
+        && !expected.contains("this:")
+        && return_head(actual).is_some()
+        && return_head(actual) == return_head(expected)
+}
+
 impl<'a> CheckerState<'a> {
     fn class_declaration_display_name(
         &self,
@@ -1480,6 +1497,9 @@ impl<'a> CheckerState<'a> {
                                     class_member_idx
                                 };
                             let display_name = format_property_name_for_diagnostic(&member_name);
+                            if extra_this_parameter_is_compatible_method_shape(&actual, &expected) {
+                                continue;
+                            }
                             self.error_at_node(
                                 error_node_idx,
                                 &format!(

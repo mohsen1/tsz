@@ -1187,7 +1187,33 @@ impl<'a> CheckerState<'a> {
         );
 
         match result {
-            CallResult::Success(return_type) => {
+            CallResult::Success(mut return_type) => {
+                if let Some(contextual_type) = contextual_type {
+                    let result_app = query::get_application_info(self.ctx.types, return_type)
+                        .or_else(|| {
+                            self.ctx
+                                .types
+                                .get_display_alias(return_type)
+                                .and_then(|alias| {
+                                    query::get_application_info(self.ctx.types, alias)
+                                })
+                        });
+                    let contextual_app =
+                        query::get_application_info(self.ctx.types, contextual_type);
+                    if let (Some((result_base, result_args)), Some((ctx_base, ctx_args))) =
+                        (result_app, contextual_app)
+                        && result_base == ctx_base
+                        && result_args.len() == ctx_args.len()
+                        && !result_args.is_empty()
+                        && result_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
+                        && ctx_args
+                            .iter()
+                            .any(|&arg| arg != TypeId::UNKNOWN && arg != TypeId::ERROR)
+                    {
+                        return_type = contextual_type;
+                    }
+                }
+
                 // TS2351: when a class extends a generic base without required type
                 // arguments (TS2314 on the extends clause), tsc considers `typeof C`
                 // to have no construct signatures. Our constructor builder still

@@ -128,6 +128,18 @@ impl<'a> CheckerState<'a> {
         }
         let expr_type = self.get_type_of_node_with_request(unary.expression, &operand_request);
 
+        if self
+            .await_operand_invalid_thenable_this_type(expr_type)
+            .is_some()
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::TYPE_OF_AWAIT_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT_CONTAIN_A_CALLA,
+                diagnostic_codes::TYPE_OF_AWAIT_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT_CONTAIN_A_CALLA,
+            );
+        }
+
         // TS1062: check for self-referencing Promise cycles before unwrapping.
         // Types like `type T1 = 1 | Promise<T1> | T1[]` create infinite cycles
         // when resolving Awaited<T>. Detect this and emit TS1062.

@@ -2191,6 +2191,10 @@ impl<'a> CheckerState<'a> {
                                     || !self.is_assignable_to(when_false, expected_return_type)
                             });
                         if conditional_branch_mismatch
+                            && !self.is_nested_same_wrapper_application_assignment(
+                                actual_return,
+                                expected_return_type,
+                            )
                             && let Some(loc) = self.get_source_location(body)
                         {
                             let src_str = self.format_type(actual_return);

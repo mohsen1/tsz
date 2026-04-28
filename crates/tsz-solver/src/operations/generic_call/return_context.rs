@@ -837,6 +837,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut substitution = TypeSubstitution::new();
+        if func.is_constructor {
+            let return_type_eval = self.interner.evaluate_type(func.return_type);
+            let contextual_app = crate::type_queries::get_application_info(
+                self.interner.as_type_database(),
+                contextual_type,
+            )
+            .or_else(|| {
+                let contextual_eval = self.interner.evaluate_type(contextual_type);
+                crate::type_queries::get_application_info(
+                    self.interner.as_type_database(),
+                    contextual_eval,
+                )
+            });
+            if let Some((contextual_base, contextual_args)) = contextual_app
+                && (contextual_base == func.return_type || contextual_base == return_type_eval)
+                && contextual_args.len() == func.type_params.len()
+            {
+                for (type_param, contextual_arg) in
+                    func.type_params.iter().zip(contextual_args.iter())
+                {
+                    if *contextual_arg != TypeId::UNKNOWN && *contextual_arg != TypeId::ERROR {
+                        substitution.insert(type_param.name, *contextual_arg);
+                    }
+                }
+                if !substitution.is_empty() {
+                    return substitution;
+                }
+            }
+        }
+
         let mut visited = FxHashSet::default();
         self.collect_return_context_substitution(
             func.return_type,

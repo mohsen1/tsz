@@ -226,7 +226,7 @@ impl<'a> InferenceContext<'a> {
 
             // TypeApplication: recurse into instantiated type
             (Some(TypeData::Application(source_app)), Some(TypeData::Application(target_app))) => {
-                self.infer_applications(source, source_app, target_app, priority)?;
+                self.infer_applications(source, source_app, target, target_app, priority)?;
             }
 
             // Index access types: infer both object and index types
@@ -1162,40 +1162,47 @@ impl<'a> InferenceContext<'a> {
             return Ok(());
         }
 
-        // Further split parameterized into naked type params vs structured
-        let (_naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) = parameterized
+        // Further split parameterized into naked type params vs structured.
+        // Match TypeScript's inferToMultipleTypes ordering: structured targets
+        // get the first chance to consume source union members, and only source
+        // members that did not structurally match flow to naked type variables.
+        // This prevents `B | PromiseLike<B>` from inferring `T = B | PromiseLike<B>`
+        // against `T | PromiseLike<T>` after the wrapper member already matched.
+        let (naked_params, structured_params): (Vec<TypeId>, Vec<TypeId>) = parameterized
             .iter()
             .partition(|&&t| matches!(self.interner.lookup(t), Some(TypeData::TypeParameter(_))));
 
+        let mut structurally_matched_sources = std::collections::HashSet::new();
         for &source_ty in resolved_sources.iter() {
             // Skip source members that match fixed targets
             if fixed.contains(&source_ty) {
                 continue;
             }
 
-            if !structured_params.is_empty() {
-                // Check if this source member structurally matches any structured target
-                let has_structural_match = structured_params
-                    .iter()
-                    .any(|&t| self.types_share_outer_structure(source_ty, t));
-
-                if has_structural_match {
-                    // Infer only against structurally matching targets, NOT naked type params.
-                    // This prevents e.g. `Foo<U>` from being inferred against naked `V`
-                    // when `Foo<V>` is available as a structural match.
-                    for &target_ty in &structured_params {
-                        if self.types_share_outer_structure(source_ty, target_ty) {
-                            self.infer_from_types(source_ty, target_ty, priority)?;
-                        }
-                    }
-                    continue;
+            for &target_ty in &structured_params {
+                if self.types_share_outer_structure(source_ty, target_ty) {
+                    structurally_matched_sources.insert(source_ty);
+                    self.infer_from_types(source_ty, target_ty, priority)?;
                 }
             }
+        }
 
-            // No structural match found — infer against all parameterized targets
-            // (including naked type params)
-            for &target_ty in &parameterized {
-                self.infer_from_types(source_ty, target_ty, priority)?;
+        let naked_priority = if structured_params.is_empty() {
+            priority
+        } else {
+            InferencePriority::LowPriority
+        };
+        for &source_ty in resolved_sources.iter() {
+            if fixed.contains(&source_ty) || structurally_matched_sources.contains(&source_ty) {
+                continue;
+            }
+
+            if naked_params.is_empty() {
+                continue;
+            }
+
+            for &target_ty in &naked_params {
+                self.infer_from_types(source_ty, target_ty, naked_priority)?;
             }
         }
 
@@ -1240,6 +1247,34 @@ impl<'a> InferenceContext<'a> {
     /// inference. For example, `Foo<U>` and `Foo<V>` share outer structure (both
     /// are applications of `Foo`), but `U` and `Foo<V>` do not.
     fn types_share_outer_structure(&self, source: TypeId, target: TypeId) -> bool {
+        let application_outer = |type_id| {
+            let app_id = match self.interner.lookup(type_id) {
+                Some(TypeData::Application(app_id)) => Some(app_id),
+                _ => {
+                    let evaluated =
+                        crate::evaluation::evaluate::evaluate_type(self.interner, type_id);
+                    if evaluated == type_id {
+                        None
+                    } else {
+                        match self.interner.lookup(evaluated) {
+                            Some(TypeData::Application(app_id)) => Some(app_id),
+                            _ => None,
+                        }
+                    }
+                }
+            }?;
+            let app = self.interner.type_application(app_id);
+            let lazy_def = crate::type_queries::get_lazy_def_id(self.interner, app.base);
+            Some((app.base, lazy_def))
+        };
+
+        if let (Some((source_base, source_def)), Some((target_base, target_def))) =
+            (application_outer(source), application_outer(target))
+            && (source_base == target_base || (source_def.is_some() && source_def == target_def))
+        {
+            return true;
+        }
+
         let (Some(s_key), Some(t_key)) =
             (self.interner.lookup(source), self.interner.lookup(target))
         else {
@@ -1330,6 +1365,7 @@ impl<'a> InferenceContext<'a> {
         &mut self,
         source: TypeId,
         source_app: TypeApplicationId,
+        target: TypeId,
         target_app: TypeApplicationId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
@@ -1370,13 +1406,23 @@ impl<'a> InferenceContext<'a> {
             return Ok(());
         }
 
-        // When the bases differ (e.g., source is MyPromise<boolean, any> and target
-        // is DoNothingAlias<T, U> where DoNothingAlias extends MyPromise), expand
-        // the target application to its structural form and infer structurally.
-        // This mirrors tsc's behavior of walking the base type chain when reference
-        // type targets don't share the same origin as the source.
-        if let Some(expanded_target) = self.try_expand_application(target_app) {
-            return self.infer_from_types(source, expanded_target, priority);
+        // When the bases differ, expand both applications when possible before
+        // falling back to one-sided expansion. This mirrors tsc's reference
+        // inference path, where structurally related generic references can still
+        // contribute candidates even when their declarations differ.
+        let expanded_source = self.try_expand_application(source_app);
+        let expanded_target = self.try_expand_application(target_app);
+        match (expanded_source, expanded_target) {
+            (Some(expanded_source), Some(expanded_target)) => {
+                return self.infer_from_types(expanded_source, expanded_target, priority);
+            }
+            (Some(expanded_source), None) => {
+                return self.infer_from_types(expanded_source, target, priority);
+            }
+            (None, Some(expanded_target)) => {
+                return self.infer_from_types(source, expanded_target, priority);
+            }
+            (None, None) => {}
         }
 
         Ok(())
