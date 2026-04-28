@@ -911,6 +911,19 @@ impl<'a> UsageAnalyzer<'a> {
             }
         }
 
+        // Preserve imported type arguments used only at the call site of an
+        // inferred initializer, e.g. `export const f = create<T>()`.
+        if decl.type_annotation.is_none()
+            && decl.initializer.is_some()
+            && let Some(init_node) = self.arena.get(decl.initializer)
+            && let Some(call) = self.arena.get_call_expr(init_node)
+            && let Some(type_args) = call.type_arguments.as_ref()
+        {
+            for &arg_idx in &type_args.nodes {
+                self.analyze_type_node(arg_idx);
+            }
+        }
+
         if decl.initializer.is_some()
             && self.initializer_preserves_value_reference(decl.initializer)
         {

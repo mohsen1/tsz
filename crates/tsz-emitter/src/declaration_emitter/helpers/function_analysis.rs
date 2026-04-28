@@ -1023,7 +1023,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn value_reference_symbol_can_use_typeof(
         &self,
-        expr_idx: NodeIndex,
+        _expr_idx: NodeIndex,
         sym_id: SymbolId,
         resolved_sym_id: SymbolId,
         resolved_symbol: &tsz_binder::Symbol,
@@ -1044,39 +1044,7 @@ impl<'a> DeclarationEmitter<'a> {
             return true;
         }
 
-        self.is_value_import_alias_symbol(sym_id) && self.value_reference_type_is_callable(expr_idx)
-    }
-
-    pub(in crate::declaration_emitter) fn value_reference_type_is_callable(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> bool {
-        let Some(interner) = self.type_interner else {
-            return false;
-        };
-        let Some(type_id) = self.get_node_type_or_names(&[expr_idx]) else {
-            return false;
-        };
-
-        tsz_solver::visitor::function_shape_id(interner, type_id).is_some()
-            || tsz_solver::visitor::callable_shape_id(interner, type_id).is_some()
-    }
-
-    pub(in crate::declaration_emitter) fn is_value_import_alias_symbol(
-        &self,
-        sym_id: SymbolId,
-    ) -> bool {
-        let Some(binder) = self.binder else {
-            return false;
-        };
-        let Some(symbol) = binder.symbols.get(sym_id) else {
-            return false;
-        };
-
-        symbol.has_any_flags(symbol_flags::ALIAS)
-            && symbol.import_module.is_some()
-            && !symbol.is_type_only
-            && symbol.import_name.as_deref() != Some("*")
+        false
     }
 
     pub(in crate::declaration_emitter) fn value_reference_symbol(

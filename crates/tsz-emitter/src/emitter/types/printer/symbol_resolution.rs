@@ -275,6 +275,7 @@ impl<'a> TypePrinter<'a> {
                 // Don't prepend for source files and blocks
                 if !parent_sym.escaped_name.starts_with('"')
                     && !parent_sym.escaped_name.starts_with("__")
+                    && Self::is_valid_identifier(&parent_sym.escaped_name)
                 {
                     // If the current name is not a valid identifier, use indexed access
                     // notation: (typeof Parent)["member"] instead of Parent.member
@@ -420,6 +421,7 @@ impl<'a> TypePrinter<'a> {
         needs_typeof: bool,
     ) -> Option<String> {
         if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            && Self::is_valid_qualified_name(&name)
             && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
         {
             return Some(if needs_typeof {
@@ -465,6 +467,10 @@ impl<'a> TypePrinter<'a> {
         }
 
         None
+    }
+
+    fn is_valid_qualified_name(name: &str) -> bool {
+        name.split('.').all(Self::is_valid_identifier)
     }
 
     pub(crate) fn symbol_is_import_qualifiable(&self, sym_id: SymbolId) -> bool {

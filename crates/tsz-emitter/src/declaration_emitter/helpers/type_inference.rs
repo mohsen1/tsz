@@ -28,6 +28,867 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    fn type_annotation_text_from_arena_node(
+        &self,
+        source_arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
+        let printed = self
+            .get_node_type(type_annotation)
+            .map(|type_id| self.print_type_id(type_id));
+        let type_text = if std::ptr::eq(source_arena, self.arena) {
+            self.preferred_annotation_name_text(type_annotation)
+                .or_else(|| self.emit_type_node_text(type_annotation))
+        } else {
+            self.source_slice_from_arena(source_arena, type_annotation)
+        }?;
+        let type_text = if std::ptr::eq(source_arena, self.arena) {
+            printed.filter(|text| text != "any").unwrap_or(type_text)
+        } else {
+            let rewritten = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
+            let rewritten = self
+                .expand_portable_intersection_type_text(source_arena, &rewritten)
+                .unwrap_or(rewritten);
+            match printed {
+                Some(ref printed)
+                    if printed != "any"
+                        && !printed.contains("any")
+                        && (!rewritten.contains("import(\"") || printed.contains("import(\"")) =>
+                {
+                    printed.clone()
+                }
+                _ => rewritten,
+            }
+        };
+        let trimmed = type_text.trim_end();
+        let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
+        let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+        Some(trimmed.to_string())
+    }
+
+    fn expand_portable_intersection_type_text(
+        &self,
+        source_arena: &NodeArena,
+        text: &str,
+    ) -> Option<String> {
+        let parts = Self::split_top_level_intersection_parts(text);
+        if parts.len() <= 1 {
+            return self.expand_portable_object_type_text(source_arena, text);
+        }
+
+        let mut changed = false;
+        let expanded_parts: Vec<String> = parts
+            .into_iter()
+            .map(|part| {
+                if let Some(expanded) =
+                    self.expand_portable_object_type_text(source_arena, part.trim())
+                {
+                    changed = true;
+                    expanded
+                } else {
+                    part.trim().to_string()
+                }
+            })
+            .collect();
+
+        changed.then(|| expanded_parts.join(" & "))
+    }
+
+    fn split_top_level_intersection_parts(text: &str) -> Vec<String> {
+        let bytes = text.as_bytes();
+        let mut brace_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut paren_depth = 0usize;
+        let mut angle_depth = 0usize;
+        let mut part_start = 0usize;
+        let mut parts = Vec::new();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                b'&' if brace_depth == 0
+                    && bracket_depth == 0
+                    && paren_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    let part = text
+                        .get(part_start..i)
+                        .map(str::trim)
+                        .unwrap_or_default()
+                        .to_string();
+                    if !part.is_empty() {
+                        parts.push(part);
+                    }
+                    part_start = i + 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        let tail = text
+            .get(part_start..)
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        if !tail.is_empty() {
+            parts.push(tail);
+        }
+        parts
+    }
+
+    fn expand_portable_object_type_text(
+        &self,
+        source_arena: &NodeArena,
+        text: &str,
+    ) -> Option<String> {
+        let trimmed = text.trim().trim_end_matches(';').trim();
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        if inner.starts_with('[') {
+            return self.expand_portable_mapped_object_text(source_arena, inner);
+        }
+        (!inner.is_empty()).then(|| format!("{{\n    {};\n}}", inner.trim().trim_end_matches(';')))
+    }
+
+    fn expand_portable_mapped_object_text(
+        &self,
+        source_arena: &NodeArena,
+        inner: &str,
+    ) -> Option<String> {
+        let in_pos = inner.find(" in ")?;
+        let after_in = inner.get(in_pos + 4..)?;
+        let close_bracket = after_in.find(']')?;
+        let key_ref = after_in.get(..close_bracket)?.trim();
+        let after_bracket = after_in.get(close_bracket + 1..)?.trim_start();
+        let after_optional = after_bracket.strip_prefix("?:")?.trim_start();
+        let value_type = after_optional.trim_end().trim_end_matches(';').trim();
+        let (module_specifier, export_name) = Self::parse_import_type_reference(key_ref)?;
+        let keys = self.expand_imported_string_union_alias_keys(
+            source_arena,
+            &module_specifier,
+            &export_name,
+        )?;
+        let members: Vec<String> = keys
+            .into_iter()
+            .map(|key| format!("    {key}?: {value_type} | undefined;"))
+            .collect();
+        Some(format!("{{\n{}\n}}", members.join("\n")))
+    }
+
+    fn parse_import_type_reference(text: &str) -> Option<(String, String)> {
+        let module_start = text.find("import(\"")? + 8;
+        let module_end = text.get(module_start..)?.find("\")")? + module_start;
+        let module_specifier = text.get(module_start..module_end)?.to_string();
+        let export_name = text
+            .get(module_end + 2..)?
+            .trim()
+            .strip_prefix('.')?
+            .to_string();
+        Some((module_specifier, export_name))
+    }
+
+    fn expand_imported_string_union_alias_keys(
+        &self,
+        source_arena: &NodeArena,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> Option<Vec<String>> {
+        let binder = self.binder?;
+        let source_path = self
+            .arena_to_path
+            .get(&(source_arena as *const NodeArena as usize))
+            .cloned()
+            .or_else(|| {
+                self.arena_source_file(source_arena)
+                    .map(|source_file| source_file.file_name.clone())
+            })
+            .or_else(|| self.current_file_path.clone())?;
+
+        for module_path in self.matching_module_export_paths(binder, &source_path, module_specifier)
+        {
+            let Some(exports) = binder.module_exports.get(module_path) else {
+                continue;
+            };
+            let Some(export_sym_id) = exports.get(export_name) else {
+                continue;
+            };
+            if let Some(keys) =
+                self.with_symbol_declarations(export_sym_id, |foreign_arena, decl_idx| {
+                    let decl_node = foreign_arena.get(decl_idx)?;
+                    let alias = foreign_arena.get_type_alias(decl_node)?;
+                    self.expand_string_literals_from_type_node_in_arena(
+                        foreign_arena,
+                        alias.type_node,
+                        &FxHashMap::default(),
+                        0,
+                    )
+                })
+            {
+                return Some(keys);
+            }
+        }
+
+        None
+    }
+
+    fn type_reference_name_text_from_arena(
+        &self,
+        arena: &NodeArena,
+        name_idx: NodeIndex,
+    ) -> Option<String> {
+        let name_node = arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            return self.identifier_text_from_arena(arena, name_idx);
+        }
+        if name_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = arena.get_qualified_name(name_node)?;
+            return self.identifier_text_from_arena(arena, qualified.right);
+        }
+        None
+    }
+
+    fn find_type_alias_type_node_in_arena(
+        &self,
+        arena: &NodeArena,
+        name: &str,
+    ) -> Option<NodeIndex> {
+        let source_file = self.arena_source_file(arena)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = arena.get(stmt_idx)?;
+            let alias = arena.get_type_alias(stmt_node)?;
+            if self
+                .identifier_text_from_arena(arena, alias.name)
+                .as_deref()
+                == Some(name)
+            {
+                return Some(alias.type_node);
+            }
+        }
+        None
+    }
+
+    fn expand_string_literals_from_type_node_in_arena(
+        &self,
+        arena: &NodeArena,
+        type_node: NodeIndex,
+        substitutions: &FxHashMap<String, String>,
+        depth: usize,
+    ) -> Option<Vec<String>> {
+        if depth > 32 {
+            return None;
+        }
+
+        let node = arena.get(type_node)?;
+        match node.kind {
+            k if k == syntax_kind_ext::UNION_TYPE => {
+                let composite = arena.get_composite_type(node)?;
+                let mut result = Vec::new();
+                for &child in &composite.types.nodes {
+                    result.extend(self.expand_string_literals_from_type_node_in_arena(
+                        arena,
+                        child,
+                        substitutions,
+                        depth + 1,
+                    )?);
+                }
+                Some(result)
+            }
+            k if k == syntax_kind_ext::LITERAL_TYPE => {
+                let literal = arena.get_literal_type(node)?;
+                let literal_node = arena.get(literal.literal)?;
+                if literal_node.kind == SyntaxKind::StringLiteral as u16 {
+                    Some(vec![arena.get_literal(literal_node)?.text.clone()])
+                } else {
+                    None
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let type_ref = arena.get_type_ref(node)?;
+                let name = self.type_reference_name_text_from_arena(arena, type_ref.type_name)?;
+                if let Some(value) = substitutions.get(&name) {
+                    return Some(vec![value.clone()]);
+                }
+                if let Some(alias_type) = self.find_type_alias_type_node_in_arena(arena, &name) {
+                    return self.expand_string_literals_from_type_node_in_arena(
+                        arena,
+                        alias_type,
+                        substitutions,
+                        depth + 1,
+                    );
+                }
+                let source_file = self.arena_source_file(arena)?;
+                for &stmt_idx in &source_file.statements.nodes {
+                    let stmt_node = arena.get(stmt_idx)?;
+                    let Some(import) = arena.get_import_decl(stmt_node) else {
+                        continue;
+                    };
+                    let Some(module_node) = arena.get(import.module_specifier) else {
+                        continue;
+                    };
+                    let Some(module_lit) = arena.get_literal(module_node) else {
+                        continue;
+                    };
+                    let Some(clause_node) = arena.get(import.import_clause) else {
+                        continue;
+                    };
+                    let Some(clause) = arena.get_import_clause(clause_node) else {
+                        continue;
+                    };
+                    let Some(bindings_node) = arena.get(clause.named_bindings) else {
+                        continue;
+                    };
+                    let Some(bindings) = arena.get_named_imports(bindings_node) else {
+                        continue;
+                    };
+                    for &spec_idx in &bindings.elements.nodes {
+                        let spec_node = arena.get(spec_idx)?;
+                        let specifier = arena.get_specifier(spec_node)?;
+                        let local_name = self.identifier_text_from_arena(arena, specifier.name)?;
+                        if local_name != name {
+                            continue;
+                        }
+                        let imported_name = if specifier.property_name.is_some() {
+                            self.identifier_text_from_arena(arena, specifier.property_name)
+                                .unwrap_or(local_name)
+                        } else {
+                            local_name
+                        };
+                        return self.expand_imported_string_union_alias_keys(
+                            arena,
+                            module_lit.text.as_str(),
+                            &imported_name,
+                        );
+                    }
+                }
+                None
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                let name = self.identifier_text_from_arena(arena, type_node)?;
+                if let Some(value) = substitutions.get(&name) {
+                    return Some(vec![value.clone()]);
+                }
+                let alias_type = self.find_type_alias_type_node_in_arena(arena, &name)?;
+                self.expand_string_literals_from_type_node_in_arena(
+                    arena,
+                    alias_type,
+                    substitutions,
+                    depth + 1,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn declared_type_annotation_text_for_symbol(&self, sym_id: SymbolId) -> Option<String> {
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let type_annotation = source_arena
+                .get_variable_declaration(decl_node)
+                .map(|decl| decl.type_annotation)
+                .or_else(|| {
+                    source_arena
+                        .get_property_decl(decl_node)
+                        .map(|decl| decl.type_annotation)
+                })
+                .or_else(|| {
+                    source_arena
+                        .get_parameter(decl_node)
+                        .map(|param| param.type_annotation)
+                })
+                .filter(|type_idx| type_idx.is_some())?;
+            self.type_annotation_text_from_arena_node(source_arena, type_annotation)
+        })
+    }
+
+    fn explicit_asserted_type_node_from_arena(
+        arena: &NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let mut current = expr_idx;
+
+        for _ in 0..100 {
+            let node = arena.get(current)?;
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = arena.get_parenthesized(node)
+            {
+                current = paren.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+                && let Some(unary) = arena.get_unary_expr_ex(node)
+            {
+                current = unary.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = arena.get_binary_expr(node)
+                && binary.operator_token == SyntaxKind::CommaToken as u16
+            {
+                current = binary.right;
+                continue;
+            }
+
+            let assertion = arena.get_type_assertion(node)?;
+            let asserted_type = arena.get(assertion.type_node)?;
+            if asserted_type.kind == SyntaxKind::ConstKeyword as u16 {
+                return None;
+            }
+            return Some(assertion.type_node);
+        }
+
+        None
+    }
+
+    fn declaration_type_symbol_from_type_node(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let binder = self.binder?;
+        let type_node = arena.get(type_idx)?;
+        match type_node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let type_ref = arena.get_type_ref(type_node)?;
+                if std::ptr::eq(arena, self.arena)
+                    && let Some(name) = self.get_identifier_text(type_ref.type_name)
+                    && let Some(sym_id) = self.resolve_identifier_symbol(type_ref.type_name, &name)
+                {
+                    Some(sym_id)
+                } else {
+                    binder.get_node_symbol(type_ref.type_name)
+                }
+            }
+            k if k == SyntaxKind::Identifier as u16 || k == syntax_kind_ext::QUALIFIED_NAME => {
+                if std::ptr::eq(arena, self.arena)
+                    && let Some(name) = self.get_identifier_text(type_idx)
+                    && let Some(sym_id) = self.resolve_identifier_symbol(type_idx, &name)
+                {
+                    Some(sym_id)
+                } else {
+                    binder.get_node_symbol(type_idx)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn property_access_declared_type_annotation_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let binder = self.binder?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(expr_node)?;
+        let member_name = self.get_identifier_text(access.name_or_argument)?;
+        let base_sym_id = self.value_reference_symbol(access.expression)?;
+
+        self.with_symbol_declarations(base_sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let declared_type = source_arena
+                .get_variable_declaration(decl_node)
+                .and_then(|decl| {
+                    if decl.type_annotation.is_some() {
+                        Some(decl.type_annotation)
+                    } else if decl.initializer.is_some() {
+                        Self::explicit_asserted_type_node_from_arena(source_arena, decl.initializer)
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    source_arena.get_parameter(decl_node).and_then(|param| {
+                        if param.type_annotation.is_some() {
+                            Some(param.type_annotation)
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .or_else(|| {
+                    source_arena.get_property_decl(decl_node).and_then(|decl| {
+                        if decl.type_annotation.is_some() {
+                            Some(decl.type_annotation)
+                        } else if decl.initializer.is_some() {
+                            Self::explicit_asserted_type_node_from_arena(
+                                source_arena,
+                                decl.initializer,
+                            )
+                        } else {
+                            None
+                        }
+                    })
+                })?;
+
+            let declared_type_sym_id =
+                self.declaration_type_symbol_from_type_node(source_arena, declared_type)?;
+            let declared_type_sym_id = self
+                .resolve_portability_import_alias(declared_type_sym_id, binder)
+                .unwrap_or_else(|| {
+                    self.resolve_portability_declaration_symbol(declared_type_sym_id, binder)
+                });
+            self.type_member_declared_type_annotation_text(declared_type_sym_id, &member_name)
+        })
+    }
+
+    fn type_member_declared_type_annotation_text(
+        &self,
+        type_sym_id: SymbolId,
+        member_name: &str,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let member_sym_id = binder
+            .symbols
+            .get(type_sym_id)
+            .and_then(|symbol| symbol.members.as_ref())
+            .and_then(|members| members.get(member_name));
+        let printed_member_type = member_sym_id.and_then(|member_sym_id| {
+            self.type_cache
+                .as_ref()
+                .and_then(|cache| cache.symbol_types.get(&member_sym_id))
+                .copied()
+                .map(|type_id| self.print_type_id(type_id))
+        });
+
+        self.with_symbol_declarations(type_sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let mut members: Vec<NodeIndex> = Vec::new();
+            if let Some(interface) = source_arena.get_interface(decl_node) {
+                members.extend(interface.members.nodes.iter().copied());
+            }
+            if let Some(class_decl) = source_arena.get_class(decl_node) {
+                members.extend(class_decl.members.nodes.iter().copied());
+            }
+            if let Some(type_alias) = source_arena.get_type_alias(decl_node)
+                && let Some(type_node) = source_arena.get(type_alias.type_node)
+                && type_node.kind == syntax_kind_ext::TYPE_LITERAL
+                && let Some(type_literal) = source_arena.get_type_literal(type_node)
+            {
+                members.extend(type_literal.members.nodes.iter().copied());
+            }
+
+            for member_idx in members {
+                let Some(member_node) = source_arena.get(member_idx) else {
+                    continue;
+                };
+                if let Some(signature) = source_arena.get_signature(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, signature.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && signature.type_annotation.is_some()
+                {
+                    let raw = self.type_annotation_text_from_arena_node(
+                        source_arena,
+                        signature.type_annotation,
+                    );
+                    if let Some(printed) = printed_member_type.as_ref() {
+                        let printed =
+                            self.qualify_foreign_imported_names_in_text(source_arena, printed);
+                        if !printed.contains("any")
+                            && (raw.as_ref().is_none_or(|raw| raw.contains("[k in"))
+                                || !printed.contains("[k in"))
+                        {
+                            return Some(printed);
+                        }
+                    }
+                    return raw;
+                }
+                if let Some(prop_decl) = source_arena.get_property_decl(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, prop_decl.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && prop_decl.type_annotation.is_some()
+                {
+                    let raw = self.type_annotation_text_from_arena_node(
+                        source_arena,
+                        prop_decl.type_annotation,
+                    );
+                    if let Some(printed) = printed_member_type.as_ref() {
+                        let printed =
+                            self.qualify_foreign_imported_names_in_text(source_arena, printed);
+                        if !printed.contains("any")
+                            && (raw.as_ref().is_none_or(|raw| raw.contains("[k in"))
+                                || !printed.contains("[k in"))
+                        {
+                            return Some(printed);
+                        }
+                    }
+                    return raw;
+                }
+                if let Some(accessor) = source_arena.get_accessor(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, accessor.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && accessor.type_annotation.is_some()
+                {
+                    let raw = self.type_annotation_text_from_arena_node(
+                        source_arena,
+                        accessor.type_annotation,
+                    );
+                    if let Some(printed) = printed_member_type.as_ref() {
+                        let printed =
+                            self.qualify_foreign_imported_names_in_text(source_arena, printed);
+                        if !printed.contains("any")
+                            && (raw.as_ref().is_none_or(|raw| raw.contains("[k in"))
+                                || !printed.contains("[k in"))
+                        {
+                            return Some(printed);
+                        }
+                    }
+                    return raw;
+                }
+            }
+
+            None
+        })
+    }
+
+    fn with_symbol_declarations<T>(
+        &self,
+        sym_id: SymbolId,
+        mut f: impl FnMut(&NodeArena, NodeIndex) -> Option<T>,
+    ) -> Option<T> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            if let Some(result) = self
+                .arena
+                .get(decl_idx)
+                .and_then(|_| f(self.arena, decl_idx))
+            {
+                return Some(result);
+            }
+            if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena in arenas {
+                    if let Some(result) = arena
+                        .get(decl_idx)
+                        .and_then(|_| f(arena.as_ref(), decl_idx))
+                    {
+                        return Some(result);
+                    }
+                }
+            }
+            if let Some(arena) = binder.symbol_arenas.get(&sym_id)
+                && let Some(result) = arena
+                    .get(decl_idx)
+                    .and_then(|_| f(arena.as_ref(), decl_idx))
+            {
+                return Some(result);
+            }
+            if let Some(arena) = self.global_symbol_arenas.get(&sym_id)
+                && let Some(result) = arena
+                    .get(decl_idx)
+                    .and_then(|_| f(arena.as_ref(), decl_idx))
+            {
+                return Some(result);
+            }
+        }
+
+        None
+    }
+
+    fn replace_whole_word_in_text(text: &str, word: &str, replacement: &str) -> String {
+        let mut result = String::with_capacity(text.len() + 16);
+        let bytes = text.as_bytes();
+        let word_bytes = word.as_bytes();
+        let word_len = word_bytes.len();
+        let text_len = bytes.len();
+        let mut i = 0;
+        while i < text_len {
+            if i + word_len <= text_len && &bytes[i..i + word_len] == word_bytes {
+                let before_ok = i == 0 || !Self::is_ident_char_in_text(bytes[i - 1]);
+                let after_ok =
+                    i + word_len >= text_len || !Self::is_ident_char_in_text(bytes[i + word_len]);
+                if before_ok && after_ok {
+                    result.push_str(replacement);
+                    i += word_len;
+                    continue;
+                }
+            }
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+        result
+    }
+
+    const fn is_ident_char_in_text(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+    }
+
+    fn identifier_text_from_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let node = arena.get(idx)?;
+        arena
+            .get_identifier(node)
+            .map(|ident| ident.escaped_text.clone())
+    }
+
+    fn property_name_text_from_arena(&self, arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let node = arena.get(idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self.identifier_text_from_arena(arena, idx);
+        }
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let literal = arena.get_literal(node)?;
+            return Some(literal.text.clone());
+        }
+        None
+    }
+
+    fn qualify_foreign_exported_names_in_text(
+        &self,
+        source_arena: &NodeArena,
+        source_path: &str,
+        text: &str,
+        excluded_names: &[String],
+    ) -> String {
+        let Some(current_path) = self.current_file_path.as_deref() else {
+            return text.to_string();
+        };
+        if self.paths_refer_to_same_source_file(current_path, source_path) {
+            return text.to_string();
+        }
+
+        let rel_path =
+            self.strip_ts_extensions(&self.calculate_relative_path(current_path, source_path));
+        let Some(source_file) = self.arena_source_file(source_arena) else {
+            return text.to_string();
+        };
+
+        let mut rewritten = text.to_string();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = source_arena.get(stmt_idx) else {
+                continue;
+            };
+            let target_node = source_arena
+                .get_export_decl(stmt_node)
+                .and_then(|export| source_arena.get(export.export_clause))
+                .unwrap_or(stmt_node);
+            let export_name = if let Some(decl) = source_arena.get_interface(target_node) {
+                (source_arena.has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                    || source_arena.get_export_decl(stmt_node).is_some())
+                .then_some(decl.name)
+            } else if let Some(decl) = source_arena.get_type_alias(target_node) {
+                (source_arena.has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                    || source_arena.get_export_decl(stmt_node).is_some())
+                .then_some(decl.name)
+            } else if let Some(decl) = source_arena.get_class(target_node) {
+                (source_arena.has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                    || source_arena.get_export_decl(stmt_node).is_some())
+                .then_some(decl.name)
+            } else if let Some(decl) = source_arena.get_enum(target_node) {
+                (source_arena.has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                    || source_arena.get_export_decl(stmt_node).is_some())
+                .then_some(decl.name)
+            } else {
+                None
+            }
+            .and_then(|name_idx| self.identifier_text_from_arena(source_arena, name_idx));
+
+            let Some(export_name) = export_name else {
+                continue;
+            };
+            if excluded_names.iter().any(|name| name == &export_name) {
+                continue;
+            }
+            let qualified = format!("import(\"{rel_path}\").{export_name}");
+            rewritten = Self::replace_whole_word_in_text(&rewritten, &export_name, &qualified);
+        }
+
+        rewritten
+    }
+
+    fn qualify_foreign_imported_names_in_text(
+        &self,
+        source_arena: &NodeArena,
+        text: &str,
+    ) -> String {
+        let Some(source_file) = self.arena_source_file(source_arena) else {
+            return text.to_string();
+        };
+
+        let mut rewritten = text.to_string();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = source_arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = source_arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = source_arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = source_arena.get_literal(module_node) else {
+                continue;
+            };
+            let module_specifier = module_lit.text.as_str();
+            let Some(clause_node) = source_arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = source_arena.get_import_clause(clause_node) else {
+                continue;
+            };
+
+            if clause.name.is_some()
+                && let Some(local_name) = self.identifier_text_from_arena(source_arena, clause.name)
+            {
+                let qualified = format!("import(\"{module_specifier}\").default");
+                rewritten = Self::replace_whole_word_in_text(&rewritten, &local_name, &qualified);
+            }
+
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = source_arena.get(clause.named_bindings)
+                && let Some(bindings) = source_arena.get_named_imports(bindings_node)
+            {
+                if bindings.name.is_some() && bindings.elements.nodes.is_empty() {
+                    if let Some(local_name) =
+                        self.identifier_text_from_arena(source_arena, bindings.name)
+                    {
+                        let qualified = format!("typeof import(\"{module_specifier}\")");
+                        rewritten =
+                            Self::replace_whole_word_in_text(&rewritten, &local_name, &qualified);
+                    }
+                } else {
+                    for &spec_idx in &bindings.elements.nodes {
+                        let Some(spec_node) = source_arena.get(spec_idx) else {
+                            continue;
+                        };
+                        let Some(specifier) = source_arena.get_specifier(spec_node) else {
+                            continue;
+                        };
+                        let Some(local_name) =
+                            self.identifier_text_from_arena(source_arena, specifier.name)
+                        else {
+                            continue;
+                        };
+                        let imported_name = if specifier.property_name.is_some() {
+                            self.identifier_text_from_arena(source_arena, specifier.property_name)
+                                .unwrap_or(local_name.clone())
+                        } else {
+                            local_name.clone()
+                        };
+                        let qualified = format!("import(\"{module_specifier}\").{imported_name}");
+                        rewritten =
+                            Self::replace_whole_word_in_text(&rewritten, &local_name, &qualified);
+                    }
+                }
+            }
+        }
+
+        rewritten
+    }
+
     /// Get the type of a node from the type cache, if available.
     pub(crate) fn get_node_type(&self, node_id: NodeIndex) -> Option<tsz_solver::types::TypeId> {
         if let (Some(cache), _) = (&self.type_cache, &self.type_interner) {
@@ -751,45 +1612,14 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
-        let sym_id = self.value_reference_symbol(expr_idx)?;
         let binder = self.binder?;
-        let symbol = binder.symbols.get(sym_id)?;
+        let raw_sym_id = self.value_reference_symbol(expr_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_declaration_symbol(raw_sym_id, binder));
 
-        for decl_idx in symbol.declarations.iter().copied() {
-            let decl_node = self.arena.get(decl_idx)?;
-            // Variable declarations (var/let/const)
-            if let Some(var_decl) = self.arena.get_variable_declaration(decl_node)
-                && let Some(type_text) = self
-                    .preferred_annotation_name_text(var_decl.type_annotation)
-                    .or_else(|| self.emit_type_node_text(var_decl.type_annotation))
-            {
-                let trimmed = type_text.trim_end();
-                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                return Some(trimmed.to_string());
-            }
-            // Property declarations (class members)
-            if let Some(prop_decl) = self.arena.get_property_decl(decl_node)
-                && let Some(type_text) = self
-                    .preferred_annotation_name_text(prop_decl.type_annotation)
-                    .or_else(|| self.emit_type_node_text(prop_decl.type_annotation))
-            {
-                let trimmed = type_text.trim_end();
-                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                return Some(trimmed.to_string());
-            }
-            // Parameters (function/method parameters)
-            if let Some(param) = self.arena.get_parameter(decl_node)
-                && let Some(type_text) = self
-                    .preferred_annotation_name_text(param.type_annotation)
-                    .or_else(|| self.emit_type_node_text(param.type_annotation))
-            {
-                let trimmed = type_text.trim_end();
-                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
-                return Some(trimmed.to_string());
-            }
-        }
-
-        None
+        self.declared_type_annotation_text_for_symbol(sym_id)
+            .or_else(|| self.property_access_declared_type_annotation_text(expr_idx))
     }
 
     pub(in crate::declaration_emitter) fn value_reference_symbol_type_text(
@@ -799,7 +1629,9 @@ impl<'a> DeclarationEmitter<'a> {
         let sym_id = self.value_reference_symbol(expr_idx)?;
         let binder = self.binder?;
         let cache = self.type_cache.as_ref()?;
-        let resolved_sym_id = binder.resolve_import_symbol(sym_id).unwrap_or(sym_id);
+        let resolved_sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
         let symbol = binder.symbols.get(resolved_sym_id)?;
 
         for decl_idx in symbol.declarations.iter().copied() {
@@ -866,39 +1698,60 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let call = self.arena.get_call_expr(expr_node)?;
-        let sym_id = self.value_reference_symbol(call.expression)?;
         let binder = self.binder?;
-        let symbol = binder.symbols.get(sym_id)?;
-        let source_arena = binder.symbol_arenas.get(&sym_id)?;
-        let source_file = self.arena_source_file(source_arena.as_ref())?;
-        if !source_file.is_declaration_file {
-            return None;
-        }
-
-        for decl_idx in symbol.declarations.iter().copied() {
-            let Some(decl_node) = source_arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(func) = source_arena.get_function(decl_node) else {
-                continue;
-            };
-            if func.type_annotation.is_none() {
-                continue;
+        let raw_sym_id = self.value_reference_symbol(call.expression)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        let type_args = self.type_argument_list_source_text(call.type_arguments.as_ref());
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let func = source_arena.get_function(decl_node)?;
+            let source_file = self.arena_source_file(source_arena)?;
+            if !source_file.is_declaration_file || !func.type_annotation.is_some() {
+                return None;
             }
-            if let Some(type_text) =
-                self.source_slice_from_arena(source_arena.as_ref(), func.type_annotation)
+
+            let mut type_text = self
+                .source_slice_from_arena(source_arena, func.type_annotation)?
+                .trim_end()
+                .trim_end_matches(';')
+                .trim_end()
+                .to_string();
+
+            let mut type_param_names = Vec::new();
+            if !type_args.is_empty()
+                && let Some(type_params) = func.type_parameters.as_ref()
             {
-                return Some(
-                    type_text
-                        .trim_end()
-                        .trim_end_matches(';')
-                        .trim_end()
-                        .to_string(),
+                for (&param_idx, arg_text) in type_params.nodes.iter().zip(type_args.iter()) {
+                    if let Some(param_node) = source_arena.get(param_idx)
+                        && let Some(param) = source_arena.get_type_parameter(param_node)
+                        && let Some(name_text) =
+                            self.identifier_text_from_arena(source_arena, param.name)
+                    {
+                        type_param_names.push(name_text.clone());
+                        type_text =
+                            Self::replace_whole_word_in_text(&type_text, &name_text, arg_text);
+                    }
+                }
+            }
+
+            let source_path = self.get_symbol_source_path(sym_id, binder).or_else(|| {
+                self.arena_to_path
+                    .get(&(source_arena as *const NodeArena as usize))
+                    .cloned()
+            });
+            type_text = self.qualify_foreign_imported_names_in_text(source_arena, &type_text);
+            if let Some(source_path) = source_path.as_deref() {
+                type_text = self.qualify_foreign_exported_names_in_text(
+                    source_arena,
+                    source_path,
+                    &type_text,
+                    &type_param_names,
                 );
             }
-        }
-
-        None
+            Some(type_text)
+        })
     }
 
     pub(in crate::declaration_emitter) fn tagged_template_declared_return_type_text(
@@ -1459,7 +2312,7 @@ impl<'a> DeclarationEmitter<'a> {
             let closing_indent = "    ".repeat(depth as usize);
             let formatted_members: Vec<String> = members
                 .iter()
-                .map(|m| format!("{member_indent}{m};"))
+                .map(|m| Self::format_object_member_entry(&member_indent, m))
                 .collect();
             Some(format!(
                 "{{\n{}\n{closing_indent}}}",
@@ -1484,7 +2337,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = self
                     .preferred_object_member_initializer_type_text(data.initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
-                Some(format!("{name}: {type_text}"))
+                Some(Self::format_object_member_type_text(
+                    name, &type_text, depth,
+                ))
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 let data = self.arena.get_shorthand_property(member_node)?;
@@ -1499,7 +2354,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = self
                     .preferred_object_member_initializer_type_text(initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
-                Some(format!("{name}: {type_text}"))
+                Some(Self::format_object_member_type_text(
+                    name, &type_text, depth,
+                ))
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 let data = self.arena.get_accessor(member_node)?;
@@ -1540,6 +2397,31 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    fn format_object_member_type_text(name: &str, type_text: &str, depth: u32) -> String {
+        if !type_text.contains('\n') {
+            return format!("{name}: {type_text}");
+        }
+
+        let _ = depth;
+        format!("{name}: {type_text}")
+    }
+
+    fn format_object_member_entry(member_indent: &str, member_text: &str) -> String {
+        let mut lines = member_text.lines();
+        let first = lines.next().unwrap_or(member_text);
+        let mut result = String::new();
+        result.push_str(member_indent);
+        result.push_str(first);
+        for line in lines {
+            result.push('\n');
+            result.push_str(line);
+        }
+        if !result.trim_end().ends_with(';') {
+            result.push(';');
+        }
+        result
     }
 
     pub(in crate::declaration_emitter) fn object_literal_member_name_text(
@@ -2241,6 +3123,19 @@ impl<'a> DeclarationEmitter<'a> {
             .get(initializer)
             .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
             && self.object_literal_prefers_syntax_type_text(initializer)
+        {
+            return true;
+        }
+        if self.explicit_asserted_type_text(initializer).is_some() {
+            return true;
+        }
+        if self
+            .preferred_expression_type_text(initializer)
+            .is_some_and(|text| {
+                !text.is_empty()
+                    && text != "any"
+                    && (text.contains("import(\"") || text.starts_with("typeof "))
+            })
         {
             return true;
         }
