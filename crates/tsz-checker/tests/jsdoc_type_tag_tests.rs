@@ -133,6 +133,39 @@ fn check_js_with_libs(source: &str) -> Vec<Diag> {
     check_js_internal(source, true)
 }
 
+fn check_js_with_exact_optional(source: &str) -> Vec<Diag> {
+    let options = CheckerOptions {
+        allow_js: true,
+        check_js: true,
+        strict: true,
+        exact_optional_property_types: true,
+        ..CheckerOptions::default()
+    };
+
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.js".to_string(),
+        options,
+    );
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d: &Diagnostic| Diag { code: d.code })
+        .collect()
+}
+
 /// @type {boolean} on class field with incompatible initializer → TS2322
 #[test]
 fn test_jsdoc_type_on_class_field_initializer_mismatch() {
@@ -525,6 +558,71 @@ typed("x");
         ts2345,
         0,
         "Expected no TS2345 for call on inline generic JSDoc @type function, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Under `exactOptionalPropertyTypes`, a JSDoc `@property {T} [name]` declares
+/// `name?: T` (not `name?: T | undefined`). Assigning `name: undefined` must
+/// emit TS2375 — the same diagnostic produced for the equivalent inline form
+/// `@typedef {{ name?: T }}`.
+///
+/// Before the fix, the imperative `@typedef {object}` + `@property` path
+/// unconditionally widened the property type to `T | undefined` whenever
+/// `strictNullChecks` was on, swallowing the TS2375 because `value: undefined`
+/// matched the widened property type.
+#[test]
+fn test_jsdoc_property_optional_under_exact_optional_emits_ts2375() {
+    let source = r#"
+/**
+ * @typedef {object} A
+ * @property {number} [value]
+ */
+
+/** @type {A} */
+const a = { value: undefined };
+"#;
+    let diagnostics = check_js_with_exact_optional(source);
+    let ts2375 = diagnostics.iter().filter(|d| d.code == 2375).count();
+    assert_eq!(
+        ts2375,
+        1,
+        "Expected TS2375 for `value: undefined` under exactOptionalPropertyTypes \
+         when @property uses `[value]` optional syntax, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Without `exactOptionalPropertyTypes`, the same `@property {T} [name]` pattern
+/// must still accept `name: undefined` because the property type widens to
+/// `T | undefined` under classic optional semantics. This guards against a
+/// fix that drops the widening unconditionally.
+#[test]
+fn test_jsdoc_property_optional_without_exact_optional_accepts_undefined() {
+    let source = r#"
+/**
+ * @typedef {object} A
+ * @property {number} [value]
+ */
+
+/** @type {A} */
+const a = { value: undefined };
+"#;
+    // strict (so strictNullChecks=true) but exactOptionalPropertyTypes=false
+    let diagnostics = check_js(source);
+    let ts2375 = diagnostics.iter().filter(|d| d.code == 2375).count();
+    let ts2322 = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2375,
+        0,
+        "TS2375 must not fire without exactOptionalPropertyTypes, got codes: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ts2322,
+        0,
+        "TS2322 must not fire when classic optional semantics widen to `T | undefined`, \
+         got codes: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
