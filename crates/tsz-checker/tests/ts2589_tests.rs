@@ -1,6 +1,11 @@
 //! Tests for TS2589: Type instantiation is excessively deep and possibly infinite.
 
+use crate::context::CheckerOptions;
+use crate::query_boundaries::common::TypeInterner;
+use crate::state::CheckerState;
 use crate::test_utils::{check_source_code_messages, check_source_diagnostics};
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     check_source_code_messages(source)
@@ -8,6 +13,85 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
+}
+
+#[test]
+fn property_access_ts2589_recovers_variable_symbol_type_to_any() {
+    let source = r#"
+type T2<K extends "x" | "y"> = {
+    x: T2<K>[K];
+    y: number;
+};
+
+declare let x2: T2<"x">;
+let x2x = x2.x;
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let sym_id = binder.file_locals.get("x2x").expect("expected x2x symbol");
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(root);
+
+    let decl_idx = binder
+        .get_symbol(sym_id)
+        .and_then(|symbol| symbol.declarations.first().copied())
+        .expect("x2x declaration");
+    let decl_node = parser.get_arena().get(decl_idx).expect("x2x decl node");
+    let decl = parser
+        .get_arena()
+        .get_variable_declaration(decl_node)
+        .expect("x2x decl data");
+    let initializer_cached = checker
+        .ctx
+        .node_types
+        .get(&decl.initializer.0)
+        .copied()
+        .map(|ty| checker.format_type(ty))
+        .unwrap_or_else(|| "<missing>".to_string());
+    let decl_cached = checker
+        .ctx
+        .node_types
+        .get(&decl_idx.0)
+        .copied()
+        .map(|ty| checker.format_type(ty))
+        .unwrap_or_else(|| "<missing>".to_string());
+    let symbol_cached = checker
+        .ctx
+        .symbol_types
+        .get(&sym_id)
+        .copied()
+        .map(|ty| checker.format_type(ty))
+        .unwrap_or_else(|| "<missing>".to_string());
+
+    assert_eq!(
+        symbol_cached, "any",
+        "x2x symbol cache should recover to any after TS2589 (decl_cached={decl_cached}, initializer_cached={initializer_cached})"
+    );
+    assert_eq!(
+        decl_cached, "any",
+        "x2x declaration cache should recover to any after TS2589 (symbol_cached={symbol_cached}, initializer_cached={initializer_cached})"
+    );
+
+    let symbol_type = checker.get_type_of_symbol(sym_id);
+    assert_eq!(
+        checker.format_type(symbol_type),
+        "any",
+        "x2x lookup should recover to any after TS2589 (symbol_cached={symbol_cached}, decl_cached={decl_cached}, initializer_cached={initializer_cached})"
+    );
 }
 
 #[test]
