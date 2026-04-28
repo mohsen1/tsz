@@ -41,6 +41,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.emit_type_node_text(type_annotation))
         } else {
             self.source_slice_from_arena(source_arena, type_annotation)
+                .or_else(|| self.emit_type_node_text_from_arena(source_arena, type_annotation))
         }?;
         let type_text = if std::ptr::eq(source_arena, self.arena) {
             printed.filter(|text| text != "any").unwrap_or(type_text)
@@ -389,6 +390,8 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn declared_type_annotation_text_for_symbol(&self, sym_id: SymbolId) -> Option<String> {
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
+                .unwrap_or(decl_idx);
             let decl_node = source_arena.get(decl_idx)?;
             let type_annotation = source_arena
                 .get_variable_declaration(decl_node)
@@ -406,6 +409,79 @@ impl<'a> DeclarationEmitter<'a> {
                 .filter(|type_idx| type_idx.is_some())?;
             self.type_annotation_text_from_arena_node(source_arena, type_annotation)
         })
+    }
+
+    fn annotation_bearing_declaration_from_arena(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let mut current = decl_idx;
+        for _ in 0..12 {
+            let node = arena.get(current)?;
+            if arena.get_variable_declaration(node).is_some()
+                || arena.get_property_decl(node).is_some()
+                || arena.get_parameter(node).is_some()
+                || arena.get_interface(node).is_some()
+                || arena.get_class(node).is_some()
+                || arena.get_type_alias(node).is_some()
+            {
+                return Some(current);
+            }
+            let parent = arena.parent_of(current)?;
+            if parent.is_none() {
+                break;
+            }
+            current = parent;
+        }
+        None
+    }
+
+    fn emit_type_node_text_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        source_arena.get(type_idx)?;
+
+        let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
+            (&self.type_cache, self.type_interner, self.binder)
+        {
+            DeclarationEmitter::with_type_info(
+                source_arena,
+                type_cache.clone(),
+                type_interner,
+                binder,
+            )
+        } else {
+            DeclarationEmitter::new(source_arena)
+        };
+
+        let source_file = self.arena_source_file(source_arena);
+        scratch.source_is_declaration_file = source_file
+            .map(|source_file| source_file.is_declaration_file)
+            .unwrap_or(self.source_is_declaration_file);
+        scratch.source_is_js_file = self.source_is_js_file;
+        scratch.current_source_file_idx = source_file
+            .and_then(|_| {
+                source_arena
+                    .nodes
+                    .iter()
+                    .position(|node| source_arena.get_source_file(node).is_some())
+                    .and_then(|idx| u32::try_from(idx).ok())
+                    .map(NodeIndex)
+            })
+            .or(self.current_source_file_idx);
+        scratch.source_file_text = source_file.map(|source_file| source_file.text.clone());
+        scratch.current_file_path = self
+            .arena_to_path
+            .get(&(source_arena as *const NodeArena as usize))
+            .cloned()
+            .or_else(|| source_file.map(|source_file| source_file.file_name.clone()))
+            .or_else(|| self.current_file_path.clone());
+        scratch.current_arena = self.current_arena.clone();
+        scratch.arena_to_path = self.arena_to_path.clone();
+        scratch.emit_type(type_idx);
+        Some(scratch.writer.take_output())
     }
 
     fn explicit_asserted_type_node_from_arena(
@@ -492,6 +568,8 @@ impl<'a> DeclarationEmitter<'a> {
         let base_sym_id = self.value_reference_symbol(access.expression)?;
 
         self.with_symbol_declarations(base_sym_id, |source_arena, decl_idx| {
+            let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
+                .unwrap_or(decl_idx);
             let decl_node = source_arena.get(decl_idx)?;
             let declared_type = source_arena
                 .get_variable_declaration(decl_node)
@@ -532,9 +610,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.declaration_type_symbol_from_type_node(source_arena, declared_type)?;
             let declared_type_sym_id = self
                 .resolve_portability_import_alias(declared_type_sym_id, binder)
-                .unwrap_or_else(|| {
-                    self.resolve_portability_declaration_symbol(declared_type_sym_id, binder)
-                });
+                .unwrap_or(declared_type_sym_id);
+            let declared_type_sym_id =
+                self.resolve_portability_declaration_symbol(declared_type_sym_id, binder);
             self.type_member_declared_type_annotation_text(declared_type_sym_id, &member_name)
         })
     }
@@ -559,6 +637,8 @@ impl<'a> DeclarationEmitter<'a> {
         });
 
         self.with_symbol_declarations(type_sym_id, |source_arena, decl_idx| {
+            let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
+                .unwrap_or(decl_idx);
             let decl_node = source_arena.get(decl_idx)?;
             let mut members: Vec<NodeIndex> = Vec::new();
             if let Some(interface) = source_arena.get_interface(decl_node) {
