@@ -1083,6 +1083,48 @@ module.exports.foo.label = "ok";
 }
 
 #[test]
+fn test_js_function_class_expandos_emit_namespace_aliases() {
+    let output = emit_js_dts(
+        r#"
+export function foo() {}
+foo.Widget = class {
+    value() {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    export { Widget };\n}"),
+        "Expected JS function class expandos to emit as merged namespace aliases: {output}"
+    );
+    assert!(
+        output.contains("declare class Widget {\n    value(): void;\n}"),
+        "Expected JS function class expandos to emit a reusable class declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_named_function_class_expandos_emit_namespace_aliases() {
+    let output = emit_js_dts(
+        r#"
+module.exports.foo = function foo() {}
+module.exports.foo.Widget = class {
+    value() {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    export { Widget };\n}"),
+        "Expected CommonJS named function class expandos to emit namespace aliases: {output}"
+    );
+    assert!(
+        output.contains("declare class Widget {\n    value(): void;\n}"),
+        "Expected CommonJS named function class expandos to emit a reusable class declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_like_class_emits_companion_class() {
     let output = emit_js_dts(
         r#"
