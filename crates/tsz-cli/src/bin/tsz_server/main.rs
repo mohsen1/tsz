@@ -657,6 +657,30 @@ impl Server {
         self.response_seq
     }
 
+    fn reset_session_state(&mut self) {
+        self.open_files.clear();
+        self.external_project_files.clear();
+        self.completion_import_module_specifier_ending = None;
+        self.import_module_specifier_preference = None;
+        self.organize_imports_type_order = None;
+        self.organize_imports_ignore_case = true;
+        self.auto_import_file_exclude_patterns.clear();
+        self.auto_import_specifier_exclude_regexes.clear();
+        self.include_completions_with_class_member_snippets = true;
+        self.new_line_character = None;
+        self.allow_importing_ts_extensions = false;
+        self.inferred_check_options = CheckOptions::default();
+        self.inferred_projectinfo_options = None;
+        self.auto_imports_allowed_for_inferred_projects = true;
+        self.inferred_module_is_none_for_projects = false;
+        self.plugin_configs.clear();
+    }
+
+    fn handle_reset(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
+        self.reset_session_state();
+        self.stub_response(seq, request, Some(serde_json::json!(true)))
+    }
+
     // =========================================================================
     // Helper: Parse and Bind a File
     // =========================================================================
@@ -875,6 +899,7 @@ impl Server {
             "open" => self.handle_open(seq, &request),
             "close" => self.handle_close(seq, &request),
             "change" => self.handle_change(seq, &request),
+            "reset" | "tsz/reset" => self.handle_reset(seq, &request),
             "configure" => self.handle_configure(seq, &request),
             "quickinfo" => self.handle_quickinfo(seq, &request),
             "definition"

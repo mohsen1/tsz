@@ -22,8 +22,9 @@ const TEST_TIMEOUT_MS = 15000;
 const MEMORY_THRESHOLD_BYTES = 512 * 1024 * 1024; // 512MB
 // Check memory every N tests
 const MEMORY_CHECK_INTERVAL = 25;
-// Prevent cross-test contamination in tsz-server open file state.
-const RESTART_BRIDGE_EVERY_TEST = true;
+// Reset tsz-server session state after each test. Restart only when the bridge
+// itself looks unhealthy; process startup dominates fourslash CI wall time.
+const RESTART_BRIDGE_EVERY_TEST = false;
 // Temporary parity allowlist for known stragglers in the current campaign slice.
 // Keep this list narrow and remove entries as real parity fixes land.
 const TEMP_PARITY_ALLOWLIST = new Set([
@@ -4470,6 +4471,16 @@ async function main() {
         } catch (err) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
+            const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
+            const bridgeLikelyUnhealthy =
+                timedOut ||
+                errMsg.includes("Stream closed before complete message was read") ||
+                errMsg.includes("Unexpected empty response body") ||
+                errMsg.includes("Broken pipe");
+            if (bridgeLikelyUnhealthy) {
+                shouldRestartBridge = true;
+                restartReason = `post-failure recovery for ${testName}`;
+            }
             if (isTemporarilyAllowedParityFailure(testName, errMsg)) {
                 process.send({
                     type: "result",
@@ -4480,19 +4491,9 @@ async function main() {
                     xfailed: true,
                     error: errMsg,
                     elapsed,
-                    timedOut: false,
+                    timedOut,
                 });
             } else {
-                const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
-                const bridgeLikelyUnhealthy =
-                    timedOut ||
-                    errMsg.includes("Stream closed before complete message was read") ||
-                    errMsg.includes("Unexpected empty response body") ||
-                    errMsg.includes("Broken pipe");
-                if (bridgeLikelyUnhealthy) {
-                    shouldRestartBridge = true;
-                    restartReason = `post-failure recovery for ${testName}`;
-                }
                 process.send({
                     type: "result", workerId, testFile, testName,
                     passed: false, error: errMsg, elapsed, timedOut,
@@ -4509,6 +4510,19 @@ async function main() {
                     type: "error", workerId,
                     error: `Bridge restart failed: ${restartErr.message}`,
                 });
+            }
+        } else {
+            try {
+                bridge.resetSession();
+            } catch (resetErr) {
+                try {
+                    await restartBridge(`reset recovery after ${testName}: ${resetErr.message}`);
+                } catch (restartErr) {
+                    process.send({
+                        type: "error", workerId,
+                        error: `Bridge restart failed after reset failure: ${restartErr.message}`,
+                    });
+                }
             }
         }
 
