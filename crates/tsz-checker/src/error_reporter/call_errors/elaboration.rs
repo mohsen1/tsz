@@ -38,6 +38,13 @@ impl<'a> CheckerState<'a> {
                     if candidate_keyof == TypeId::ERROR {
                         continue;
                     }
+                    // `keyof null`, `keyof undefined`, `keyof void`, and
+                    // `keyof never` all reduce to `never`. tsc displays the
+                    // reduced form; falling back to "keyof null" loses
+                    // fingerprint parity (unknownControlFlow.ts ff1).
+                    if candidate_keyof == TypeId::NEVER {
+                        continue;
+                    }
 
                     let same_key_space = (self.is_assignable_to(param_type, candidate_keyof)
                         && self.is_assignable_to(candidate_keyof, param_type))
