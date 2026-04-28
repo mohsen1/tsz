@@ -306,14 +306,36 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         parent: &Self,
     ) -> Self {
-        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Every
-        // cross-arena delegation in the deep recursive cascade allocates
-        // one of these. PR 3 should remove most of them by replacing the
-        // child-checker construction with a memoized cross-file query.
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters()
-                .checker_state_with_parent_cache_constructed,
-        );
+        // Attribution: prefer `with_parent_cache_attributed` at call sites
+        // we want to track in the per-reason counter dump (PR #1631).
+        // Sites that still call this raw form attribute to
+        // `CheckerCreationReason::Other`. See
+        // `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+        Self::with_parent_cache_attributed(
+            arena,
+            binder,
+            types,
+            file_name,
+            compiler_options,
+            parent,
+            tsz_common::perf_counters::CheckerCreationReason::Other,
+        )
+    }
+
+    /// Attributed variant of [`Self::with_parent_cache`]: the caller passes
+    /// the reason this child checker is being created so PR #1631's
+    /// counter dump can show which call sites drive the construction
+    /// explosion. Always prefer this over the raw `with_parent_cache`.
+    pub fn with_parent_cache_attributed(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: CheckerOptions,
+        parent: &Self,
+        reason: tsz_common::perf_counters::CheckerCreationReason,
+    ) -> Self {
+        tsz_common::perf_counters::record_with_parent_cache(reason);
         CheckerState {
             ctx: CheckerContext::with_parent_cache(
                 arena,

@@ -517,13 +517,14 @@ impl<'a> CheckerState<'a> {
             // interdependent lib types (Array → ReadonlyArray → Iterator → ...) can
             // create deep call stacks, and CheckerState is too large to stack-allocate
             // at every level without risking stack overflow.
-            let mut checker = Box::new(CheckerState::with_parent_cache(
+            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 symbol_arena,
                 delegate_binder,
                 self.ctx.types,
                 delegate_file_name,
                 self.ctx.compiler_options.clone(),
                 self, // Share parent's cache to fix Cache Isolation Bug
+                tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
             ));
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
@@ -532,7 +533,10 @@ impl<'a> CheckerState<'a> {
             checker.ctx.copy_cross_file_state_from(&self.ctx);
             // Copy cross-file symbol targets (local overlay only; global index
             // is already shared via copy_cross_file_state_from)
-            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+            self.ctx.copy_symbol_file_targets_to_attributed(
+                &mut checker.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
+            );
             checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
             // The parent cache is cloned into the child for performance, but raw
             // SymbolIds can still collide across binders in direct multi-file tests.
