@@ -261,7 +261,9 @@ impl<'a> DeclarationEmitter<'a> {
         let source_file = self.arena_source_file(arena)?;
         for &stmt_idx in &source_file.statements.nodes {
             let stmt_node = arena.get(stmt_idx)?;
-            let alias = arena.get_type_alias(stmt_node)?;
+            let Some(alias) = arena.get_type_alias(stmt_node) else {
+                continue;
+            };
             if self
                 .identifier_text_from_arena(arena, alias.name)
                 .as_deref()
@@ -703,22 +705,89 @@ impl<'a> DeclarationEmitter<'a> {
         let word_bytes = word.as_bytes();
         let word_len = word_bytes.len();
         let text_len = bytes.len();
+        let mut last_copied = 0usize;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
         let mut i = 0;
         while i < text_len {
+            match bytes[i] {
+                b'\'' if !in_double_quote => {
+                    in_single_quote = !in_single_quote;
+                    i += 1;
+                    continue;
+                }
+                b'"' if !in_single_quote => {
+                    in_double_quote = !in_double_quote;
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+
+            if in_single_quote || in_double_quote {
+                i += 1;
+                continue;
+            }
+
             if i + word_len <= text_len && &bytes[i..i + word_len] == word_bytes {
                 let before_ok = i == 0 || !Self::is_ident_char_in_text(bytes[i - 1]);
                 let after_ok =
                     i + word_len >= text_len || !Self::is_ident_char_in_text(bytes[i + word_len]);
-                if before_ok && after_ok {
+                let qualified_member = i > 0 && bytes[i - 1] == b'.';
+                if before_ok && after_ok && !qualified_member {
+                    result.push_str(&text[last_copied..i]);
                     result.push_str(replacement);
                     i += word_len;
+                    last_copied = i;
                     continue;
                 }
             }
-            result.push(bytes[i] as char);
             i += 1;
         }
+        result.push_str(&text[last_copied..]);
         result
+    }
+
+    fn contains_whole_word_in_text(text: &str, word: &str) -> bool {
+        let bytes = text.as_bytes();
+        let word_bytes = word.as_bytes();
+        let word_len = word_bytes.len();
+        let text_len = bytes.len();
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut i = 0;
+        while i < text_len {
+            match bytes[i] {
+                b'\'' if !in_double_quote => {
+                    in_single_quote = !in_single_quote;
+                    i += 1;
+                    continue;
+                }
+                b'"' if !in_single_quote => {
+                    in_double_quote = !in_double_quote;
+                    i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+
+            if in_single_quote || in_double_quote {
+                i += 1;
+                continue;
+            }
+
+            if i + word_len <= text_len && &bytes[i..i + word_len] == word_bytes {
+                let before_ok = i == 0 || !Self::is_ident_char_in_text(bytes[i - 1]);
+                let after_ok =
+                    i + word_len >= text_len || !Self::is_ident_char_in_text(bytes[i + word_len]);
+                let qualified_member = i > 0 && bytes[i - 1] == b'.';
+                if before_ok && after_ok && !qualified_member {
+                    return true;
+                }
+            }
+            i += 1;
+        }
+        false
     }
 
     const fn is_ident_char_in_text(b: u8) -> bool {
@@ -807,6 +876,55 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         rewritten
+    }
+
+    fn type_text_contains_unqualified_foreign_value_export(
+        &self,
+        source_arena: &NodeArena,
+        source_path: &str,
+        text: &str,
+    ) -> bool {
+        let Some(current_path) = self.current_file_path.as_deref() else {
+            return false;
+        };
+        if self.paths_refer_to_same_source_file(current_path, source_path) {
+            return false;
+        }
+
+        let Some(source_file) = self.arena_source_file(source_arena) else {
+            return false;
+        };
+
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                let Some(stmt_node) = source_arena.get(stmt_idx) else {
+                    return false;
+                };
+                let export_name = if let Some(decl) = source_arena.get_function(stmt_node) {
+                    source_arena
+                        .has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                        .then_some(decl.name)
+                } else if let Some(var_stmt) = source_arena.get_variable(stmt_node) {
+                    if !source_arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword) {
+                        None
+                    } else {
+                        var_stmt.declarations.nodes.first().and_then(|decl_idx| {
+                            let decl_node = source_arena.get(*decl_idx)?;
+                            let decl = source_arena.get_variable_declaration(decl_node)?;
+                            Some(decl.name)
+                        })
+                    }
+                } else {
+                    None
+                }
+                .and_then(|name_idx| self.identifier_text_from_arena(source_arena, name_idx));
+
+                export_name.is_some_and(|name| Self::contains_whole_word_in_text(text, &name))
+            })
     }
 
     fn qualify_foreign_imported_names_in_text(
@@ -1861,6 +1979,24 @@ impl<'a> DeclarationEmitter<'a> {
                     &type_text,
                     &type_param_names,
                 );
+                if self
+                    .current_file_path
+                    .as_deref()
+                    .is_some_and(|current_path| {
+                        !self.paths_refer_to_same_source_file(current_path, source_path)
+                            && type_text.starts_with("typeof ")
+                            && !type_text.contains("import(\"")
+                    })
+                {
+                    return None;
+                }
+                if self.type_text_contains_unqualified_foreign_value_export(
+                    source_arena,
+                    source_path,
+                    &type_text,
+                ) {
+                    return None;
+                }
             }
             Some(type_text)
         })
