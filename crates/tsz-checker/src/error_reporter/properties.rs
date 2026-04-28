@@ -452,19 +452,26 @@ impl<'a> CheckerState<'a> {
             return format!("typeof {}", ident.escaped_text);
         }
         let is_element_access_receiver =
-            self.access_receiver_for_diagnostic_node(idx)
-                .is_some_and(|expr| {
-                    self.ctx
-                        .arena
-                        .get(expr)
-                        .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                });
+            self.ctx
+                .arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                || self
+                    .access_receiver_for_diagnostic_node(idx)
+                    .is_some_and(|expr| {
+                        self.ctx.arena.get(expr).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                        })
+                    });
 
         if is_element_access_receiver {
             if let Some(display) =
                 self.element_access_receiver_declared_element_display(idx, type_id)
             {
                 return display;
+            }
+            if let Some(module_name) = self.ctx.namespace_module_names.get(&type_id) {
+                return format!("typeof import(\"{module_name}\")");
             }
             let has_named_receiver_identity = self.named_type_display_name(type_id).is_some()
                 || self
@@ -973,6 +980,7 @@ impl<'a> CheckerState<'a> {
                 // Normalize module specifier: TSC displays resolved module names
                 // without the relative path prefix (e.g., "./b" → "b").
                 let display_name = module_name.strip_prefix("./").unwrap_or(&module_name);
+                let display_name = strip_property_namespace_module_extension(display_name);
                 let type_str = format!("typeof import(\"{display_name}\")");
                 let (code, message) = if let Some(ref suggestion) = suggestion {
                     (
@@ -2193,6 +2201,18 @@ impl<'a> CheckerState<'a> {
         }
         true
     }
+}
+
+fn strip_property_namespace_module_extension(module_name: &str) -> &str {
+    const EXTS: &[&str] = &[
+        ".d.ts", ".d.mts", ".d.cts", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts",
+    ];
+    for ext in EXTS {
+        if let Some(stripped) = module_name.strip_suffix(ext) {
+            return stripped;
+        }
+    }
+    module_name
 }
 
 /// Match tsc's `^(?:EventTarget|Node|(?:HTML[a-zA-Z]*)?Element)$` regex used by

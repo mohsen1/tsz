@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn current_file_commonjs_module_exports_namespace_type(&mut self) -> TypeId {
-        self.current_file_commonjs_namespace_type_with_display_extension(false)
+        self.current_file_commonjs_namespace_type_with_display_extension(true)
     }
 
     fn current_file_commonjs_namespace_type_with_display_extension(
