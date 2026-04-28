@@ -1520,6 +1520,7 @@ impl ParserState {
 
             // Method
             let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
+            let mut body_already_consumed_by_recovery = false;
             let parameters = if has_open_paren {
                 let parameters = self.parse_parameter_list();
                 self.parse_expected(SyntaxKind::CloseParenToken);
@@ -1536,7 +1537,7 @@ impl ParserState {
             } else {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-                self.recover_from_missing_method_open_paren();
+                body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
                 self.make_node_list(vec![])
             };
 
@@ -1549,7 +1550,9 @@ impl ParserState {
 
             // Parse body
             self.push_label_scope();
-            let body = if self.is_token(SyntaxKind::OpenBraceToken) {
+            let body = if body_already_consumed_by_recovery {
+                NodeIndex::NONE
+            } else if self.is_token(SyntaxKind::OpenBraceToken) {
                 self.parse_block()
             } else {
                 // Consume the semicolon if present (method signature).

@@ -887,7 +887,12 @@ impl ParserState {
     /// Recover from invalid method/member syntax when `(` is missing after the member name.
     /// This is used for async/generator forms like `async * get x() {}` where a single TS1005
     /// should be emitted and the parser should skip the rest of the member to avoid cascades.
-    pub(crate) fn recover_from_missing_method_open_paren(&mut self) {
+    ///
+    /// Returns `true` when the recovery fully terminated the member — either by
+    /// consuming a body block (`{ ... }`) or by consuming a member-terminator
+    /// (`;` or `,`). Callers should skip their own body lookup in this case to
+    /// avoid emitting a redundant `'{' expected.` past the actual terminator.
+    pub(crate) fn recover_from_missing_method_open_paren(&mut self) -> bool {
         while !(self.is_token(SyntaxKind::OpenBraceToken)
             || self.is_token(SyntaxKind::SemicolonToken)
             || self.is_token(SyntaxKind::CommaToken)
@@ -899,12 +904,14 @@ impl ParserState {
         if self.is_token(SyntaxKind::OpenBraceToken) {
             let body = self.parse_block();
             let _ = body;
-            return;
+            return true;
         }
 
         if self.is_token(SyntaxKind::SemicolonToken) || self.is_token(SyntaxKind::CommaToken) {
             self.next_token();
+            return true;
         }
+        false
     }
 
     /// Parse optional token, returns true if found

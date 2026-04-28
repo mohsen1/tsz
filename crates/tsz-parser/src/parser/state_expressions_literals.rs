@@ -2258,6 +2258,7 @@ impl ParserState {
         }
 
         let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
+        let mut body_already_consumed_by_recovery = false;
         let parameters = if has_open_paren {
             let parameters = self.parse_parameter_list();
             self.parse_expected(SyntaxKind::CloseParenToken);
@@ -2265,7 +2266,7 @@ impl ParserState {
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-            self.recover_from_missing_method_open_paren();
+            body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
             self.make_node_list(vec![])
         };
 
@@ -2277,7 +2278,13 @@ impl ParserState {
 
         // Push a new label scope for the method body
         self.push_label_scope();
-        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
+        let body = if body_already_consumed_by_recovery {
+            // recover_from_missing_method_open_paren already consumed the body
+            // block while recovering past the missing `(`. Skipping the body
+            // lookup here avoids a redundant TS1005 `'{' expected` at the
+            // outer object-literal closing brace (or EOF).
+            NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
             // tsc prefers "'{' expected." on `=>` in object methods written like:
