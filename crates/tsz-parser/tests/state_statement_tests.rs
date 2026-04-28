@@ -956,3 +956,53 @@ fn test_await_label_in_static_block_emits_ts1109() {
         "Expected TS1109 for 'await' as label in static block, got codes: {codes:?}"
     );
 }
+
+/// Test that `[await]` as a class member computed property name in a nested class inside
+/// a static block emits TS1109 (Expression expected) instead of TS1213. tsc treats `await`
+/// as a keyword in static blocks, so using it as a computed property name in a class
+/// defined within a static block should fail with TS1109.
+#[test]
+fn test_await_as_computed_property_in_class_in_static_block_emits_ts1109_not_ts1213() {
+    let source = r#"class C {
+    static {
+        class D {
+            [await] = 1;
+        }
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for class D '[await]' computed property in static block, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO
+        ),
+        "Should NOT emit TS1213 for '[await]' in static block, got codes: {codes:?}"
+    );
+}
+
+/// Test that `await => {}` (arrow function with `await` as single parameter) in a static
+/// block emits TS1109 (Expression expected) at the `await` position. Previously, `STATIC_BLOCK`
+/// was cleared before arrow parameter parsing, so `await` was accepted as a valid identifier
+/// and the error was a misleading TS1005 at the arrow.
+#[test]
+fn test_await_as_arrow_single_param_in_static_block_emits_ts1109() {
+    let source = r#"class C {
+    static {
+        await => {};
+    }
+}"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for 'await =>' in static block, got codes: {codes:?}"
+    );
+}
