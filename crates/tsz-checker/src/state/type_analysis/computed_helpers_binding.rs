@@ -29,45 +29,6 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn imported_namespace_display_module_name(&self, module_name: &str) -> String {
-        fn trim_namespace_display_path(resolved_name: &str) -> String {
-            let trimmed = resolved_name
-                .strip_prefix("./")
-                .unwrap_or(resolved_name)
-                .trim_start_matches('/');
-
-            let components: Vec<_> = trimmed
-                .split('/')
-                .filter(|segment| !segment.is_empty())
-                .collect();
-            if let Some(node_modules_idx) = components
-                .iter()
-                .position(|segment| *segment == "node_modules")
-            {
-                if node_modules_idx > 0 {
-                    let previous = components[node_modules_idx - 1];
-                    let looks_like_virtual_root = previous.starts_with('p')
-                        && previous[1..].chars().all(|ch| ch.is_ascii_digit());
-                    if looks_like_virtual_root {
-                        return components[node_modules_idx - 1..].join("/");
-                    }
-                }
-                // tsc displays node_modules imports by their bare package name,
-                // e.g. `typeof import("shortid")` not `typeof import("node_modules/shortid/index")`.
-                // Scoped packages (`@scope/pkg`) keep both segments; unscoped packages
-                // keep just the package directory name.
-                let after_nm = &components[node_modules_idx + 1..];
-                if let Some(first) = after_nm.first() {
-                    if first.starts_with('@') && after_nm.len() >= 2 {
-                        return format!("{}/{}", after_nm[0], after_nm[1]);
-                    }
-                    return (*first).to_string();
-                }
-                return components[node_modules_idx..].join("/");
-            }
-
-            trimmed.to_string()
-        }
-
         // For relative imports, use the module specifier directly as the display
         // name rather than the resolved file path. This matches tsc, which shows
         // `typeof import("aliasAssignments_moduleA")` not the full resolved path.
@@ -80,11 +41,36 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .resolve_import_target(module_name)
                 .and_then(|target_idx| {
-                    self.ctx
+                    let target_file_name = self
+                        .ctx
                         .get_arena_for_file(target_idx as u32)
                         .source_files
                         .first()
-                        .map(|source_file| source_file.file_name.clone())
+                        .map(|sf| sf.file_name.clone())?;
+
+                    // When the target is in a node_modules/ that is a direct sibling of the
+                    // source file's directory (common in conformance-test virtual FSes where
+                    // all files share a single root dir), compute the path relative to the
+                    // source file's directory. This gives "node_modules/pkg/..." which
+                    // trim_namespace_display_path then preserves verbatim (node_modules_idx==0),
+                    // matching tsc's output of `import("node_modules/pkg/index")`.
+                    // For deeper layouts (src/app.ts → ../node_modules/pkg/...) the relative
+                    // form contains ".." and we fall back to the absolute path.
+                    let source_dir = std::path::Path::new(&self.ctx.file_name)
+                        .parent()
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_default();
+                    if !source_dir.is_empty() {
+                        let source_dir_slash = format!("{source_dir}/");
+                        let target_norm = target_file_name.replace('\\', "/");
+                        if let Some(relative) = target_norm.strip_prefix(&source_dir_slash)
+                            && relative.starts_with("node_modules/")
+                        {
+                            return Some(relative.to_string());
+                        }
+                    }
+
+                    Some(target_file_name)
                 })
                 .unwrap_or_else(|| module_name.to_string())
         };
@@ -1618,5 +1604,124 @@ impl<'a> CheckerState<'a> {
         };
         let flags = symbol.flags;
         (flags & symbol_flags::INTERFACE) != 0 && (flags & symbol_flags::VALUE) != 0
+    }
+}
+
+/// Normalize a resolved file path to the display form used in `typeof import("...")`.
+///
+/// Rules (mirroring tsc):
+/// - Virtual-FS-root `node_modules` (`/node_modules/pkg/…`, `node_modules_idx == 0`):
+///   keep the full root-relative path so the message reads
+///   `import("node_modules/pkg/index")`.
+/// - Paths with a virtual-root prefix (`/p123/node_modules/…`):
+///   strip the absolute prefix but keep from the `p123` segment onwards.
+/// - Deeper project paths (`/home/user/project/node_modules/pkg/…`):
+///   display just the bare package name (`"pkg"`) or scoped name (`"@scope/pkg"`).
+/// - No `node_modules` segment: return the trimmed path as-is.
+pub(crate) fn trim_namespace_display_path(resolved_name: &str) -> String {
+    let trimmed = resolved_name
+        .strip_prefix("./")
+        .unwrap_or(resolved_name)
+        .trim_start_matches('/');
+
+    let components: Vec<_> = trimmed
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    if let Some(node_modules_idx) = components
+        .iter()
+        .position(|segment| *segment == "node_modules")
+    {
+        // When node_modules is at the filesystem root (idx==0) the file lives
+        // at `/node_modules/pkg/…` — typical in conformance-test virtual FSes.
+        // tsc keeps the full root-relative path: `import("node_modules/pkg/index")`.
+        if node_modules_idx == 0 {
+            return components.join("/");
+        }
+        if node_modules_idx > 0 {
+            let previous = components[node_modules_idx - 1];
+            let looks_like_virtual_root =
+                previous.starts_with('p') && previous[1..].chars().all(|ch| ch.is_ascii_digit());
+            if looks_like_virtual_root {
+                return components[node_modules_idx - 1..].join("/");
+            }
+        }
+        // For deeper paths (e.g. /home/user/project/node_modules/pkg), tsc
+        // displays the bare package name: `import("pkg")` not
+        // `import("node_modules/pkg/index")`. Scoped packages keep both segments.
+        let after_nm = &components[node_modules_idx + 1..];
+        if let Some(first) = after_nm.first() {
+            if first.starts_with('@') && after_nm.len() >= 2 {
+                return format!("{}/{}", after_nm[0], after_nm[1]);
+            }
+            return (*first).to_string();
+        }
+        return components[node_modules_idx..].join("/");
+    }
+
+    trimmed.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::trim_namespace_display_path;
+
+    #[test]
+    fn virtual_fs_root_node_modules_keeps_full_path() {
+        // `/node_modules/pkg/index.d.ts` → `node_modules/pkg/index.d.ts`
+        // (caller strips extension; we keep the full path including node_modules)
+        assert_eq!(
+            trim_namespace_display_path("/node_modules/mdast-util-to-string/index.d.ts"),
+            "node_modules/mdast-util-to-string/index.d.ts"
+        );
+    }
+
+    #[test]
+    fn virtual_fs_root_scoped_package_keeps_full_path() {
+        assert_eq!(
+            trim_namespace_display_path("/node_modules/@scope/pkg/index.d.ts"),
+            "node_modules/@scope/pkg/index.d.ts"
+        );
+    }
+
+    #[test]
+    fn deep_project_path_strips_to_package_name() {
+        // Real project: /home/user/project/node_modules/shortid/index.d.ts → "shortid"
+        assert_eq!(
+            trim_namespace_display_path("/home/user/project/node_modules/shortid/index.d.ts"),
+            "shortid"
+        );
+    }
+
+    #[test]
+    fn deep_project_scoped_package_keeps_both_segments() {
+        assert_eq!(
+            trim_namespace_display_path("/home/user/project/node_modules/@types/react/index.d.ts"),
+            "@types/react"
+        );
+    }
+
+    #[test]
+    fn virtual_root_prefix_path_kept() {
+        // /p123/node_modules/csv-parse/lib/index.d.ts → "p123/node_modules/csv-parse/lib/index.d.ts"
+        assert_eq!(
+            trim_namespace_display_path("/p123/node_modules/csv-parse/lib/index.d.ts"),
+            "p123/node_modules/csv-parse/lib/index.d.ts"
+        );
+    }
+
+    #[test]
+    fn no_node_modules_returns_trimmed() {
+        assert_eq!(trim_namespace_display_path("/src/utils.ts"), "src/utils.ts");
+        assert_eq!(
+            trim_namespace_display_path("./src/utils.ts"),
+            "src/utils.ts"
+        );
+        assert_eq!(trim_namespace_display_path("server.d.ts"), "server.d.ts");
+    }
+
+    #[test]
+    fn relative_prefix_stripped() {
+        assert_eq!(trim_namespace_display_path("./mod.d.ts"), "mod.d.ts");
     }
 }
