@@ -849,6 +849,58 @@ fn test_destructuring_variable_declaration_groups_typed_bindings() {
 }
 
 #[test]
+fn test_destructured_parameter_with_defaulted_property_uses_multiline_object_type() {
+    let output = emit_dts("const k = ({ x: z = 'y' }) => {};");
+    assert!(
+        output.contains("declare const k: ({ x: z }: {\n    x?: string;\n}) => void;"),
+        "Expected defaulted object binding parameter to emit a multiline object type: {output}"
+    );
+}
+
+#[test]
+fn test_destructured_parameter_defaulting_from_any_emits_any() {
+    let output = emit_dts("var a; function f({ p: {} = a } = a) {}");
+    assert!(
+        output.contains("declare function f({ p: {} }?: any): void;"),
+        "Expected destructured parameter defaulting from any to emit any: {output}"
+    );
+}
+
+#[test]
+fn test_returned_function_expression_preserves_destructured_typeof_alias_parameter() {
+    let output = emit_dts(
+        "type Named = { name: string }; function f({ name: alias }: Named) { return function(p: typeof alias) {} }",
+    );
+    assert!(
+        output.contains("declare function f({ name: alias }: Named): (p: typeof alias) => void;"),
+        "Expected returned function expression parameter to preserve typeof alias: {output}"
+    );
+}
+
+#[test]
+fn test_method_returning_non_null_null_widens_to_any() {
+    let output = emit_dts(
+        "type Named = { name: string }; class C { m({ name: alias }: Named, p: typeof alias) { return null!; } }",
+    );
+    assert!(
+        output.contains("m({ name: alias }: Named, p: typeof alias): any;"),
+        "Expected null! method return to emit any: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_object_return_preserves_destructured_typeof_alias_member() {
+    let output = emit_dts_with_binding(
+        "type Named = { name: string }; function f({ name: alias }: Named) { type Named2 = { name: typeof alias }; return null! as Named2; }",
+    );
+    assert!(
+        output
+            .contains("declare function f({ name: alias }: Named): {\n    name: typeof alias;\n};"),
+        "Expected asserted local alias return to preserve typeof destructured alias: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_parameter_properties_emit_individual_class_properties() {
     let source = "class C { constructor(public [x, y]: [string, number]) {} }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -113,6 +113,16 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 Some("any".to_string())
             }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.preferred_expression_type_text(unary.expression)
+                    .or_else(|| self.infer_fallback_type_text_at(unary.expression, depth + 1))
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.function_expression_type_text_from_ast(node_id)
+            }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.preferred_expression_type_text(node_id)
             }
@@ -228,6 +238,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.array_literal_expression_type_text(expr_idx)
             }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.function_expression_type_text_from_ast(expr_idx)
+            }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 self.short_circuit_expression_type_text(expr_idx)
             }
@@ -315,9 +330,70 @@ impl<'a> DeclarationEmitter<'a> {
             if asserted_type.kind == SyntaxKind::ConstKeyword as u16 {
                 return None;
             }
+            if let Some(alias_text) =
+                self.local_asserted_type_alias_text(current, assertion.type_node)
+            {
+                return Some(alias_text);
+            }
             return self.emit_type_node_text_normalized(assertion.type_node);
         }
 
+        None
+    }
+
+    fn local_asserted_type_alias_text(
+        &self,
+        assertion_expr_idx: NodeIndex,
+        type_node_idx: NodeIndex,
+    ) -> Option<String> {
+        let name = self.simple_type_reference_name_text(type_node_idx)?;
+        let alias_type_node =
+            self.find_enclosing_block_type_alias_type_node(assertion_expr_idx, &name)?;
+        let alias_text = self.emit_type_node_text_normalized(alias_type_node)?;
+        alias_text.contains("typeof ").then_some(alias_text)
+    }
+
+    fn simple_type_reference_name_text(&self, type_node_idx: NodeIndex) -> Option<String> {
+        let type_node = self.arena.get(type_node_idx)?;
+        if type_node.kind == SyntaxKind::Identifier as u16 {
+            return self.get_identifier_text(type_node_idx);
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = self.arena.get_type_ref(type_node)?;
+            return self.type_reference_name_text(type_ref.type_name);
+        }
+        None
+    }
+
+    fn find_enclosing_block_type_alias_type_node(
+        &self,
+        from_idx: NodeIndex,
+        name: &str,
+    ) -> Option<NodeIndex> {
+        let mut current_idx = from_idx;
+        while let Some(ext) = self.arena.get_extended(current_idx) {
+            let parent_idx = ext.parent;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::BLOCK
+                && let Some(block) = self.arena.get_block(parent_node)
+                && let Some(type_node) =
+                    block.statements.nodes.iter().copied().find_map(|stmt_idx| {
+                        let stmt_node = self.arena.get(stmt_idx)?;
+                        if stmt_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                            return None;
+                        }
+                        let alias = self.arena.get_type_alias(stmt_node)?;
+                        (self.get_identifier_text(alias.name).as_deref() == Some(name))
+                            .then_some(alias.type_node)
+                    })
+            {
+                return Some(type_node);
+            }
+            current_idx = parent_idx;
+        }
         None
     }
 
@@ -1300,6 +1376,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn should_prefer_source_return_type_text(
+        &self,
+        source_type_text: &str,
+        inferred_return_type: tsz_solver::types::TypeId,
+    ) -> bool {
+        if !source_type_text.contains("typeof ") {
+            return false;
+        }
+        !self.print_type_id(inferred_return_type).contains("typeof ")
+    }
+
     pub(in crate::declaration_emitter) fn collect_unique_return_type_text_from_block(
         &self,
         statements: &NodeList,
@@ -1398,6 +1485,58 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    fn function_expression_type_text_from_ast(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(expr_node)?;
+
+        let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
+            (&self.type_cache, self.type_interner, self.binder)
+        {
+            DeclarationEmitter::with_type_info(
+                self.arena,
+                type_cache.clone(),
+                type_interner,
+                binder,
+            )
+        } else {
+            DeclarationEmitter::new(self.arena)
+        };
+        scratch.source_is_declaration_file = self.source_is_declaration_file;
+        scratch.source_is_js_file = self.source_is_js_file;
+        scratch.current_source_file_idx = self.current_source_file_idx;
+        scratch.source_file_text = self.source_file_text.clone();
+        scratch.current_file_path = self.current_file_path.clone();
+        scratch.current_arena = self.current_arena.clone();
+        scratch.arena_to_path = self.arena_to_path.clone();
+        scratch.indent_level = self.indent_level;
+
+        if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            scratch.emit_type_parameters(type_params);
+        }
+        scratch.write("(");
+        scratch.emit_parameters_with_body(&func.parameters, func.body);
+        scratch.write(") => ");
+        if func.type_annotation.is_some() {
+            scratch.emit_type(func.type_annotation);
+        } else if func.body.is_some() && scratch.body_returns_void(func.body) {
+            scratch.write("void");
+        } else if let Some(return_type) =
+            scratch.function_body_preferred_return_type_text(func.body)
+        {
+            scratch.write(&return_type);
+        } else {
+            scratch.write("any");
+        }
+        Some(scratch.writer.take_output())
     }
 
     pub(in crate::declaration_emitter) fn infer_object_literal_type_text_at(
