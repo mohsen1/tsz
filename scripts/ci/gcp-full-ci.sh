@@ -1383,6 +1383,10 @@ aggregate_fourslash() {
 run_dist_binaries() {
   ci_section "Build dist-fast binaries"
   timed build_test_binaries build_test_binaries
+  show_sccache_stats
+}
+
+show_sccache_stats() {
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
   fi
@@ -1391,6 +1395,7 @@ run_dist_binaries() {
 run_unit_archive_only() {
   ci_section "Build unit test archive"
   timed build_unit_test_archive build_unit_test_archive
+  show_sccache_stats
 }
 
 run_node_harness_prep() {
@@ -1415,9 +1420,7 @@ run_build() {
   else
     echo "scripts/node_modules already present (cache hit)"
   fi
-  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
-    sccache --show-stats 2>/dev/null || true
-  fi
+  show_sccache_stats
 }
 
 # Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
@@ -1428,12 +1431,14 @@ run_build() {
 # invocations reference TypeScript/src/lib (and test fixtures pull from
 # tests/cases). The exceptions are explicit:
 #   - lint runs only `cargo clippy`, no build/test.
+#   - dist-binaries and unit-archive only compile Rust artifacts.
 #   - unit-shard runs nextest from a pre-built archive, no compilation.
 # Aggregate suites bypass run_common_setup() entirely (see main()).
 suite_needs_typescript_source() {
   local suite="$1"
   case "$suite" in
     lint) return 1 ;;
+    dist-binaries|unit-archive) return 1 ;;
     unit-shard) return 1 ;;
     # Aggregate suites only download per-shard JSONs from GCS, jq-sum
     # them, and compare to a snapshot file. They never read TypeScript/.
@@ -1449,10 +1454,9 @@ run_common_setup() {
   if suite_needs_typescript_source "$suite"; then
     timed init_typescript_submodule init_typescript_submodule
   else
-    # lint, dist-binaries, unit-archive, unit*, wasm, wasm-web don't read
-    # TypeScript/ at compile time. Skipping the submodule init avoids
-    # downloading ~50 MB of source and avoids the gitlink-vs-ref-file
-    # staleness check that's only relevant when the tree is actually used.
+    # Skipping the submodule init avoids downloading ~50 MB of source and
+    # avoids the gitlink-vs-ref-file staleness check that's only relevant
+    # when the tree is actually used.
     echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
   fi
   if suite_needs_group "$suite" rust_compile; then
@@ -1509,12 +1513,15 @@ main() {
       ;;
     wasm)
       timed build_wasm build_wasm
+      show_sccache_stats
       ;;
     wasm-web)
       timed build_wasm_web build_wasm_web
+      show_sccache_stats
       ;;
     wasm-all)
       timed build_wasm_all build_wasm_all
+      show_sccache_stats
       ;;
     conformance)
       timed build_test_binaries build_test_binaries
