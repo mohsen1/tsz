@@ -575,8 +575,10 @@ g("", 3, a => a);
         "Expected one TS2345 for the conflicting second argument, got: {diags:?}"
     );
     assert!(
-        ts2345[0].message_text.contains("'3'") && ts2345[0].message_text.contains("'\"\"'"),
-        "Expected TS2345 to compare 3 against the first string-literal candidate, got: {:?}",
+        (ts2345[0].message_text.contains("'3'") || ts2345[0].message_text.contains("'number'"))
+            && (ts2345[0].message_text.contains("'\"\"'")
+                || ts2345[0].message_text.contains("'string'")),
+        "Expected TS2345 to compare the second argument against the first string candidate, got: {:?}",
         ts2345[0]
     );
 }

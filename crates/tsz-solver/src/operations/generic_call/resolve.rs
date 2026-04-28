@@ -88,6 +88,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut direct_param_vars = FxHashSet::default();
         let mut first_direct_primitive_candidate: FxHashMap<InferenceVar, TypeId> =
             FxHashMap::default();
+        let mut first_direct_primitive_mismatch: Option<(usize, TypeId, TypeId)> = None;
         let mut placeholder_probe_map: FxHashMap<TypeId, InferenceVar> = FxHashMap::default();
         // Reusable buffer for placeholder names (avoids per-iteration String allocation)
         let mut placeholder_buf = String::with_capacity(24);
@@ -658,6 +659,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if self.is_contextually_sensitive(arg_type) {
                 saw_deferred_arg = true;
             }
+            let is_rest_param_arg = instantiated_params.last().is_some_and(|param| param.rest)
+                && i >= instantiated_params.len().saturating_sub(1);
 
             // When the checker contextually types an inline arrow using the union of
             // overload signatures, the arrow's parameter types may contain the original
@@ -861,20 +864,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // add enough inference evidence to merge `""` and `3` into a union,
             // incorrectly accepting `g<T>(a: T, b: T, c: (t: T) => T)`.
             if let Some(&var) = var_map.get(&contextual_target_type)
-                && let Some(current_base) = self.primitive_base_of(source_for_inference)
+                && !is_rest_param_arg
+                && direct_param_vars.contains(&var)
+                && !matches!(
+                    source_for_inference,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                )
                 && let Some(&first_candidate) = first_direct_primitive_candidate.get(&var)
+                && let Some(first_base) = self.primitive_base_of(first_candidate)
             {
-                if let Some(first_base) = self.primitive_base_of(first_candidate)
-                    && first_base != current_base
+                let current_base = self.primitive_base_of(source_for_inference);
+                if current_base.map_or(true, |base| base != first_base)
+                    && !self
+                        .checker
+                        .is_assignable_to(source_for_inference, first_candidate)
                 {
-                    return CallResult::ArgumentTypeMismatch {
-                        index: i,
-                        expected: first_candidate,
-                        actual: source_for_inference,
-                        fallback_return: TypeId::ERROR,
-                    };
+                    first_direct_primitive_mismatch.get_or_insert((
+                        i,
+                        first_candidate,
+                        source_for_inference,
+                    ));
+                    continue;
                 }
             } else if let Some(&var) = var_map.get(&contextual_target_type)
+                && !is_rest_param_arg
+                && direct_param_vars.contains(&var)
+                && !matches!(
+                    source_for_inference,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                )
                 && self.primitive_base_of(source_for_inference).is_some()
             {
                 first_direct_primitive_candidate.insert(var, source_for_inference);
@@ -2109,6 +2127,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Store BEFORE the final check so they're available even if the check fails
         // (the checker uses these to perform EPC on ArgumentTypeMismatch too).
         self.last_instantiated_params = Some(instantiated_params.clone());
+
+        if let Some((index, expected, actual)) = first_direct_primitive_mismatch {
+            return CallResult::ArgumentTypeMismatch {
+                index,
+                expected,
+                actual,
+                fallback_return: return_type,
+            };
+        }
 
         if let Some(result) =
             self.check_argument_types_with(&instantiated_params, &final_args, true, func.is_method)
