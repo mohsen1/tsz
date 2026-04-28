@@ -556,10 +556,12 @@ run_unit_shard() {
     return 1
   fi
 
+  # Use hash partitioning instead of count partitioning so slow tests are spread
+  # by stable test identity rather than clustered by nextest's listing order.
   cargo nextest run \
     --archive-file "$tmp_archive" \
     --profile ci \
-    --partition "count:$((shard_index + 1))/${shard_count}"
+    --partition "hash:$((shard_index + 1))/${shard_count}"
   rm -f "$tmp_archive"
 }
 
