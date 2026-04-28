@@ -1125,6 +1125,21 @@ module.exports.foo.Widget = class {
 }
 
 #[test]
+fn test_js_commonjs_named_function_self_alias_emits_import_export_namespace_member() {
+    let output = emit_js_dts(
+        r#"
+module.exports.foo = function foo() {}
+module.exports.foo.self = module.exports.foo;
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    import self = foo;\n    export { self };\n}"),
+        "Expected CommonJS named function self aliases to use an import alias inside the namespace: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_like_class_emits_companion_class() {
     let output = emit_js_dts(
         r#"

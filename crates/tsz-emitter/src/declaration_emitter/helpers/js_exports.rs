@@ -29,9 +29,9 @@ use tsz_scanner::SyntaxKind;
 
 use super::{
     JsClassLikePrototypeMembers, JsCommonjsExpandoDeclKind, JsCommonjsExpandoDeclarations,
-    JsCommonjsNamedExports, JsCommonjsSyntheticStatements, JsNamespaceExportAliases,
-    JsStaticMethodAugmentationEntry, JsStaticMethodAugmentationGroup, JsStaticMethodAugmentations,
-    JsStaticMethodInfo, JsStaticMethodKey,
+    JsCommonjsNamedExports, JsCommonjsSyntheticStatements, JsNamespaceExportAlias,
+    JsNamespaceExportAliases, JsStaticMethodAugmentationEntry, JsStaticMethodAugmentationGroup,
+    JsStaticMethodAugmentations, JsStaticMethodInfo, JsStaticMethodKey,
 };
 
 impl<'a> DeclarationEmitter<'a> {
@@ -476,7 +476,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         for &stmt_idx in &source_file.statements.nodes {
-            let Some((root_name, export_name, local_name)) =
+            let Some((root_name, export_name, local_name, use_import_alias)) =
                 self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root.as_deref())
             else {
                 if let Some((root_name, member_name, _initializer)) =
@@ -509,7 +509,13 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            Self::push_js_namespace_export_alias(&mut aliases, &root_name, export_name, local_name);
+            Self::push_js_namespace_export_alias_with_kind(
+                &mut aliases,
+                &root_name,
+                export_name,
+                local_name,
+                use_import_alias,
+            );
         }
 
         if let Some(root_name) = commonjs_root.as_deref() {
@@ -1575,19 +1581,41 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
+        let mut import_alias_exports = Vec::new();
         let mut plain_exports = Vec::new();
         let mut renamed_exports = Vec::new();
-        for (export_name, local_name) in aliases {
+        for alias in aliases {
+            let export_name = alias.export_name;
             let local_name = self
                 .js_shadowed_export_equals_local_aliases
-                .get(&local_name)
+                .get(&alias.local_name)
                 .cloned()
-                .unwrap_or(local_name);
+                .unwrap_or(alias.local_name);
+            if alias.use_import_alias {
+                import_alias_exports.push((export_name, local_name));
+                continue;
+            }
             if export_name == local_name {
                 plain_exports.push(local_name);
             } else {
                 renamed_exports.push((export_name, local_name));
             }
+        }
+
+        for (export_name, local_name) in import_alias_exports {
+            self.write_indent();
+            self.write("import ");
+            self.write(&export_name);
+            self.write(" = ");
+            self.write(&local_name);
+            self.write(";");
+            self.write_line();
+
+            self.write_indent();
+            self.write("export { ");
+            self.write(&export_name);
+            self.write(" };");
+            self.write_line();
         }
 
         if !plain_exports.is_empty() {
@@ -1906,7 +1934,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         stmt_idx: NodeIndex,
         commonjs_root: Option<&str>,
-    ) -> Option<(String, String, String)> {
+    ) -> Option<(String, String, String, bool)> {
         let stmt_node = self.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
             return None;
@@ -1924,13 +1952,21 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let local_name = self.get_identifier_text(
-            self.arena
-                .skip_parenthesized_and_assertions_and_comma(binary.right),
-        )?;
+        let rhs = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let module_exports_local_name = self.module_exports_property_reference_name(rhs);
+        let local_name = self
+            .get_identifier_text(rhs)
+            .or_else(|| module_exports_local_name.clone())?;
         let (root_name, export_name) =
             self.js_namespace_export_alias_target(binary.left, commonjs_root)?;
-        Some((root_name, export_name, local_name))
+        Some((
+            root_name,
+            export_name,
+            local_name,
+            module_exports_local_name.is_some(),
+        ))
     }
 
     pub(in crate::declaration_emitter) fn js_namespace_export_alias_target(
@@ -1960,6 +1996,10 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(root_name) = commonjs_root
         {
             return Some((root_name.to_string(), export_name));
+        }
+
+        if let Some(root_name) = self.module_exports_property_reference_name(receiver_idx) {
+            return Some((root_name, export_name));
         }
 
         None
@@ -2198,11 +2238,33 @@ impl<'a> DeclarationEmitter<'a> {
         export_name: String,
         local_name: String,
     ) {
+        Self::push_js_namespace_export_alias_with_kind(
+            aliases,
+            root_name,
+            export_name,
+            local_name,
+            false,
+        );
+    }
+
+    pub(in crate::declaration_emitter) fn push_js_namespace_export_alias_with_kind(
+        aliases: &mut JsNamespaceExportAliases,
+        root_name: &str,
+        export_name: String,
+        local_name: String,
+        use_import_alias: bool,
+    ) {
         let entry = aliases.entry(root_name.to_string()).or_default();
-        if !entry.iter().any(|(existing_export, existing_local)| {
-            existing_export == &export_name && existing_local == &local_name
+        if !entry.iter().any(|existing| {
+            existing.export_name == export_name
+                && existing.local_name == local_name
+                && existing.use_import_alias == use_import_alias
         }) {
-            entry.push((export_name, local_name));
+            entry.push(JsNamespaceExportAlias {
+                export_name,
+                local_name,
+                use_import_alias,
+            });
         }
     }
 }
