@@ -913,6 +913,14 @@ pub struct CheckerContext<'a> {
     /// Part of the `DefId` migration to decouple Solver from Binder.
     pub definition_store: Arc<DefinitionStore>,
 
+    /// Whether per-run type results should be mirrored into the shared
+    /// `DefinitionStore` result caches.
+    ///
+    /// Batch project checking enables this through `ProjectEnv`; interactive/LSP
+    /// callers keep it disabled so persistent shared stores do not accumulate
+    /// speculative request-local results across editor operations.
+    pub share_owner_symbol_type_results: bool,
+
     /// Mapping from Binder `SymbolId` to Solver `DefId`.
     /// Used during migration to avoid creating duplicate `DefIds` for the same symbol.
     /// Wrapped in `RefCell` to allow mutation through shared references (for use in Fn closures).
@@ -1539,6 +1547,7 @@ impl ProjectEnv {
         // prepopulation so `is_fully_populated()` reflects project-wide state.
         if let Some(ref store) = self.shared_definition_store {
             ctx.definition_store = Arc::clone(store);
+            ctx.share_owner_symbol_type_results = true;
         }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // When the shared DefinitionStore was fully populated (via from_semantic_defs
