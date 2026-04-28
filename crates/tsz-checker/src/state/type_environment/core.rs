@@ -1553,13 +1553,14 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .map(|sf| sf.file_name.clone())
                             .unwrap_or_else(|| self.ctx.file_name.clone());
-                        let mut checker = Box::new(CheckerState::with_parent_cache(
+                        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                             arena.as_ref(),
                             decl_binder,
                             self.ctx.types,
                             decl_file_name,
                             self.ctx.compiler_options.clone(),
                             self,
+                            tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
                         ));
                         if let Some(file_idx) = self.ctx.get_file_idx_for_arena(arena.as_ref()) {
                             checker.ctx.current_file_idx = file_idx;

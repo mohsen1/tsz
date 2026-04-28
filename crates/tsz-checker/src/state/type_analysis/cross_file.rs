@@ -9,6 +9,10 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+const CROSS_FILE_QUERY_INTERFACE_TYPE: u8 = 1;
+const CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE: u8 = 2;
+const CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE: u8 = 3;
+
 fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
 
@@ -736,6 +740,19 @@ impl<'a> CheckerState<'a> {
             .map(std::convert::AsRef::as_ref);
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
+        let query_file_idx = self.ctx.get_file_idx_for_arena(symbol_arena);
+        if let Some(file_idx) = query_file_idx
+            && let Some((cached_type, cached_params)) =
+                self.ctx.definition_store.get_resolved_cross_file_query(
+                    CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
+                    file_idx as u32,
+                    sym_id.0,
+                    0,
+                    0,
+                )
+        {
+            return Some((cached_type, cached_params));
+        }
 
         // Guard against deep cross-arena recursion
         if !Self::enter_cross_arena_delegation() {
@@ -762,13 +779,14 @@ impl<'a> CheckerState<'a> {
             .get_binder_for_arena(symbol_arena)
             .unwrap_or(self.ctx.binder);
 
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
             delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         for &id in &self.ctx.class_instance_resolution_set {
@@ -790,6 +808,20 @@ impl<'a> CheckerState<'a> {
         checker.ctx.ensure_type_env_has_definition_store();
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
+        if let (Some(file_idx), Some((type_id, params))) = (query_file_idx, result.as_ref())
+            && *type_id != TypeId::UNKNOWN
+            && *type_id != TypeId::ERROR
+        {
+            self.ctx.definition_store.cache_resolved_cross_file_query(
+                CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
+                file_idx as u32,
+                sym_id.0,
+                0,
+                0,
+                *type_id,
+                params.clone(),
+            );
+        }
 
         self.ctx.leave_recursion();
         Self::leave_cross_arena_delegation();
@@ -836,6 +868,25 @@ impl<'a> CheckerState<'a> {
         }
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
+        let query_file_idx =
+            delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
+        if let Some(file_idx) = query_file_idx
+            && let Some((cached_type, _)) = self.ctx.definition_store.get_resolved_cross_file_query(
+                CROSS_FILE_QUERY_INTERFACE_TYPE,
+                file_idx as u32,
+                sym_id.0,
+                0,
+                0,
+            )
+            && cached_type != TypeId::UNKNOWN
+            && cached_type != TypeId::ERROR
+        {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx
+                .definition_store
+                .register_type_to_def(cached_type, def_id);
+            return Some(cached_type);
+        }
         let delegate_binder = if let Some(file_idx) = delegate_file_idx {
             self.ctx
                 .get_binder_for_file(file_idx)
@@ -865,17 +916,21 @@ impl<'a> CheckerState<'a> {
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
 
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             symbol_arena,
             delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaInterface,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
-        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaInterface,
+        );
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         // Parent caches are cloned into the child for performance, but raw SymbolIds
         // can collide across binders. Clear the delegated symbol's entries so the
@@ -956,6 +1011,17 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_to_def(result, def_id);
+            if let Some(file_idx) = query_file_idx {
+                self.ctx.definition_store.cache_resolved_cross_file_query(
+                    CROSS_FILE_QUERY_INTERFACE_TYPE,
+                    file_idx as u32,
+                    sym_id.0,
+                    0,
+                    0,
+                    result,
+                    Vec::new(),
+                );
+            }
             Some(result)
         } else {
             None
@@ -978,6 +1044,20 @@ impl<'a> CheckerState<'a> {
         let delegate_binder = delegate_file_idx
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
             .unwrap_or(self.ctx.binder);
+        if type_args.is_none()
+            && let Some(file_idx) = delegate_file_idx
+            && let Some((cached_type, _)) = self.ctx.definition_store.get_resolved_cross_file_query(
+                CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                file_idx as u32,
+                interface_idx.0,
+                member_idx.0,
+                0,
+            )
+            && cached_type != TypeId::UNKNOWN
+            && cached_type != TypeId::ERROR
+        {
+            return Some(cached_type);
+        }
 
         if !Self::enter_cross_arena_delegation() {
             return None;
@@ -993,17 +1073,21 @@ impl<'a> CheckerState<'a> {
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
 
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             interface_arena,
             delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
-        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
+        );
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         let parent_is_declaration_file = self.ctx.file_name.ends_with(".d.ts")
             || self.ctx.file_name.ends_with(".d.cts")
@@ -1054,6 +1138,19 @@ impl<'a> CheckerState<'a> {
         Self::leave_cross_arena_delegation();
 
         if result != TypeId::UNKNOWN && result != TypeId::ERROR {
+            if type_args.is_none()
+                && let Some(file_idx) = delegate_file_idx
+            {
+                self.ctx.definition_store.cache_resolved_cross_file_query(
+                    CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                    file_idx as u32,
+                    interface_idx.0,
+                    member_idx.0,
+                    0,
+                    result,
+                    Vec::new(),
+                );
+            }
             Some(result)
         } else {
             None
