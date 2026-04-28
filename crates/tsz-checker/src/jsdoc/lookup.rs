@@ -105,12 +105,18 @@ impl<'a> CheckerState<'a> {
         if !text.contains("@typedef") && !text.contains("@callback") && !text.contains("@import") {
             return false;
         }
+        if !name.is_empty() && !text.contains(name) {
+            return false;
+        }
 
         source_file.comments.iter().any(|comment| {
             if !is_jsdoc_comment(comment, text) {
                 return false;
             }
             let content = get_jsdoc_content(comment, text);
+            if !name.is_empty() && !content.contains(name) {
+                return false;
+            }
             Self::parse_jsdoc_typedefs(&content)
                 .iter()
                 .any(|(typedef_name, _)| typedef_name == name)
