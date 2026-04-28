@@ -124,6 +124,29 @@ function f(p) {}
     );
 }
 
+/// `export class C` wraps the class in an EXPORT_DECLARATION node, so leading
+/// JSDoc attaches before `export` rather than before `class`. The reference
+/// path must walk up to the wrapper to surface JSDoc `@template T` params,
+/// otherwise `C<number>` falsely emits TS2315 ("Type 'C' is not generic").
+#[test]
+fn jsdoc_class_template_on_exported_class_does_not_emit_ts2315() {
+    let diags = crate::test_utils::check_js_source_diagnostics(
+        r#"/**
+ * @template T
+ */
+export class C {}
+
+/** @type {C<number>} */
+let foo;
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2315),
+        "Should not emit TS2315 for `export class` with @template T: codes={:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn is_plain_jsdoc_type_name_checks_identifier_shape() {
     assert!(CheckerState::is_plain_jsdoc_type_name("C"));
