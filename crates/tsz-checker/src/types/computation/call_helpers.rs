@@ -709,13 +709,14 @@ impl<'a> CheckerState<'a> {
             .ctx
             .get_binder_for_arena(decl_arena.as_ref())
             .unwrap_or(self.ctx.binder);
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             decl_arena.as_ref(),
             delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
         ));
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
@@ -819,13 +820,14 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| self.ctx.file_name.clone());
                 let delegate_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
 
-                let mut checker = Box::new(CheckerState::with_parent_cache(
+                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                     decl_arena,
                     self.ctx.binder,
                     self.ctx.types,
                     delegate_file_name,
                     self.ctx.compiler_options.clone(),
                     self,
+                    tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
                 ));
                 checker.ctx.copy_cross_file_state_from(&self.ctx);
                 checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
