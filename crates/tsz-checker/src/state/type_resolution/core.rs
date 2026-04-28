@@ -75,59 +75,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Some parser paths represent dotted type-reference names as property
-        // access expressions rather than QualifiedName nodes. Treat them as
-        // entity names in type position so missing namespace exports report
-        // TS2694 instead of silently collapsing to error.
-        if let Some(name_node) = self.ctx.arena.get(type_name_idx)
-            && name_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        {
-            let sym_res = self.resolve_qualified_symbol_in_type_position(type_name_idx);
-            match sym_res {
-                TypeSymbolResolution::Type(sym_id) => {
-                    self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
-                    let mut result = self.type_reference_symbol_type(sym_id);
-                    if has_type_args && let Some(args) = &type_ref.type_arguments {
-                        if !self.is_inside_type_parameter_declaration(idx)
-                            && self.validate_type_reference_type_arguments(sym_id, args, idx)
-                        {
-                            return TypeId::ERROR;
-                        }
-                        let type_args: Vec<TypeId> = args
-                            .nodes
-                            .iter()
-                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                            .collect();
-                        if !type_args.is_empty() {
-                            result = self.ctx.types.application(result, type_args);
-                        }
-                    }
-                    return result;
-                }
-                TypeSymbolResolution::ValueOnly(_) => {
-                    let name = self
-                        .entity_name_text(type_name_idx)
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    use crate::query_boundaries::name_resolution::NameLookupKind;
-                    self.report_wrong_meaning_diagnostic(
-                        &name,
-                        type_name_idx,
-                        NameLookupKind::Value,
-                    );
-                    return TypeId::ERROR;
-                }
-                TypeSymbolResolution::NotFound => {
-                    let _ = self.report_type_query_missing_member(type_name_idx);
-                    if let Some(args) = &type_ref.type_arguments {
-                        for &arg_idx in &args.nodes {
-                            let _ = self.get_type_from_type_node(arg_idx);
-                        }
-                    }
-                    return TypeId::ERROR;
-                }
-            }
-        }
-
         // Check if type_name is a qualified name (A.B)
         if let Some(name_node) = self.ctx.arena.get(type_name_idx)
             && name_node.kind == syntax_kind_ext::QUALIFIED_NAME
