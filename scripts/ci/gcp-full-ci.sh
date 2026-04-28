@@ -505,6 +505,7 @@ _UNIT_TEST_PACKAGES=(
 run_unit_tests() {
   ci_section "Workspace nextest suites"
   cargo nextest run --profile ci --cargo-profile ci-unit \
+    --build-jobs "$CARGO_BUILD_JOBS" \
     "${_UNIT_TEST_PACKAGES[@]}"
 }
 
@@ -531,6 +532,7 @@ build_unit_test_archive() {
   local archive_rc=0
   cargo nextest archive \
     --cargo-profile ci-unit \
+    --build-jobs "$CARGO_BUILD_JOBS" \
     --archive-file "$tmp_archive" \
     "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
   if [[ "$archive_rc" -ne 0 ]]; then
@@ -644,7 +646,7 @@ build_wasm() {
   ci_section "WASM build (nodejs target)"
   (
     cd crates/tsz-wasm
-    wasm-pack build --target nodejs --out-dir ../../pkg --no-opt
+    wasm-pack build --profile ci-wasm --target nodejs --out-dir ../../pkg --no-opt -- --jobs "$CARGO_BUILD_JOBS"
   )
   mkdir -p pkg/lib
   cp -R TypeScript/src/lib/. pkg/lib/
@@ -655,7 +657,7 @@ build_wasm_web() {
   cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
   (
     cd crates/tsz-wasm
-    wasm-pack build --target web --out-dir ../../pkg/web --no-opt
+    wasm-pack build --profile ci-wasm --target web --out-dir ../../pkg/web --no-opt -- --jobs "$CARGO_BUILD_JOBS"
   )
 }
 
