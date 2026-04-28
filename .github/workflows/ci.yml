@@ -132,22 +132,6 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
-  unit-archive:
-    name: unit-archive
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Build unit test archive
-        run: scripts/ci/github-suite.sh unit-archive
-
   wasm:
     name: wasm
     needs: gate
@@ -216,37 +200,23 @@ jobs:
           compression-level: 1
 
   unit:
-    # NOTE: this is over-sharded for what unit tests actually do (~5 min of
-    # work split across 4 shards each paying ~40s of setup overhead). The
-    # natural fix is to deshard into a single 'unit' job that calls the
-    # 'unit' suite directly. That fix is blocked on 4 pre-existing test
-    # failures that the shard architecture silently masks: the shards
-    # download a nextest archive without workspace source, so tests that
-    # do `if !some_workspace_path.exists() { return }` (e.g.,
-    # test_binder_file_size_ceiling in tsz-solver) early-return as a
-    # non-failure. A single unit job has the workspace checkout, runs the
-    # tests for real, and they fail. See follow-up for the test fixes;
-    # this PR keeps the over-sharding as-is to avoid expanding scope into
-    # unrelated test debt.
-    name: unit-${{ matrix.shard }}
-    needs: [gate, unit-archive]
+    # One nextest job avoids the 3m+ archive/upload critical path. Nextest
+    # already parallelizes heavily inside the runner, and the latest green
+    # #1657 sample showed the actual shard execution was much cheaper than
+    # preparing and shipping the archive.
+    name: unit
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3]
     env:
-      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_UNIT_SHARD_COUNT: 4
-      TSZ_CI_CACHE_SAVE: "0"
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit shard
-        run: scripts/ci/github-suite.sh unit-shard
+      - name: Run unit suite
+        run: scripts/ci/github-suite.sh unit
 
   conformance:
     # Conformance remains below the current wall-clock tail. In the
