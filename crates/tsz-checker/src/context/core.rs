@@ -150,8 +150,27 @@ impl<'a> CheckerContext<'a> {
     /// where D = number of dynamically discovered entries, instead of O(N)
     /// where N = total entries (base + dynamic).
     pub fn copy_symbol_file_targets_to(&self, child: &mut CheckerContext<'_>) {
+        // Untracked variant: attributes to `CheckerCreationReason::Other`.
+        // Prefer `copy_symbol_file_targets_to_attributed` at call sites we
+        // want to see in the per-reason dump.
+        self.copy_symbol_file_targets_to_attributed(
+            child,
+            tsz_common::perf_counters::CheckerCreationReason::Other,
+        );
+    }
+
+    /// Attributed overlay copy: also bumps the per-reason counters in the
+    /// `tsz_common::perf_counters` dump (PR #1631). Use this at call sites
+    /// where you know the reason; the dump shows which reasons drive the
+    /// 12.8B-entry copy explosion observed on subset3.
+    pub fn copy_symbol_file_targets_to_attributed(
+        &self,
+        child: &mut CheckerContext<'_>,
+        reason: tsz_common::perf_counters::CheckerCreationReason,
+    ) {
         let overlay = self.cross_file_symbol_targets.borrow();
         if !overlay.is_empty() {
+            tsz_common::perf_counters::record_overlay_copy(reason, overlay.len() as u64);
             *child.cross_file_symbol_targets.borrow_mut() = overlay.clone();
         }
     }
