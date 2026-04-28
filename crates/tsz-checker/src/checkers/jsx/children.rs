@@ -182,8 +182,10 @@ impl<'a> CheckerState<'a> {
                 // TS2746 path for components that only declare a single non-array
                 // children type, but prefer any intersection member that can actually
                 // accept multiple JSX children.
-                if let Some(react_child_type) =
-                    self.get_react_node_multiple_children_type(tag_name_idx)
+                if self.jsx_tag_resolves_to_class(tag_name_idx)
+                    && self.type_has_jsx_children_callable_signature(children_type)
+                    && let Some(react_child_type) =
+                        self.get_react_node_multiple_children_type(tag_name_idx)
                 {
                     if has_text_child && !self.children_type_accepts_text(react_child_type) {
                         return;
@@ -490,6 +492,17 @@ impl<'a> CheckerState<'a> {
         }
         let instance_type = self.class_instance_type_from_symbol(sym_id)?;
         self.get_jsx_instance_multiple_children_prop_type(instance_type)
+    }
+
+    fn jsx_tag_resolves_to_class(&mut self, tag_name_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(tag_name_idx) else {
+            return false;
+        };
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, &lib_binders)
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
     }
 
     fn get_jsx_instance_multiple_children_prop_type(
