@@ -157,6 +157,22 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if !access.question_dot_token
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && !ident.escaped_text.starts_with('#')
+            && !(self.is_js_file()
+                && self.ctx.compiler_options.check_js
+                && self.property_access_is_write_target_or_base(idx))
+            && let Some(ns_name) = self.uninstantiated_namespace_name(access.expression)
+        {
+            self.report_wrong_meaning_diagnostic(
+                &ns_name,
+                access.expression,
+                crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+            );
+            return TypeId::ERROR;
+        }
+
         // Once the base expression is known to be a type-only import/export chain,
         // property access is not a valid value operation. Preserve the TS1361/TS1362
         // diagnostic on the base identifier and stop before member lookup adds a
@@ -367,21 +383,7 @@ impl<'a> CheckerState<'a> {
         {
             // Check if there's a local binding shadowing the global
             let is_local_shadow = self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    // Local declarations shadow global value names. This includes
-                    // variables, classes, and functions — e.g., a file-local
-                    // `export declare class Promise<R>` must shadow the global
-                    // `Promise` so that its custom static members are visible.
-                    (symbol.flags
-                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::PROPERTY
-                            | symbol_flags::CLASS
-                            | symbol_flags::FUNCTION))
-                        != 0
-                });
+                .property_access_global_value_is_shadowed(access.expression, &ident.escaped_text);
 
             if !is_local_shadow {
                 let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
@@ -744,15 +746,7 @@ impl<'a> CheckerState<'a> {
             && self.is_known_global_value_name(&ident.escaped_text)
         {
             let is_local_shadow = self
-                .resolve_identifier_symbol_without_tracking(access.expression)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    (symbol.flags
-                        & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::PROPERTY))
-                        != 0
-                });
+                .property_access_global_value_is_shadowed(access.expression, &ident.escaped_text);
 
             if !is_local_shadow {
                 let value_type = self.type_of_value_symbol_by_name(&ident.escaped_text);
