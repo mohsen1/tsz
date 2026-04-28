@@ -867,6 +867,28 @@ fn test_destructured_parameter_defaulting_from_any_emits_any() {
 }
 
 #[test]
+fn test_returned_function_expression_preserves_destructured_typeof_alias_parameter() {
+    let output = emit_dts(
+        "type Named = { name: string }; function f({ name: alias }: Named) { return function(p: typeof alias) {} }",
+    );
+    assert!(
+        output.contains("declare function f({ name: alias }: Named): (p: typeof alias) => void;"),
+        "Expected returned function expression parameter to preserve typeof alias: {output}"
+    );
+}
+
+#[test]
+fn test_method_returning_non_null_null_widens_to_any() {
+    let output = emit_dts(
+        "type Named = { name: string }; class C { m({ name: alias }: Named, p: typeof alias) { return null!; } }",
+    );
+    assert!(
+        output.contains("m({ name: alias }: Named, p: typeof alias): any;"),
+        "Expected null! method return to emit any: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_parameter_properties_emit_individual_class_properties() {
     let source = "class C { constructor(public [x, y]: [string, number]) {} }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
