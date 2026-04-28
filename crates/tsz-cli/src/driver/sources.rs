@@ -494,6 +494,56 @@ pub(super) fn collect_type_root_files(
     (files.into_iter().collect(), Vec::new())
 }
 
+/// Per-file work that the parallel `read_source_files` BFS phase produces.
+/// Bundled together so the file is opened and scanned exactly once per BFS
+/// visit, with all per-file work running on a rayon worker before the
+/// (necessarily serial) module-resolver phase consumes it.
+struct ParsedSource {
+    read_result: FileReadResult,
+    specifiers: Vec<(
+        String,
+        tsz::module_resolver::ImportKind,
+        Option<tsz::module_resolver::ImportingModuleKind>,
+    )>,
+    type_refs: Vec<(String, Option<String>, usize, usize)>,
+    reference_paths: Vec<(String, usize, usize)>,
+}
+
+/// Read one source file and run the in-text scanners that the BFS used to
+/// inline. Pure function — no shared state, safe to invoke from any thread.
+fn parse_source_for_bfs(path: &Path, no_resolve: bool) -> ParsedSource {
+    let read_result = read_source_file(path);
+    let (text, is_binary) = match &read_result {
+        FileReadResult::Text(t) => (Some(t.as_str()), false),
+        FileReadResult::Binary { text, .. } => (Some(text.as_str()), true),
+        FileReadResult::Error(_) => (None, false),
+    };
+    let specifiers = match text {
+        Some(text) if !is_binary => {
+            crate::driver::resolution::collect_module_requests_from_text(path, text)
+        }
+        _ => Vec::new(),
+    };
+    let type_refs = match text {
+        Some(text) if !is_binary => {
+            tsz::checker::triple_slash_validator::extract_reference_types(text)
+        }
+        _ => Vec::new(),
+    };
+    let reference_paths = match text {
+        Some(text) if !is_binary && !no_resolve => {
+            tsz::checker::triple_slash_validator::extract_reference_paths(text)
+        }
+        _ => Vec::new(),
+    };
+    ParsedSource {
+        read_result,
+        specifiers,
+        type_refs,
+        reference_paths,
+    }
+}
+
 pub(super) fn read_source_files(
     paths: &[PathBuf],
     base_dir: &Path,
@@ -536,136 +586,194 @@ pub(super) fn read_source_files(
         }
     }
 
-    while let Some(path) = pending.pop_front() {
-        // Use cached bind result only when we know the file hasn't changed
-        // (changed_paths is provided and this file is not in it)
-        if use_cache
-            && let Some(cache) = cache
-            && let Some(changed_paths) = changed_paths
-            && !changed_paths.contains(&path)
-            && let (Some(_), Some(cached_deps)) =
-                (cache.bind_cache.get(&path), cache.dependencies.get(&path))
-        {
-            dependencies.insert(path.clone(), cached_deps.clone());
-            sources.insert(path.clone(), (None, false, false)); // Cached files are not binary
-            for dep in cached_deps {
-                if seen.insert(dep.clone()) {
-                    pending.push_back(dep.clone());
+    // PERF: BFS-by-level parallelism for the I/O-bound part of the loop.
+    //
+    // The original loop popped one path at a time and did the file read +
+    // import-text scan + reference-text scan inline. On a 6086-file workspace
+    // this single-threaded BFS spent ~85% of total wall time inside
+    // `read_source_files`, all of it sequenced through the open()/read()
+    // syscalls and the in-memory regex-based scanners. Profile (samply,
+    // large-ts-repo full bench): the calling thread held 100% of CPU while
+    // the rayon worker pool sat idle.
+    //
+    // Restructuring as a level-synchronous BFS lets every path discovered in
+    // the previous iteration's resolution phase be read in parallel before
+    // the (necessarily serial) module-resolver step that mutates
+    // `module_resolver`, `resolution_cache`, `seen`, and `pending`. The serial
+    // phase still pops items from a freshly-drained per-level batch in the
+    // original BFS order, so the visited-set ordering and dependency
+    // propagation are unchanged.
+
+    /// Per-batch action for one path. Computed once on the calling thread,
+    /// then `Read` items get their file body materialized in parallel before
+    /// the serial resolution phase consumes the result.
+    enum BatchAction {
+        Cached,
+        SkipJs,
+        Read,
+    }
+
+    while !pending.is_empty() {
+        let batch: Vec<PathBuf> = pending.drain(..).collect();
+
+        // Phase 1 (serial): classify each path. The cache + skip checks are
+        // cheap (HashMap lookups + path component scans) and need read access
+        // to `cache`/`changed_paths`, so we keep them on the calling thread.
+        let actions: Vec<BatchAction> = batch
+            .iter()
+            .map(|path| {
+                let cached = use_cache
+                    && cache.is_some_and(|c| {
+                        changed_paths.is_some_and(|cp| !cp.contains(path))
+                            && c.bind_cache.contains_key(path)
+                            && c.dependencies.contains_key(path)
+                    });
+                if cached {
+                    BatchAction::Cached
+                } else if should_skip_js_in_node_modules(path, options.max_node_module_js_depth) {
+                    BatchAction::SkipJs
+                } else {
+                    BatchAction::Read
                 }
+            })
+            .collect();
+
+        // Phase 2 (parallel): read + parse imports/refs for `Read` paths.
+        // Each task is independent — no shared mutable state — and the closure
+        // returns owned data. Per-path overhead is dominated by the open()
+        // syscall plus the linear scanners over the file body, both of which
+        // benefit from saturating the disk queue and CPU cores in parallel.
+        use rayon::prelude::*;
+        let no_resolve = options.no_resolve;
+        let parsed: Vec<Option<ParsedSource>> = batch
+            .par_iter()
+            .zip(actions.par_iter())
+            .map(|(path, action)| match action {
+                BatchAction::Read => Some(parse_source_for_bfs(path, no_resolve)),
+                BatchAction::Cached | BatchAction::SkipJs => None,
+            })
+            .collect();
+
+        // Phase 3 (serial): apply each batch entry's action, queueing newly
+        // discovered deps into `pending` for the next BFS level.
+        for ((path, action), maybe_parsed) in batch.into_iter().zip(actions).zip(parsed) {
+            match action {
+                BatchAction::Cached => {
+                    let cache = cache.expect("cached arm only fires when cache is Some");
+                    let cached_deps = cache
+                        .dependencies
+                        .get(&path)
+                        .expect("cached arm only fires when dependencies entry exists");
+                    dependencies.insert(path.clone(), cached_deps.clone());
+                    sources.insert(path.clone(), (None, false, false));
+                    for dep in cached_deps {
+                        if seen.insert(dep.clone()) {
+                            pending.push_back(dep.clone());
+                        }
+                    }
+                    continue;
+                }
+                BatchAction::SkipJs => {
+                    sources.insert(path.clone(), (None, false, false));
+                    continue;
+                }
+                BatchAction::Read => {}
             }
-            continue;
-        }
 
-        // Skip JS files in node_modules that exceed maxNodeModuleJsDepth.
-        // These files are recorded as dependencies but treated as untyped
-        // (no parsing, no import resolution). This matches tsc's behavior:
-        // with the default maxNodeModuleJsDepth=0, JS files inside node_modules
-        // are never parsed.
-        if should_skip_js_in_node_modules(&path, options.max_node_module_js_depth) {
-            sources.insert(path.clone(), (None, false, false));
-            continue;
-        }
+            let parsed = maybe_parsed.expect("Read action always produces parsed source");
+            let ParsedSource {
+                read_result,
+                specifiers,
+                type_refs,
+                reference_paths,
+            } = parsed;
 
-        // Read file with binary detection
-        let (text, is_binary, suppress_parser_diagnostics) = match read_source_file(&path) {
-            FileReadResult::Text(t) => (t, false, false),
-            FileReadResult::Binary {
-                text,
-                suppress_parser_diagnostics,
-            } => (text, true, suppress_parser_diagnostics),
-            FileReadResult::Error(e) => {
-                return Err(anyhow::anyhow!("failed to read {}: {}", path.display(), e));
-            }
-        };
-        let specifiers = if is_binary {
-            Vec::new()
-        } else {
-            crate::driver::resolution::collect_module_requests_from_text(&path, &text)
-        };
-        let type_refs = if is_binary {
-            Vec::new()
-        } else {
-            tsz::checker::triple_slash_validator::extract_reference_types(&text)
-        };
-        let reference_paths = if is_binary || options.no_resolve {
-            vec![]
-        } else {
-            tsz::checker::triple_slash_validator::extract_reference_paths(&text)
-        };
+            let (text, is_binary, suppress_parser_diagnostics) = match read_result {
+                FileReadResult::Text(t) => (t, false, false),
+                FileReadResult::Binary {
+                    text,
+                    suppress_parser_diagnostics,
+                } => (text, true, suppress_parser_diagnostics),
+                FileReadResult::Error(e) => {
+                    return Err(anyhow::anyhow!("failed to read {}: {}", path.display(), e));
+                }
+            };
 
-        sources.insert(
-            path.clone(),
-            (Some(text), is_binary, suppress_parser_diagnostics),
-        );
-        let entry = dependencies.entry(path.clone()).or_default();
+            sources.insert(
+                path.clone(),
+                (Some(text), is_binary, suppress_parser_diagnostics),
+            );
+            let entry = dependencies.entry(path.clone()).or_default();
 
-        if !options.no_resolve {
-            for (specifier, import_kind, resolution_mode_override) in specifiers {
-                let request = tsz::module_resolver::ModuleLookupRequest {
-                    specifier: &specifier,
-                    containing_file: &path,
-                    specifier_span: tsz_common::Span::new(0, 0),
-                    import_kind,
-                    resolution_mode_override,
-                    no_implicit_any: options.checker.no_implicit_any,
-                    implied_classic_resolution: options.checker.implied_classic_resolution,
-                };
-                let outcome = module_resolver
-                    .lookup(
-                        &request,
-                        |spec, fp| {
-                            resolve_module_specifier(
-                                fp,
-                                spec,
-                                options,
-                                base_dir,
-                                &mut resolution_cache,
-                                &seen,
-                            )
-                        },
-                        |_| false,
-                        Some(&seen),
-                    )
-                    .classify();
-                if let Some(resolved) = outcome.resolved_path {
-                    let canonical = normalize(&resolved, options);
-                    entry.insert(canonical.clone());
-                    if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
-                        pending.push_back(canonical);
+            if !options.no_resolve {
+                for (specifier, import_kind, resolution_mode_override) in specifiers {
+                    let request = tsz::module_resolver::ModuleLookupRequest {
+                        specifier: &specifier,
+                        containing_file: &path,
+                        specifier_span: tsz_common::Span::new(0, 0),
+                        import_kind,
+                        resolution_mode_override,
+                        no_implicit_any: options.checker.no_implicit_any,
+                        implied_classic_resolution: options.checker.implied_classic_resolution,
+                    };
+                    tsz_common::perf_counters::inc(
+                        &tsz_common::perf_counters::counters().resolver_lookup_calls,
+                    );
+                    let outcome = module_resolver
+                        .lookup(
+                            &request,
+                            |spec, fp| {
+                                resolve_module_specifier(
+                                    fp,
+                                    spec,
+                                    options,
+                                    base_dir,
+                                    &mut resolution_cache,
+                                    &seen,
+                                )
+                            },
+                            |_| false,
+                            Some(&seen),
+                        )
+                        .classify();
+                    if let Some(resolved) = outcome.resolved_path {
+                        let canonical = normalize(&resolved, options);
+                        entry.insert(canonical.clone());
+                        if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
+                            pending.push_back(canonical);
+                        }
                     }
                 }
             }
-        }
 
-        // Resolve /// <reference types="..." /> directives
-        if !type_refs.is_empty() && !options.no_resolve {
-            let type_roots = options
-                .type_roots
-                .clone()
-                .unwrap_or_else(|| default_type_roots(base_dir));
-            for (type_name, resolution_mode, types_offset, types_len) in type_refs {
-                // TS1453: Validate resolution-mode attribute value.
-                // tsc anchors this diagnostic at the `types` attribute value span.
-                // When invalid, tsc resolves the type reference without an explicit
-                // mode. Empirically, tsc includes the package such that globals from
-                // all export conditions are available. We emulate this by resolving
-                // with both "import" and "require" conditions.
-                let invalid_mode = if let Some(ref mode) = resolution_mode
-                    && mode != "import"
-                    && mode != "require"
-                {
-                    resolution_mode_errors.push((path.clone(), types_offset, types_len));
-                    true
-                } else {
-                    false
-                };
-                let effective_resolution_mode = if invalid_mode {
-                    None
-                } else {
-                    resolution_mode.as_ref()
-                };
-                let resolved =
-                    if let Some(mode) = effective_resolution_mode {
+            // Resolve /// <reference types="..." /> directives
+            if !type_refs.is_empty() && !options.no_resolve {
+                let type_roots = options
+                    .type_roots
+                    .clone()
+                    .unwrap_or_else(|| default_type_roots(base_dir));
+                for (type_name, resolution_mode, types_offset, types_len) in type_refs {
+                    // TS1453: Validate resolution-mode attribute value.
+                    // tsc anchors this diagnostic at the `types` attribute value span.
+                    // When invalid, tsc resolves the type reference without an explicit
+                    // mode. Empirically, tsc includes the package such that globals from
+                    // all export conditions are available. We emulate this by resolving
+                    // with both "import" and "require" conditions.
+                    let invalid_mode = if let Some(ref mode) = resolution_mode
+                        && mode != "import"
+                        && mode != "require"
+                    {
+                        resolution_mode_errors.push((path.clone(), types_offset, types_len));
+                        true
+                    } else {
+                        false
+                    };
+                    let effective_resolution_mode = if invalid_mode {
+                        None
+                    } else {
+                        resolution_mode.as_ref()
+                    };
+                    let resolved = if let Some(mode) = effective_resolution_mode {
                         // With explicit resolution-mode, use exports map with the specified condition
                         let candidates =
                             crate::driver::resolution::type_package_candidates_pub(&type_name);
@@ -691,84 +799,85 @@ pub(super) fn read_source_files(
                     } else {
                         resolve_type_package_from_roots(&type_name, &type_roots, options)
                     };
-                // If type roots resolution failed, fall back to searching node_modules/
-                // directly. tsc's resolveTypeReferenceDirective always uses node_modules
-                // walk-up as a secondary fallback after typeRoots, regardless of the
-                // configured module resolution mode (including Classic).
-                let resolved = resolved.or_else(|| {
-                    crate::driver::resolution::resolve_type_reference_from_node_modules(
-                        &type_name,
-                        &path,
-                        base_dir,
-                        effective_resolution_mode.map(|s| s.as_str()),
-                        options,
-                    )
-                });
-                if let Some(resolved) = resolved {
-                    let canonical = normalize(&resolved, options);
-                    entry.insert(canonical.clone());
-                    if seen.insert(canonical.clone()) {
-                        pending.push_back(canonical);
+                    // If type roots resolution failed, fall back to searching node_modules/
+                    // directly. tsc's resolveTypeReferenceDirective always uses node_modules
+                    // walk-up as a secondary fallback after typeRoots, regardless of the
+                    // configured module resolution mode (including Classic).
+                    let resolved = resolved.or_else(|| {
+                        crate::driver::resolution::resolve_type_reference_from_node_modules(
+                            &type_name,
+                            &path,
+                            base_dir,
+                            effective_resolution_mode.map(|s| s.as_str()),
+                            options,
+                        )
+                    });
+                    if let Some(resolved) = resolved {
+                        let canonical = normalize(&resolved, options);
+                        entry.insert(canonical.clone());
+                        if seen.insert(canonical.clone()) {
+                            pending.push_back(canonical);
+                        }
+                    } else if !invalid_mode {
+                        type_reference_errors.push((
+                            path.clone(),
+                            type_name.clone(),
+                            types_offset,
+                            types_len,
+                        ));
                     }
-                } else if !invalid_mode {
-                    type_reference_errors.push((
-                        path.clone(),
-                        type_name.clone(),
-                        types_offset,
-                        types_len,
-                    ));
-                }
-                // When resolution-mode is invalid, also try the other condition
-                // so that globals from both export paths are available.
-                // tsc appears to make all globals available in this case.
-                if invalid_mode {
-                    for mode in &["import", "require"] {
-                        if let Some(alt) =
-                            crate::driver::resolution::resolve_type_reference_from_node_modules(
-                                &type_name,
-                                &path,
-                                base_dir,
-                                Some(mode),
-                                options,
-                            )
-                        {
-                            let canonical = normalize(&alt, options);
-                            entry.insert(canonical.clone());
-                            if seen.insert(canonical.clone()) {
-                                pending.push_back(canonical);
+                    // When resolution-mode is invalid, also try the other condition
+                    // so that globals from both export paths are available.
+                    // tsc appears to make all globals available in this case.
+                    if invalid_mode {
+                        for mode in &["import", "require"] {
+                            if let Some(alt) =
+                                crate::driver::resolution::resolve_type_reference_from_node_modules(
+                                    &type_name,
+                                    &path,
+                                    base_dir,
+                                    Some(mode),
+                                    options,
+                                )
+                            {
+                                let canonical = normalize(&alt, options);
+                                entry.insert(canonical.clone());
+                                if seen.insert(canonical.clone()) {
+                                    pending.push_back(canonical);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Resolve /// <reference path="..." /> directives
-        if !reference_paths.is_empty() {
-            let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
-            for (reference_path, _line_num, _quote_offset) in reference_paths {
-                if reference_path.is_empty() {
-                    continue;
-                }
-                let mut candidates = Vec::new();
-                let direct_reference = base_dir.join(&reference_path);
-                candidates.push(direct_reference);
-                if !reference_path.contains('.') {
-                    for ext in [".ts", ".tsx", ".d.ts"] {
-                        candidates.push(base_dir.join(format!("{reference_path}{ext}")));
+            // Resolve /// <reference path="..." /> directives
+            if !reference_paths.is_empty() {
+                let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
+                for (reference_path, _line_num, _quote_offset) in reference_paths {
+                    if reference_path.is_empty() {
+                        continue;
                     }
-                }
+                    let mut candidates = Vec::new();
+                    let direct_reference = base_dir.join(&reference_path);
+                    candidates.push(direct_reference);
+                    if !reference_path.contains('.') {
+                        for ext in [".ts", ".tsx", ".d.ts"] {
+                            candidates.push(base_dir.join(format!("{reference_path}{ext}")));
+                        }
+                    }
 
-                let Some(resolved_reference) = candidates
-                    .iter()
-                    .find(|candidate| candidate.is_file())
-                    .map(|candidate| normalize(candidate, options))
-                else {
-                    continue;
-                };
-                entry.insert(resolved_reference.clone());
-                if seen.insert(resolved_reference.clone()) {
-                    pending.push_back(resolved_reference);
+                    let Some(resolved_reference) = candidates
+                        .iter()
+                        .find(|candidate| candidate.is_file())
+                        .map(|candidate| normalize(candidate, options))
+                    else {
+                        continue;
+                    };
+                    entry.insert(resolved_reference.clone());
+                    if seen.insert(resolved_reference.clone()) {
+                        pending.push_back(resolved_reference);
+                    }
                 }
             }
         }

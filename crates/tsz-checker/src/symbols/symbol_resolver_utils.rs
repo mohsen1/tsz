@@ -975,12 +975,52 @@ impl<'a> CheckerState<'a> {
             .map(Some)
             .unwrap_or(defaults.allow_unused_labels);
 
-        // Parse @ignoreDeprecations: "5.0" or "6.0" as a string option
-        let lower_text = text.to_ascii_lowercase();
-        if lower_text.contains("@ignoredeprecations") {
-            // If the option is present with a valid value, suppress deprecation warnings
+        // Parse @ignoreDeprecations: "5.0" or "6.0" as a string option.
+        // Pragma directives are confined to the first ~32 leading comment
+        // lines (see `parse_test_option_bool`), so a full-source
+        // `to_ascii_lowercase()` was allocating a complete lowercased copy
+        // of every checked file just to scan a region we already iterate.
+        // Reuse the comment-line scan to avoid that O(file_size) allocation.
+        if Self::source_has_pragma(text, "@ignoredeprecations") {
             opts.ignore_deprecations = true;
         }
+    }
+
+    /// Case-insensitive presence check for a `@pragma` token in the leading
+    /// comment block of a source file. Mirrors `parse_test_option_bool`'s
+    /// scope (first 32 lines, comment lines only) but stops at the first
+    /// match and never allocates a lowercased copy of the full file.
+    fn source_has_pragma(text: &str, lower_pragma: &str) -> bool {
+        for line in text.lines().take(32) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let is_comment =
+                trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*');
+            if !is_comment {
+                break;
+            }
+            // Case-insensitive substring match without allocating: walk the
+            // trimmed line in windows the size of `lower_pragma`, comparing
+            // ASCII-lowercased bytes directly.
+            let line_bytes = trimmed.as_bytes();
+            let pragma_bytes = lower_pragma.as_bytes();
+            if line_bytes.len() < pragma_bytes.len() {
+                continue;
+            }
+            for start in 0..=line_bytes.len() - pragma_bytes.len() {
+                let window = &line_bytes[start..start + pragma_bytes.len()];
+                if window
+                    .iter()
+                    .zip(pragma_bytes)
+                    .all(|(a, b)| a.to_ascii_lowercase() == *b)
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     // =========================================================================

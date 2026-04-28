@@ -1078,6 +1078,76 @@ fn cross_file_jsx_diagnostics_with_options_and_default_libs(
         .collect()
 }
 
+#[test]
+fn jsx_element_type_literal_with_generic_merges_global_jsx_exports() {
+    let react_like_lib = r#"
+declare namespace React {
+    type ComponentType<P = {}> = (props: P) => JSX.Element;
+
+    global {
+        namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {
+                div: {};
+            }
+        }
+    }
+}
+
+declare module "react" {
+    export = React;
+}
+"#;
+    let source = r#"
+import * as React from "react";
+
+declare global {
+    namespace JSX {
+        type ElementType<P = any> =
+            | {
+                [K in keyof JSX.IntrinsicElements]: P extends JSX.IntrinsicElements[K]
+                    ? K
+                    : never;
+            }[keyof JSX.IntrinsicElements]
+            | React.ComponentType<P>;
+    }
+}
+
+let a = <div />;
+let c = <ruhroh />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        react_like_lib,
+        source,
+        JsxMode::React,
+        true,
+    );
+
+    assert!(
+        !has_code(&diags, diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER),
+        "JSX.IntrinsicElements should resolve through merged global JSX augmentations, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS
+        ),
+        "JSX.IntrinsicElements should be visible for intrinsic lookup, got: {diags:?}"
+    );
+    assert!(
+        has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Unknown intrinsic tag should report TS2339, got: {diags:?}"
+    );
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::ITS_RETURN_TYPE_IS_NOT_A_VALID_JSX_ELEMENT
+        ) || has_code(&diags, diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT),
+        "Unknown JSX ElementType tag should report a JSX component validity error, got: {diags:?}"
+    );
+}
+
 fn cross_file_jsx_diagnostics_with_pos(
     lib_source: &str,
     main_source: &str,

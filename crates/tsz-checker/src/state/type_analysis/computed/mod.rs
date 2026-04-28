@@ -272,6 +272,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
+        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Counts every
+        // entry to type-of-symbol computation; PR 1 uses this against
+        // unique-SymbolId estimates to characterize recomputation.
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().compute_type_of_symbol_calls,
+        );
+
         let factory = self.ctx.types.factory();
         use tsz_lowering::TypeLowering;
 

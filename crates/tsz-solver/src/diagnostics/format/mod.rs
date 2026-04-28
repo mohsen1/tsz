@@ -1499,17 +1499,7 @@ impl<'a> TypeFormatter<'a> {
     /// Strip TypeScript/JavaScript file extensions from module specifier
     /// display names. TSC omits extensions in `typeof import("mod")` output.
     fn strip_module_extension(module_name: &str) -> &str {
-        // Check `.d.{ts,mts,cts}` before shorter extensions
-        const EXTS: &[&str] = &[
-            ".d.ts", ".d.mts", ".d.cts", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts",
-            ".cts",
-        ];
-        for ext in EXTS {
-            if let Some(stripped) = module_name.strip_suffix(ext) {
-                return stripped;
-            }
-        }
-        module_name
+        tsz_common::file_extensions::strip_known_extension(module_name)
     }
 
     const fn format_intrinsic(&self, kind: IntrinsicKind) -> &'static str {

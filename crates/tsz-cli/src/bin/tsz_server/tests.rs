@@ -77,6 +77,57 @@ fn make_request(command: &str, arguments: serde_json::Value) -> TsServerRequest 
     }
 }
 
+#[test]
+fn reset_clears_session_state_but_keeps_server_alive() {
+    let mut server = make_server();
+    server
+        .open_files
+        .insert("/test.ts".to_string(), "const x = 1;".to_string());
+    server.external_project_files.insert(
+        "project".to_string(),
+        vec!["/test.ts".to_string(), "/dep.ts".to_string()],
+    );
+    server.completion_import_module_specifier_ending = Some("js".to_string());
+    server.import_module_specifier_preference = Some("relative".to_string());
+    server.organize_imports_type_order = Some("last".to_string());
+    server.organize_imports_ignore_case = false;
+    server.auto_import_file_exclude_patterns = vec!["**/dist/**".to_string()];
+    server.auto_import_specifier_exclude_regexes = vec!["^internal/".to_string()];
+    server.include_completions_with_class_member_snippets = false;
+    server.new_line_character = Some("\r\n".to_string());
+    server.allow_importing_ts_extensions = true;
+    server.inferred_check_options.no_lib = true;
+    server.auto_imports_allowed_for_inferred_projects = false;
+    server.inferred_module_is_none_for_projects = true;
+    server
+        .plugin_configs
+        .insert("plugin".to_string(), serde_json::json!({"enabled": true}));
+
+    let response = server.handle_tsserver_request(make_request("tsz/reset", serde_json::json!({})));
+
+    assert!(response.success);
+    assert_eq!(response.body, Some(serde_json::json!(true)));
+    assert!(server.open_files.is_empty());
+    assert!(server.external_project_files.is_empty());
+    assert_eq!(server.completion_import_module_specifier_ending, None);
+    assert_eq!(server.import_module_specifier_preference, None);
+    assert_eq!(server.organize_imports_type_order, None);
+    assert!(server.organize_imports_ignore_case);
+    assert!(server.auto_import_file_exclude_patterns.is_empty());
+    assert!(server.auto_import_specifier_exclude_regexes.is_empty());
+    assert!(server.include_completions_with_class_member_snippets);
+    assert_eq!(server.new_line_character, None);
+    assert!(!server.allow_importing_ts_extensions);
+    assert!(!server.inferred_check_options.no_lib);
+    assert!(server.inferred_check_options.lib.is_none());
+    assert!(server.inferred_check_options.target.is_none());
+    assert!(server.inferred_check_options.module.is_none());
+    assert!(server.inferred_projectinfo_options.is_none());
+    assert!(server.auto_imports_allowed_for_inferred_projects);
+    assert!(!server.inferred_module_is_none_for_projects);
+    assert!(server.plugin_configs.is_empty());
+}
+
 fn apply_tsserver_text_edits(mut source: String, edits: &[serde_json::Value]) -> String {
     let mut spans: Vec<(usize, usize, String)> = edits
         .iter()

@@ -1202,6 +1202,12 @@ pub fn classify_for_contextual_literal(
         TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. } => {
             ContextualLiteralAllowKind::TemplateLiteral
         }
+        // Numeric/string enums act as a union of their member values for the
+        // purpose of contextual literal preservation: assigning `-1` to an
+        // enum E { A = 0, B = 1 } must keep the source `-1` literal so the
+        // structural subtype check rejects it (TS2322), rather than widening
+        // to `number` and falling into the open-numeric-enum rule.
+        TypeData::Enum(_, members) => ContextualLiteralAllowKind::Members(vec![members]),
         _ => ContextualLiteralAllowKind::NotAllowed,
     }
 }

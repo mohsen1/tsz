@@ -586,6 +586,53 @@ impl<'a> CheckerState<'a> {
         out
     }
 
+    pub(super) fn jsdoc_template_constraints_before_typedef_host(
+        jsdoc: &str,
+    ) -> Vec<(String, Option<String>)> {
+        // tsc accepts @template tags AFTER a single @typedef in the same
+        // JSDoc comment (templates bind to the typedef host). It does NOT
+        // extend that grace to @callback or @overload — TS8039 fires for
+        // misplaced templates after those tags. Match that policy: when the
+        // only host in the block is a single @typedef, scan the whole block
+        // for @template; otherwise restrict to the prefix before any host.
+        let normalize = |raw: &str| -> String {
+            raw.trim()
+                .trim_start_matches("/**")
+                .trim_start_matches("/*")
+                .trim_start_matches('*')
+                .trim()
+                .trim_end_matches("*/")
+                .trim()
+                .to_string()
+        };
+        let mut typedef_count = 0usize;
+        let mut other_host_count = 0usize;
+        for raw_line in jsdoc.lines() {
+            let trimmed = normalize(raw_line);
+            if trimmed.starts_with("@typedef") {
+                typedef_count += 1;
+            } else if trimmed.starts_with("@callback") || trimmed.starts_with("@overload") {
+                other_host_count += 1;
+            }
+        }
+        if typedef_count == 1 && other_host_count == 0 {
+            return Self::jsdoc_template_constraints(jsdoc);
+        }
+        let mut prefix = String::new();
+        for raw_line in jsdoc.lines() {
+            let trimmed = normalize(raw_line);
+            if trimmed.starts_with("@typedef")
+                || trimmed.starts_with("@callback")
+                || trimmed.starts_with("@overload")
+            {
+                break;
+            }
+            prefix.push_str(raw_line);
+            prefix.push('\n');
+        }
+        Self::jsdoc_template_constraints(&prefix)
+    }
+
     // -----------------------------------------------------------------
     // JSDoc typedef / callback / import parsing
     // -----------------------------------------------------------------
@@ -600,10 +647,11 @@ impl<'a> CheckerState<'a> {
             callback: None,
         };
         let mut wrapped_typedef_body: Option<Vec<String>> = None;
-        let template_params: Vec<JsdocTemplateParamInfo> = Self::jsdoc_template_constraints(jsdoc)
-            .into_iter()
-            .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
-            .collect();
+        let template_params: Vec<JsdocTemplateParamInfo> =
+            Self::jsdoc_template_constraints_before_typedef_host(jsdoc)
+                .into_iter()
+                .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
+                .collect();
         for raw_line in jsdoc.lines() {
             // Normalize both multiline (`/** ... */`) and single-line (`/** ... */`)
             // JSDoc block-comment lines into tag content before parsing.

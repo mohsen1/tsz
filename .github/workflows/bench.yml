@@ -64,7 +64,11 @@ jobs:
       - name: Run benchmarks
         shell: bash
         run: |
-          set -euo pipefail
+          # -u + -o pipefail kept; -e dropped so a fixture group surfacing
+          # a non-zero return from inside bench-vs-tsgo.sh (despite its own
+          # run_isolated swallow) doesn't abort the step before the EXIT
+          # trap can flush partial JSON.
+          set -uo pipefail
 
           # Background resource monitor — logs load/memory/disk every 30s to aid
           # post-mortem analysis if the runner is killed by OOM or resource pressure.

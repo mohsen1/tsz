@@ -358,6 +358,22 @@ impl ParserState {
         current.abs_diff(self.last_error_pos) > ERROR_SUPPRESSION_DISTANCE
     }
 
+    /// Returns true when the most recent parse diagnostic was a leading-zero
+    /// numeric literal error (TS1121 / TS1489) at a position different from
+    /// the current token. These are orthogonal to the missing-semicolon
+    /// error (TS1005) that follows them in cases like `00.5;` — tsc emits
+    /// both because its `parseErrorAtPosition` dedups only by exact start.
+    pub(crate) fn last_error_was_leading_zero_at_other_pos(&self) -> bool {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let Some(last) = self.parse_diagnostics.last() else {
+            return false;
+        };
+        let is_leading_zero = last.code
+            == diagnostic_codes::OCTAL_LITERALS_ARE_NOT_ALLOWED_USE_THE_SYNTAX
+            || last.code == diagnostic_codes::DECIMALS_WITH_LEADING_ZEROS_ARE_NOT_ALLOWED;
+        is_leading_zero && last.start != self.token_pos()
+    }
+
     pub(crate) fn should_emit_jsx_missing_close_brace_at_semicolon(
         &self,
         range_start: u32,
@@ -800,6 +816,17 @@ impl ParserState {
             || (self.is_token(SyntaxKind::Identifier)
                 && self.scanner.get_token_value_ref() == "await");
 
+        // In static blocks, 'await' used as a class member computed property name
+        // should emit TS1109 "Expression expected", not TS1213. Check this before
+        // the general class-member modifier check so tsc parity is preserved.
+        if self.in_class_member_name()
+            && self.in_static_block_context()
+            && self.is_token(SyntaxKind::AwaitKeyword)
+        {
+            self.error_expression_expected();
+            return true;
+        }
+
         // Class members reject modifier-like keywords as computed property names.
         // This emits TS1213 in class member context while leaving object/literal contexts unchanged.
         if self.in_class_member_name()
@@ -860,7 +887,12 @@ impl ParserState {
     /// Recover from invalid method/member syntax when `(` is missing after the member name.
     /// This is used for async/generator forms like `async * get x() {}` where a single TS1005
     /// should be emitted and the parser should skip the rest of the member to avoid cascades.
-    pub(crate) fn recover_from_missing_method_open_paren(&mut self) {
+    ///
+    /// Returns `true` when the recovery fully terminated the member — either by
+    /// consuming a body block (`{ ... }`) or by consuming a member-terminator
+    /// (`;` or `,`). Callers should skip their own body lookup in this case to
+    /// avoid emitting a redundant `'{' expected.` past the actual terminator.
+    pub(crate) fn recover_from_missing_method_open_paren(&mut self) -> bool {
         while !(self.is_token(SyntaxKind::OpenBraceToken)
             || self.is_token(SyntaxKind::SemicolonToken)
             || self.is_token(SyntaxKind::CommaToken)
@@ -872,12 +904,14 @@ impl ParserState {
         if self.is_token(SyntaxKind::OpenBraceToken) {
             let body = self.parse_block();
             let _ = body;
-            return;
+            return true;
         }
 
         if self.is_token(SyntaxKind::SemicolonToken) || self.is_token(SyntaxKind::CommaToken) {
             self.next_token();
+            return true;
         }
+        false
     }
 
     /// Parse optional token, returns true if found
@@ -1085,15 +1119,20 @@ impl ParserState {
         // mirror that here: any scanner diagnostics emitted *after* our most
         // recent parser push are the effective "lastError" tail. If the very
         // last such scanner diagnostic shares this start, dedup applies.
-        // (Earlier scanner diagnostics are not relevant: a parser push or
-        // a later scanner push past their position has already moved the
-        // effective `lastError` past them.)
+        //
+        // Crucially, scanner-side dedup does NOT advance the high-water mark
+        // — multiple parser errors at the same scanner-claimed position
+        // (e.g. malformed `0b21010;` triggers both a `,'` expected and a `;'`
+        // expected at the bad-digit position) all dedup against the same
+        // scanner diag. Advancing the mark here would consume the slot and
+        // leak the second parser error. We only advance the mark when
+        // actually pushing a parser diagnostic (below), at which point the
+        // scanner diag has been "absorbed" into our lastError tail.
         let scanner_diags = self.scanner.get_scanner_diagnostics();
         if scanner_diags.len() > self.scanner_diagnostics_high_water_mark
             && let Some(last_scanner) = scanner_diags.last()
             && self.u32_from_usize(last_scanner.pos) == start
         {
-            self.scanner_diagnostics_high_water_mark = scanner_diags.len();
             return;
         }
         // Track the position of this error to prevent cascading errors at same position
@@ -2145,8 +2184,13 @@ impl ParserState {
             // parseErrorAtCurrentToken). We emit TS1005 even when the expression
             // had prior errors (like TS1121 for octal literals), matching tsc
             // behavior for cases like `00.5;` where both errors should be reported.
-            // Suppress cascading TS1005 when a recent error was emitted nearby.
-            if self.should_report_error() {
+            // Suppress cascading TS1005 when a recent error was emitted nearby —
+            // except when the prior error was a leading-zero diagnostic
+            // (TS1121/TS1489) at a different position. Those are orthogonal to
+            // the missing-semicolon error: tsc's `parseErrorAtPosition` dedups
+            // only by exact start, so `00.5;` reports TS1121 at col 1 AND
+            // TS1005 at col 3.
+            if self.should_report_error() || self.last_error_was_leading_zero_at_other_pos() {
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             }
             return;

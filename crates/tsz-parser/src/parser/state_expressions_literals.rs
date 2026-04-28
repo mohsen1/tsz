@@ -484,50 +484,20 @@ impl ParserState {
         // `check_for_identifier_start_after_numeric_literal` can suppress a
         // colliding TS1351 the same way tsc's `parseErrorAtPosition` does.
 
-        // Check for missing hex digits (e.g., 0x, 0X) - TS1125
-        if (token_flags & TokenFlags::HexSpecifier as u32) != 0 {
-            // Hex literal should be at least 3 chars (0x followed by at least one digit)
-            // If it's just "0x" or "0X", no hex digits were provided
-            if text.len() == 2 {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Hexadecimal digit expected.",
-                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                );
-            }
-        }
-
-        // Check for missing binary digits (e.g., 0b, 0B) - TS1177
-        if (token_flags & TokenFlags::BinarySpecifier as u32) != 0 {
-            // Binary literal should be at least 3 chars (0b followed by at least one digit)
-            // If it's just "0b" or "0B", no binary digits were provided
-            if text.len() == 2 {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Binary digit expected.",
-                    diagnostic_codes::BINARY_DIGIT_EXPECTED,
-                );
-            }
-        }
-
-        // Check for missing octal digits (e.g., 0o, 0O) - TS1178
-        if (token_flags & TokenFlags::OctalSpecifier as u32) != 0 {
-            // Octal literal should be at least 3 chars (0o followed by at least one digit)
-            // If it's just "0o" or "0O", no octal digits were provided
-            if text.len() == 2 {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Octal digit expected.",
-                    diagnostic_codes::OCTAL_DIGIT_EXPECTED,
-                );
-            }
-        }
+        // Note: TS1125/TS1177/TS1178 ("Hexadecimal/Binary/Octal digit expected")
+        // for empty- or invalid-digit prefixed integer literals (`0x`, `0b21010`,
+        // `0o81010`, etc.) are emitted by the scanner in
+        // `scan_integer_base_literal`'s `if !saw_digit` branch at the same
+        // position the parser would re-emit them here. Re-emitting via
+        // `parse_error_at` would dedup against the scanner's diagnostic but
+        // bumps `scanner_diagnostics_high_water_mark` — "consuming" the slot
+        // that subsequent diagnostics like TS1005 (',' expected) at the same
+        // position would otherwise dedup against, leaking spurious TS1005 at
+        // every malformed-base-literal site. Removing the parser-side
+        // duplicates is behavior-preserving for the digit-expected diagnostic
+        // itself (still emitted by the scanner) and lets the position-based
+        // dedup work for cascading parser errors.
+        let _ = end_pos;
 
         // Check if this numeric literal has an invalid separator (for TS1351 check).
         // The scanner has already pushed per-occurrence TS6188/TS6189 diagnostics
@@ -556,24 +526,13 @@ impl ParserState {
             );
         }
 
-        // If the scanner stopped numeric scanning at an invalid separator and left a recoverable
-        // identifier immediately after it (for example `0_b`), emit the missing-name diagnostic
-        // expected by TS (TS2304) on that identifier.
-        if let Some(sep_pos) = invalid_separator_pos
-            && self.is_identifier_or_keyword()
-            && self.token_pos() as usize == sep_pos + 1
-        {
-            use tsz_common::diagnostics::diagnostic_codes;
-            let missing_name = self.scanner.get_token_text_ref().to_string();
-            if !missing_name.is_empty() {
-                self.parse_error_at(
-                    self.token_pos(),
-                    self.token_end() - self.token_pos(),
-                    &format!("Cannot find name '{missing_name}'."),
-                    diagnostic_codes::CANNOT_FIND_NAME,
-                );
-            }
-        }
+        // Note: tsc does NOT emit TS2304 ("Cannot find name") for the
+        // recovered identifier after an invalid separator (e.g. `0_X0101`).
+        // The TS1351 and TS6188 diagnostics already cover the user-facing
+        // error; the identifier survives only as a parser-recovery token.
+        // Suppressing TS2304 here matches tsc's
+        // `parser.numericSeparators.{hex,binary,octal}Negative.ts` baselines.
+        let _ = invalid_separator_pos;
 
         self.arena.add_literal(
             SyntaxKind::NumericLiteral as u16,
@@ -2299,6 +2258,7 @@ impl ParserState {
         }
 
         let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
+        let mut body_already_consumed_by_recovery = false;
         let parameters = if has_open_paren {
             let parameters = self.parse_parameter_list();
             self.parse_expected(SyntaxKind::CloseParenToken);
@@ -2306,7 +2266,7 @@ impl ParserState {
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
-            self.recover_from_missing_method_open_paren();
+            body_already_consumed_by_recovery = self.recover_from_missing_method_open_paren();
             self.make_node_list(vec![])
         };
 
@@ -2318,7 +2278,13 @@ impl ParserState {
 
         // Push a new label scope for the method body
         self.push_label_scope();
-        let body = if self.is_token(SyntaxKind::OpenBraceToken) {
+        let body = if body_already_consumed_by_recovery {
+            // recover_from_missing_method_open_paren already consumed the body
+            // block while recovering past the missing `(`. Skipping the body
+            // lookup here avoids a redundant TS1005 `'{' expected` at the
+            // outer object-literal closing brace (or EOF).
+            NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
             // tsc prefers "'{' expected." on `=>` in object methods written like:

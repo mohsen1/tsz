@@ -1230,6 +1230,103 @@ const z = x[x.S];
 }
 
 #[test]
+fn test_js_late_bound_module_exports_reports_reads_with_typeof_import_display_name() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "lateBoundAssignmentDeclarationSupport2.js",
+                r#"
+const _sym = Symbol();
+const _str = "my-fake-sym";
+
+module.exports[_sym] = "ok";
+module.exports[_str] = "ok";
+module.exports.S = _sym;
+"#,
+            ),
+            (
+                "usage.js",
+                r#"
+const x = require("./lateBoundAssignmentDeclarationSupport2.js");
+const y = x["my-fake-sym"];
+const z = x[x.S];
+"#,
+            ),
+        ],
+        "usage.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts7053_messages.len(),
+        2,
+        "Expected exactly the two late-bound TS7053 diagnostics. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7053_messages.iter().all(|message| {
+            message.contains("typeof import(\"lateBoundAssignmentDeclarationSupport2\")")
+        }),
+        "Expected module.exports late-bound diagnostics to report on required namespace reads with `typeof import(...)` display. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_js_late_bound_module_exports_write_diagnostics_preserve_js_extension() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "lateBoundAssignmentDeclarationSupport2.js",
+        r#"
+const _sym = Symbol();
+const _str = "my-fake-sym";
+
+module.exports[_sym] = "ok";
+module.exports[_str] = "ok";
+module.exports.S = _sym;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts7053_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7053)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts7053_messages.len(),
+        2,
+        "Expected exactly the two late-bound module.exports write TS7053 diagnostics. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        ts7053_messages.iter().all(|message| {
+            message.contains("typeof import(\"lateBoundAssignmentDeclarationSupport2.js\")")
+        }),
+        "Expected current-file module.exports diagnostics to preserve the .js extension in `typeof import(...)`. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_js_constructor_void_zero_assignment_does_not_create_member() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",

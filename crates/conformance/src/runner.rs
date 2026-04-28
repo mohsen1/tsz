@@ -304,6 +304,25 @@ fn mark_known_conformance_debt(test_key: &str, mut result: TestResult) -> TestRe
     result
 }
 
+fn is_appledouble_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("._"))
+}
+
+fn stable_shard_for_path(path: &Path, test_dir: &Path, shard_count: usize) -> usize {
+    let key = path
+        .strip_prefix(test_dir)
+        .unwrap_or(path)
+        .to_string_lossy();
+    let mut hash = 1_469_598_103_934_665_603_u64;
+    for byte in key.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    (hash as usize) % shard_count
+}
+
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -416,7 +435,20 @@ impl Runner {
         let concurrency_limit = self.args.workers;
         let semaphore = Arc::new(Semaphore::new(concurrency_limit));
 
-        // Create batch process pool (unless --no-batch)
+        // Server mode does NOT own every test: tests whose directives match
+        // has_unsupported_server_options (jsx, moduleResolution, paths,
+        // baseUrl, types, typeRoots — see options_convert.rs) set
+        // use_server = false in run_test() and fall through to the CLI path.
+        // If we skip the batch pool, those tests degrade to per-test
+        // subprocess spawning, which is much slower than the batch pool they
+        // would have used otherwise.
+        //
+        // So always create the batch pool unless --no-batch is set. When
+        // server mode is also active, the two pools coexist: server-eligible
+        // tests use the server pool, server-incompatible tests use the batch
+        // pool. The cost (idle batch processes when most tests run on the
+        // server) is small compared to the subprocess-per-test cost it
+        // avoids.
         let pool: Option<Arc<ProcessPool>> = if self.args.no_batch {
             info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
             None
@@ -444,7 +476,9 @@ impl Runner {
             }
         };
 
-        // Create server pool if mode is Server
+        // Server pool is additive: it handles tests whose options are all
+        // server-compatible. The batch pool created above stays available
+        // for tests with unsupported server options.
         let server_pool: Option<Arc<ServerPool>> = if self.args.mode == RunMode::Server {
             let server_bin = self.args.resolved_server_binary();
             match ServerPool::new(
@@ -463,7 +497,7 @@ impl Runner {
                     Some(Arc::new(sp))
                 }
                 Err(e) => {
-                    warn!("Failed to create server pool: {e}. Falling back to CLI batch mode.");
+                    warn!("Failed to create server pool: {e}. CLI batch pool handles all tests.");
                     None
                 }
             }
@@ -830,6 +864,10 @@ impl Runner {
                 continue;
             }
 
+            if is_appledouble_file(path) {
+                continue;
+            }
+
             // Check file extension
             if path
                 .extension()
@@ -869,9 +907,10 @@ impl Runner {
         if let Some((shard_index, shard_count)) = self.parse_shard_spec()? {
             files = files
                 .into_iter()
-                .enumerate()
-                .filter_map(|(index, path)| {
-                    if index % shard_count == shard_index {
+                .filter_map(|path| {
+                    if stable_shard_for_path(&path, std::path::Path::new(test_dir), shard_count)
+                        == shard_index
+                    {
                         Some(path)
                     } else {
                         None
@@ -1645,6 +1684,16 @@ mod tests {
     fn cwd_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn appledouble_files_are_not_discoverable_tests() {
+        assert!(is_appledouble_file(Path::new(
+            "TypeScript/tests/cases/._foo.ts"
+        )));
+        assert!(is_appledouble_file(Path::new("._bar.js")));
+        assert!(!is_appledouble_file(Path::new("foo.ts")));
+        assert!(!is_appledouble_file(Path::new("dir/regular.js")));
     }
 
     fn with_temp_cwd<F, T>(create_fast_binary: bool, f: F) -> T

@@ -606,6 +606,193 @@ impl<'a> DeclarationEmitter<'a> {
         params.into_iter().nth(position)
     }
 
+    pub(crate) fn jsdoc_satisfies_param_decl_for_parameter(
+        &self,
+        param_idx: NodeIndex,
+        position: usize,
+    ) -> Option<JsdocParamDecl> {
+        let jsdoc = self.function_like_jsdoc_for_node(param_idx)?;
+        let params = Self::parse_jsdoc_satisfies_param_decls(&jsdoc);
+        if params.is_empty() {
+            return None;
+        }
+
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        let source_is_rest = param.dot_dot_dot_token;
+
+        if let Some(name) = self.get_identifier_text(param.name)
+            && let Some(found) = params.iter().find(|decl| decl.name == name)
+        {
+            return Some(Self::adapt_jsdoc_satisfies_param_decl(
+                found,
+                source_is_rest,
+            ));
+        }
+
+        let mut next_position = 0usize;
+        let mut rest_decl = None;
+        for decl in &params {
+            if decl.rest {
+                rest_decl = Some(decl);
+                continue;
+            }
+            if next_position == position {
+                return Some(Self::adapt_jsdoc_satisfies_param_decl(decl, source_is_rest));
+            }
+            next_position += 1;
+        }
+
+        rest_decl.map(|decl| Self::adapt_jsdoc_satisfies_param_decl(decl, source_is_rest))
+    }
+
+    fn adapt_jsdoc_satisfies_param_decl(
+        decl: &JsdocParamDecl,
+        source_is_rest: bool,
+    ) -> JsdocParamDecl {
+        let mut adapted = decl.clone();
+        if source_is_rest {
+            return adapted;
+        }
+
+        adapted.rest = false;
+        if decl.rest {
+            adapted.optional = false;
+            if let Some(element_type) = adapted.type_text.strip_suffix("[]") {
+                adapted.type_text = element_type.trim().to_string();
+            }
+        }
+        adapted
+    }
+
+    pub(in crate::declaration_emitter) fn parse_jsdoc_satisfies_param_decls(
+        jsdoc: &str,
+    ) -> Vec<JsdocParamDecl> {
+        let Some(type_expr) = Self::extract_jsdoc_satisfies_expression(jsdoc) else {
+            return Vec::new();
+        };
+        Self::parse_function_type_param_decls(type_expr)
+    }
+
+    fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
+        let tag_pos = jsdoc.find("@satisfies")?;
+        let rest = &jsdoc[tag_pos + "@satisfies".len()..];
+        let open = rest.find('{')?;
+        let after_open = &rest[open + 1..];
+        let mut depth = 1usize;
+        let mut end_idx = None;
+        for (i, ch) in after_open.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end_idx = end_idx?;
+        Some(after_open[..end_idx].trim())
+    }
+
+    fn parse_function_type_param_decls(type_expr: &str) -> Vec<JsdocParamDecl> {
+        let type_expr = type_expr.trim();
+        let Some(params_text) = Self::function_type_params_text(type_expr) else {
+            return Vec::new();
+        };
+        Self::split_jsdoc_params(params_text)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, raw)| Self::parse_function_type_param_decl(raw, index))
+            .filter(|decl| decl.name != "this")
+            .collect()
+    }
+
+    fn function_type_params_text(type_expr: &str) -> Option<&str> {
+        if let Some(rest) = type_expr.strip_prefix("function") {
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix('(')?;
+            let close_idx = Self::find_matching_paren(rest)?;
+            return Some(&rest[..close_idx]);
+        }
+
+        let rest = type_expr.strip_prefix('(')?;
+        let close_idx = Self::find_matching_paren(rest)?;
+        let after_close = rest[close_idx + 1..].trim_start();
+        if !after_close.starts_with("=>") {
+            return None;
+        }
+        Some(&rest[..close_idx])
+    }
+
+    fn find_matching_paren(text: &str) -> Option<usize> {
+        let mut depth = 1usize;
+        for (i, ch) in text.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    fn parse_function_type_param_decl(raw: &str, index: usize) -> Option<JsdocParamDecl> {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            return None;
+        }
+
+        let (rest_param, raw) = if let Some(stripped) = raw.strip_prefix("...") {
+            (true, stripped.trim())
+        } else {
+            (false, raw)
+        };
+
+        let (name, optional, type_expr) = if let Some(colon_idx) = Self::find_top_level_colon(raw) {
+            let raw_name = raw[..colon_idx].trim();
+            let raw_type = raw[colon_idx + 1..].trim();
+            let optional = raw_name.ends_with('?');
+            let name = raw_name.trim_end_matches('?').trim();
+            let name = if name.is_empty() {
+                format!("arg{index}")
+            } else {
+                name.to_string()
+            };
+            (name, optional, raw_type)
+        } else {
+            (format!("arg{index}"), false, raw)
+        };
+
+        Some(JsdocParamDecl {
+            name,
+            type_text: Self::normalize_jsdoc_type_text(type_expr, rest_param),
+            optional,
+            rest: rest_param,
+        })
+    }
+
+    fn find_top_level_colon(text: &str) -> Option<usize> {
+        let mut depth = 0usize;
+        for (i, ch) in text.char_indices() {
+            match ch {
+                '(' | '<' | '{' | '[' => depth += 1,
+                ')' | '>' | '}' | ']' => depth = depth.saturating_sub(1),
+                ':' if depth == 0 => return Some(i),
+                _ => {}
+            }
+        }
+        None
+    }
+
     pub(crate) fn parse_jsdoc_return_type_text(jsdoc: &str) -> Option<String> {
         for raw_line in jsdoc.lines() {
             let line = raw_line.trim_start_matches('*').trim();
@@ -756,6 +943,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
+        self.suppress_current_statement_jsdoc_comments = true;
         self.emit_pending_js_export_equals_for_name(decl_name);
         self.write_indent();
         if is_exported {
@@ -790,7 +978,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write("(");
+        self.use_jsdoc_satisfies_parameter_fallback = true;
         self.emit_parameters_with_body(&func.parameters, func.body);
+        self.use_jsdoc_satisfies_parameter_fallback = false;
         self.write(")");
 
         if func.type_annotation.is_some() {
@@ -799,6 +989,15 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = jsdoc
             .as_deref()
             .and_then(Self::parse_jsdoc_return_type_text)
+        {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                decl_name,
+                &func.parameters,
+            )
         {
             self.write(": ");
             self.write(&return_type_text);
@@ -830,7 +1029,14 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
-        self.emit_js_namespace_export_aliases_for_name(decl_name);
+        self.emit_js_function_like_class_if_needed(
+            decl_name,
+            &func.parameters,
+            func.body,
+            is_exported,
+            initializer,
+        );
+        self.emit_js_namespace_export_aliases_for_name(decl_name, is_exported);
         true
     }
 
@@ -1376,7 +1582,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                self.emit_rendered_jsdoc_type_alias(decl, true);
+                self.emit_rendered_jsdoc_type_alias(decl, self.js_export_equals_names.is_empty());
             }
         }
     }
@@ -1385,9 +1591,10 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) {
-        if !self.source_is_js_file || self.source_file_has_module_syntax(source_file) {
+        if !self.source_is_js_file {
             return;
         }
+        let exported = self.source_file_has_module_syntax(source_file);
 
         let mut decls = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
@@ -1411,7 +1618,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for decl in decls {
-            self.emit_rendered_jsdoc_type_alias(decl, false);
+            self.emit_rendered_jsdoc_type_alias(decl, exported);
         }
     }
 }

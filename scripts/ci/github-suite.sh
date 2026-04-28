@@ -4,7 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-suite="${1:?usage: $0 <build|dist-binaries|unit-archive|node-harness-prep|lint|unit|unit-shard|wasm|wasm-web|conformance|conformance-aggregate|emit|emit-shard|emit-aggregate|fourslash|fourslash-shard|fourslash-aggregate>}"
+suite="${1:?usage: $0 <build|dist-binaries|unit-archive|node-harness-prep|lint|unit|unit-shard|wasm|wasm-web|wasm-all|conformance|conformance-aggregate|emit|emit-shard|emit-aggregate|fourslash|fourslash-shard|fourslash-aggregate>}"
 export _TSZ_CI_SUITE="$suite"
 export TSZ_CI_SUITE="$suite"
 export _TSZ_CI_CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache}}"
@@ -44,14 +44,31 @@ python3 scripts/ci/gcp-summary.py \
   --logs-dir "$TSZ_CI_LOG_DIR" \
   --out .ci-status/check-summary.md || true
 
-if [[ "${TSZ_CI_CACHE_SAVE:-1}" == "1" ]]; then
-  if command -v gsutil >/dev/null 2>&1; then
-    scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
-  else
-    echo "warning: gsutil is unavailable; skipping GCS CI cache save" >&2
-  fi
-else
+if [[ "${TSZ_CI_CACHE_SAVE:-1}" != "1" ]]; then
   echo "info: GCS cache save skipped (TSZ_CI_CACHE_SAVE=0)"
+elif [[ "$rc" -ne 0 ]]; then
+  # A failed suite often leaves a partially-populated target dir
+  # (some workspace crates compiled, some not, fingerprints written
+  # mid-flight, etc.). Publishing that as the new shared cache for the
+  # next build to restore is exactly the kind of "stale forever" state
+  # the new write policy was built to prevent. Skip cache save on
+  # non-zero suite exit so main's blob always reflects a green build.
+  # TSZ_CI_CACHE_SAVE_ON_FAILURE=1 escapes the gate for emergency
+  # repairs (e.g., a known-good build that fails on a flaky test).
+  if [[ "${TSZ_CI_CACHE_SAVE_ON_FAILURE:-0}" == "1" ]]; then
+    echo "info: suite failed (rc=${rc}) but TSZ_CI_CACHE_SAVE_ON_FAILURE=1 — saving cache anyway"
+    if command -v gsutil >/dev/null 2>&1; then
+      scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+    else
+      echo "warning: gsutil is unavailable; skipping GCS CI cache save" >&2
+    fi
+  else
+    echo "info: GCS cache save skipped (suite failed with rc=${rc})"
+  fi
+elif command -v gsutil >/dev/null 2>&1; then
+  scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
+else
+  echo "warning: gsutil is unavailable; skipping GCS CI cache save" >&2
 fi
 
 if [[ -f .ci-status/check-summary.md ]]; then

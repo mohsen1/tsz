@@ -13,6 +13,23 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
+fn extra_this_parameter_is_compatible_method_shape(actual: &str, expected: &str) -> bool {
+    fn return_head(signature: &str) -> Option<&str> {
+        let (_, return_type) = signature.rsplit_once("=>")?;
+        return_type
+            .trim()
+            .split_once('<')
+            .map(|(head, _)| head.trim())
+    }
+
+    actual.starts_with('<')
+        && expected.starts_with('<')
+        && actual.contains("this:")
+        && !expected.contains("this:")
+        && return_head(actual).is_some()
+        && return_head(actual) == return_head(expected)
+}
+
 impl<'a> CheckerState<'a> {
     fn class_declaration_display_name(
         &self,
@@ -950,8 +967,23 @@ impl<'a> CheckerState<'a> {
 
                     // Push interface type parameters into scope so they're available when
                     // checking member types (fixes TS2304 false positive for interface type params)
-                    let (interface_type_params, interface_type_param_updates) =
+                    let (mut interface_type_params, interface_type_param_updates) =
                         self.push_type_parameters(&interface_type_params);
+
+                    // Fallback: when the interface declaration's AST lives in a different
+                    // arena (e.g. lib types like `AsyncIterator<T, TReturn, TNext>`), the
+                    // local arena walk above leaves `interface_type_params` empty. Look up
+                    // the canonical type parameters via the solver-side definition store
+                    // so the substitution we build below correctly maps interface type
+                    // parameters to the supplied type arguments.
+                    if interface_type_params.is_empty()
+                        && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
+                        && let Some(store_params) =
+                            self.ctx.definition_store.get_type_params(def_id)
+                        && !store_params.is_empty()
+                    {
+                        interface_type_params = store_params;
+                    }
 
                     // Fill in missing type arguments with defaults/constraints/unknown
                     if type_args.len() < interface_type_params.len() {
@@ -1480,6 +1512,9 @@ impl<'a> CheckerState<'a> {
                                     class_member_idx
                                 };
                             let display_name = format_property_name_for_diagnostic(&member_name);
+                            if extra_this_parameter_is_compatible_method_shape(&actual, &expected) {
+                                continue;
+                            }
                             self.error_at_node(
                                 error_node_idx,
                                 &format!(

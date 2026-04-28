@@ -617,7 +617,14 @@ impl<'a> CheckerState<'a> {
                     spread_expr_type,
                 ) {
                     if let Some(ref _expected) = tuple_context {
-                        // For tuple context, add each element with spread flag
+                        // For tuple context, expand each element of the spread source
+                        // tuple, preserving its `rest` flag so a trailing rest element
+                        // (e.g. spreading `[string, boolean, ...boolean[]]`) keeps the
+                        // tuple shape `[..., ...boolean[]]` instead of collapsing to
+                        // `[..., boolean[]]` (a fixed array element). The latter both
+                        // garbles diagnostic display and triggers spurious TS2322
+                        // when assigning to a target tuple whose own rest accepts the
+                        // source's variadic tail.
                         for elem in &elems {
                             let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index))
                             {
@@ -628,7 +635,7 @@ impl<'a> CheckerState<'a> {
                                 type_id: elem.type_id,
                                 name: None,
                                 optional,
-                                rest: false, // Individual tuple elements are not spreads
+                                rest: elem.rest,
                             });
                             // Don't increment index here - each tuple element maps to position
                         }

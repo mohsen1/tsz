@@ -1414,9 +1414,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 != 0
         {
             self.ctx
-                .cross_file_symbol_targets
-                .borrow_mut()
-                .insert(scoped_sym_id, scoped_symbol.decl_file_idx as usize);
+                .register_symbol_file_target(scoped_sym_id, scoped_symbol.decl_file_idx as usize);
             return Some(scoped_sym_id.0);
         }
 
@@ -1438,9 +1436,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     != 0
                 {
                     self.ctx
-                        .cross_file_symbol_targets
-                        .borrow_mut()
-                        .insert(lib_sym_id, symbol.decl_file_idx as usize);
+                        .register_symbol_file_target(lib_sym_id, symbol.decl_file_idx as usize);
                     return Some(lib_sym_id.0);
                 }
             }
@@ -1502,9 +1498,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     != 0
             {
                 self.ctx
-                    .cross_file_symbol_targets
-                    .borrow_mut()
-                    .insert(lib_sym_id, symbol.decl_file_idx as usize);
+                    .register_symbol_file_target(lib_sym_id, symbol.decl_file_idx as usize);
                 return Some(lib_sym_id.0);
             }
         }

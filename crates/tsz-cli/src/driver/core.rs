@@ -50,6 +50,25 @@ use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
 use tsz_solver::QueryCache;
 
+fn diagnostic_source_line<'a>(
+    program: &'a MergedProgram,
+    diagnostic: &Diagnostic,
+) -> Option<&'a str> {
+    let file = program.files.iter().find(|file| {
+        file.file_name == diagnostic.file || file.file_name.ends_with(&diagnostic.file)
+    })?;
+    let source_file = file.arena.get_source_file_at(file.source_file)?;
+    let source_text = source_file.text.as_ref();
+    let start = (diagnostic.start as usize).min(source_text.len());
+    let line_start = source_text[..start]
+        .rfind('\n')
+        .map_or(0, |idx| idx.saturating_add(1));
+    let line_end = source_text[start..]
+        .find('\n')
+        .map_or(source_text.len(), |idx| start + idx);
+    Some(&source_text[line_start..line_end])
+}
+
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileInclusionReason {
@@ -1433,6 +1452,10 @@ fn compile_inner(
         let has_js_grammar_errors = diagnostics
             .iter()
             .any(|d| tsz::checker::diagnostics::is_js_grammar_diagnostic(d.code));
+        let has_jsdoc_invalid_template_order = diagnostics.iter().any(|d| {
+            d.code
+                == diagnostic_codes::A_JSDOC_TEMPLATE_TAG_MAY_NOT_FOLLOW_A_TYPEDEF_CALLBACK_OR_OVERLOAD_TAG
+        });
         if has_js_grammar_errors {
             let ts8xxx_positions: rustc_hash::FxHashSet<(String, u32)> = diagnostics
                 .iter()
@@ -1440,7 +1463,14 @@ fn compile_inner(
                 .map(|d| (d.file.clone(), d.start))
                 .collect();
             diagnostics.retain(|d| {
-                d.code != 2304 || ts8xxx_positions.contains(&(d.file.clone(), d.start))
+                let keep_jsdoc_template_name_error = has_jsdoc_invalid_template_order
+                    && d.code == 2304
+                    && !d.message_text.contains("'U'")
+                    && diagnostic_source_line(&program, d)
+                        .is_some_and(|line| line.contains("@param"));
+                d.code != 2304
+                    || ts8xxx_positions.contains(&(d.file.clone(), d.start))
+                    || keep_jsdoc_template_name_error
             });
         }
     }

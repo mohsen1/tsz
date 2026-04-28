@@ -1670,7 +1670,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // position (only in deferred/context-sensitive args), the `unknown`
                 // is a placeholder that SHOULD be replaced by the contextual return
                 // type to enable proper contextual typing of callbacks.
-                if !has_constraints && ty == TypeId::UNKNOWN && direct_param_vars.contains(&var) {
+                let constructor_context_can_fill_unknown =
+                    func.is_constructor && structural_return_subst.get(tp.name).is_some();
+                if !has_constraints
+                    && ty == TypeId::UNKNOWN
+                    && direct_param_vars.contains(&var)
+                    && !constructor_context_can_fill_unknown
+                {
                     ty
                 } else {
                     let can_apply = self.can_apply_contextual_return_substitution(

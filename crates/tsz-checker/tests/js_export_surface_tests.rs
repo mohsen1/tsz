@@ -2262,7 +2262,12 @@ lib.bar = "nope";
 }
 
 #[test]
-fn test_define_property_export_tracks_constant_names_cross_file() {
+fn test_define_property_export_only_tracks_literal_names_cross_file() {
+    // tsc's binder recognizes `Object.defineProperty(exports, X, ...)` as a
+    // synthesizable export only when `X` is a syntactic literal. References
+    // to `const`/`let` bindings — even ones initialized with a string literal
+    // — are NOT propagated, so the corresponding properties never appear on
+    // the synthesized exports type and import-side accesses surface as TS2339.
     let diagnostics = check_commonjs_two_files(
         "lib.js",
         r#"
@@ -2286,54 +2291,49 @@ lib.prop;
         .iter()
         .filter(|(c, msg)| *c == 2339 && msg.contains("thing"))
         .collect();
-    let missing: Vec<_> = diagnostics
-        .iter()
-        .filter(|(c, msg)| {
-            *c == 2339 && (msg.contains("thing") || msg.contains("other") || msg.contains("prop"))
-        })
-        .collect();
     assert!(
         thing_missing.is_empty(),
         "Expected literal defineProperty export to stay visible, got: {diagnostics:#?}"
     );
+
+    let other_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, msg)| *c == 2339 && msg.contains("other"))
+        .collect();
+    let prop_missing: Vec<_> = diagnostics
+        .iter()
+        .filter(|(c, msg)| *c == 2339 && msg.contains("prop"))
+        .collect();
     assert!(
-        missing.is_empty(),
-        "Expected constant-name defineProperty exports to stay visible cross-file, got: {diagnostics:#?}"
+        !other_missing.is_empty(),
+        "Expected TS2339 for binding-named defineProperty export 'other', got: {diagnostics:#?}"
+    );
+    assert!(
+        !prop_missing.is_empty(),
+        "Expected TS2339 for binding-named defineProperty export 'prop', got: {diagnostics:#?}"
     );
 }
 
 #[test]
-fn test_define_property_export_supports_constant_names_and_malformed_descriptors_cross_file() {
+fn test_define_property_export_malformed_descriptor_is_readonly_cross_file() {
+    // tsc treats malformed/mixed `Object.defineProperty` descriptors as
+    // readonly any-typed properties: an empty `{}`, a mixed accessor+data
+    // (`get`+`value`), and a lone `writable: true` (no value, no accessor)
+    // all produce properties that exist for read access but reject writes
+    // with TS2540. Only a paired `value` + `writable: true` data descriptor
+    // or an explicit `set` accessor makes the property writable.
     let diagnostics = check_commonjs_two_files(
         "mod1.js",
         r#"
-const obj = { value: 42, writable: true };
-Object.defineProperty(exports, "thing", obj);
-
-/** @type {string} */
-let str = /** @type {string} */("other");
-Object.defineProperty(exports, str, { value: 42, writable: true });
-
-const propName = "prop";
-Object.defineProperty(exports, propName, { value: 42, writable: true });
-
+Object.defineProperty(exports, "writableThing", { value: 42, writable: true });
 Object.defineProperty(exports, "bad1", { });
 Object.defineProperty(exports, "bad2", { get() { return 12 }, value: "no" });
 Object.defineProperty(exports, "bad3", { writable: true });
 "#,
-        "importer.js",
+        "importer.ts",
         r#"
-const mod = require("./mod1");
-mod.thing;
-mod.other;
-mod.prop;
-mod.bad1;
-mod.bad2;
-mod.bad3;
-
-mod.thing = 0;
-mod.other = 0;
-mod.prop = 0;
+import mod = require("./mod1");
+mod.writableThing = 0;
 mod.bad1 = 0;
 mod.bad2 = 0;
 mod.bad3 = 0;
@@ -2341,14 +2341,25 @@ mod.bad3 = 0;
         "./mod1",
     );
 
-    let relevant: Vec<_> = diagnostics
+    let writable_thing_readonly: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| matches!(*code, 2339 | 2540))
+        .filter(|(c, msg)| *c == 2540 && msg.contains("writableThing"))
         .collect();
     assert!(
-        relevant.is_empty(),
-        "Expected constant-name defineProperty exports and malformed descriptors to stay permissive cross-file, got: {diagnostics:#?}"
+        writable_thing_readonly.is_empty(),
+        "Expected no TS2540 for value+writable:true descriptor, got: {diagnostics:#?}"
     );
+
+    for name in ["bad1", "bad2", "bad3"] {
+        let readonly: Vec<_> = diagnostics
+            .iter()
+            .filter(|(c, msg)| *c == 2540 && msg.contains(name))
+            .collect();
+        assert!(
+            !readonly.is_empty(),
+            "Expected TS2540 for malformed descriptor '{name}', got: {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]

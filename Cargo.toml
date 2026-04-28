@@ -103,7 +103,10 @@ strip = "symbols"     # Strip debug symbols to reduce binary size
 # Use for: CI testing, conformance runs. Not for representative perf benchmarks.
 inherits = "release"
 lto = false           # No LTO: linking is ~5-10x faster; sccache hits the codegen step
-codegen-units = 16    # Parallel codegen
+codegen-units = 8     # Parallel codegen — halved from 16 so peak RSS per rustc
+                      # drops ~2× (LLVM keeps each codegen unit's IR in memory). That
+                      # lets scripts/ci/gcp-full-ci.sh raise CARGO_BUILD_JOBS without
+                      # OOM-killing rustc on the cloud runners.
 strip = "debuginfo"
 
 [profile.dev-fast]
@@ -145,3 +148,20 @@ lto = "thin"
 inherits = "dev"
 debug = false
 codegen-units = 8
+
+[profile.ci-lint]
+# Used by `cargo clippy` in the CI lint suite. Clippy doesn't ship binaries
+# or run tests — it only needs `.rmeta` analysis output. So:
+#   debug = false      → no DWARF generation; clippy never reads it
+#   incremental = false → incremental fingerprinting fights sccache (sccache
+#                          can't cache work that depends on the per-target
+#                          incremental session) and CI runners are ephemeral
+#                          so the on-disk incremental cache is dead weight
+#   opt-level = 0      → inherited from dev; clippy doesn't need optimisation
+#   codegen-units      → inherits dev's 256 (set in .cargo/config.toml).
+#                          No reason to override here; if the dev default
+#                          changes we want ci-lint to follow it.
+# Goal: clippy in <2 min warm, with sccache shouldering cross-commit reuse.
+inherits = "dev"
+debug = false
+incremental = false

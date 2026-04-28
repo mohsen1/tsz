@@ -574,7 +574,15 @@ impl<'a> CheckerState<'a> {
                             exists_locally = false;
                         }
 
-                        if exists_locally {
+                        // When the target module uses `export = X` and `X`
+                        // exists locally with the imported name, the TS2497 +
+                        // TS2616/TS2595/TS2597 path earlier in this function
+                        // already reports the import-style mismatch. Skip the
+                        // duplicate "declares 'X' locally" TS2459/TS2460.
+                        let module_uses_export_equals = exports_table.has("export=");
+                        let suppress_for_export_equals =
+                            exists_locally && module_uses_export_equals;
+                        if exists_locally && !suppress_for_export_equals {
                             if let Some(ref renamed_as) = exported_as {
                                 // TS2460: Symbol exists locally and is exported under a different name
                                 let message = format_message(
@@ -598,6 +606,10 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
                                 );
                             }
+                        } else if suppress_for_export_equals {
+                            // TS2497 + TS2616/TS2595/TS2597 already emitted
+                            // earlier in this function for the export-equals
+                            // import mismatch.
                         } else if has_json_default_export
                             || has_module_exports_binding
                             || exports_table.has("default")
@@ -1517,8 +1529,16 @@ impl<'a> CheckerState<'a> {
         for &key in &module_keys {
             if let Some(exports) = self.ctx.module_exports_for_module(binder, key) {
                 // Check if the symbol is exported under a different name
-                // by looking through all export names
+                // by looking through all export names. Skip the synthetic
+                // `"export="` key — `export = Foo` is not a "renamed export"
+                // for TS2460 purposes; tsc falls through to TS2497/TS2616
+                // ("module can only be referenced via default-export") in
+                // that case, so we let the caller emit the export-equals
+                // diagnostic.
                 for (export_name, sym_id) in exports.iter() {
+                    if export_name.as_str() == "export=" {
+                        continue;
+                    }
                     if let Some(sym) = binder.symbols.get(*sym_id) {
                         let decl_arena = if sym.decl_file_idx == u32::MAX {
                             self.ctx.arena
@@ -1544,6 +1564,9 @@ impl<'a> CheckerState<'a> {
             && let Some(exports) = self.ctx.module_exports_for_module(binder, fname)
         {
             for (export_name, sym_id) in exports.iter() {
+                if export_name.as_str() == "export=" {
+                    continue;
+                }
                 if let Some(sym) = binder.symbols.get(*sym_id) {
                     let decl_arena = if sym.decl_file_idx == u32::MAX {
                         self.ctx.arena

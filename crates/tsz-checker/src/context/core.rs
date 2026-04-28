@@ -100,9 +100,9 @@ impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
     /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
-    /// no `RefCell` overhead), then falls back to the local `cross_file_symbol_targets`
-    /// overlay for dynamically-discovered mappings. Returns `None` if the symbol
-    /// has no known cross-file owner.
+    /// no `RefCell` overhead), then falls back to the layered
+    /// `cross_file_symbol_targets` overlay for dynamically-discovered mappings.
+    /// Returns `None` if the symbol has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
         // Check shared base map first (covers all pre-computed entries, no RefCell cost)
         if let Some(&idx) = self
@@ -112,11 +112,7 @@ impl<'a> CheckerContext<'a> {
         {
             return Some(idx);
         }
-        // Fall back to local overlay (dynamically discovered during this check)
-        self.cross_file_symbol_targets
-            .borrow()
-            .get(&sym_id)
-            .copied()
+        self.cross_file_symbol_targets.borrow().get(sym_id)
     }
 
     /// Check whether a `SymbolId` has a known cross-file owner.
@@ -124,10 +120,7 @@ impl<'a> CheckerContext<'a> {
         self.global_symbol_file_index
             .as_ref()
             .is_some_and(|map| map.contains_key(&sym_id))
-            || self
-                .cross_file_symbol_targets
-                .borrow()
-                .contains_key(&sym_id)
+            || self.cross_file_symbol_targets.borrow().contains_key(sym_id)
     }
 
     /// Register a dynamically-discovered `SymbolId` → file index mapping
@@ -142,18 +135,40 @@ impl<'a> CheckerContext<'a> {
         self.register_symbol_file_target(sym_id, file_idx);
     }
 
-    /// Copy the local overlay of symbol-file targets to a child checker context.
+    /// Attach the local overlay of symbol-file targets to a child checker context.
     ///
-    /// This copies only the dynamically-discovered overlay entries, NOT the
-    /// entries from `global_symbol_file_index` (which is already shared via
-    /// `copy_cross_file_state_from`). This makes child-checker creation O(D)
-    /// where D = number of dynamically discovered entries, instead of O(N)
-    /// where N = total entries (base + dynamic).
+    /// The dynamically-discovered overlay is frozen into an immutable parent
+    /// snapshot and shared with the child. No map entries are cloned; only the
+    /// `Arc` parent pointer is copied.
     pub fn copy_symbol_file_targets_to(&self, child: &mut CheckerContext<'_>) {
-        let overlay = self.cross_file_symbol_targets.borrow();
-        if !overlay.is_empty() {
-            *child.cross_file_symbol_targets.borrow_mut() = overlay.clone();
+        // Untracked variant: attributes to `CheckerCreationReason::Other`.
+        // Prefer `copy_symbol_file_targets_to_attributed` at call sites we
+        // want to see in the per-reason dump.
+        self.copy_symbol_file_targets_to_attributed(
+            child,
+            tsz_common::perf_counters::CheckerCreationReason::Other,
+        );
+    }
+
+    /// Attributed overlay inheritance. The counter call remains so the perf
+    /// dump tracks how often this handoff occurs, but entries-copied is zero
+    /// because the child now inherits an `Arc` parent snapshot.
+    pub fn copy_symbol_file_targets_to_attributed(
+        &self,
+        child: &mut CheckerContext<'_>,
+        reason: tsz_common::perf_counters::CheckerCreationReason,
+    ) {
+        let parent_snapshot = self
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .snapshot_for_child();
+        if parent_snapshot.is_some() {
+            tsz_common::perf_counters::record_overlay_copy(reason, 0);
         }
+        child
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .install_parent_snapshot(parent_snapshot);
     }
 
     /// Merge the child checker's local overlay back into this context.
@@ -164,9 +179,17 @@ impl<'a> CheckerContext<'a> {
         let child_overlay = child.cross_file_symbol_targets.borrow();
         if !child_overlay.is_empty() {
             let mut parent_overlay = self.cross_file_symbol_targets.borrow_mut();
-            for (&sym_id, &file_idx) in child_overlay.iter() {
-                parent_overlay.insert(sym_id, file_idx);
-            }
+            parent_overlay.merge_from(&child_overlay, true);
+        }
+    }
+
+    /// Merge child symbol-file targets without overwriting mappings already
+    /// known by the parent.
+    pub fn merge_missing_symbol_file_targets_from(&self, child: &CheckerContext<'_>) {
+        let child_overlay = child.cross_file_symbol_targets.borrow();
+        if !child_overlay.is_empty() {
+            let mut parent_overlay = self.cross_file_symbol_targets.borrow_mut();
+            parent_overlay.merge_from(&child_overlay, false);
         }
     }
 
@@ -1188,28 +1211,57 @@ impl<'a> CheckerContext<'a> {
 
         let arenas = self.all_arenas.as_ref()?;
 
-        // Direct-match fast path: the specifier IS an exact project file
-        // name (or differs only in extension). Very cheap linear scan over
-        // arenas with no path allocation.
-        let normalized_specifier = specifier.replace('\\', "/");
-        let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
-        if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
-            arena.source_files.first().is_some_and(|sf| {
-                let file_name = sf.file_name.replace('\\', "/");
-                file_name == normalized_specifier
-                    || Self::strip_ts_extension(&file_name) == stripped_specifier
-            })
-        }) {
-            return Some(target_idx);
+        // Direct-match fast path on the pre-built reverse index when one is
+        // wired in. The previous version of this fast path did an O(N)
+        // linear scan over `all_arenas` allocating a `.replace('\\', "/")`
+        // String per arena per call — which on a 6000-file project with
+        // bare imports like `@shared/foo` showed up as the #1 hot leaf at
+        // 22.46% self-time on a profiled subset. The reverse index keys are
+        // already normalized file names, so a single `get(&specifier)` (and
+        // a backslash-normalized variant if needed) covers the same cases
+        // without per-arena allocation.
+        //
+        // Importantly, this fast path is NOT a substitute for the linear
+        // scan below: the index covers *literal* file-name matches, but
+        // `resolve_specifier_via_file_index` will return `None` for bare
+        // specifiers that contain a slash without a `./` / `../` / `/`
+        // prefix (project-relative paths like `packages/foo/src/bar.ts`).
+        // The linear scan handled those by direct comparison; we preserve
+        // that behavior here without scanning, by trying the index lookup
+        // for both the raw and stripped-extension forms.
+        let normalized_specifier = if specifier.contains('\\') {
+            specifier.replace('\\', "/")
+        } else {
+            specifier.to_string()
+        };
+
+        if let Some(idx) = self.global_file_name_index.as_ref() {
+            // 1. Direct file-name hit (fully-qualified specifier).
+            if let Some(&target_idx) = idx.get(&normalized_specifier) {
+                return Some(target_idx);
+            }
+            // 2. Extension-stem fan-out: the linear scan also matched on
+            //    `strip_ts_extension(spec) == strip_ts_extension(file_name)`,
+            //    which lets a `.js` import resolve to a `.ts` source. Probe
+            //    the index with every TS/JS extension applied to the stem.
+            let stripped = Self::strip_ts_extension(&normalized_specifier);
+            const FAN_OUT_EXTS: &[&str] = &[
+                ".ts", ".tsx", ".d.ts", ".d.tsx", ".mts", ".cts", ".d.mts", ".d.cts", ".js",
+                ".jsx", ".mjs", ".cjs",
+            ];
+            // Reuse a single buffer across the fan-out attempts to avoid
+            // per-extension `String` allocation.
+            let mut buf = String::with_capacity(stripped.len() + 6);
+            for ext in FAN_OUT_EXTS {
+                buf.clear();
+                buf.push_str(stripped);
+                buf.push_str(ext);
+                if let Some(&target_idx) = idx.get(&buf) {
+                    return Some(target_idx);
+                }
+            }
         }
 
-        // Specifier-to-target fallback. Historically this rebuilt the full
-        // O(N²) `(src_idx, specifier) -> tgt_idx` map on every miss, which
-        // dominated the CPU profile for large projects (>40% in Path::
-        // Components iteration). We now consult a pre-built reverse index
-        // from normalized file name to file index and probe the small
-        // candidate set the specifier could address (direct hit, TS/JS
-        // extension fan-out, directory-index fallback) in O(1) each.
         let source_file_name = arenas
             .get(source_file_idx)
             .and_then(|arena| arena.source_files.first())
@@ -1223,9 +1275,20 @@ impl<'a> CheckerContext<'a> {
             );
         }
 
-        // No pre-built index (legacy contexts with no ProjectEnv wiring).
-        // Build the reverse index on-demand from `all_arenas` — still O(N)
-        // per call, but without the catastrophic O(N²) cross-product.
+        // No pre-built index (legacy single-context paths with no ProjectEnv
+        // wiring). Use the original linear scan, then build a one-shot
+        // reverse index for richer specifier resolution.
+        let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
+        if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
+            arena.source_files.first().is_some_and(|sf| {
+                let file_name = sf.file_name.replace('\\', "/");
+                file_name == normalized_specifier
+                    || Self::strip_ts_extension(&file_name) == stripped_specifier
+            })
+        }) {
+            return Some(target_idx);
+        }
+
         let fallback_idx = crate::module_resolution::build_file_name_index(arenas);
         crate::module_resolution::resolve_specifier_via_file_index(
             source_file_name,

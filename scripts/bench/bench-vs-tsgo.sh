@@ -486,6 +486,38 @@ check_prerequisites() {
 RESULTS_CSV=""
 BENCHMARKS_RUN=0
 
+# run_isolated <label> <command...>
+#
+# Runs a fixture function and swallows any non-zero exit so one bad fixture
+# (network blip on git clone, pnpm install flake, OOM during a project bench,
+# tsgo segfault on large-ts-repo) doesn't abort the entire bench run.
+# Records a degraded CSV row so the failure surfaces in the published JSON
+# instead of vanishing silently.
+#
+# Note: bash suspends `set -e` inside functions called from a conditional
+# context (cmd || ..., cmd && ..., if cmd, etc.), so commands inside the
+# fixture that fail individually won't abort the function automatically.
+# This matches the prior `fixture_call || true` behavior; it just adds
+# logging + a tracked failure row.
+run_isolated() {
+    local label="$1"; shift
+    local rc=0
+    "$@" || rc=$?
+    if (( rc != 0 )); then
+        echo -e "${YELLOW}warning:${NC} fixture '$label' exited rc=$rc — continuing with remaining benchmarks" >&2
+        record_fixture_failure "$label" "$rc"
+    fi
+    return 0
+}
+
+# Append a degraded row to RESULTS_CSV when a fixture group fails outright
+# (no individual benchmarks were recorded). The schema matches existing error
+# rows: name, lines, kb, tsz_ms, tsgo_ms, tsz_lps, tsgo_lps, winner, ratio, status.
+record_fixture_failure() {
+    local label="$1" rc="$2"
+    RESULTS_CSV="${RESULTS_CSV}${label},0,0,ERR,ERR,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
+}
+
 run_benchmark() {
     local name="$1"
     local file="$2"
@@ -671,26 +703,23 @@ run_project_benchmark() {
 
     # Pre-validate with timeout: record errors/timeouts in summary table.
     # Project-level benchmarks get a longer timeout since they check many files.
-    # large-ts-repo skips both tsz and tsgo pre-validation:
-    #   - tsz: OOMs on 6000+ file projects
-    #   - tsgo: cold check of the full workspace takes >120s even for tsgo;
-    #     pre-validation would always timeout and block the hyperfine run.
-    # Both are verified during the actual hyperfine run instead.
+    # large-ts-repo skips pre-validation entirely (the cold check itself takes
+    # several minutes for both compilers; pre-validation would always timeout
+    # and block the hyperfine run). Both are verified during the actual
+    # hyperfine run instead, with `--ignore-failure` so a long cold path or
+    # OOM on either side records a row rather than aborting the bench.
     local project_timeout=$((BENCH_TIMEOUT * 2))
     local tsz_check=0
     local tsgo_check=0
     if [ "$name" != "large-ts-repo" ]; then
         run_with_timeout "$project_timeout" ${tsz_prefix[@]+"${tsz_prefix[@]}"} "$TSZ" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsz_check=$?
         run_with_timeout "$project_timeout" ${project_node_prefix[@]+"${project_node_prefix[@]}"} "$TSGO" --noEmit -p "$tsconfig" >/dev/null 2>&1 || tsgo_check=$?
-    else
-        tsz_check=1  # treat as failed so we enter the partial-data path below
-        # tsgo_check stays 0: we proceed directly to the hyperfine run
     fi
 
-    # For large-ts-repo: tsz is expected to fail (OOM); still benchmark tsgo.
-    # For other projects: any failure is an error, skip.
+    # `tsz_failed_expected` is reserved for fixtures where tsz is known to fail.
+    # large-ts-repo is no longer pre-validated (see comment above); the actual
+    # hyperfine run determines whether tsz produces a number or a TIMEOUT row.
     local tsz_failed_expected=false
-    [ "$name" = "large-ts-repo" ] && [ "$tsz_check" -ne 0 ] && tsz_failed_expected=true
 
     if { [ "$tsz_check" -ne 0 ] && [ "$tsz_failed_expected" = false ]; } || [ "$tsgo_check" -ne 0 ]; then
         local status=""
@@ -746,9 +775,13 @@ run_project_benchmark() {
     local proj_min
     local proj_max
     if [ "$name" = "large-ts-repo" ]; then
-        # tsgo cold-checks 6000+ files; give it up to 10 min per run.
-        # 1 warmup + 1 measured run keeps total wall-clock under 20 min.
-        run_timeout=600
+        # tsz cold-checks 6000+ files in ~12min on a workstation; tsgo is much
+        # faster (~2.5s) but kept the 10min ceiling for headroom on slow CI
+        # runners. Bump to 25min so tsz can record a real number instead of
+        # being treated as "unavailable", which previously hard-skipped the
+        # tsz arm of this benchmark via a bench-script bypass.
+        # 1 warmup + 1 measured run keeps total wall-clock under ~50min.
+        run_timeout=1500
         proj_warmup=1
         proj_min=1
         proj_max=2
@@ -2924,18 +2957,18 @@ main() {
         done
     fi  # End of medium/small files skip
 
-    run_utility_types_benchmarks
-    run_ts_toolbelt_benchmarks
-    run_ts_essentials_benchmarks
-    run_utility_types_project_benchmarks
-    run_ts_toolbelt_project_benchmarks || true
-    run_ts_essentials_project_benchmarks || true
-    run_rxjs_project_benchmarks || true
-    run_type_fest_project_benchmarks || true
-    run_zod_project_benchmarks || true
-    run_kysely_project_benchmarks || true
-    run_nextjs_benchmarks || true
-    run_large_ts_repo_benchmarks || true
+    run_isolated "utility-types"          run_utility_types_benchmarks
+    run_isolated "ts-toolbelt"            run_ts_toolbelt_benchmarks
+    run_isolated "ts-essentials"          run_ts_essentials_benchmarks
+    run_isolated "utility-types-project"  run_utility_types_project_benchmarks
+    run_isolated "ts-toolbelt-project"    run_ts_toolbelt_project_benchmarks
+    run_isolated "ts-essentials-project"  run_ts_essentials_project_benchmarks
+    run_isolated "rxjs-project"           run_rxjs_project_benchmarks
+    run_isolated "type-fest-project"      run_type_fest_project_benchmarks
+    run_isolated "zod-project"            run_zod_project_benchmarks
+    run_isolated "kysely-project"         run_kysely_project_benchmarks
+    run_isolated "nextjs"                 run_nextjs_benchmarks
+    run_isolated "large-ts-repo"          run_large_ts_repo_benchmarks
 
     print_header "Synthetic Benchmarks - Scaling Test"
     

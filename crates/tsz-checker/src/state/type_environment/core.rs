@@ -1373,11 +1373,20 @@ impl<'a> CheckerState<'a> {
         let sf = checker.ctx.arena.source_files.first()?;
         let source_text: &str = &sf.text;
         let comments = &sf.comments;
-        let jsdoc = checker.try_leading_jsdoc(
-            comments,
-            checker.ctx.arena.get(decl_idx)?.pos,
-            source_text,
-        )?;
+        let mut search_pos = checker.ctx.arena.get(decl_idx)?.pos;
+        // For `export class Foo {}` the parser wraps the class in an
+        // EXPORT_DECLARATION node. The leading JSDoc attaches before the
+        // `export` keyword, so the gap between the JSDoc end and `class.pos`
+        // contains `"export "` and `try_leading_jsdoc` would return None.
+        // Walk up to the wrapping export to locate the JSDoc correctly.
+        if let Some(ext) = checker.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent) = checker.ctx.arena.get(ext.parent)
+            && parent.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION
+        {
+            search_pos = parent.pos;
+        }
+        let jsdoc = checker.try_leading_jsdoc(comments, search_pos, source_text)?;
 
         let names = Self::jsdoc_template_type_params(&jsdoc);
         if names.is_empty() {

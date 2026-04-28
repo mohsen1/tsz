@@ -1,0 +1,101 @@
+name: Re-run CI on PR comment
+
+# Lets PR contributors re-run failed CI without write access by commenting
+# `/retest` or `/ci` on their PR. The workflow itself runs from `main` (not
+# the PR head), reads the PR's most recent CI run, and calls
+# `gh run rerun --failed` on it. No contributor code is executed here.
+#
+# Permission gate: comment author must be the PR author OR a member with at
+# least `write` association (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR with
+# explicit write). First-time drive-by commenters cannot trigger CI re-runs.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  pull-requests: read
+  contents: read
+
+jobs:
+  rerun:
+    name: Re-run CI
+    if: |
+      github.event.issue.pull_request != null &&
+      (
+        contains(github.event.comment.body, '/retest') ||
+        contains(github.event.comment.body, '/ci')
+      ) &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR' ||
+        github.event.comment.user.login == github.event.issue.user.login
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: React to comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+        run: |
+          gh api -X POST "repos/${REPO}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content='rocket' || true
+
+      - name: Resolve PR head SHA
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          head_sha=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Find latest CI run for the PR head
+        id: run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          # The CI workflow file (must match the workflow we want to re-run).
+          # Update this if the main CI workflow filename changes.
+          run_id=$(gh run list \
+            --repo "${REPO}" \
+            --workflow ci.yml \
+            --commit "${HEAD_SHA}" \
+            --limit 1 \
+            --json databaseId,conclusion,status \
+            --jq '.[0].databaseId // empty')
+          if [ -z "${run_id}" ]; then
+            echo "::error::No CI run found for SHA ${HEAD_SHA}; nothing to re-run."
+            exit 1
+          fi
+          echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+
+      - name: Re-run failed jobs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+        run: |
+          gh run rerun --repo "${REPO}" --failed "${RUN_ID}"
+
+      - name: Comment with link to re-run
+        if: always() && job.status != 'cancelled'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          RUN_ID: ${{ steps.run.outputs.run_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "${JOB_STATUS}" = "success" ]; then
+            body="Re-running failed jobs on the latest CI run: https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          else
+            body="Could not re-run CI. See workflow logs."
+          fi
+          gh pr comment "${PR_NUMBER}" --repo "${REPO}" --body "${body}"

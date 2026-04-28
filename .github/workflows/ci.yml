@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
   merge_group:
   push:
     branches: [main]
@@ -37,18 +37,50 @@ jobs:
           set -euo pipefail
           should_run=true
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # The `labeled` event triggers on every label add. We only care
+            # about the `ci-approved` label (used to opt fork PRs into CI).
+            # For any other label, this would just duplicate the existing
+            # CI run from the same SHA's open/sync events, so skip.
+            if [[ "${{ github.event.action }}" == "labeled" \
+                  && "${{ github.event.label.name }}" != "ci-approved" ]]; then
+              echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
+              should_run=false
+            fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
               should_run=false
             fi
             if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
-              echo "Skipping self-hosted CI for fork PRs."
-              should_run=false
+              # Fork PRs cannot use self-hosted runners by default (untrusted
+              # code on shared infra). A maintainer must add the
+              # `ci-approved` label after reviewing the diff to opt the PR
+              # into full CI. Without that label, only the lightweight
+              # ubuntu-latest checks run, which means heavy regressions
+              # (e.g. conformance) cannot be caught — which is exactly how
+              # PR #1608 slipped 72 conformance regressions into main.
+              has_label=$(gh api \
+                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+                --jq '.labels // [] | map(.name) | index("ci-approved") // empty' \
+                2>/dev/null || true)
+              if [[ -n "$has_label" ]]; then
+                echo "Fork PR has ci-approved label — running full CI on self-hosted runners."
+              else
+                echo "Skipping self-hosted CI for fork PRs (add 'ci-approved' label to enable)."
+                should_run=false
+              fi
             fi
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             # Skip redundant main CI when the push is a PR merge already validated by PR CI.
             # Saves ~40+ runner-minutes per merge (32 conformance + lint + unit + wasm + emit shards).
             pr_number=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
               --jq '.[0].number // empty' 2>/dev/null || true)
+            if [[ -z "$pr_number" ]]; then
+              commit_subject=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}" \
+                --jq '.commit.message | split("\n")[0]' 2>/dev/null || true)
+              if [[ "$commit_subject" =~ \(\#([0-9]+)\) ]]; then
+                pr_number="${BASH_REMATCH[1]}"
+                echo "Commit subject references PR #${pr_number} — using it for main CI skip check"
+              fi
+            fi
             if [[ -n "$pr_number" ]]; then
               pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
                 --jq '.head.sha' 2>/dev/null || true)
@@ -91,6 +123,10 @@ jobs:
     env:
       GITHUB_SHA: ${{ github.sha }}
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      # The dist artifact unblocks conformance/emit/fourslash. On main run
+      # 25057027232, saving cargo-target-deps took ~100s after a 75s build,
+      # while sccache already had 100% Rust hits.
+      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -106,22 +142,7 @@ jobs:
           path: dist-fast-binaries.tar
           retention-days: 1
           if-no-files-found: error
-
-  unit-archive:
-    name: unit-archive
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Build unit test archive
-        run: scripts/ci/github-suite.sh unit-archive
+          compression-level: 1
 
   wasm:
     name: wasm
@@ -131,33 +152,36 @@ jobs:
     timeout-minutes: 45
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      # Keep sccache writes, but do not tar the wasm target dir on the job's
+      # critical path. The wasm target save was ~33s on run 25057027232.
+      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run wasm suite (nodejs target)
-        run: scripts/ci/github-suite.sh wasm
-
-  wasm-web:
-    name: wasm-web
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 45
-    env:
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Build web WASM for website playground
-        run: scripts/ci/github-suite.sh wasm-web
+      - name: Run wasm suite (nodejs + web targets)
+        run: scripts/ci/github-suite.sh wasm-all
       - name: Upload web WASM artifact
         uses: actions/upload-artifact@v4
         with:
           name: wasm-web
           path: pkg/web/
           retention-days: 30
+
+  wasm-web:
+    name: wasm-web
+    needs: [gate, wasm]
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download web WASM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-web
+          path: pkg/web/
+      - name: Verify web WASM artifact
+        run: test -s pkg/web/tsz_wasm_bg.wasm
 
   node-harness-prep:
     name: node-harness-prep
@@ -191,27 +215,33 @@ jobs:
           compression-level: 1
 
   unit:
-    name: unit-${{ matrix.shard }}
-    needs: [gate, unit-archive]
+    # One nextest job avoids the 3m+ archive/upload critical path. Nextest
+    # already parallelizes heavily inside the runner, and the latest green
+    # #1657 sample showed the actual shard execution was much cheaper than
+    # preparing and shipping the archive.
+    name: unit
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3]
     env:
-      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_UNIT_SHARD_COUNT: 4
-      TSZ_CI_CACHE_SAVE: "0"
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+      # Nextest completed in ~2m on run 25057027232, then the job spent
+      # 383s packing cargo-target-unit. That target-dir tarball dominates
+      # main wall clock, while sccache remains active for compile reuse.
+      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit shard
-        run: scripts/ci/github-suite.sh unit-shard
+      - name: Run unit suite
+        run: scripts/ci/github-suite.sh unit
 
   conformance:
+    # Conformance remains comfortably below the current wall-clock tail. In
+    # run 25058599510, 6 shards finished in <=2m21 while unit/fourslash were
+    # still running. Keep enough parallelism to stay off the critical path
+    # while returning runner capacity to the slower suites.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true'
@@ -220,11 +250,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        shard: [0, 1, 2, 3]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 16
-      TSZ_CI_CONFORMANCE_SHARDS: 16
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
+      TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -251,8 +281,8 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 16
-      TSZ_CI_CONFORMANCE_SHARDS: 16
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
+      TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
@@ -319,6 +349,10 @@ jobs:
         run: scripts/ci/github-suite.sh emit-aggregate
 
   fourslash:
+    # Each matrix shard runs on its own 8-vCPU cloud runner. Run 25058599510
+    # still tailed in fourslash-2 at 6m23, while conformance had spare
+    # capacity. Shift those two runners here; weighted snapshot timings reduce
+    # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.should_run == 'true'
@@ -327,11 +361,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
-      TSZ_CI_FOURSLASH_WORKERS: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
+      TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
+      TSZ_CI_FOURSLASH_WORKERS: 8
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
@@ -371,7 +406,7 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4

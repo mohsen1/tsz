@@ -73,6 +73,50 @@ const t: Tuple = ["hello", ...[1, 2], true];  // Error: can't spread number[] in
 }
 
 #[test]
+fn test_spread_variadic_tuple_preserves_rest_in_tuple_context() {
+    // Regression: spliceTuples.ts. When spreading a tuple with a trailing rest
+    // element (e.g. `[string, boolean, ...boolean[]]`) into another tuple
+    // position, the rest must be preserved as a rest element of the result —
+    // not collapsed into a single fixed `boolean[]` element. Collapsing
+    // (1) garbles diagnostic display and (2) makes the result fail to assign
+    // to a target tuple whose own rest accepts the source's variadic tail.
+    let source = r#"
+declare const sbb_: [string, boolean, ...boolean[]];
+let k4: [number, string, ...boolean[]] = [1, ...sbb_];
+let k5: [number, string, boolean, ...boolean[]] = [1, ...sbb_];
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 0,
+        "Expected no TS2322 — spreading [string, boolean, ...boolean[]] should preserve the rest \
+         and assign cleanly to a target whose rest is `...boolean[]`, got {ts2322_count} TS2322 errors. \
+         Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_spread_variadic_tuple_too_few_required_still_errors() {
+    // Sister-case to the above: when the target tuple needs MORE required
+    // elements than the source can statically supply, TS2322 must still fire.
+    // `sbb_` has only one required boolean before `...boolean[]`, so assigning
+    // to a target needing two required booleans is a real error.
+    let source = r#"
+declare const sbb_: [string, boolean, ...boolean[]];
+let k6: [number, string, boolean, boolean, ...boolean[]] = [1, ...sbb_];
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+    assert!(
+        ts2322_count >= 1,
+        "Expected at least one TS2322 — source [string, boolean, ...boolean[]] cannot satisfy \
+         a target with two required booleans, got {ts2322_count}. Diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_object_spread() {
     let source = r"
 const obj1 = { a: 1, b: 2 };

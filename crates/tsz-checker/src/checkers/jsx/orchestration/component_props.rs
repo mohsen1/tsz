@@ -655,6 +655,7 @@ impl<'a> CheckerState<'a> {
                             &message,
                             diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                         );
+                        self.check_missing_intrinsic_tag_against_jsx_element_type(element_idx, tag);
                         self.ctx
                             .jsx_intrinsic_props_cache
                             .insert(cache_key, TypeId::ERROR);
@@ -670,6 +671,50 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(props)
+    }
+
+    fn check_missing_intrinsic_tag_against_jsx_element_type(
+        &mut self,
+        element_idx: NodeIndex,
+        tag: &str,
+    ) {
+        let Some(tag_name_idx) = self.jsx_tag_name_idx_for_element_like(element_idx) else {
+            return;
+        };
+        let Some(element_type_sym_id) = self.get_jsx_namespace_export_symbol_id("ElementType")
+        else {
+            return;
+        };
+        let element_type = self.type_reference_symbol_type(element_type_sym_id);
+        if matches!(
+            element_type,
+            TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
+        ) {
+            return;
+        }
+
+        let tag_type = self.ctx.types.literal_string(tag);
+        if self.is_assignable_to(tag_type, element_type) {
+            return;
+        }
+
+        use tsz_common::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            tag_name_idx,
+            diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT,
+            &[tag],
+        );
+    }
+
+    fn jsx_tag_name_idx_for_element_like(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if let Some(opening) = self.ctx.arena.get_jsx_opening(node) {
+            return Some(opening.tag_name);
+        }
+        if let Some(closing) = self.ctx.arena.get_jsx_closing(node) {
+            return Some(closing.tag_name);
+        }
+        Some(idx)
     }
 
     pub(in crate::checkers_domain::jsx) fn get_jsx_intrinsic_tag_name(

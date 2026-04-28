@@ -117,6 +117,13 @@ file_mtime() {
 
 # Check if binaries are up-to-date with source code
 # Returns 0 if binaries are fresh (up-to-date), 1 if they need rebuilding
+binaries_exist() {
+    [ -x "$TSZ_BIN" ] &&
+        [ -x "$SERVER_BIN" ] &&
+        [ -x "$CACHE_GEN_BIN" ] &&
+        [ -x "$RUNNER_BIN" ]
+}
+
 binaries_are_fresh() {
     local binary_dir="$REPO_ROOT/.target/$BUILD_PROFILE"
     local tsz_bin="$binary_dir/tsz"
@@ -203,6 +210,15 @@ binaries_are_fresh() {
 ensure_binaries() {
     export RUST_BACKTRACE=1
 
+    # CI conformance shards download an exact-SHA dist-fast artifact built by
+    # the dist-binaries job. The checkout in each shard can have newer mtimes
+    # than that artifact, so the generic freshness check would rebuild in every
+    # shard even though the artifact is the intended binary source.
+    if [[ "$BUILD_PROFILE" == "dist-fast" && "${TSZ_CI_TRUST_DIST_FAST_CACHE:-0}" == "1" ]] && binaries_exist; then
+        echo -e "${GREEN}Using trusted dist-fast binaries from CI artifact${NC}"
+        return 0
+    fi
+
     # Fast path: check if binaries are already fresh
     if binaries_are_fresh; then
         echo -e "${GREEN}Binaries are up-to-date (profile: $BUILD_PROFILE)${NC}"
@@ -235,6 +251,16 @@ ensure_binaries() {
         local flag="$1"
         "$RUNNER_BIN" --help 2>&1 | grep -q -- "$flag"
     }
+
+    # NOTE: do NOT pass --mode server in CI. The legacy server protocol in
+    # crates/conformance/src/server_pool.rs returns only error codes — it
+    # does NOT carry diagnostic fingerprints (code + file + line + column
+    # + message_key). The runner falls back to code-only comparison via
+    # use_fingerprint_compare() in runner.rs:42, which silently skips the
+    # fingerprint-level regression detection that conformance-baseline.txt
+    # is built around. Enabling server mode here is a coverage regression.
+    # Re-enable only after the server protocol carries fingerprints (or
+    # gate it behind an opt-in env var that's off in CI).
 
 # Ensure scripts/node_modules is installed (provides TypeScript lib files for type checking)
 ensure_scripts_deps() {
