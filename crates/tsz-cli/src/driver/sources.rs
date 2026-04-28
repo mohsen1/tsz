@@ -656,9 +656,7 @@ pub(super) fn read_source_files(
 
         // Phase 3 (serial): apply each batch entry's action, queueing newly
         // discovered deps into `pending` for the next BFS level.
-        for ((path, action), maybe_parsed) in
-            batch.into_iter().zip(actions).zip(parsed)
-        {
+        for ((path, action), maybe_parsed) in batch.into_iter().zip(actions).zip(parsed) {
             match action {
                 BatchAction::Cached => {
                     let cache = cache.expect("cached arm only fires when cache is Some");
@@ -701,79 +699,78 @@ pub(super) fn read_source_files(
                 }
             };
 
-        sources.insert(
-            path.clone(),
-            (Some(text), is_binary, suppress_parser_diagnostics),
-        );
-        let entry = dependencies.entry(path.clone()).or_default();
+            sources.insert(
+                path.clone(),
+                (Some(text), is_binary, suppress_parser_diagnostics),
+            );
+            let entry = dependencies.entry(path.clone()).or_default();
 
-        if !options.no_resolve {
-            for (specifier, import_kind, resolution_mode_override) in specifiers {
-                let request = tsz::module_resolver::ModuleLookupRequest {
-                    specifier: &specifier,
-                    containing_file: &path,
-                    specifier_span: tsz_common::Span::new(0, 0),
-                    import_kind,
-                    resolution_mode_override,
-                    no_implicit_any: options.checker.no_implicit_any,
-                    implied_classic_resolution: options.checker.implied_classic_resolution,
-                };
-                let outcome = module_resolver
-                    .lookup(
-                        &request,
-                        |spec, fp| {
-                            resolve_module_specifier(
-                                fp,
-                                spec,
-                                options,
-                                base_dir,
-                                &mut resolution_cache,
-                                &seen,
-                            )
-                        },
-                        |_| false,
-                        Some(&seen),
-                    )
-                    .classify();
-                if let Some(resolved) = outcome.resolved_path {
-                    let canonical = normalize(&resolved, options);
-                    entry.insert(canonical.clone());
-                    if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
-                        pending.push_back(canonical);
+            if !options.no_resolve {
+                for (specifier, import_kind, resolution_mode_override) in specifiers {
+                    let request = tsz::module_resolver::ModuleLookupRequest {
+                        specifier: &specifier,
+                        containing_file: &path,
+                        specifier_span: tsz_common::Span::new(0, 0),
+                        import_kind,
+                        resolution_mode_override,
+                        no_implicit_any: options.checker.no_implicit_any,
+                        implied_classic_resolution: options.checker.implied_classic_resolution,
+                    };
+                    let outcome = module_resolver
+                        .lookup(
+                            &request,
+                            |spec, fp| {
+                                resolve_module_specifier(
+                                    fp,
+                                    spec,
+                                    options,
+                                    base_dir,
+                                    &mut resolution_cache,
+                                    &seen,
+                                )
+                            },
+                            |_| false,
+                            Some(&seen),
+                        )
+                        .classify();
+                    if let Some(resolved) = outcome.resolved_path {
+                        let canonical = normalize(&resolved, options);
+                        entry.insert(canonical.clone());
+                        if has_source_file_extension(&canonical) && seen.insert(canonical.clone()) {
+                            pending.push_back(canonical);
+                        }
                     }
                 }
             }
-        }
 
-        // Resolve /// <reference types="..." /> directives
-        if !type_refs.is_empty() && !options.no_resolve {
-            let type_roots = options
-                .type_roots
-                .clone()
-                .unwrap_or_else(|| default_type_roots(base_dir));
-            for (type_name, resolution_mode, types_offset, types_len) in type_refs {
-                // TS1453: Validate resolution-mode attribute value.
-                // tsc anchors this diagnostic at the `types` attribute value span.
-                // When invalid, tsc resolves the type reference without an explicit
-                // mode. Empirically, tsc includes the package such that globals from
-                // all export conditions are available. We emulate this by resolving
-                // with both "import" and "require" conditions.
-                let invalid_mode = if let Some(ref mode) = resolution_mode
-                    && mode != "import"
-                    && mode != "require"
-                {
-                    resolution_mode_errors.push((path.clone(), types_offset, types_len));
-                    true
-                } else {
-                    false
-                };
-                let effective_resolution_mode = if invalid_mode {
-                    None
-                } else {
-                    resolution_mode.as_ref()
-                };
-                let resolved =
-                    if let Some(mode) = effective_resolution_mode {
+            // Resolve /// <reference types="..." /> directives
+            if !type_refs.is_empty() && !options.no_resolve {
+                let type_roots = options
+                    .type_roots
+                    .clone()
+                    .unwrap_or_else(|| default_type_roots(base_dir));
+                for (type_name, resolution_mode, types_offset, types_len) in type_refs {
+                    // TS1453: Validate resolution-mode attribute value.
+                    // tsc anchors this diagnostic at the `types` attribute value span.
+                    // When invalid, tsc resolves the type reference without an explicit
+                    // mode. Empirically, tsc includes the package such that globals from
+                    // all export conditions are available. We emulate this by resolving
+                    // with both "import" and "require" conditions.
+                    let invalid_mode = if let Some(ref mode) = resolution_mode
+                        && mode != "import"
+                        && mode != "require"
+                    {
+                        resolution_mode_errors.push((path.clone(), types_offset, types_len));
+                        true
+                    } else {
+                        false
+                    };
+                    let effective_resolution_mode = if invalid_mode {
+                        None
+                    } else {
+                        resolution_mode.as_ref()
+                    };
+                    let resolved = if let Some(mode) = effective_resolution_mode {
                         // With explicit resolution-mode, use exports map with the specified condition
                         let candidates =
                             crate::driver::resolution::type_package_candidates_pub(&type_name);
@@ -799,87 +796,87 @@ pub(super) fn read_source_files(
                     } else {
                         resolve_type_package_from_roots(&type_name, &type_roots, options)
                     };
-                // If type roots resolution failed, fall back to searching node_modules/
-                // directly. tsc's resolveTypeReferenceDirective always uses node_modules
-                // walk-up as a secondary fallback after typeRoots, regardless of the
-                // configured module resolution mode (including Classic).
-                let resolved = resolved.or_else(|| {
-                    crate::driver::resolution::resolve_type_reference_from_node_modules(
-                        &type_name,
-                        &path,
-                        base_dir,
-                        effective_resolution_mode.map(|s| s.as_str()),
-                        options,
-                    )
-                });
-                if let Some(resolved) = resolved {
-                    let canonical = normalize(&resolved, options);
-                    entry.insert(canonical.clone());
-                    if seen.insert(canonical.clone()) {
-                        pending.push_back(canonical);
+                    // If type roots resolution failed, fall back to searching node_modules/
+                    // directly. tsc's resolveTypeReferenceDirective always uses node_modules
+                    // walk-up as a secondary fallback after typeRoots, regardless of the
+                    // configured module resolution mode (including Classic).
+                    let resolved = resolved.or_else(|| {
+                        crate::driver::resolution::resolve_type_reference_from_node_modules(
+                            &type_name,
+                            &path,
+                            base_dir,
+                            effective_resolution_mode.map(|s| s.as_str()),
+                            options,
+                        )
+                    });
+                    if let Some(resolved) = resolved {
+                        let canonical = normalize(&resolved, options);
+                        entry.insert(canonical.clone());
+                        if seen.insert(canonical.clone()) {
+                            pending.push_back(canonical);
+                        }
+                    } else if !invalid_mode {
+                        type_reference_errors.push((
+                            path.clone(),
+                            type_name.clone(),
+                            types_offset,
+                            types_len,
+                        ));
                     }
-                } else if !invalid_mode {
-                    type_reference_errors.push((
-                        path.clone(),
-                        type_name.clone(),
-                        types_offset,
-                        types_len,
-                    ));
-                }
-                // When resolution-mode is invalid, also try the other condition
-                // so that globals from both export paths are available.
-                // tsc appears to make all globals available in this case.
-                if invalid_mode {
-                    for mode in &["import", "require"] {
-                        if let Some(alt) =
-                            crate::driver::resolution::resolve_type_reference_from_node_modules(
-                                &type_name,
-                                &path,
-                                base_dir,
-                                Some(mode),
-                                options,
-                            )
-                        {
-                            let canonical = normalize(&alt, options);
-                            entry.insert(canonical.clone());
-                            if seen.insert(canonical.clone()) {
-                                pending.push_back(canonical);
+                    // When resolution-mode is invalid, also try the other condition
+                    // so that globals from both export paths are available.
+                    // tsc appears to make all globals available in this case.
+                    if invalid_mode {
+                        for mode in &["import", "require"] {
+                            if let Some(alt) =
+                                crate::driver::resolution::resolve_type_reference_from_node_modules(
+                                    &type_name,
+                                    &path,
+                                    base_dir,
+                                    Some(mode),
+                                    options,
+                                )
+                            {
+                                let canonical = normalize(&alt, options);
+                                entry.insert(canonical.clone());
+                                if seen.insert(canonical.clone()) {
+                                    pending.push_back(canonical);
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Resolve /// <reference path="..." /> directives
-        if !reference_paths.is_empty() {
-            let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
-            for (reference_path, _line_num, _quote_offset) in reference_paths {
-                if reference_path.is_empty() {
-                    continue;
-                }
-                let mut candidates = Vec::new();
-                let direct_reference = base_dir.join(&reference_path);
-                candidates.push(direct_reference);
-                if !reference_path.contains('.') {
-                    for ext in [".ts", ".tsx", ".d.ts"] {
-                        candidates.push(base_dir.join(format!("{reference_path}{ext}")));
+            // Resolve /// <reference path="..." /> directives
+            if !reference_paths.is_empty() {
+                let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
+                for (reference_path, _line_num, _quote_offset) in reference_paths {
+                    if reference_path.is_empty() {
+                        continue;
+                    }
+                    let mut candidates = Vec::new();
+                    let direct_reference = base_dir.join(&reference_path);
+                    candidates.push(direct_reference);
+                    if !reference_path.contains('.') {
+                        for ext in [".ts", ".tsx", ".d.ts"] {
+                            candidates.push(base_dir.join(format!("{reference_path}{ext}")));
+                        }
+                    }
+
+                    let Some(resolved_reference) = candidates
+                        .iter()
+                        .find(|candidate| candidate.is_file())
+                        .map(|candidate| normalize(candidate, options))
+                    else {
+                        continue;
+                    };
+                    entry.insert(resolved_reference.clone());
+                    if seen.insert(resolved_reference.clone()) {
+                        pending.push_back(resolved_reference);
                     }
                 }
-
-                let Some(resolved_reference) = candidates
-                    .iter()
-                    .find(|candidate| candidate.is_file())
-                    .map(|candidate| normalize(candidate, options))
-                else {
-                    continue;
-                };
-                entry.insert(resolved_reference.clone());
-                if seen.insert(resolved_reference.clone()) {
-                    pending.push_back(resolved_reference);
-                }
             }
-        }
         }
     }
 
