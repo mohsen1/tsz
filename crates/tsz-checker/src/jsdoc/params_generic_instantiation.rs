@@ -236,7 +236,11 @@ impl<'a> CheckerState<'a> {
                 matches!(base_name, "Void" | "Undefined")
             };
 
-        if resolved_non_generic {
+        // JSDoc treats `Object<K, V>` as a record-shaped indexed type
+        // (`{ [k: K]: V }`), even though the lib `interface Object` declaration
+        // has no type parameters. tsc accepts this without TS2315 in JS files.
+        let is_jsdoc_object_record = base_name == "Object" && arg_strs.len() == 2;
+        if resolved_non_generic && !is_jsdoc_object_record {
             let base_offset = type_expr[..angle_idx].rfind(base_name).unwrap_or(0);
             let message = crate::diagnostics::format_message(
                 crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_GENERIC,
