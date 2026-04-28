@@ -874,7 +874,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && let Some(first_base) = self.primitive_base_of(first_candidate)
             {
                 let current_base = self.primitive_base_of(source_for_inference);
-                if current_base.map_or(true, |base| base != first_base)
+                if current_base != Some(first_base)
                     && !self
                         .checker
                         .is_assignable_to(source_for_inference, first_candidate)
