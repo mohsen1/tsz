@@ -889,6 +889,18 @@ fn test_method_returning_non_null_null_widens_to_any() {
 }
 
 #[test]
+fn test_inferred_object_return_preserves_destructured_typeof_alias_member() {
+    let output = emit_dts_with_binding(
+        "type Named = { name: string }; function f({ name: alias }: Named) { type Named2 = { name: typeof alias }; return null! as Named2; }",
+    );
+    assert!(
+        output
+            .contains("declare function f({ name: alias }: Named): {\n    name: typeof alias;\n};"),
+        "Expected asserted local alias return to preserve typeof destructured alias: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_parameter_properties_emit_individual_class_properties() {
     let source = "class C { constructor(public [x, y]: [string, number]) {} }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
