@@ -769,6 +769,22 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && self
+                        .should_prefer_source_return_type_text(type_text, effective_return_type_id)
+                {
+                    self.write(": ");
+                    if let Some(ref tp) = func.type_parameters
+                        && !tp.nodes.is_empty()
+                    {
+                        let outer_names = self.collect_type_param_names(tp);
+                        self.write(&Self::rename_shadowed_type_params_in_text(
+                            type_text,
+                            &outer_names,
+                        ));
+                    } else {
+                        self.write(type_text);
+                    }
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && let Some(type_text) = preferred_return
                 {

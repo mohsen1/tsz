@@ -113,6 +113,16 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 Some("any".to_string())
             }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.preferred_expression_type_text(unary.expression)
+                    .or_else(|| self.infer_fallback_type_text_at(unary.expression, depth + 1))
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.function_expression_type_text_from_ast(node_id)
+            }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.preferred_expression_type_text(node_id)
             }
@@ -227,6 +237,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.array_literal_expression_type_text(expr_idx)
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.function_expression_type_text_from_ast(expr_idx)
             }
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 self.short_circuit_expression_type_text(expr_idx)
@@ -1288,6 +1303,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn should_prefer_source_return_type_text(
+        &self,
+        source_type_text: &str,
+        inferred_return_type: tsz_solver::types::TypeId,
+    ) -> bool {
+        if !source_type_text.contains("typeof ") {
+            return false;
+        }
+        !self.print_type_id(inferred_return_type).contains("typeof ")
+    }
+
     pub(in crate::declaration_emitter) fn collect_unique_return_type_text_from_block(
         &self,
         statements: &NodeList,
@@ -1386,6 +1412,58 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    fn function_expression_type_text_from_ast(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(expr_node)?;
+
+        let mut scratch = if let (Some(type_cache), Some(type_interner), Some(binder)) =
+            (&self.type_cache, self.type_interner, self.binder)
+        {
+            DeclarationEmitter::with_type_info(
+                self.arena,
+                type_cache.clone(),
+                type_interner,
+                binder,
+            )
+        } else {
+            DeclarationEmitter::new(self.arena)
+        };
+        scratch.source_is_declaration_file = self.source_is_declaration_file;
+        scratch.source_is_js_file = self.source_is_js_file;
+        scratch.current_source_file_idx = self.current_source_file_idx;
+        scratch.source_file_text = self.source_file_text.clone();
+        scratch.current_file_path = self.current_file_path.clone();
+        scratch.current_arena = self.current_arena.clone();
+        scratch.arena_to_path = self.arena_to_path.clone();
+        scratch.indent_level = self.indent_level;
+
+        if let Some(ref type_params) = func.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            scratch.emit_type_parameters(type_params);
+        }
+        scratch.write("(");
+        scratch.emit_parameters_with_body(&func.parameters, func.body);
+        scratch.write(") => ");
+        if func.type_annotation.is_some() {
+            scratch.emit_type(func.type_annotation);
+        } else if func.body.is_some() && scratch.body_returns_void(func.body) {
+            scratch.write("void");
+        } else if let Some(return_type) =
+            scratch.function_body_preferred_return_type_text(func.body)
+        {
+            scratch.write(&return_type);
+        } else {
+            scratch.write("any");
+        }
+        Some(scratch.writer.take_output())
     }
 
     pub(in crate::declaration_emitter) fn infer_object_literal_type_text_at(
