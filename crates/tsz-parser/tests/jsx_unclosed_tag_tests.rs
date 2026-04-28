@@ -101,8 +101,7 @@ fn test_jsx_missing_closing_tag_anchor_after_conflict_marker_uses_opening_end() 
     assert_eq!(
         ts1005.len(),
         1,
-        "Expected exactly one TS1005 `</` diagnostic, got: {:?}",
-        ts1005
+        "Expected exactly one TS1005 `</` diagnostic, got: {ts1005:?}",
     );
     // Anchor must be at end of `<div>`. The opening tag occupies bytes 10..15
     // (`<div>`); its end is byte 15.

@@ -692,22 +692,23 @@ impl ParserState {
             let last_child_stole_closer =
                 self.check_last_child_stole_closer(&children, opening_tag_name);
 
-            let closing =
-                if let Some((child_opening_tag, child_closing_idx)) = last_child_stole_closer {
-                    // TS17008: The child element was never properly closed
-                    // (dedup at same position handles double emission from inner + outer)
-                    self.emit_jsx_unclosed_tag_error(child_opening_tag);
-                    // Reuse the child's closing element as our own
-                    child_closing_idx
-                } else {
-                    // When a Git merge conflict marker terminated JSX child
-                    // scanning before any closing tag and we're at EOF, tsc
-                    // anchors the missing `</` error at the end of the opening
-                    // element rather than at the EOF position. Emit our own
-                    // diagnostic at that anchor and synthesize an empty
-                    // closing element so `parse_jsx_closing_element` doesn't
-                    // re-emit at EOF.
-                    let has_conflict_marker = self
+            let closing = if let Some((child_opening_tag, child_closing_idx)) =
+                last_child_stole_closer
+            {
+                // TS17008: The child element was never properly closed
+                // (dedup at same position handles double emission from inner + outer)
+                self.emit_jsx_unclosed_tag_error(child_opening_tag);
+                // Reuse the child's closing element as our own
+                child_closing_idx
+            } else {
+                // When a Git merge conflict marker terminated JSX child
+                // scanning before any closing tag and we're at EOF, tsc
+                // anchors the missing `</` error at the end of the opening
+                // element rather than at the EOF position. Emit our own
+                // diagnostic at that anchor and synthesize an empty
+                // closing element so `parse_jsx_closing_element` doesn't
+                // re-emit at EOF.
+                let has_conflict_marker = self
                         .scanner
                         .get_scanner_diagnostics()
                         .iter()
@@ -715,52 +716,52 @@ impl ParserState {
                             d.code
                                 == tsz_common::diagnostics::diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED
                         });
-                    let closing = if has_conflict_marker
-                        && self.is_token(SyntaxKind::EndOfFileToken)
-                        && let Some(opening_node) = self.arena.get(opening)
-                    {
-                        let anchor = opening_node.end;
-                        self.parse_error_at(
-                            anchor,
-                            0,
-                            "'</' expected.",
-                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
-                        );
-                        // Synthesize a closing element that mirrors the opener
-                        // so the downstream tag-mismatch check stays quiet
-                        // (we already emitted the TS1005 above).
-                        self.arena.add_jsx_closing(
-                            syntax_kind_ext::JSX_CLOSING_ELEMENT,
-                            anchor,
-                            anchor,
-                            crate::parser::node::JsxClosingData {
-                                tag_name: opening_tag_name.unwrap_or(NodeIndex::NONE),
-                            },
-                        )
-                    } else {
-                        self.parse_jsx_closing_element()
-                    };
-                    // Check for tag name mismatch
-                    if let Some(open_tag) = opening_tag_name
-                        && let Some(close_node) = self.arena.get(closing)
-                        && let Some(close_data) = self.arena.get_jsx_closing(close_node)
-                    {
-                        let close_tag = close_data.tag_name;
-                        if !self.jsx_tag_names_match(open_tag, close_tag) {
-                            // Check if closing matches parent's tag (tsc pattern)
-                            let matches_parent = currently_opened_tag
-                                .is_some_and(|pt| self.jsx_tag_names_match(pt, close_tag));
-                            if matches_parent {
-                                // TS17008: Our tag is unclosed (closer belongs to parent)
-                                self.emit_jsx_unclosed_tag_error(open_tag);
-                            } else {
-                                // TS17002: Wrong closing tag
-                                self.emit_jsx_mismatched_closing_tag_error(open_tag, close_tag);
-                            }
+                let closing = if has_conflict_marker
+                    && self.is_token(SyntaxKind::EndOfFileToken)
+                    && let Some(opening_node) = self.arena.get(opening)
+                {
+                    let anchor = opening_node.end;
+                    self.parse_error_at(
+                        anchor,
+                        0,
+                        "'</' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                    // Synthesize a closing element that mirrors the opener
+                    // so the downstream tag-mismatch check stays quiet
+                    // (we already emitted the TS1005 above).
+                    self.arena.add_jsx_closing(
+                        syntax_kind_ext::JSX_CLOSING_ELEMENT,
+                        anchor,
+                        anchor,
+                        crate::parser::node::JsxClosingData {
+                            tag_name: opening_tag_name.unwrap_or(NodeIndex::NONE),
+                        },
+                    )
+                } else {
+                    self.parse_jsx_closing_element()
+                };
+                // Check for tag name mismatch
+                if let Some(open_tag) = opening_tag_name
+                    && let Some(close_node) = self.arena.get(closing)
+                    && let Some(close_data) = self.arena.get_jsx_closing(close_node)
+                {
+                    let close_tag = close_data.tag_name;
+                    if !self.jsx_tag_names_match(open_tag, close_tag) {
+                        // Check if closing matches parent's tag (tsc pattern)
+                        let matches_parent = currently_opened_tag
+                            .is_some_and(|pt| self.jsx_tag_names_match(pt, close_tag));
+                        if matches_parent {
+                            // TS17008: Our tag is unclosed (closer belongs to parent)
+                            self.emit_jsx_unclosed_tag_error(open_tag);
+                        } else {
+                            // TS17002: Wrong closing tag
+                            self.emit_jsx_mismatched_closing_tag_error(open_tag, close_tag);
                         }
                     }
-                    closing
-                };
+                }
+                closing
+            };
 
             let end_pos = self.token_end();
 
