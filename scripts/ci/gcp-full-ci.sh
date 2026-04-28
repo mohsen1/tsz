@@ -1008,6 +1008,36 @@ PYEOF
   fi
 }
 
+validate_emit_aggregate_counts() {
+  local js_passed="$1" js_total="$2" js_skipped="$3" js_timeouts="$4"
+  local dts_passed="$5" dts_total="$6" dts_skipped="$7"
+  local files_count="$8" expected_shards="$9"
+
+  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${files_count}/${expected_shards} shards"
+
+  if [[ "$files_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${files_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
+    return 1
+  fi
+  if [[ "$js_total" -eq 0 ]]; then
+    echo "error: emit aggregate has zero JS tests — something is wrong" >&2
+    return 1
+  fi
+
+  local base_js base_dts
+  base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
+  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
+  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
+    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
+    return 1
+  fi
+  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
+    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
+    return 1
+  fi
+  echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+}
+
 run_emit_shard() {
   ci_section "Emit shard"
   local bucket run_key shard_index shard_count
@@ -1067,6 +1097,11 @@ run_emit_shard() {
       && echo "Uploaded emit shard result: shard-${shard_index}.json" \
       || echo "warning: failed to upload emit shard result (non-fatal)" >&2
   fi
+
+  if [[ "$shard_count" -eq 1 ]]; then
+    ci_section "Emit aggregate"
+    validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1
+  fi
   return 0
 }
 
@@ -1109,29 +1144,8 @@ run_emit_aggregate() {
     dts_skipped=$((dts_skipped + $(num_or_zero "$(jq -r '.dts_skipped // 0' "$f")")))
   done
 
-  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${files_count}/${expected_shards} shards"
-
-  if [[ "$files_count" -lt "$expected_shards" ]]; then
-    echo "error: only ${files_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
-    return 1
-  fi
-  if [[ "$js_total" -eq 0 ]]; then
-    echo "error: emit aggregate has zero JS tests — something is wrong" >&2
-    return 1
-  fi
-
-  local base_js base_dts
-  base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
-  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
-  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
-    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
-    return 1
-  fi
-  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
-    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
-    return 1
-  fi
-  echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+  validate_emit_aggregate_counts "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
+    "$dts_passed" "$dts_total" "$dts_skipped" "$files_count" "$expected_shards"
 }
 
 run_fourslash_shard() {
