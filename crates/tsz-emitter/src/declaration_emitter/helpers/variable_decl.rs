@@ -128,7 +128,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
-                && (self.function_initializer_has_inline_parameter_comments(initializer)
+                && (self.function_initializer_needs_source_signature(initializer)
+                    || self.function_initializer_has_inline_parameter_comments(initializer)
                     || self.function_initializer_is_self_returning_for(initializer, decl_name)
                     || self.function_initializer_returns_unique_identifier(initializer)
                     || self.function_initializer_has_typeof_in_param_annotations(initializer))
@@ -1038,6 +1039,39 @@ impl<'a> DeclarationEmitter<'a> {
                 self.parameter_has_leading_inline_block_comment(param_node.pos)
             })
         })
+    }
+
+    pub(in crate::declaration_emitter) fn function_initializer_needs_source_signature(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        func.type_annotation.is_some()
+            || func
+                .type_parameters
+                .as_ref()
+                .is_some_and(|type_params| !type_params.nodes.is_empty())
+            || func.parameters.nodes.iter().copied().any(|param_idx| {
+                self.arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.arena.get_parameter(param_node))
+                    .and_then(|param| self.arena.get(param.name))
+                    .is_some_and(|name_node| {
+                        name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    })
+            })
     }
 
     /// Returns `true` when the initializer is a function expression / arrow whose
