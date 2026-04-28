@@ -2157,6 +2157,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::Identifier as u16 => {
                 let type_id = source_type
                     .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                    .or_else(|| self.get_symbol_cached_type(node_idx))
                     .or_else(|| self.get_node_type(node_idx))
                     .or_else(|| self.get_type_via_symbol(node_idx));
                 bindings.push((node_idx, type_id));
@@ -2165,6 +2166,8 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(element) = self.arena.get_binding_element(node) {
                     let effective_type = source_type
                         .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                        .or_else(|| self.get_symbol_cached_type(node_idx))
+                        .or_else(|| self.get_symbol_cached_type(element.name))
                         .or_else(|| {
                             if element.initializer.is_some() {
                                 self.get_node_type(element.initializer)
@@ -2273,6 +2276,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: Option<tsz_solver::types::TypeId>,
     ) {
         let type_id = type_id
+            .or_else(|| self.get_symbol_cached_type(ident_idx))
             .or_else(|| self.get_node_type(ident_idx))
             .or_else(|| self.get_type_via_symbol(ident_idx));
         self.write(": ");
