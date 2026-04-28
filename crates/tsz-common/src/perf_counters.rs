@@ -98,7 +98,7 @@ pub enum CheckerCreationReason {
     ExpandoProperty = 11,
     /// `identifier::resolution` cross-file fallback.
     IdentifierResolution = 12,
-    /// Generic call-helpers cross-file resolution (call_helpers.rs).
+    /// Generic call-helpers cross-file resolution (`call_helpers.rs`).
     CallHelpers = 13,
     /// `computed_helpers_binding` deep alias resolution.
     BindingHelpers = 14,
@@ -217,9 +217,6 @@ static COUNTERS: OnceLock<PerfCounters> = OnceLock::new();
 
 impl PerfCounters {
     const fn new_zero() -> Self {
-        // Helper to construct a zero array of the right length without
-        // requiring `AtomicU64: Copy` (it isn't).
-        const Z: AtomicU64 = AtomicU64::new(0);
         Self {
             enabled: AtomicBool::new(false),
             delegate_cross_arena_calls: AtomicU64::new(0),
@@ -229,7 +226,8 @@ impl PerfCounters {
             delegate_max_recursion_depth: AtomicU64::new(0),
             checker_state_constructed: AtomicU64::new(0),
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
-            with_parent_cache_by_reason: [Z; CHECKER_CREATION_REASON_COUNT],
+            with_parent_cache_by_reason: [const { AtomicU64::new(0) };
+                CHECKER_CREATION_REASON_COUNT],
             copy_symbol_file_targets_calls: AtomicU64::new(0),
             copy_symbol_file_targets_entries_total: AtomicU64::new(0),
             copy_symbol_file_targets_entries_max: AtomicU64::new(0),
@@ -237,9 +235,12 @@ impl PerfCounters {
             copy_symbol_file_targets_len_ge_10k: AtomicU64::new(0),
             copy_symbol_file_targets_len_ge_100k: AtomicU64::new(0),
             copy_symbol_file_targets_len_ge_1m: AtomicU64::new(0),
-            overlay_copy_calls_by_reason: [Z; CHECKER_CREATION_REASON_COUNT],
-            overlay_copy_entries_by_reason: [Z; CHECKER_CREATION_REASON_COUNT],
-            overlay_copy_max_entries_by_reason: [Z; CHECKER_CREATION_REASON_COUNT],
+            overlay_copy_calls_by_reason: [const { AtomicU64::new(0) };
+                CHECKER_CREATION_REASON_COUNT],
+            overlay_copy_entries_by_reason: [const { AtomicU64::new(0) };
+                CHECKER_CREATION_REASON_COUNT],
+            overlay_copy_max_entries_by_reason: [const { AtomicU64::new(0) };
+                CHECKER_CREATION_REASON_COUNT],
             interner_intern_calls: AtomicU64::new(0),
             interner_intern_hits: AtomicU64::new(0),
             interner_intern_misses: AtomicU64::new(0),
@@ -353,7 +354,10 @@ pub fn record_overlay_copy(reason: CheckerCreationReason, entries: u64) {
         inc(&c.copy_symbol_file_targets_len_ge_1m);
     }
     inc(&c.overlay_copy_calls_by_reason[reason.as_index()]);
-    add(&c.overlay_copy_entries_by_reason[reason.as_index()], entries);
+    add(
+        &c.overlay_copy_entries_by_reason[reason.as_index()],
+        entries,
+    );
     record_max(
         &c.overlay_copy_max_entries_by_reason[reason.as_index()],
         entries,

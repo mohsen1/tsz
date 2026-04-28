@@ -1036,6 +1036,36 @@ declare namespace foo {
 }
 
 #[test]
+fn test_js_function_like_class_emits_companion_class() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @param {number} x
+ * @param {number} y
+ */
+export function Point(x, y) {
+    if (!(this instanceof Point)) return new Point(x, y);
+    this.x = x;
+    this.y = y;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function Point(x: number, y: number): Point;"),
+        "Expected constructor-style JS function to return its companion class: {output}"
+    );
+    assert!(
+        output.contains("export class Point {"),
+        "Expected constructor-style JS function to emit a companion class: {output}"
+    );
+    assert!(
+        output.contains("x: number | undefined;") && output.contains("y: number | undefined;"),
+        "Expected this-assigned properties to be recovered on the companion class: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_exported_arrow_function_preserves_any_return_type() {
     let source = r#"
 const donkey = (ast) => ast;

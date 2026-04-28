@@ -474,6 +474,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos);
         }
 
+        if kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = self.arena.get_function(stmt_node)
+            && self.is_js_export_equals_name(func.name)
+        {
+            self.emit_pending_js_export_equals_for_name(func.name);
+        }
+
         // Save position before JSDoc comments so we can undo them if the
         // declaration turns out to be invisible (non-exported in namespace, etc.)
         let before_jsdoc_len = self.writer.len();
@@ -722,6 +729,15 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                func.name,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if func_body.is_some()
             && self.emit_js_returned_define_property_function_type(func_body)
         {
@@ -949,7 +965,15 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
-        self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+        if !self.emit_js_function_like_class_if_needed(
+            func.name,
+            &func.parameters,
+            func.body,
+            is_exported,
+            func_idx,
+        ) {
+            self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+        }
         self.emit_js_namespace_export_aliases_for_name(func.name);
 
         // Skip comments within the function body to prevent them from
@@ -973,6 +997,7 @@ impl<'a> DeclarationEmitter<'a> {
             || self.is_js_named_exported_name(class.name);
         if !is_exported
             && !self.should_emit_public_api_member(&class.modifiers)
+            && !self.is_js_export_equals_name(class.name)
             && !self.is_confirmed_public_api_dependency(class.name)
         {
             return;
