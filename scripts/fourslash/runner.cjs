@@ -28,7 +28,8 @@
  *   --tsz-server=PATH     Path to tsz-server binary (required)
  *   --max=N               Maximum number of tests to run
  *   --offset=N            Skip first N tests (applied after --shard)
- *   --shard=I/N           Run shard I of N; tests assigned by stable path hash
+ *   --shard=I/N           Run shard I of N
+ *   --shard-strategy=MODE Shard strategy: weighted or hash (default: weighted)
  *   --filter=PATTERN      Only run tests matching pattern (substring)
  *   --test-dir=DIR        Test directory relative to TypeScript root
  *   --verbose             Show detailed output for each test
@@ -65,6 +66,7 @@ function parseArgs() {
         offset: 0,
         shardId: -1,
         shardTotal: 0,
+        shardStrategy: "weighted",
         filter: "",
         testDir: "tests/cases/fourslash",
         verbose: false,
@@ -94,6 +96,12 @@ function parseArgs() {
             opts.shardTotal = parseInt(m[2], 10);
             if (opts.shardTotal < 1 || opts.shardId < 0 || opts.shardId >= opts.shardTotal) {
                 console.error(`Error: --shard=${spec} out of range`);
+                process.exit(2);
+            }
+        } else if (arg.startsWith("--shard-strategy=")) {
+            opts.shardStrategy = arg.substring("--shard-strategy=".length);
+            if (!["weighted", "hash"].includes(opts.shardStrategy)) {
+                console.error(`Error: --shard-strategy must be weighted or hash (got: ${opts.shardStrategy})`);
                 process.exit(2);
             }
         } else if (arg.startsWith("--filter=")) {
@@ -178,6 +186,83 @@ function stableShardForPath(filePath, shardTotal) {
         hash = (hash * prime) & mask;
     }
     return Number(hash % BigInt(shardTotal));
+}
+
+function snapshotWeightFile() {
+    return path.join(__dirname, "fourslash-snapshot.json");
+}
+
+function loadHistoricalWeights() {
+    const weightFile = snapshotWeightFile();
+    if (!fs.existsSync(weightFile)) return new Map();
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(weightFile, "utf8"));
+        const weights = new Map();
+        for (const result of parsed.results || []) {
+            if (!result || typeof result.file !== "string") continue;
+            const elapsed = Number(result.elapsed || 0);
+            if (Number.isFinite(elapsed) && elapsed > 0) {
+                weights.set(result.file.replace(/\\/g, "/"), elapsed);
+            }
+        }
+        return weights;
+    } catch (err) {
+        console.warn(`warning: failed to read fourslash historical weights: ${err.message}`);
+        return new Map();
+    }
+}
+
+function weightedShardTests(testFiles, shardId, shardTotal) {
+    const weights = loadHistoricalWeights();
+    if (weights.size === 0) {
+        return testFiles.filter(file => stableShardForPath(file, shardTotal) === shardId);
+    }
+
+    const shards = Array.from({ length: shardTotal }, () => ({ totalWeight: 0, tests: [] }));
+    const weightedTests = testFiles.map(file => {
+        const relPath = file.replace(/\\/g, "/");
+        return {
+            file,
+            relPath,
+            weight: weights.get(relPath) || 100,
+        };
+    });
+
+    weightedTests.sort((a, b) => {
+        const byWeight = b.weight - a.weight;
+        return byWeight !== 0 ? byWeight : a.relPath.localeCompare(b.relPath);
+    });
+
+    for (const test of weightedTests) {
+        let best = 0;
+        for (let i = 1; i < shards.length; i++) {
+            if (
+                shards[i].totalWeight < shards[best].totalWeight ||
+                (shards[i].totalWeight === shards[best].totalWeight && shards[i].tests.length < shards[best].tests.length)
+            ) {
+                best = i;
+            }
+        }
+        shards[best].tests.push(test);
+        shards[best].totalWeight += test.weight;
+    }
+
+    return shards[shardId].tests.map(test => test.file);
+}
+
+function slowestResults(testResults, limit = 10) {
+    return [...testResults]
+        .filter(r => Number.isFinite(Number(r.elapsed)))
+        .sort((a, b) => (b.elapsed || 0) - (a.elapsed || 0))
+        .slice(0, limit)
+        .map(r => ({
+            file: r.file,
+            name: path.basename(r.file, ".ts"),
+            status: r.status,
+            timedOut: r.timedOut || false,
+            elapsed: r.elapsed || 0,
+        }));
 }
 
 // =============================================================================
@@ -1886,11 +1971,13 @@ async function main() {
     const testFiles = discoverTests(opts.testDir, opts.filter);
     const totalAvailable = testFiles.length;
     let testsToRun = testFiles;
-    // --shard=I/N uses a stable path hash so slow clusters in sorted directory
-    // order do not all land on the same CI shard. Applied before --offset/--max
-    // so those still trim within the shard if explicitly passed.
+    // --shard=I/N uses historical timing by default so known slow tests are
+    // spread across CI shards and scheduled early within each shard. Applied
+    // before --offset/--max so those still trim within the shard if passed.
     if (opts.shardTotal > 0) {
-        testsToRun = testFiles.filter(file => stableShardForPath(file, opts.shardTotal) === opts.shardId);
+        testsToRun = opts.shardStrategy === "weighted"
+            ? weightedShardTests(testFiles, opts.shardId, opts.shardTotal)
+            : testFiles.filter(file => stableShardForPath(file, opts.shardTotal) === opts.shardId);
     }
     if (opts.offset > 0) testsToRun = testsToRun.slice(opts.offset);
     if (opts.max > 0) testsToRun = testsToRun.slice(0, opts.max);
@@ -1898,7 +1985,8 @@ async function main() {
     const mode = opts.sequential ? "sequential" : `parallel (${Math.min(opts.workers, testsToRun.length)} workers)`;
     console.log("");
     console.log(`Found ${totalAvailable} test files in ${opts.testDir}`);
-    console.log(`Running ${testsToRun.length} tests [${mode}]${opts.filter ? ` (filter: "${opts.filter}")` : ""}`);
+    const shardMode = opts.shardTotal > 0 ? ` shard=${opts.shardId}/${opts.shardTotal} strategy=${opts.shardStrategy}` : "";
+    console.log(`Running ${testsToRun.length} tests [${mode}]${opts.filter ? ` (filter: "${opts.filter}")` : ""}${shardMode}`);
     console.log("─".repeat(70));
 
     const startTime = Date.now();
@@ -1959,6 +2047,16 @@ async function main() {
         }
     }
 
+    const slowest = slowestResults(results.testResults || [], 10);
+    if (slowest.length > 0 && !opts.verbose) {
+        console.log("");
+        console.log(`Slowest ${slowest.length} tests:`);
+        for (const test of slowest) {
+            const status = test.status === "pass" ? "PASS" : test.status.toUpperCase();
+            console.log(`  ${String(test.elapsed).padStart(6)}ms ${status.padEnd(7)} ${test.name}`);
+        }
+    }
+
     // Dump all errors to file for analysis (development aid)
     try {
         const errDump = errors.map(({file, error}) => path.basename(file, ".ts") + ": " + error.split("\n")[0]).join("\n");
@@ -2015,6 +2113,8 @@ async function main() {
                 failed,
                 xfailed,
                 timedOut,
+                shard: opts.shardTotal > 0 ? { index: opts.shardId, count: opts.shardTotal, strategy: opts.shardStrategy } : null,
+                slowest,
                 passRate: total > 0 ? Math.round(passed / total * 1000) / 10 : 0,
             },
             results: jsonResults,
