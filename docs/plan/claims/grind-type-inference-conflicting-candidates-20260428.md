@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-28
 - **Branch**: `grind/type-inference-conflicting-candidates-20260428`
-- **PR**: TBD
+- **PR**: #1635
 - **Status**: ready
 - **Workstream**: 1 (Diagnostic conformance)
 
