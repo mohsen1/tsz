@@ -5,7 +5,9 @@
 use crate::state::CheckerState;
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
-use tsz_common::perf_counters::{CrossArenaSymbolMissKind, CrossArenaSymbolMissSource};
+use tsz_common::perf_counters::{
+    CrossArenaAliasShortcutOutcome, CrossArenaSymbolMissKind, CrossArenaSymbolMissSource,
+};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -216,33 +218,91 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<TypeId> {
-        let (module_name, import_name) = {
-            let symbol = self.get_cross_file_symbol(sym_id)?;
+        use CrossArenaAliasShortcutOutcome as AliasOutcome;
+
+        let (module_name, import_name, alias_source_file_idx) = {
+            let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                    AliasOutcome::MissingSymbol,
+                );
+                return None;
+            };
             if symbol.flags & symbol_flags::ALIAS == 0 {
+                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                    AliasOutcome::NotAlias,
+                );
                 return None;
             }
-            let module_name = symbol.import_module.clone()?;
-            let import_name = symbol.import_name.clone()?;
-            if import_name == "*" || import_name == "default" {
+            let Some(module_name) = symbol.import_module.clone() else {
+                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                    AliasOutcome::MissingModule,
+                );
+                return None;
+            };
+            let Some(import_name) = symbol.import_name.clone() else {
+                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                    AliasOutcome::MissingImportName,
+                );
+                return None;
+            };
+            if import_name == "*" {
+                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                    AliasOutcome::NamespaceImport,
+                );
                 return None;
             }
-            (module_name, import_name)
+            if import_name == "default" {
+                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                    AliasOutcome::DefaultImport,
+                );
+                return None;
+            }
+            let Some(alias_source_file_idx) = (symbol.decl_file_idx != u32::MAX)
+                .then_some(symbol.decl_file_idx as usize)
+                .or_else(|| self.ctx.resolve_symbol_file_index(sym_id))
+            else {
+                tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                    AliasOutcome::MissingAliasFile,
+                );
+                return None;
+            };
+            (module_name, import_name, alias_source_file_idx)
         };
 
-        let alias_file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
-        let target_sym_id = self.resolve_cross_file_export_from_file(
+        let alias_cache_file_idx = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(alias_source_file_idx);
+        let Some(target_sym_id) = self.resolve_cross_file_export_from_file(
             &module_name,
             &import_name,
-            Some(alias_file_idx),
-        )?;
+            Some(alias_source_file_idx),
+        ) else {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::MissingTarget,
+            );
+            return None;
+        };
         if target_sym_id == sym_id {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::SelfTarget,
+            );
             return None;
         }
 
-        let target_flags = self
+        let Some(target_flags) = self
             .get_cross_file_symbol(target_sym_id)
-            .map(|symbol| symbol.flags)?;
+            .map(|symbol| symbol.flags)
+        else {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::MissingTargetSymbol,
+            );
+            return None;
+        };
         if target_flags & symbol_flags::ALIAS != 0 {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::TargetAlias,
+            );
             return None;
         }
 
@@ -256,18 +316,33 @@ impl<'a> CheckerState<'a> {
             .alias_partner_for(target_binder, target_sym_id)
             .is_some()
         {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::AliasPartner,
+            );
             return None;
         }
 
         let target_is_interface_value_merge = target_flags & symbol_flags::INTERFACE != 0
             && target_flags & (symbol_flags::VARIABLE | symbol_flags::FUNCTION) != 0;
         if target_is_interface_value_merge {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::InterfaceValueMerge,
+            );
             return None;
         }
 
         let mut result = self.get_type_of_symbol(target_sym_id);
         result = self.apply_module_augmentations(&module_name, &import_name, result);
-        if matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+        if result == TypeId::ERROR {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::ErrorResult,
+            );
+            return None;
+        }
+        if result == TypeId::UNKNOWN {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::UnknownResult,
+            );
             return None;
         }
 
@@ -275,10 +350,11 @@ impl<'a> CheckerState<'a> {
         if self.ctx.share_owner_symbol_type_results {
             self.ctx.definition_store.cache_resolved_symbol_type(
                 sym_id.0,
-                alias_file_idx as u32,
+                alias_cache_file_idx as u32,
                 result,
             );
         }
+        tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);
 
         Some(result)
     }
