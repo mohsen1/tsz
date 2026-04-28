@@ -35,6 +35,9 @@ use tsz_common::interner::Atom;
 /// Used for debugging `DefId` collision issues.
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
+type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
+type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
+
 // =============================================================================
 // DefId - Solver-Owned Definition Identifier
 // =============================================================================
@@ -531,6 +534,10 @@ pub struct DefinitionStore {
     /// Prevents duplicate cross-file delegation in parallel checking.
     resolved_symbol_types: DashMap<(u32, u32), TypeId>,
 
+    /// Thread-safe cache for cross-file checker queries that are not the plain
+    /// `type_of_symbol` path, keyed by `(kind, file_idx, primary, secondary, args_hash)`.
+    resolved_cross_file_queries: DashMap<CrossFileQueryCacheKey, CrossFileQueryCacheValue>,
+
     /// Per-file mutual exclusion locks for cross-file type delegation.
     /// Prevents concurrent delegation to the same target file.
     file_delegation_locks: DashMap<usize, Arc<Mutex<()>>>,
@@ -711,6 +718,7 @@ impl DefinitionStore {
             class_to_constructor: DashMap::with_capacity(id_capacity / 2),
             name_to_defs: DashMap::with_capacity(id_capacity),
             resolved_symbol_types: DashMap::new(),
+            resolved_cross_file_queries: DashMap::new(),
             file_delegation_locks: DashMap::new(),
             fully_populated: std::sync::atomic::AtomicBool::new(false),
             circular_def_ids: DashSet::new(),
@@ -943,6 +951,40 @@ impl DefinitionStore {
         self.resolved_symbol_types
             .entry((symbol_id, file_idx))
             .or_insert(type_id);
+    }
+
+    /// Look up a previously resolved cross-file query result.
+    pub fn get_resolved_cross_file_query(
+        &self,
+        kind: u8,
+        file_idx: u32,
+        primary: u32,
+        secondary: u32,
+        args_hash: u64,
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        self.resolved_cross_file_queries
+            .get(&(kind, file_idx, primary, secondary, args_hash))
+            .map(|entry| {
+                let (type_id, params) = entry.value();
+                (*type_id, params.as_ref().clone())
+            })
+    }
+
+    /// Cache a cross-file query result. First writer wins to keep parallel
+    /// checking deterministic when equivalent queries race.
+    pub fn cache_resolved_cross_file_query(
+        &self,
+        kind: u8,
+        file_idx: u32,
+        primary: u32,
+        secondary: u32,
+        args_hash: u64,
+        type_id: TypeId,
+        type_params: Vec<TypeParamInfo>,
+    ) {
+        self.resolved_cross_file_queries
+            .entry((kind, file_idx, primary, secondary, args_hash))
+            .or_insert_with(|| (type_id, Arc::new(type_params)));
     }
 
     /// Mark a DefId as participating in a circular type alias cycle.
@@ -1507,6 +1549,15 @@ impl DefinitionStore {
         for entry in &self.name_to_defs {
             size += std::mem::size_of::<Atom>() + DASHMAP_ENTRY_OVERHEAD;
             size += entry.value().capacity() * std::mem::size_of::<DefId>();
+        }
+
+        // resolved_cross_file_queries:
+        // (kind, file_idx, primary, secondary, args_hash) -> (TypeId, params)
+        for entry in &self.resolved_cross_file_queries {
+            size += std::mem::size_of::<(u8, u32, u32, u32, u64)>()
+                + std::mem::size_of::<TypeId>()
+                + DASHMAP_ENTRY_OVERHEAD;
+            size += entry.value().1.capacity() * std::mem::size_of::<TypeParamInfo>();
         }
 
         size

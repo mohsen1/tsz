@@ -42,18 +42,22 @@ impl<'a> CheckerState<'a> {
         let binder = all_binders.get(file_idx)?;
         let source_file = arena.source_files.first()?;
 
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             arena.as_ref(),
             binder.as_ref(),
             self.ctx.types,
             source_file.file_name.clone(),
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::JsDocTypeConstruction,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = file_idx;
-        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::JsDocTypeConstruction,
+        );
 
         let result = checker.jsdoc_enum_annotation_type_for_current_checker(decl);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
@@ -149,18 +153,22 @@ impl<'a> CheckerState<'a> {
             }
 
             for source_file in &arena.source_files {
-                let mut checker = Box::new(CheckerState::with_parent_cache(
+                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                     arena.as_ref(),
                     binder.as_ref(),
                     self.ctx.types,
                     source_file.file_name.clone(),
                     self.ctx.compiler_options.clone(),
                     self,
+                    tsz_common::perf_counters::CheckerCreationReason::JsDocTypeConstruction,
                 ));
                 checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
                 checker.ctx.copy_cross_file_state_from(&self.ctx);
                 checker.ctx.current_file_idx = file_idx;
-                self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+                self.ctx.copy_symbol_file_targets_to_attributed(
+                    &mut checker.ctx,
+                    tsz_common::perf_counters::CheckerCreationReason::JsDocTypeConstruction,
+                );
 
                 if let Some(ty) = checker
                     .resolve_jsdoc_assigned_value_type_in_arena(name, allow_prototype_only_fallback)
@@ -349,13 +357,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             for source_file in &arena.source_files {
-                let mut checker = Box::new(CheckerState::with_parent_cache(
+                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                     arena.as_ref(),
                     binder.as_ref(),
                     self.ctx.types,
                     source_file.file_name.clone(),
                     self.ctx.compiler_options.clone(),
                     self,
+                    tsz_common::perf_counters::CheckerCreationReason::JsDocTypeConstruction,
                 ));
                 checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
                 checker.ctx.copy_cross_file_state_from(&self.ctx);

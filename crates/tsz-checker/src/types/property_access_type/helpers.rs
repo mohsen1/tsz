@@ -185,6 +185,74 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn recover_self_recursive_property_access_type(
+        &self,
+        receiver_type: TypeId,
+        property_name: &str,
+        result_type: TypeId,
+    ) -> TypeId {
+        let Some((indexed_object, indexed_key)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, result_type)
+        else {
+            return result_type;
+        };
+
+        if indexed_object != receiver_type {
+            return result_type;
+        }
+
+        let Some(indexed_key_name) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, indexed_key)
+        else {
+            return result_type;
+        };
+
+        if self.ctx.types.resolve_atom(indexed_key_name) == property_name {
+            TypeId::ANY
+        } else {
+            result_type
+        }
+    }
+
+    pub(crate) fn recover_self_recursive_property_access_result_at(
+        &mut self,
+        idx: NodeIndex,
+        result_type: TypeId,
+    ) -> TypeId {
+        if crate::query_boundaries::common::index_access_types(self.ctx.types, result_type)
+            .is_none()
+        {
+            return result_type;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return result_type;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return result_type;
+        }
+
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return result_type;
+        };
+        let Some(name_ident) = self.ctx.arena.get_identifier_at(access.name_or_argument) else {
+            return result_type;
+        };
+
+        let receiver_type = self
+            .ctx
+            .node_types
+            .get(&access.expression.0)
+            .copied()
+            .unwrap_or_else(|| self.get_type_of_node(access.expression));
+
+        self.recover_self_recursive_property_access_type(
+            receiver_type,
+            &name_ident.escaped_text,
+            result_type,
+        )
+    }
+
     pub(crate) fn is_stale_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {
         if !crate::query_boundaries::state::checking::is_type_parameter_like(
             self.ctx.types,
@@ -528,7 +596,8 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() + 1);
-        let result = self.get_type_of_property_access_inner(idx, request);
+        let inner_result = self.get_type_of_property_access_inner(idx, request);
+        let result = self.recover_self_recursive_property_access_result_at(idx, inner_result);
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() - 1);
