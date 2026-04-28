@@ -547,7 +547,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(source_binder) = self.ctx.get_binder_for_file(from_file)
-            && let Some((sym_id, _)) =
+            && let Some((sym_id, _is_type_only)) =
                 source_binder.resolve_import_with_reexports_type_only(module_specifier, export_name)
         {
             return record_and_return(sym_id);
@@ -556,7 +556,7 @@ impl<'a> CheckerState<'a> {
         // Prefer the binder's type-aware export resolver so interface/type-only
         // exports reached through `import("./x").T` behave the same way as
         // regular type-node resolution.
-        if let Some((sym_id, _)) =
+        if let Some((sym_id, _is_type_only)) =
             target_binder.resolve_import_with_reexports_type_only(&target_file_name, export_name)
         {
             return record_and_return(sym_id);
@@ -569,18 +569,18 @@ impl<'a> CheckerState<'a> {
             .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
-        {
-            return record_and_return(sym_id);
-        }
+            {
+                return record_and_return(sym_id);
+            }
 
         if let Some(exports_table) = self
             .ctx
             .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
-        {
-            return record_and_return(sym_id);
-        }
+            {
+                return record_and_return(sym_id);
+            }
 
         // Follow re-export chains (wildcard and named re-exports) BEFORE
         // falling back to file_locals. file_locals may contain merged globals
@@ -604,9 +604,20 @@ impl<'a> CheckerState<'a> {
 
         // Last resort: check file_locals (for script files or binding edge cases
         // where module_exports wasn't populated).
-        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
-            return record_and_return(sym_id);
-        }
+        //
+        // IMPORTANT: Only use file_locals as a fallback when module_exports is
+        // empty or unavailable. When module_exports IS populated, it is the
+        // authoritative source — file_locals may contain namespace import
+        // members that leaked from type-only imports and should not be returned
+        // as value exports.
+        let has_module_exports = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
+            .is_some_and(|e| !e.is_empty());
+        if !has_module_exports
+            && let Some(sym_id) = target_binder.file_locals.get(export_name) {
+                return record_and_return(sym_id);
+            }
 
         None
     }
@@ -700,9 +711,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.module_exports_for_module(binder, module_specifier)
                 && let Some(sym_id) =
                     self.resolve_export_from_table(binder, exports_table, export_name)
-            {
-                return Some((sym_id, idx));
-            }
+                {
+                    return Some((sym_id, idx));
+                }
         }
         None
     }
@@ -801,6 +812,19 @@ impl<'a> CheckerState<'a> {
 
         // Last resort: check file_locals (for script files or binding edge cases
         // where module_exports wasn't populated).
+        //
+        // IMPORTANT: Only use file_locals as a fallback when module_exports is
+        // empty or unavailable. When module_exports IS populated, it is the
+        // authoritative source — file_locals may contain namespace import
+        // members that leaked from type-only imports (e.g., `import type * as X
+        // from 'mod'`) and should not be returned as value exports.
+        let has_module_exports = self
+            .ctx
+            .module_exports_for_module(target_binder, &target_file_name)
+            .is_some_and(|e| !e.is_empty());
+        if has_module_exports {
+            return None;
+        }
         // When looking for "default" and the module has `export =`, prefer the
         // `export =` target over a static member named "default". ESM-extension
         // files never synthesize this fallback (see note above).
@@ -811,7 +835,18 @@ impl<'a> CheckerState<'a> {
             return Some((sym_id, file_idx));
         }
         if let Some(sym_id) = target_binder.file_locals.get(export_name) {
-            return Some((sym_id, file_idx));
+            // Symbol found in file_locals — verify it has a runtime value.
+            // Type-only imports (e.g., `import type * as X from 'mod'`) may
+            // populate file_locals with individual namespace members, but those
+            // members should not be returned as value exports.
+            let has_value = target_binder
+                .get_symbol(sym_id)
+                .is_some_and(|s| !s.is_type_only);
+            if !has_value {
+                // Don't return type-only members as value exports
+            } else {
+                return Some((sym_id, file_idx));
+            }
         }
 
         None
