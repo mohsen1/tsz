@@ -13,36 +13,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn property_access_global_value_is_shadowed(
-        &self,
-        expression: NodeIndex,
-        name: &str,
-    ) -> bool {
-        self.resolve_identifier_symbol_without_tracking(expression)
-            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-            .is_some_and(|symbol| {
-                (symbol.flags
-                    & (symbol_flags::FUNCTION_SCOPED_VARIABLE
-                        | symbol_flags::BLOCK_SCOPED_VARIABLE
-                        | symbol_flags::PROPERTY
-                        | symbol_flags::CLASS
-                        | symbol_flags::FUNCTION
-                        | symbol_flags::NAMESPACE_MODULE
-                        | symbol_flags::VALUE_MODULE))
-                    != 0
-            })
-            || self
-                .ctx
-                .binder
-                .file_locals
-                .get(name)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| {
-                    symbol
-                        .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
-                })
-    }
-
     pub(crate) fn current_file_commonjs_module_identifier_is_unshadowed(
         &self,
         idx: NodeIndex,
