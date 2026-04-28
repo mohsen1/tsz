@@ -569,18 +569,18 @@ impl<'a> CheckerState<'a> {
             .module_exports_for_module(target_binder, &target_file_name)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
-            {
-                return record_and_return(sym_id);
-            }
+        {
+            return record_and_return(sym_id);
+        }
 
         if let Some(exports_table) = self
             .ctx
             .module_exports_for_module(target_binder, module_specifier)
             && let Some(sym_id) =
                 self.resolve_export_from_table(target_binder, exports_table, export_name)
-            {
-                return record_and_return(sym_id);
-            }
+        {
+            return record_and_return(sym_id);
+        }
 
         // Follow re-export chains (wildcard and named re-exports) BEFORE
         // falling back to file_locals. file_locals may contain merged globals
@@ -614,10 +614,9 @@ impl<'a> CheckerState<'a> {
             .ctx
             .module_exports_for_module(target_binder, &target_file_name)
             .is_some_and(|e| !e.is_empty());
-        if !has_module_exports
-            && let Some(sym_id) = target_binder.file_locals.get(export_name) {
-                return record_and_return(sym_id);
-            }
+        if !has_module_exports && let Some(sym_id) = target_binder.file_locals.get(export_name) {
+            return record_and_return(sym_id);
+        }
 
         None
     }
@@ -711,9 +710,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.module_exports_for_module(binder, module_specifier)
                 && let Some(sym_id) =
                     self.resolve_export_from_table(binder, exports_table, export_name)
-                {
-                    return Some((sym_id, idx));
-                }
+            {
+                return Some((sym_id, idx));
+            }
         }
         None
     }

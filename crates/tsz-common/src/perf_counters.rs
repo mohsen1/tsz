@@ -98,7 +98,7 @@ pub enum CheckerCreationReason {
     ExpandoProperty = 11,
     /// `identifier::resolution` cross-file fallback.
     IdentifierResolution = 12,
-    /// Generic call-helpers cross-file resolution (call_helpers.rs).
+    /// Generic call-helpers cross-file resolution (`call_helpers.rs`).
     CallHelpers = 13,
     /// `computed_helpers_binding` deep alias resolution.
     BindingHelpers = 14,
@@ -218,7 +218,10 @@ static COUNTERS: OnceLock<PerfCounters> = OnceLock::new();
 impl PerfCounters {
     const fn new_zero() -> Self {
         // Helper to construct a zero array of the right length without
-        // requiring `AtomicU64: Copy` (it isn't).
+        // requiring `AtomicU64: Copy` (it isn't). The `const` is used as a
+        // copyable initializer for the array literal, not stored — the
+        // interior-mutable-const warning is a false positive here.
+        #[allow(clippy::declare_interior_mutable_const)]
         const Z: AtomicU64 = AtomicU64::new(0);
         Self {
             enabled: AtomicBool::new(false),
@@ -353,7 +356,10 @@ pub fn record_overlay_copy(reason: CheckerCreationReason, entries: u64) {
         inc(&c.copy_symbol_file_targets_len_ge_1m);
     }
     inc(&c.overlay_copy_calls_by_reason[reason.as_index()]);
-    add(&c.overlay_copy_entries_by_reason[reason.as_index()], entries);
+    add(
+        &c.overlay_copy_entries_by_reason[reason.as_index()],
+        entries,
+    );
     record_max(
         &c.overlay_copy_max_entries_by_reason[reason.as_index()],
         entries,
