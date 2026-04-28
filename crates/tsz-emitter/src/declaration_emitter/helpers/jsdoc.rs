@@ -1036,7 +1036,7 @@ impl<'a> DeclarationEmitter<'a> {
             is_exported,
             initializer,
         );
-        self.emit_js_namespace_export_aliases_for_name(decl_name);
+        self.emit_js_namespace_export_aliases_for_name(decl_name, is_exported);
         true
     }
 

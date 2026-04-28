@@ -62,6 +62,29 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn emit_multiline_jsdoc_comment(&mut self, jsdoc: &str) {
+        if self.remove_comments {
+            return;
+        }
+
+        self.write_indent();
+        self.write("/**");
+        self.write_line();
+        for line in jsdoc.trim().lines() {
+            self.write_indent();
+            if line.trim().is_empty() {
+                self.write(" *");
+            } else {
+                self.write(" * ");
+                self.write(line.trim());
+            }
+            self.write_line();
+        }
+        self.write_indent();
+        self.write(" */");
+        self.write_line();
+    }
+
     pub(crate) fn emit_leading_jsdoc_comments(&mut self, pos: u32) {
         if self.remove_comments {
             return;

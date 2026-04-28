@@ -363,11 +363,16 @@ suite_caches() {
       # tooling. cargo-home (registry) is the only useful restore.
       echo "cargo-home"
       ;;
-    build|dist-binaries|unit-archive|unit)
-      # cargo build / cargo nextest: workspace crates and tests reference
-      # TypeScript/src/lib (and tests/cases for some integration tests).
-      # Need TS source even though no Node tooling is run.
+    build|unit)
+      # Full local build/unit flows may run tests that reference
+      # TypeScript/src/lib and tests/cases at runtime.
       echo "cargo-home typescript-source"
+      ;;
+    dist-binaries|unit-archive)
+      # Rust compile/archive only. These suites do not read TypeScript/ at
+      # compile time; downstream conformance/emit/fourslash jobs restore the
+      # corpus or harness when they actually need it.
+      echo "cargo-home"
       ;;
     wasm|wasm-web|wasm-all)
       # wasm-pack installs the matching wasm-bindgen CLI into
@@ -650,21 +655,25 @@ save_caches() {
     # blob; new write policy (main-only) plus profile isolation makes
     # the dedicated lint cache redundant.
     cargo_target_key="$(cargo_target_cache_key)"
-    save_archive \
-      "cargo-target-deps-${cargo_target_key}" \
-      "$(cache_uri "cargo-target-deps/${cargo_target_key}.tar.gz")" \
-      "." \
-      .target/dist-fast
-    save_archive \
-      "cargo-target-unit-${cargo_target_key}" \
-      "$(cache_uri "cargo-target-unit/${cargo_target_key}.tar.gz")" \
-      "." \
-      .target/ci-unit
-    save_archive \
-      "cargo-target-wasm-${cargo_target_key}" \
-      "$(cache_uri "cargo-target-wasm/${cargo_target_key}.tar.gz")" \
-      "." \
-      .target/wasm32-unknown-unknown
+    if [[ "${TSZ_CI_CACHE_SAVE_CARGO_TARGETS:-1}" == "1" ]]; then
+      save_archive \
+        "cargo-target-deps-${cargo_target_key}" \
+        "$(cache_uri "cargo-target-deps/${cargo_target_key}.tar.gz")" \
+        "." \
+        .target/dist-fast
+      save_archive \
+        "cargo-target-unit-${cargo_target_key}" \
+        "$(cache_uri "cargo-target-unit/${cargo_target_key}.tar.gz")" \
+        "." \
+        .target/ci-unit
+      save_archive \
+        "cargo-target-wasm-${cargo_target_key}" \
+        "$(cache_uri "cargo-target-wasm/${cargo_target_key}.tar.gz")" \
+        "." \
+        .target/wasm32-unknown-unknown
+    else
+      echo "Cache save skipped: cargo-target-* (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0)"
+    fi
   fi
 
   if suite_has_cache wasm-pack-cache; then

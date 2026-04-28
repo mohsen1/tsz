@@ -448,6 +448,10 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(indexed_access) = self.arena.get_indexed_access_type(type_node) {
                     // Check if object type needs parentheses for precedence
                     let obj_node = self.arena.get(indexed_access.object_type);
+                    let multiline_variadic_tuple = obj_node.is_some_and(|n| {
+                        n.kind == syntax_kind_ext::TUPLE_TYPE
+                            && self.tuple_type_should_break_multiline(indexed_access.object_type)
+                    });
                     let needs_parens = obj_node.is_some_and(|n| {
                         n.kind == syntax_kind_ext::UNION_TYPE
                             || n.kind == syntax_kind_ext::INTERSECTION_TYPE
@@ -458,7 +462,11 @@ impl<'a> DeclarationEmitter<'a> {
                     if needs_parens {
                         self.write("(");
                     }
-                    self.emit_type(indexed_access.object_type);
+                    if multiline_variadic_tuple {
+                        self.emit_tuple_type_multiline(indexed_access.object_type);
+                    } else {
+                        self.emit_type(indexed_access.object_type);
+                    }
                     if needs_parens {
                         self.write(")");
                     }
@@ -698,7 +706,22 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    fn emit_named_tuple_type_multiline(&mut self, tuple_idx: NodeIndex) {
+    fn tuple_type_should_break_multiline(&self, tuple_idx: NodeIndex) -> bool {
+        self.arena
+            .get(tuple_idx)
+            .filter(|node| node.kind == syntax_kind_ext::TUPLE_TYPE)
+            .and_then(|node| self.arena.get_tuple_type(node))
+            .is_some_and(|tuple| {
+                tuple.elements.nodes.len() > 1
+                    && tuple.elements.nodes.iter().any(|&elem_idx| {
+                        self.arena
+                            .get(elem_idx)
+                            .is_some_and(|elem| elem.kind == syntax_kind_ext::REST_TYPE)
+                    })
+            })
+    }
+
+    fn emit_tuple_type_multiline(&mut self, tuple_idx: NodeIndex) {
         let Some(tuple_node) = self.arena.get(tuple_idx) else {
             self.emit_type(tuple_idx);
             return;
@@ -721,6 +744,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.decrease_indent();
         self.write_indent();
         self.write("]");
+    }
+
+    fn emit_named_tuple_type_multiline(&mut self, tuple_idx: NodeIndex) {
+        self.emit_tuple_type_multiline(tuple_idx);
     }
 
     /// Emit a `<T1, T2, ...>` type argument list.

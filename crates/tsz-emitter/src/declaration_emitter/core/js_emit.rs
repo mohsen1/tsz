@@ -324,7 +324,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.emit_pending_js_export_equals_for_name(name_idx);
             let _ = self.emit_js_named_class_expression_declaration(name_idx, initializer, false);
-            self.emit_js_namespace_export_aliases_for_name(name_idx);
+            self.emit_js_namespace_export_aliases_for_name(name_idx, false);
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -411,9 +411,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(init_node) = self.arena.get(initializer) else {
             return;
         };
-        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
-            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-        {
+        if !self.is_js_function_initializer(initializer) {
             return;
         }
         let Some(func) = self.arena.get_function(init_node) else {
@@ -503,6 +501,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(name_idx);
+        self.emit_ts_late_bound_function_namespace_from_members(
+            name_idx,
+            is_exported,
+            &late_bound_members,
+        );
         self.emit_js_function_like_class_if_needed(
             name_idx,
             &func.parameters,
@@ -511,7 +515,7 @@ impl<'a> DeclarationEmitter<'a> {
             initializer,
         );
         if is_exported {
-            self.emit_js_namespace_export_aliases_for_name(name_idx);
+            self.emit_js_namespace_export_aliases_for_name(name_idx, true);
             self.emitted_module_indicator = true;
         }
     }
@@ -2606,11 +2610,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.increase_indent();
 
         if let Some(jsdoc) = self.function_like_jsdoc_for_node(jsdoc_anchor) {
-            for line in Self::normalize_jsdoc_block(&jsdoc).lines() {
-                self.write_indent();
-                self.write(line.trim_end());
-                self.write_line();
-            }
+            self.emit_multiline_jsdoc_comment(&jsdoc);
         }
         self.write_indent();
         self.write("constructor(");
@@ -2622,6 +2622,13 @@ impl<'a> DeclarationEmitter<'a> {
             .get_identifier_text(name_idx)
             .is_some_and(|name| self.js_function_body_returns_new_named(body_idx, &name));
         let mut declared_names = FxHashSet::default();
+        for &member_idx in &prototype_members {
+            if let Some(name_idx) = self.get_member_name_idx(member_idx)
+                && let Some(name) = self.get_identifier_text(name_idx)
+            {
+                declared_names.insert(name);
+            }
+        }
         for (stmt_idx, prop_name_idx, rhs_idx) in this_assignments {
             let Some(prop_name) = self.get_identifier_text(prop_name_idx) else {
                 continue;
@@ -2631,11 +2638,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             if let Some(jsdoc_type) = self.jsdoc_type_text_for_node(stmt_idx) {
                 if let Some(jsdoc) = self.function_like_jsdoc_for_node(stmt_idx) {
-                    for line in Self::normalize_jsdoc_block(&jsdoc).lines() {
-                        self.write_indent();
-                        self.write(line.trim_end());
-                        self.write_line();
-                    }
+                    self.emit_multiline_jsdoc_comment(&jsdoc);
                 }
                 self.write_indent();
                 self.emit_node(prop_name_idx);
@@ -2643,6 +2646,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&jsdoc_type);
                 self.write(";");
                 self.write_line();
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
                 continue;
             }
             let type_text = self
@@ -2664,7 +2670,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        for member_idx in prototype_members {
+        let mut proto_type = None;
+        let mut emitted_getters = FxHashSet::default();
+        for &member_idx in &prototype_members {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
@@ -2676,6 +2684,16 @@ impl<'a> DeclarationEmitter<'a> {
                     .as_deref()
                     == Some("__proto__")
             {
+                if let Some(type_text) = self.js_proto_property_assignment_type_text(member_idx) {
+                    proto_type = Some(type_text);
+                }
+                continue;
+            }
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(name_idx) = self.get_member_name_idx(member_idx)
+                && let Some(name) = self.get_identifier_text(name_idx)
+                && self.prototype_members_have_setter_named(&prototype_members, &name)
+            {
                 continue;
             }
             let before_jsdoc_len = self.writer.len();
@@ -2683,11 +2701,27 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_leading_jsdoc_comments(member_node.pos);
             let before_member_len = self.writer.len();
             self.emit_class_member(member_idx);
+            if member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(name_idx) = self.get_member_name_idx(member_idx)
+                && let Some(name) = self.get_identifier_text(name_idx)
+                && emitted_getters.insert(name.clone())
+                && let Some(getter_idx) =
+                    self.prototype_members_getter_named(&prototype_members, &name)
+            {
+                self.emit_class_member(getter_idx);
+            }
             if self.writer.len() == before_member_len {
                 self.writer.truncate(before_jsdoc_len);
                 self.comment_emit_idx = saved_comment_idx;
                 self.skip_comments_in_node(member_node.pos, member_node.end);
             }
+        }
+        if let Some(proto_type) = proto_type {
+            self.write_indent();
+            self.write("__proto__: ");
+            self.write(&proto_type);
+            self.write(";");
+            self.write_line();
         }
 
         self.decrease_indent();
@@ -2695,6 +2729,60 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("}");
         self.write_line();
         true
+    }
+
+    fn js_proto_property_assignment_type_text(&self, member_idx: NodeIndex) -> Option<String> {
+        let member_node = self.arena.get(member_idx)?;
+        let prop = self.arena.get_property_assignment(member_node)?;
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(prop.initializer);
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return self
+                .get_identifier_text(initializer)
+                .map(|base_name| format!("typeof {base_name}"));
+        }
+        let access = self.arena.get_access_expr(init_node)?;
+        if self.get_identifier_text(access.name_or_argument).as_deref() != Some("prototype") {
+            return self
+                .get_identifier_text(initializer)
+                .map(|base_name| format!("typeof {base_name}"));
+        }
+
+        let base_name = self.get_identifier_text(access.expression)?;
+        Some(format!("typeof {base_name}"))
+    }
+
+    fn prototype_members_have_setter_named(&self, members: &[NodeIndex], name: &str) -> bool {
+        self.prototype_members_getter_or_setter_named(members, name, syntax_kind_ext::SET_ACCESSOR)
+            .is_some()
+    }
+
+    fn prototype_members_getter_named(
+        &self,
+        members: &[NodeIndex],
+        name: &str,
+    ) -> Option<NodeIndex> {
+        self.prototype_members_getter_or_setter_named(members, name, syntax_kind_ext::GET_ACCESSOR)
+    }
+
+    fn prototype_members_getter_or_setter_named(
+        &self,
+        members: &[NodeIndex],
+        name: &str,
+        kind: u16,
+    ) -> Option<NodeIndex> {
+        members.iter().copied().find(|&member_idx| {
+            self.arena.get(member_idx).is_some_and(|node| {
+                node.kind == kind
+                    && self
+                        .get_member_name_idx(member_idx)
+                        .and_then(|name_idx| self.get_identifier_text(name_idx))
+                        .as_deref()
+                        == Some(name)
+            })
+        })
     }
 
     fn js_function_body_this_property_assignments(

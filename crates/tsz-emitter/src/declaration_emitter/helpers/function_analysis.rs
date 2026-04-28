@@ -526,15 +526,41 @@ impl<'a> DeclarationEmitter<'a> {
         let receiver_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
-        if self.get_identifier_text(receiver_idx).as_deref() != Some(root_name) {
+        let receiver_matches_root = self.get_identifier_text(receiver_idx).as_deref()
+            == Some(root_name)
+            || (self.source_is_js_file
+                && self
+                    .module_exports_property_reference_name(receiver_idx)
+                    .as_deref()
+                    == Some(root_name));
+        if !receiver_matches_root {
             return None;
         }
 
         let rhs_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(binary.right);
+        if self.source_is_js_file {
+            if self.get_identifier_text(rhs_idx).is_some()
+                || self
+                    .module_exports_property_reference_name(rhs_idx)
+                    .is_some()
+            {
+                return None;
+            }
+            if self
+                .arena
+                .get(rhs_idx)
+                .is_some_and(|rhs_node| rhs_node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            {
+                return None;
+            }
+        }
         let (property_name_text, namespace_member_name) =
             self.late_bound_assignment_property_key_parts(lhs_idx)?;
+        if self.source_is_js_file && property_name_text == "prototype" {
+            return None;
+        }
         let type_text = self
             .preferred_object_member_initializer_type_text(rhs_idx, self.indent_level + 1)
             .or_else(|| {
@@ -554,13 +580,16 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         root_name_idx: NodeIndex,
     ) -> Vec<LateBoundAssignmentMember> {
-        if self.source_is_js_file || self.source_is_declaration_file {
+        if self.source_is_declaration_file {
             return Vec::new();
         }
 
         let Some(root_name) = self.get_identifier_text(root_name_idx) else {
             return Vec::new();
         };
+        if self.source_is_js_file && self.js_export_equals_names.contains(&root_name) {
+            return Vec::new();
+        }
         let Some(source_file) = self.arena.source_files.first() else {
             return Vec::new();
         };
@@ -665,7 +694,11 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             self.write_indent();
-            self.write("var ");
+            if self.source_is_js_file {
+                self.write("let ");
+            } else {
+                self.write("var ");
+            }
             self.write(namespace_member_name);
             self.write(": ");
             self.write(&member.type_text);

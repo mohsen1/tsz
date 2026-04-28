@@ -163,6 +163,36 @@ fn template_after_typedef_no_ts8039() {
     );
 }
 
+/// @template tags placed AFTER a single @typedef bind to the typedef host,
+/// matching tsc's lenient template-placement rule for @typedef. Without this,
+/// `Funcs<A, B>` use sites would fire TS2315 ("Type 'Funcs' is not generic").
+/// See conformance test `contravariantOnlyInferenceFromAnnotatedFunctionJs.ts`.
+#[test]
+fn template_after_typedef_binds_as_generic_params() {
+    let codes = check_js_strict(
+        r#"
+/**
+ * @typedef {{ [K in keyof B]: { fn: (a: A) => B[K]; } }} Funcs
+ * @template A
+ * @template {Record<string, unknown>} B
+ */
+
+/**
+ * @template A
+ * @template {Record<string, unknown>} B
+ * @param {Funcs<A, B>} fns
+ */
+function foo(fns) {}
+
+foo({});
+"#,
+    );
+    assert!(
+        !codes.contains(&2315),
+        "Funcs<A, B> must not emit TS2315 when templates are after @typedef, got: {codes:?}"
+    );
+}
+
 #[test]
 fn template_after_typedef_property_emits_ts8039() {
     let codes = check_js(

@@ -229,8 +229,11 @@ impl<'a> CheckerState<'a> {
             if let Some((_, params)) = self.resolve_global_jsdoc_typedef_info(base_name) {
                 params.is_empty()
             } else if let Some(sym_id) = resolved_type_symbol {
-                self.type_reference_symbol_type_with_params(sym_id)
-                    .1
+                // `type_reference_symbol_type_with_params` only sees AST-level
+                // `<T>` lists; for JS classes declared with `@template T` JSDoc
+                // (no syntax-level params), use the reference helper which
+                // also surfaces JSDoc-derived params.
+                self.get_reference_type_params_for_symbol(sym_id, base_name)
                     .is_empty()
             } else {
                 matches!(base_name, "Void" | "Undefined")

@@ -567,6 +567,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
+        let preferred_return = if func_body.is_some() {
+            self.function_body_preferred_return_type_text(func_body)
+        } else {
+            None
+        };
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -602,6 +607,11 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                {
+                    self.write(": ");
+                    self.write(type_text);
                 } else {
                     let printed_type_text = self.print_type_id(return_type_id);
                     self.write(": ");
@@ -710,7 +720,7 @@ impl<'a> DeclarationEmitter<'a> {
                 true,
                 func_idx,
             );
-            self.emit_js_namespace_export_aliases_for_name(func.name);
+            self.emit_js_namespace_export_aliases_for_name(func.name, true);
         }
     }
 
@@ -1318,6 +1328,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
+        let preferred_return = if func_body.is_some() {
+            self.function_body_preferred_return_type_text(func_body)
+        } else {
+            None
+        };
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
@@ -1353,6 +1368,11 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                {
+                    self.write(": ");
+                    self.write(type_text);
                 } else {
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)
@@ -1404,7 +1424,7 @@ impl<'a> DeclarationEmitter<'a> {
                 true,
                 func_idx,
             );
-            self.emit_js_namespace_export_aliases_for_name(func.name);
+            self.emit_js_namespace_export_aliases_for_name(func.name, true);
         }
     }
 
