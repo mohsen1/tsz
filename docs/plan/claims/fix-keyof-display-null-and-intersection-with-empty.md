@@ -3,7 +3,7 @@
 - **Date**: 2026-04-28
 - **Branch**: `fix/keyof-display-null-and-intersection-with-empty`
 - **PR**: TBD
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -30,6 +30,11 @@ text differs in two ways the printer can fix without touching evaluation:
 
 ## Verification
 
-- `cargo nextest run -p tsz-solver --lib` (covers format unit tests)
-- `./scripts/conformance/conformance.sh run --filter "unknownControlFlow" --verbose`
-  (target reduces from 6 mismatches to ≤4)
+- `cargo nextest run -p tsz-solver --lib` — 5545 passed
+- `cargo nextest run -p tsz-checker --lib` — 2960 passed
+- `./scripts/conformance/conformance.sh run --filter "unknownControlFlow" --verbose`:
+  6 mismatches → 2 (remaining 2 are pre-existing tsz issues unrelated to
+  keyof printing: a TS2322 false positive at line 21 and a spurious
+  TS2345 at line 293 for ff3 inference).
+- `./scripts/conformance/conformance.sh run --filter "keyof"` — same set
+  of 5 baseline failures, no new regressions.
