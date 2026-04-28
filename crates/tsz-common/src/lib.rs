@@ -50,3 +50,6 @@ pub use primitives::numeric;
 // `TSZ_PERF_COUNTERS` env var; cheap (one relaxed atomic add) on hot
 // paths even when the gate is off.
 pub mod perf_counters;
+
+// Centralized file-extension constants and helpers.
+pub mod file_extensions;
