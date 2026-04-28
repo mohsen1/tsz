@@ -505,6 +505,7 @@ _UNIT_TEST_PACKAGES=(
 run_unit_tests() {
   ci_section "Workspace nextest suites"
   cargo nextest run --profile ci --cargo-profile ci-unit \
+    --build-jobs "$CARGO_BUILD_JOBS" \
     "${_UNIT_TEST_PACKAGES[@]}"
 }
 
@@ -531,6 +532,7 @@ build_unit_test_archive() {
   local archive_rc=0
   cargo nextest archive \
     --cargo-profile ci-unit \
+    --build-jobs "$CARGO_BUILD_JOBS" \
     --archive-file "$tmp_archive" \
     "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
   if [[ "$archive_rc" -ne 0 ]]; then
@@ -644,7 +646,11 @@ build_wasm() {
   ci_section "WASM build (nodejs target)"
   (
     cd crates/tsz-wasm
-    wasm-pack build --target nodejs --out-dir ../../pkg --no-opt
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
+      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
+      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
+      wasm-pack build --target nodejs --out-dir ../../pkg --no-opt -- --jobs "$CARGO_BUILD_JOBS"
   )
   mkdir -p pkg/lib
   cp -R TypeScript/src/lib/. pkg/lib/
@@ -655,7 +661,11 @@ build_wasm_web() {
   cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
   (
     cd crates/tsz-wasm
-    wasm-pack build --target web --out-dir ../../pkg/web --no-opt
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
+      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
+      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
+      wasm-pack build --target web --out-dir ../../pkg/web --no-opt -- --jobs "$CARGO_BUILD_JOBS"
   )
 }
 
@@ -761,10 +771,19 @@ for path in test_dir.rglob("*"):
         continue
     if "APISample" in path_str or "APILibCheck" in path_str:
         continue
-    files.append(path_str)
+    files.append(path)
 
 files.sort()
-selected = [path for i, path in enumerate(files) if i % count == index]
+
+def stable_shard(path):
+    rel = path.relative_to(test_dir).as_posix()
+    h = 1469598103934665603
+    for byte in rel.encode("utf-8"):
+        h ^= byte
+        h = (h * 1099511628211) & 0xffffffffffffffff
+    return h % count
+
+selected = [path.as_posix() for path in files if stable_shard(path) == index]
 passed = sum(1 for path in selected if baseline_status.get(path) == "PASS")
 print(passed, len(selected))
 PY
@@ -1383,6 +1402,10 @@ aggregate_fourslash() {
 run_dist_binaries() {
   ci_section "Build dist-fast binaries"
   timed build_test_binaries build_test_binaries
+  show_sccache_stats
+}
+
+show_sccache_stats() {
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
   fi
@@ -1391,6 +1414,7 @@ run_dist_binaries() {
 run_unit_archive_only() {
   ci_section "Build unit test archive"
   timed build_unit_test_archive build_unit_test_archive
+  show_sccache_stats
 }
 
 run_node_harness_prep() {
@@ -1415,9 +1439,7 @@ run_build() {
   else
     echo "scripts/node_modules already present (cache hit)"
   fi
-  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
-    sccache --show-stats 2>/dev/null || true
-  fi
+  show_sccache_stats
 }
 
 # Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
@@ -1428,12 +1450,14 @@ run_build() {
 # invocations reference TypeScript/src/lib (and test fixtures pull from
 # tests/cases). The exceptions are explicit:
 #   - lint runs only `cargo clippy`, no build/test.
+#   - dist-binaries and unit-archive only compile Rust artifacts.
 #   - unit-shard runs nextest from a pre-built archive, no compilation.
 # Aggregate suites bypass run_common_setup() entirely (see main()).
 suite_needs_typescript_source() {
   local suite="$1"
   case "$suite" in
     lint) return 1 ;;
+    dist-binaries|unit-archive) return 1 ;;
     unit-shard) return 1 ;;
     # Aggregate suites only download per-shard JSONs from GCS, jq-sum
     # them, and compare to a snapshot file. They never read TypeScript/.
@@ -1449,10 +1473,9 @@ run_common_setup() {
   if suite_needs_typescript_source "$suite"; then
     timed init_typescript_submodule init_typescript_submodule
   else
-    # lint, dist-binaries, unit-archive, unit*, wasm, wasm-web don't read
-    # TypeScript/ at compile time. Skipping the submodule init avoids
-    # downloading ~50 MB of source and avoids the gitlink-vs-ref-file
-    # staleness check that's only relevant when the tree is actually used.
+    # Skipping the submodule init avoids downloading ~50 MB of source and
+    # avoids the gitlink-vs-ref-file staleness check that's only relevant
+    # when the tree is actually used.
     echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
   fi
   if suite_needs_group "$suite" rust_compile; then
@@ -1509,12 +1532,15 @@ main() {
       ;;
     wasm)
       timed build_wasm build_wasm
+      show_sccache_stats
       ;;
     wasm-web)
       timed build_wasm_web build_wasm_web
+      show_sccache_stats
       ;;
     wasm-all)
       timed build_wasm_all build_wasm_all
+      show_sccache_stats
       ;;
     conformance)
       timed build_test_binaries build_test_binaries

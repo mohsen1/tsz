@@ -132,22 +132,6 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
-  unit-archive:
-    name: unit-archive
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Build unit test archive
-        run: scripts/ci/github-suite.sh unit-archive
-
   wasm:
     name: wasm
     needs: gate
@@ -216,44 +200,30 @@ jobs:
           compression-level: 1
 
   unit:
-    # NOTE: this is over-sharded for what unit tests actually do (~5 min of
-    # work split across 4 shards each paying ~40s of setup overhead). The
-    # natural fix is to deshard into a single 'unit' job that calls the
-    # 'unit' suite directly. That fix is blocked on 4 pre-existing test
-    # failures that the shard architecture silently masks: the shards
-    # download a nextest archive without workspace source, so tests that
-    # do `if !some_workspace_path.exists() { return }` (e.g.,
-    # test_binder_file_size_ceiling in tsz-solver) early-return as a
-    # non-failure. A single unit job has the workspace checkout, runs the
-    # tests for real, and they fail. See follow-up for the test fixes;
-    # this PR keeps the over-sharding as-is to avoid expanding scope into
-    # unrelated test debt.
-    name: unit-${{ matrix.shard }}
-    needs: [gate, unit-archive]
+    # One nextest job avoids the 3m+ archive/upload critical path. Nextest
+    # already parallelizes heavily inside the runner, and the latest green
+    # #1657 sample showed the actual shard execution was much cheaper than
+    # preparing and shipping the archive.
+    name: unit
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3]
     env:
-      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_UNIT_SHARD_COUNT: 4
-      TSZ_CI_CACHE_SAVE: "0"
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit shard
-        run: scripts/ci/github-suite.sh unit-shard
+      - name: Run unit suite
+        run: scripts/ci/github-suite.sh unit
 
   conformance:
-    # Conformance shards are currently well below the unit critical path
-    # (2026-04-28 sample: max shard ~2m after dist-binaries, while unit
-    # archive + unit shard is ~12m). Keep enough parallelism for timeout
-    # headroom, but avoid burning 16 runners when it does not improve wall
-    # clock time.
+    # Conformance remains below the current wall-clock tail. In the
+    # 2026-04-28 #1657 sample, 8 shards all finished in <=1m56 while
+    # unit-archive + unit shards were still running. Trim runner fan-out
+    # conservatively; 4 shards would risk making conformance the new tail
+    # once wasm/unit setup gets faster.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true'
@@ -262,11 +232,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3, 4, 5]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 8
-      TSZ_CI_CONFORMANCE_SHARDS: 8
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
+      TSZ_CI_CONFORMANCE_SHARDS: 6
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -293,8 +263,8 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 8
-      TSZ_CI_CONFORMANCE_SHARDS: 8
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
+      TSZ_CI_CONFORMANCE_SHARDS: 6
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
