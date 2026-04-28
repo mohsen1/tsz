@@ -13,9 +13,10 @@ export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
 export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
 export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$ROOT_DIR/.ci-cache/npm}"
 export npm_config_cache="$NPM_CONFIG_CACHE"
+export TSZ_CI_WASM_PACK_CACHE="${TSZ_CI_WASM_PACK_CACHE:-$ROOT_DIR/.ci-cache/wasm-pack}"
 export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
 
-mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE"
+mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
 
@@ -216,13 +217,13 @@ suite_needs_group() {
       [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
       ;;
     wasm)
-      [[ "$suite" == "wasm" || "$suite" == "wasm-web" ]]
+      [[ "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" ]]
       ;;
     node)
       [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
       ;;
     rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
       ;;
     *)
       return 1
@@ -378,6 +379,29 @@ configure_sccache() {
     unset RUSTC_WRAPPER
     export CARGO_INCREMENTAL="1"
   fi
+}
+
+setup_wasm_pack_cache() {
+  local home_cache="$HOME/.cache"
+  local link_path="$home_cache/.wasm-pack"
+  mkdir -p "$home_cache" "$TSZ_CI_WASM_PACK_CACHE"
+
+  if [[ -e "$link_path" && ! -L "$link_path" ]]; then
+    if [[ -d "$link_path" ]]; then
+      shopt -s dotglob nullglob
+      local entries=("$link_path"/*)
+      if (( ${#entries[@]} > 0 )); then
+        cp -a "${entries[@]}" "$TSZ_CI_WASM_PACK_CACHE"/
+      fi
+      shopt -u dotglob nullglob
+      rm -rf "$link_path"
+    else
+      rm -f "$link_path"
+    fi
+  fi
+
+  ln -sfn "$TSZ_CI_WASM_PACK_CACHE" "$link_path"
+  echo "wasm-pack cache: ${link_path} -> ${TSZ_CI_WASM_PACK_CACHE}"
 }
 
 ensure_source_git_context() {
@@ -628,6 +652,14 @@ build_wasm_web() {
     cd crates/tsz-wasm
     wasm-pack build --target web --out-dir ../../pkg/web --no-opt
   )
+}
+
+build_wasm_all() {
+  # Build both targets in one job so the web build reuses the nodejs build's
+  # warmed wasm target dir and wasm-bindgen CLI install instead of paying a
+  # second cold dependency/toolchain compile in another job.
+  build_wasm
+  build_wasm_web
 }
 
 prep_node_artifacts() {
@@ -1421,6 +1453,9 @@ run_common_setup() {
   if suite_needs_group "$suite" rust_compile; then
     configure_sccache
   fi
+  if suite_needs_group "$suite" wasm; then
+    setup_wasm_pack_cache
+  fi
 }
 
 run_all_suites() {
@@ -1428,6 +1463,7 @@ run_all_suites() {
   timed run_unit_tests run_unit_tests
   timed build_test_binaries build_test_binaries
   timed build_wasm build_wasm
+  timed build_wasm_web build_wasm_web
   timed prep_node_artifacts prep_node_artifacts
   timed run_conformance run_conformance
   timed run_emit_shards run_emit_shards
@@ -1472,6 +1508,9 @@ main() {
     wasm-web)
       timed build_wasm_web build_wasm_web
       ;;
+    wasm-all)
+      timed build_wasm_all build_wasm_all
+      ;;
     conformance)
       timed build_test_binaries build_test_binaries
       timed run_conformance run_conformance
@@ -1509,7 +1548,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, wasm-all, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac
