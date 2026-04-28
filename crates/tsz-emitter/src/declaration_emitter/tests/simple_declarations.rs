@@ -1571,6 +1571,52 @@ module.exports = class {
 }
 
 #[test]
+fn test_js_commonjs_function_like_export_preserves_constructor_jsdoc_block() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#,
+    );
+
+    let expected = "declare class Timer {\n    /**\n     * @param {number} timeout\n     */\n    constructor(timeout: number);\n    timeout: number;\n}";
+    assert!(
+        output.contains(expected),
+        "Expected synthetic function-like class constructor JSDoc to stay block-formatted: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_function_like_class_preserves_constructor_jsdoc_block() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} x
+ * @param {number} y
+ */
+export function Point(x, y) {
+    if (!(this instanceof Point)) {
+        return new Point(x, y);
+    }
+    this.x = x;
+    this.y = y;
+}
+"#,
+    );
+
+    let expected = "export class Point {\n    /**\n     * @param {number} x\n     * @param {number} y\n     */\n    constructor(x: number, y: number);";
+    assert!(
+        output.contains(expected),
+        "Expected exported function-like class constructor JSDoc to stay block-formatted: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
     let output = emit_js_dts(
         r#"
