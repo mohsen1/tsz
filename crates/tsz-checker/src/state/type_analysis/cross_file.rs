@@ -1110,11 +1110,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if !Self::enter_cross_arena_delegation() {
-            return None;
+            return if results.is_empty() {
+                None
+            } else {
+                Some(results)
+            };
         }
         if !self.ctx.enter_recursion() {
             Self::leave_cross_arena_delegation();
-            return None;
+            return if results.is_empty() {
+                None
+            } else {
+                Some(results)
+            };
         }
 
         let delegate_file_name = interface_arena
