@@ -66,6 +66,7 @@ impl<'a> CheckerState<'a> {
         explicit_this_type: Option<TypeId>,
         method_idx: NodeIndex,
     ) -> tsz_solver::CallSignature {
+        let enclosing_updates = self.push_enclosing_type_parameters(method_idx);
         self.exclude_params_for_type_param_constraints(&method.parameters);
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         self.clear_excluded_params_for_type_param_constraints();
@@ -156,6 +157,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.pop_type_parameters(type_param_updates);
+        self.pop_type_parameters(enclosing_updates);
 
         tsz_solver::CallSignature {
             type_params,

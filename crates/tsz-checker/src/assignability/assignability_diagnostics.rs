@@ -222,6 +222,9 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(source, target) {
             return true;
         }
+        if self.is_nested_same_wrapper_application_assignment(source, target) {
+            return true;
+        }
 
         // Build a RelationRequest so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
@@ -692,6 +695,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if self.is_assignable_to(source, target) {
+            return true;
+        }
+        if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 

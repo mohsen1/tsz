@@ -671,6 +671,52 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn application_info_or_display_alias(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
+        crate::query_boundaries::common::application_info(self.ctx.types, type_id).or_else(|| {
+            self.ctx.types.get_display_alias(type_id).and_then(|alias| {
+                crate::query_boundaries::common::application_info(self.ctx.types, alias)
+            })
+        })
+    }
+
+    pub(crate) fn is_nested_same_wrapper_application_assignment(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
+            self.application_info_or_display_alias(source),
+            self.application_info_or_display_alias(target),
+        ) && source_base == target_base
+            && source_args.len() == 1
+            && target_args.len() == 1
+            && self
+                .application_info_or_display_alias(source_args[0])
+                .is_some_and(|(nested_base, _)| nested_base == source_base)
+        {
+            return true;
+        }
+
+        fn generic_head(display: &str) -> Option<&str> {
+            display.split_once('<').map(|(head, _)| head.trim())
+        }
+
+        let source_display = self.format_type(source);
+        let target_display = self.format_type(target);
+        let Some(source_head) = generic_head(&source_display) else {
+            return false;
+        };
+        if generic_head(&target_display) != Some(source_head) {
+            return false;
+        }
+        let Some((_, source_args)) = source_display.split_once('<') else {
+            return false;
+        };
+        source_args
+            .trim_start()
+            .starts_with(&format!("{source_head}<"))
+    }
+
     /// Centralized suppression for TS2322-style assignability diagnostics.
     pub(crate) fn should_suppress_assignability_diagnostic(
         &self,
@@ -1764,6 +1810,33 @@ impl<'a> CheckerState<'a> {
             && self.is_concrete_source_to_deferred_keyof_index_access(source, target)
         {
             return false;
+        }
+
+        if crate::query_boundaries::common::application_info(self.ctx.types, source)
+            .or_else(|| {
+                self.ctx.types.get_display_alias(source).and_then(|alias| {
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                })
+            })
+            .zip(crate::query_boundaries::common::application_info(
+                self.ctx.types,
+                target,
+            ))
+            .is_some_and(|((source_base, source_args), (target_base, target_args))| {
+                source_base == target_base
+                    && source_args.len() == target_args.len()
+                    && !source_args.is_empty()
+                    && source_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
+                    && target_args
+                        .iter()
+                        .any(|&arg| arg != TypeId::UNKNOWN && arg != TypeId::ERROR)
+            })
+        {
+            return true;
+        }
+
+        if self.is_nested_same_wrapper_application_assignment(source, target) {
+            return true;
         }
 
         // Variance-aware fast path: when both source and target are Application

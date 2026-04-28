@@ -10,6 +10,13 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver as solver_narrowing;
 use tsz_solver::TypeId;
 
+#[derive(Default)]
+struct ThenableAwaitInfo {
+    awaited_type: Option<TypeId>,
+    rejected_this_type: Option<TypeId>,
+    has_callable_then: bool,
+}
+
 // =============================================================================
 // Promise and Async Type Checking Methods
 // =============================================================================
@@ -25,6 +32,10 @@ impl<'a> CheckerState<'a> {
     /// This handles built-in Promise types as well as custom Promise implementations.
     pub fn is_promise_like_name(&self, name: &str) -> bool {
         matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
+    }
+
+    fn is_builtin_promise_like_name(name: &str) -> bool {
+        matches!(name, "Promise" | "PromiseLike")
     }
 
     /// Check if a name refers to exactly the global Promise type (not subclasses).
@@ -273,7 +284,7 @@ impl<'a> CheckerState<'a> {
                 query::classify_promise_type(self.ctx.types, base)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                 && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && self.is_promise_like_name(symbol.escaped_name.as_str())
+                && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
             {
                 return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
             }
@@ -286,7 +297,7 @@ impl<'a> CheckerState<'a> {
             {
                 let sym_id = SymbolId(sym_ref.0);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && self.is_promise_like_name(symbol.escaped_name.as_str())
+                    && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
                 {
                     return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
                 }
@@ -311,10 +322,14 @@ impl<'a> CheckerState<'a> {
                 // Use DefId -> SymbolId bridge
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    && self.is_promise_like_name(symbol.escaped_name.as_str())
+                    && Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
                 {
                     return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
                 }
+            }
+
+            if let Some(awaited) = self.extract_awaited_type_from_thenable(return_type) {
+                return Some(awaited);
             }
         }
 
@@ -353,20 +368,99 @@ impl<'a> CheckerState<'a> {
     /// 1. Finding the `then` property on the object
     /// 2. Getting its call signature
     /// 3. Extracting the first param of the `onfulfilled` callback (which is T)
-    fn extract_awaited_type_from_thenable(&self, type_id: TypeId) -> Option<TypeId> {
+    fn extract_awaited_type_from_thenable(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.extract_awaited_type_from_valid_thenable(type_id, false)
+            .awaited_type
+    }
+
+    pub(crate) fn await_operand_invalid_thenable_this_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let info = self.extract_awaited_type_from_valid_thenable(type_id, true);
+        if info.has_callable_then && info.awaited_type.is_none() {
+            return info.rejected_this_type;
+        }
+        None
+    }
+
+    fn extract_awaited_type_from_valid_thenable(
+        &mut self,
+        type_id: TypeId,
+        check_this_context: bool,
+    ) -> ThenableAwaitInfo {
         use crate::query_boundaries::property_access::resolve_property_access;
 
-        let then_type = resolve_property_access(self.ctx.types, type_id, "then").success_type()?;
+        let resolved_type = self.evaluate_type_with_env(type_id);
+        let receiver_type = if resolved_type == TypeId::ERROR || resolved_type == TypeId::ANY {
+            type_id
+        } else {
+            resolved_type
+        };
+        let Some(then_type) =
+            resolve_property_access(self.ctx.types, receiver_type, "then").success_type()
+        else {
+            return ThenableAwaitInfo::default();
+        };
+
+        if check_this_context
+            && let (
+                tsz_solver::operations::CallResult::ThisTypeMismatch { expected_this, .. },
+                _,
+                _,
+            ) = self.resolve_call_with_checker_adapter(
+                then_type,
+                &[],
+                false,
+                None,
+                Some(receiver_type),
+            )
+        {
+            return ThenableAwaitInfo {
+                awaited_type: None,
+                rejected_this_type: Some(expected_this),
+                has_callable_then: true,
+            };
+        }
 
         // Get call signatures of `then`
-        let sigs = query::call_signatures_for_type(self.ctx.types, then_type)?;
-        let first_sig = sigs.first()?;
+        let Some(sigs) = query::call_signatures_for_type(self.ctx.types, then_type) else {
+            return ThenableAwaitInfo::default();
+        };
+        if sigs.is_empty() {
+            return ThenableAwaitInfo::default();
+        }
 
-        // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
-        let onfulfilled_type = first_sig.params.first().map(|p| p.type_id)?;
+        let mut callback_value_types = Vec::new();
+        let mut rejected_this_type = None;
+        for sig in &sigs {
+            if let Some(expected_this) = sig.this_type
+                && expected_this != TypeId::VOID
+                && !self.is_assignable_to(type_id, expected_this)
+            {
+                rejected_this_type.get_or_insert(expected_this);
+                continue;
+            }
 
-        // Extract the first parameter of the onfulfilled callback.
-        self.extract_first_param_from_callback(onfulfilled_type)
+            // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
+            if let Some(onfulfilled_type) = sig.params.first().map(|p| p.type_id)
+                && let Some(value_type) = self.extract_first_param_from_callback(onfulfilled_type)
+            {
+                callback_value_types.push(value_type);
+            }
+        }
+
+        let awaited_type = match callback_value_types.as_slice() {
+            [] => None,
+            [only] => Some(*only),
+            types => Some(self.ctx.types.factory().union(types.to_vec())),
+        };
+
+        ThenableAwaitInfo {
+            awaited_type,
+            rejected_this_type,
+            has_callable_then: true,
+        }
     }
 
     /// Extract the first parameter type from a callable/function type,
@@ -446,7 +540,7 @@ impl<'a> CheckerState<'a> {
         };
         let name = symbol.escaped_name.as_str();
 
-        if self.is_promise_like_name(name) {
+        if Self::is_builtin_promise_like_name(name) {
             // Return UNKNOWN instead of ANY when there are no type arguments (consistent with Task 4-6)
             return Some(args.first().copied().unwrap_or(TypeId::UNKNOWN));
         }
