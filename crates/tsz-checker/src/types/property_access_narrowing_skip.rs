@@ -4,10 +4,50 @@
 //! the 2000 LOC architecture ceiling.
 
 use crate::state::CheckerState;
+use tsz_binder::FlowNodeId;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
+    /// Skip the receiver flow-narrowing call site in `resolve_property_access`
+    /// when re-narrowing would be redundant. Two cases:
+    ///
+    /// 1. The receiver is an `Identifier` whose flow node already matches the
+    ///    property-read flow node (`get_type_of_node_with_request` already
+    ///    narrowed it).
+    /// 2. The receiver is itself an optional-chain `?.` access. The chain's
+    ///    own typing already encodes nullish behavior, and `apply_flow_narrowing`
+    ///    short-circuits `?.` accesses to their declared type — but the
+    ///    receiver-flow call here would otherwise still walk the entire flow
+    ///    graph just to derive the same `object_type`. On chain-heavy
+    ///    workloads this is the dominant cost in `check_flow`.
+    ///
+    /// Both cases require the receiver and property-read flow nodes to match,
+    /// ensuring no new narrowing site appears at the outer access.
+    pub(crate) fn is_redundant_receiver_narrow(
+        &self,
+        receiver: NodeIndex,
+        property_flow: FlowNodeId,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        if self.ctx.binder.get_node_flow(receiver) != Some(property_flow) {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(receiver) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return true;
+        }
+        (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && self
+                .ctx
+                .arena
+                .get_access_expr(node)
+                .is_some_and(|access| access.question_dot_token)
+    }
+
     pub(crate) fn should_skip_property_result_flow_narrowing(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 

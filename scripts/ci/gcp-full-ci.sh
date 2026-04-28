@@ -211,16 +211,16 @@ suite_needs_group() {
       [[ "$suite" == "lint" ]]
       ;;
     unit)
-      [[ "$suite" == "unit" || "$suite" == "unit-shard" ]]
+      [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
       ;;
     wasm)
-      [[ "$suite" == "wasm" ]]
+      [[ "$suite" == "wasm" || "$suite" == "wasm-web" ]]
       ;;
     node)
-      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* ]]
+      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
       ;;
     rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" ]]
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
       ;;
     *)
       return 1
@@ -434,11 +434,23 @@ run_lint() {
   cargo fmt --check
   scripts/arch/check-workspace-metadata.sh
   scripts/check-crate-root-files.sh
-  cargo clippy \
+  # Use the dedicated ci-lint profile (debug=false, incremental=false,
+  # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
+  # — separate cache key from .target/debug so dev incrementals on a
+  # contributor's machine aren't poisoned by CI-shaped fingerprints, and
+  # vice versa.
+  cargo clippy --profile ci-lint \
     -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
     -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
     --all-targets -- -D warnings
   scripts/arch/check-checker-boundaries.sh
+  # Surface sccache stats so the cache health is visible without reading
+  # the workflow log into a separate step.
+  if command -v sccache >/dev/null 2>&1; then
+    echo "::group::sccache stats"
+    sccache --show-stats || true
+    echo "::endgroup::"
+  fi
 }
 
 nextest_allow_no_tests() {
@@ -596,13 +608,22 @@ build_test_binaries() {
 }
 
 build_wasm() {
-  ci_section "WASM build"
+  ci_section "WASM build (nodejs target)"
   (
     cd crates/tsz-wasm
     wasm-pack build --target nodejs --out-dir ../../pkg --no-opt
   )
   mkdir -p pkg/lib
   cp -R TypeScript/src/lib/. pkg/lib/
+}
+
+build_wasm_web() {
+  ci_section "WASM build (web target for website playground)"
+  cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
+  (
+    cd crates/tsz-wasm
+    wasm-pack build --target web --out-dir ../../pkg/web --no-opt
+  )
 }
 
 prep_node_artifacts() {
@@ -618,6 +639,14 @@ prep_node_artifacts() {
     npx tsc -p tsconfig.json
   )
   ./scripts/fourslash/run-fourslash.sh --prep-only
+}
+
+maybe_prep_node_artifacts() {
+  if [[ "${TSZ_CI_NODE_HARNESS_PREPPED:-0}" == "1" ]]; then
+    echo "info: skipping prep_node_artifacts (TSZ_CI_NODE_HARNESS_PREPPED=1)"
+    return 0
+  fi
+  prep_node_artifacts
 }
 
 read_conformance_results() {
@@ -934,14 +963,18 @@ run_emit_shard() {
   echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS}"
 
   local detail_json="$METRICS_DIR/emit-shard-${shard_index}.json"
+  local emit_args=(
+    --skip-build
+    --concurrency="$EMIT_WORKERS"
+    --timeout="${EMIT_TIMEOUT_MS:-30000}"
+    --json-out="$detail_json"
+  )
+  # Only restrict to a chunk when actually sharding; with one shard, run everything.
+  if [[ "$shard_count" -gt 1 ]]; then
+    emit_args+=(--max="$chunk" --offset="$offset")
+  fi
   set +e
-  ./scripts/emit/run.sh \
-    --skip-build \
-    --max="$chunk" \
-    --offset="$offset" \
-    --concurrency="$EMIT_WORKERS" \
-    --timeout="${EMIT_TIMEOUT_MS:-30000}" \
-    --json-out="$detail_json" \
+  ./scripts/emit/run.sh "${emit_args[@]}" \
     >"$LOG_DIR/emit/shard-${shard_index}.log" 2>&1
   local rc="$?"
   set -e
@@ -1306,6 +1339,24 @@ aggregate_fourslash() {
   fi
 }
 
+run_dist_binaries() {
+  ci_section "Build dist-fast binaries"
+  timed build_test_binaries build_test_binaries
+  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
+    sccache --show-stats 2>/dev/null || true
+  fi
+}
+
+run_unit_archive_only() {
+  ci_section "Build unit test archive"
+  timed build_unit_test_archive build_unit_test_archive
+}
+
+run_node_harness_prep() {
+  ci_section "Prep node harnesses (emit + fourslash)"
+  timed prep_node_artifacts prep_node_artifacts
+}
+
 run_build() {
   ci_section "Build dist-fast binaries (upload for parallel jobs)"
   timed build_test_binaries build_test_binaries
@@ -1326,16 +1377,43 @@ run_build() {
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
   fi
-  if command -v gsutil >/dev/null 2>&1; then
-    scripts/ci/gcp-cache.sh save || echo "warning: CI cache save failed" >&2
-  fi
+}
+
+# Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
+# Keep these in sync — if you add a suite that reads TypeScript/ source,
+# update both here and there.
+#
+# Default is "needs TS source" because most cargo build / cargo test
+# invocations reference TypeScript/src/lib (and test fixtures pull from
+# tests/cases). The exceptions are explicit:
+#   - lint runs only `cargo clippy`, no build/test.
+#   - unit-shard runs nextest from a pre-built archive, no compilation.
+# Aggregate suites bypass run_common_setup() entirely (see main()).
+suite_needs_typescript_source() {
+  local suite="$1"
+  case "$suite" in
+    lint) return 1 ;;
+    unit-shard) return 1 ;;
+    # Aggregate suites only download per-shard JSONs from GCS, jq-sum
+    # them, and compare to a snapshot file. They never read TypeScript/.
+    conformance-aggregate|emit-aggregate|fourslash-aggregate) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 run_common_setup() {
   local suite="${1:-all}"
   timed ensure_host_tools ensure_host_tools "$suite"
   timed ensure_source_git_context ensure_source_git_context
-  timed init_typescript_submodule init_typescript_submodule
+  if suite_needs_typescript_source "$suite"; then
+    timed init_typescript_submodule init_typescript_submodule
+  else
+    # lint, dist-binaries, unit-archive, unit*, wasm, wasm-web don't read
+    # TypeScript/ at compile time. Skipping the submodule init avoids
+    # downloading ~50 MB of source and avoids the gitlink-vs-ref-file
+    # staleness check that's only relevant when the tree is actually used.
+    echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
+  fi
   if suite_needs_group "$suite" rust_compile; then
     configure_sccache
   fi
@@ -1366,6 +1444,15 @@ main() {
     build)
       run_build
       ;;
+    dist-binaries)
+      run_dist_binaries
+      ;;
+    unit-archive)
+      run_unit_archive_only
+      ;;
+    node-harness-prep)
+      run_node_harness_prep
+      ;;
     lint)
       timed run_lint run_lint
       ;;
@@ -1377,6 +1464,9 @@ main() {
       ;;
     wasm)
       timed build_wasm build_wasm
+      ;;
+    wasm-web)
+      timed build_wasm_web build_wasm_web
       ;;
     conformance)
       timed build_test_binaries build_test_binaries
@@ -1399,7 +1489,7 @@ main() {
       ;;
     emit-shard)
       timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_emit_shard run_emit_shard
       ;;
     emit-aggregate)
@@ -1407,7 +1497,7 @@ main() {
       ;;
     fourslash-shard)
       timed build_test_binaries build_test_binaries
-      timed prep_node_artifacts prep_node_artifacts
+      timed maybe_prep_node_artifacts maybe_prep_node_artifacts
       timed run_fourslash_shard run_fourslash_shard
       ;;
     fourslash-aggregate)
@@ -1415,7 +1505,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, lint, unit, unit-shard, wasm, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac

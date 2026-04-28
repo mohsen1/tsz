@@ -98,13 +98,13 @@ codegen-units = 1     # Single codegen unit for better optimization
 strip = "symbols"     # Strip debug symbols to reduce binary size
 
 [profile.dist-fast]
-# Fast build + good runtime: balance between compile time and performance
-# Use for: CI testing, quick benchmarks, faster conformance runs
-# Build time: ~20-30% faster than dist, Runtime: ~95% of dist performance
+# Fast build for CI: correctness over runtime performance.
+# LTO disabled so linking is not the bottleneck (sccache can't cache the link step).
+# Use for: CI testing, conformance runs. Not for representative perf benchmarks.
 inherits = "release"
-lto = "thin"          # Faster than fat LTO, still good optimization
-codegen-units = 16    # Parallel build (like release), unlike dist's serial build
-strip = "debuginfo"   # Keep symbols for debugging, strip debug info only
+lto = false           # No LTO: linking is ~5-10x faster; sccache hits the codegen step
+codegen-units = 16    # Parallel codegen
+strip = "debuginfo"
 
 [profile.dev-fast]
 inherits = "dev"
@@ -145,3 +145,20 @@ lto = "thin"
 inherits = "dev"
 debug = false
 codegen-units = 8
+
+[profile.ci-lint]
+# Used by `cargo clippy` in the CI lint suite. Clippy doesn't ship binaries
+# or run tests — it only needs `.rmeta` analysis output. So:
+#   debug = false      → no DWARF generation; clippy never reads it
+#   incremental = false → incremental fingerprinting fights sccache (sccache
+#                          can't cache work that depends on the per-target
+#                          incremental session) and CI runners are ephemeral
+#                          so the on-disk incremental cache is dead weight
+#   opt-level = 0      → inherited from dev; clippy doesn't need optimisation
+#   codegen-units      → inherits dev's 256 (set in .cargo/config.toml).
+#                          No reason to override here; if the dev default
+#                          changes we want ci-lint to follow it.
+# Goal: clippy in <2 min warm, with sccache shouldering cross-commit reuse.
+inherits = "dev"
+debug = false
+incremental = false

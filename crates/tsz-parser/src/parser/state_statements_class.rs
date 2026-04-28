@@ -1255,7 +1255,24 @@ impl ParserState {
         // (it starts a computed property name on the decorated member instead)
         let saved_flags = self.context_flags;
         self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_DECORATOR;
+        let parenthesized_await_error_pos = self
+            .look_ahead_decorator_parenthesized_await_error_pos()
+            .filter(|_| !self.is_token(SyntaxKind::AwaitKeyword));
+        if self.is_token(SyntaxKind::AwaitKeyword) {
+            self.parse_error_at_current_token(
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+        }
         let expression = self.parse_left_hand_side_expression();
+        if let Some(error_pos) = parenthesized_await_error_pos {
+            self.parse_error_at(
+                error_pos,
+                1,
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+        }
         self.context_flags = saved_flags;
 
         if self.is_token(SyntaxKind::EndOfFileToken)
@@ -1283,6 +1300,26 @@ impl ParserState {
             end_pos,
             crate::parser::node::DecoratorData { expression },
         ))
+    }
+
+    fn look_ahead_decorator_parenthesized_await_error_pos(&mut self) -> Option<u32> {
+        if !self.is_token(SyntaxKind::OpenParenToken) {
+            return None;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = if self.is_token(SyntaxKind::AwaitKeyword) {
+            self.next_token();
+            self.is_token(SyntaxKind::CloseParenToken)
+                .then(|| self.token_pos())
+        } else {
+            None
+        };
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Parse class declaration with pre-parsed decorators
@@ -1736,6 +1773,12 @@ impl ParserState {
 
         if self.is_token(SyntaxKind::ClassKeyword) {
             self.parse_class_expression()
+        } else if self.is_token(SyntaxKind::AwaitKeyword) {
+            self.parse_error_at_current_token(
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            self.parse_identifier_name()
         } else if self.is_token(SyntaxKind::ThisKeyword) {
             self.parse_this_expression()
         } else if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::NewKeyword)
@@ -1823,6 +1866,13 @@ impl ParserState {
                 ))
             }
             SyntaxKind::LessThanToken => {
+                let invalid_await_heritage = self.node_is_identifier_text(expr, "await");
+                if invalid_await_heritage {
+                    self.parse_error_at_current_token(
+                        "Expression expected.",
+                        diagnostic_codes::EXPRESSION_EXPECTED,
+                    );
+                }
                 self.next_token();
                 let mut type_args = Vec::new();
                 while !self.is_token(SyntaxKind::GreaterThanToken)
@@ -1832,6 +1882,9 @@ impl ParserState {
                     if !self.parse_optional(SyntaxKind::CommaToken) {
                         break;
                     }
+                }
+                if invalid_await_heritage && self.is_token(SyntaxKind::GreaterThanToken) {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
                 }
                 self.parse_expected(SyntaxKind::GreaterThanToken);
                 if self.is_token(SyntaxKind::OpenParenToken) {
@@ -1875,6 +1928,13 @@ impl ParserState {
             }
             _ => None,
         }
+    }
+
+    fn node_is_identifier_text(&self, node_idx: NodeIndex, text: &str) -> bool {
+        self.arena
+            .get(node_idx)
+            .and_then(|node| self.arena.get_identifier(node))
+            .is_some_and(|ident| self.arena.resolve_identifier_text(ident) == text)
     }
 
     fn parse_heritage_call_arguments(&mut self) -> (u32, NodeList) {

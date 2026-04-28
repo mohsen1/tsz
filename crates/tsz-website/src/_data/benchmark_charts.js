@@ -7,6 +7,15 @@ function fmt(n) {
   return Number(n).toLocaleString("en-US");
 }
 
+function formatDurationMs(value, fractionDigits = 0) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms)) return "";
+  if (ms > 1000) {
+    return `${(ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}s`;
+  }
+  return `${ms.toFixed(fractionDigits)}ms`;
+}
+
 const TINY_BENCHMARK_MAX_LINES = 200;
 
 const PROJECT_FALLBACK_CONFIG = {
@@ -374,12 +383,12 @@ ${shouldHideSingleProjectNames ? "" : `    <div class="bench-name">${escapeHtml(
       <div class="bench-bar-row">
   <span class="bench-bar-label">tsz</span>
         <div class="bench-bar tsz" style="width: ${tszWidth}px"></div>
-        <span class="bench-bar-time">${r.tsz_ms.toFixed(0)}ms</span>
+        <span class="bench-bar-time">${formatDurationMs(r.tsz_ms)}</span>
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
         <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
-        <span class="bench-bar-time">${r.tsgo_ms.toFixed(0)}ms</span>
+        <span class="bench-bar-time">${formatDurationMs(r.tsgo_ms)}</span>
         ${winnerLabel ? `<span class="bench-winner">${winnerLabel}</span>` : ""}
       </div>
     </div>
@@ -416,7 +425,7 @@ ${shouldHideSingleProjectNames ? "" : `    <div class="bench-name">${escapeHtml(
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
         <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
-        <span class="bench-bar-time">${r.tsgo_ms.toFixed(0)}ms</span>
+        <span class="bench-bar-time">${formatDurationMs(r.tsgo_ms)}</span>
       </div>
     </div>
   </div>\n`;

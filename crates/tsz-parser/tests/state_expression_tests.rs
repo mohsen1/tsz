@@ -10,6 +10,80 @@ fn parse_diagnostics(source: &str) -> usize {
 }
 
 #[test]
+fn await_in_heritage_type_argument_recovery_reports_tsc_parser_fingerprints() {
+    let source = "class C extends await<string> {}\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let await_pos = source.find("await").unwrap() as u32;
+    let less_than_pos = source.find('<').unwrap() as u32;
+    let greater_than_pos = source.find('>').unwrap() as u32;
+
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                && diag.start == await_pos),
+        "expected TS1109 at `await` in heritage clause, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                && diag.start == less_than_pos),
+        "expected TS1109 at `<` after invalid heritage await, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == greater_than_pos
+                && diag.message == "',' expected."),
+        "expected TS1005 comma diagnostic at `>` in invalid heritage await, got {diags:?}"
+    );
+}
+
+#[test]
+fn await_in_decorator_expression_reports_tsc_parser_fingerprints() {
+    let source = r#"
+@await
+class C1 {}
+@(await)
+class C2 {}
+class C3 {
+    @await(1)
+    ["foo"]() {}
+    method(@await [x]) {}
+    method2(@(await) [x]) {}
+}
+"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let bare_await_pos = source.find("@await").unwrap() as u32 + 1;
+    let parenthesized_close_pos = source.find("@(await)").unwrap() as u32 + "@(await".len() as u32;
+    let member_await_pos = source.find("@await(1)").unwrap() as u32 + 1;
+    let parameter_await_pos = source.find("@await [x]").unwrap() as u32 + 1;
+    let parameter_close_pos = source.find("@(await) [x]").unwrap() as u32 + "@(await".len() as u32;
+
+    for expected_pos in [
+        bare_await_pos,
+        parenthesized_close_pos,
+        member_await_pos,
+        parameter_await_pos,
+        parameter_close_pos,
+    ] {
+        assert!(
+            diags
+                .iter()
+                .any(|diag| diag.code == diagnostic_codes::EXPRESSION_EXPECTED
+                    && diag.start == expected_pos),
+            "expected TS1109 at byte {expected_pos}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn expression_parsing_handles_shift_and_greater_token_ambiguity() {
     let diag_count = parse_diagnostics("const shifted = 1 >> 2 >>> 3; let rhs = x >= 1;");
     assert_eq!(diag_count, 0, "unexpected parser diagnostics: {diag_count}");
@@ -435,5 +509,67 @@ fn negative_legacy_octal_literal_emits_ts1121() {
         diags.iter().any(|d| d.code == 1121),
         "Expected TS1121 for '-03', got codes: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn invalid_numeric_separator_followed_by_identifier_does_not_emit_ts2304() {
+    // tsc emits TS6188 (separator-not-allowed) and TS1351 (identifier
+    // cannot follow numeric literal) for inputs like `0_X0101`. It does
+    // NOT emit TS2304 ("Cannot find name 'X0101'"). The recovered
+    // identifier is parser-recovery debris, not a real name-resolution
+    // candidate. Lock that suppression so
+    // `parser.numericSeparators.{hex,binary,octal}Negative.ts` keep passing.
+    let (parser, _root) = parse_source("0_X0101");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1351),
+        "Expected TS1351 for identifier-after-numeric, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2304),
+        "TS2304 must NOT fire for the recovered identifier. Got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn malformed_binary_literal_does_not_leak_ts1005_alongside_ts1177() {
+    // `var binary = 0b21010;` — `0b` is a complete (zero-digit) binary
+    // NumericLiteral; `2` is not a valid binary digit so the scanner emits
+    // TS1177 ("Binary digit expected") at column 16 (the `2`). The next
+    // token is the decimal NumericLiteral `21010`, also starting at column
+    // 16. Without dedup, the variable-declaration list parser emits TS1005
+    // ("',' expected") followed by `parse_semicolon` emitting TS1005 (";'
+    // expected") at the same position. tsc emits ONLY TS1177 — the parser
+    // errors are suppressed by `parseErrorAtPosition`'s same-position dedup.
+    // Lock the dedup so `invalidBinaryIntegerLiteralAndOctalIntegerLiteral.ts`
+    // keeps passing.
+    let (parser, _root) = parse_source("var binary = 0b21010;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1177),
+        "Expected TS1177 (Binary digit expected) at the `2`, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1005),
+        "TS1005 must NOT fire at the same position as TS1177. Got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn malformed_octal_literal_does_not_leak_ts1005_alongside_ts1178() {
+    // Companion of the binary case for octal (`0o`). tsc emits only TS1178.
+    let (parser, _root) = parse_source("var octal = 0o81010;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1178),
+        "Expected TS1178 (Octal digit expected) at the `8`, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1005),
+        "TS1005 must NOT fire at the same position as TS1178. Got codes: {codes:?}"
     );
 }

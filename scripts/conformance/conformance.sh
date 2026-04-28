@@ -236,6 +236,16 @@ ensure_binaries() {
         "$RUNNER_BIN" --help 2>&1 | grep -q -- "$flag"
     }
 
+    # NOTE: do NOT pass --mode server in CI. The legacy server protocol in
+    # crates/conformance/src/server_pool.rs returns only error codes — it
+    # does NOT carry diagnostic fingerprints (code + file + line + column
+    # + message_key). The runner falls back to code-only comparison via
+    # use_fingerprint_compare() in runner.rs:42, which silently skips the
+    # fingerprint-level regression detection that conformance-baseline.txt
+    # is built around. Enabling server mode here is a coverage regression.
+    # Re-enable only after the server protocol carries fingerprints (or
+    # gate it behind an opt-in env var that's off in CI).
+
 # Ensure scripts/node_modules is installed (provides TypeScript lib files for type checking)
 ensure_scripts_deps() {
     if [ ! -d "$REPO_ROOT/scripts/node_modules/typescript" ]; then

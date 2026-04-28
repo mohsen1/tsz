@@ -344,9 +344,10 @@ impl<'a> CheckerState<'a> {
             self.check_dts_top_level_declare_or_export(&sf.statements.nodes);
         }
 
+        let mut seen_dts_ambient_violation = false;
         for &stmt_idx in &sf.statements.nodes {
-            if is_dts && !suppress_grammar {
-                self.check_dts_statement_in_ambient_context(stmt_idx);
+            if is_dts && !suppress_grammar && !seen_dts_ambient_violation {
+                seen_dts_ambient_violation = self.check_dts_statement_in_ambient_context(stmt_idx);
             }
             self.check_statement(stmt_idx);
             if !self.statement_falls_through(stmt_idx) {

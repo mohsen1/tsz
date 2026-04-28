@@ -3,16 +3,26 @@ name: Bench
 on:
   push:
     branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/bench/**'
+      - '.github/workflows/bench.yml'
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 3am UTC — always runs full cold PGO benchmark
   workflow_dispatch:
+    inputs:
+      full:
+        description: 'Run full cold PGO benchmark (otherwise runs quick smoke test)'
+        type: boolean
+        default: false
 
-# Only one benchmark runs at a time.  If a run is already in progress when a
-# new push arrives, the new run queues up.  If a *second* new push arrives
-# before the queued one starts, GitHub Actions automatically cancels the older
-# pending run — so only the latest commit ever waits in the queue.  The
-# currently-running benchmark always completes (no mid-run cancellation).
+# Push smoke-test runs share a group and cancel each other (only latest matters).
+# Nightly/manual full runs get a unique group so they are never cancelled mid-flight.
 concurrency:
-  group: bench
-  cancel-in-progress: false
+  group: bench-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
@@ -25,9 +35,13 @@ jobs:
   bench:
     name: bench
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 360
+    timeout-minutes: 120
     env:
-      BENCH_COLD: "1"
+      # Full mode: nightly schedule + manual dispatch with full=true.
+      # Push runs use quick smoke mode (no PGO, fewer iterations, subset of repos).
+      BENCH_FULL: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)) && '1' || '0' }}
+      BENCH_COLD: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)) && '1' || '0' }}
+      BENCH_PGO: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)) && '1' || '0' }}
       TSC_NPM_SPEC: "6.0.2"
       GITHUB_SHA: ${{ github.sha }}
     steps:
@@ -41,15 +55,45 @@ jobs:
       - name: Install pnpm
         run: |
           if ! command -v pnpm &>/dev/null; then
-            curl -fsSL https://get.pnpm.io/install.sh | PNPM_HOME="$HOME/.local/share/pnpm" sh -
-            echo "$HOME/.local/share/pnpm" >> "$GITHUB_PATH"
+            mkdir -p "$HOME/.npm-global"
+            npm config set prefix "$HOME/.npm-global"
+            npm install -g pnpm --silent
+            echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
           fi
 
       - name: Run benchmarks
+        shell: bash
         run: |
-          ./scripts/bench/bench-vs-tsgo.sh \
-            --json \
-            --json-file "$GITHUB_WORKSPACE/bench-results.json" \
+          # -u + -o pipefail kept; -e dropped so a fixture group surfacing
+          # a non-zero return from inside bench-vs-tsgo.sh (despite its own
+          # run_isolated swallow) doesn't abort the step before the EXIT
+          # trap can flush partial JSON.
+          set -uo pipefail
+
+          # Background resource monitor — logs load/memory/disk every 30s to aid
+          # post-mortem analysis if the runner is killed by OOM or resource pressure.
+          (
+            while true; do
+              echo "::group::resource snapshot $(date -Is)"
+              echo "load:"; uptime || true
+              echo "memory:"; free -h || true
+              echo "disk:"; df -h || true
+              echo "top processes:"; ps -eo pid,ppid,%cpu,%mem,rss,cmd --sort=-rss 2>/dev/null | head -20 || true
+              echo "::endgroup::"
+              sleep 30
+            done
+          ) &
+          _monitor_pid=$!
+          trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
+
+          args=(
+            --json
+            --json-file "$GITHUB_WORKSPACE/bench-results.json"
+          )
+          if [[ "${BENCH_FULL:-0}" != "1" ]]; then
+            args+=(--quick --filter 'utility-types|ts-toolbelt|ts-essentials')
+          fi
+          ./scripts/bench/bench-vs-tsgo.sh "${args[@]}" \
             2>&1 | tee "$GITHUB_WORKSPACE/bench-run.log"
 
       - name: Publish results
@@ -63,12 +107,17 @@ jobs:
           TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
-          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          if [[ "${BENCH_FULL:-0}" == "1" ]]; then
+            gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+            echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          else
+            echo "Skipping latest.json update (quick smoke-test run)"
+          fi
 
       - name: Trigger website redeploy
+        if: env.BENCH_FULL == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run gh-pages.yml --ref main
