@@ -177,3 +177,38 @@ const x: Promise<IteratorResult<string, void>> = c;
         "Promise<IteratorResult<string>> should be assignable to Promise<IteratorResult<string, void>>; got: {diagnostics:#?}"
     );
 }
+
+/// When a class implements a generic interface declared in a different
+/// arena (e.g. a lib type like `AsyncIterator<T, TReturn, TNext>`), the
+/// interface's type parameters are not visible through the local AST
+/// arena walk. The checker must fall back to the solver-side definition
+/// store so the substitution `{T -> string, TReturn -> number, TNext -> boolean}`
+/// is built correctly and propagates into the interface members.
+///
+/// Without the fallback, the displayed expected member type retains
+/// the interface's free type parameters (e.g. `(..._: [] | [TNext]) =>
+/// Promise<IteratorResult<T, TReturn>>`) and the implements check
+/// emits a spurious TS2416 because the comparison is performed against
+/// unsubstituted free type parameters.
+///
+/// Mirrors the substitution-propagation half of
+/// `TypeScript/tests/cases/compiler/customAsyncIterator.ts` using
+/// concrete primitives so the deeper Promise-of-IteratorResult-with-
+/// type-parameter relation does not interfere.
+#[test]
+fn cross_arena_interface_type_params_substituted_for_implements() {
+    let diagnostics = check_with_iterable_libs(
+        r#"
+class C implements AsyncIterator<string, number, boolean> {
+    async next(value?: boolean): Promise<IteratorResult<string, number>> {
+        return { value: "x", done: false };
+    }
+}
+"#,
+    );
+    let codes = semantic_error_codes(&diagnostics);
+    assert!(
+        codes.is_empty(),
+        "class implementing lib AsyncIterator with concrete type args must not emit any error; got: {diagnostics:#?}"
+    );
+}
