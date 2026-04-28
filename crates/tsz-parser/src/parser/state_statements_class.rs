@@ -1774,10 +1774,15 @@ impl ParserState {
         if self.is_token(SyntaxKind::ClassKeyword) {
             self.parse_class_expression()
         } else if self.is_token(SyntaxKind::AwaitKeyword) {
-            self.parse_error_at_current_token(
-                "Expression expected.",
-                diagnostic_codes::EXPRESSION_EXPECTED,
-            );
+            // tsc allows `await` as an identifier in `.d.ts` files, including
+            // heritage clause references like `declare class C extends await {}`.
+            // Skip the TS1109 "Expression expected" emission in that context.
+            if !self.is_declaration_file() {
+                self.parse_error_at_current_token(
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
             self.parse_identifier_name()
         } else if self.is_token(SyntaxKind::ThisKeyword) {
             self.parse_this_expression()
