@@ -86,6 +86,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // For those parameters we keep inference constrained so final argument checks
         // can report concrete mismatches instead of silently widening to unions.
         let mut direct_param_vars = FxHashSet::default();
+        let mut first_direct_primitive_candidate: FxHashMap<InferenceVar, TypeId> =
+            FxHashMap::default();
         let mut placeholder_probe_map: FxHashMap<TypeId, InferenceVar> = FxHashMap::default();
         // Reusable buffer for placeholder names (avoids per-iteration String allocation)
         let mut placeholder_buf = String::with_capacity(24);
@@ -852,6 +854,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 source_for_inference,
                 contextual_target_type,
             );
+
+            // For repeated naked type-parameter parameters, tsc keeps the first
+            // primitive-family candidate and reports the later conflicting direct
+            // argument. A context-sensitive callback in a later parameter can otherwise
+            // add enough inference evidence to merge `""` and `3` into a union,
+            // incorrectly accepting `g<T>(a: T, b: T, c: (t: T) => T)`.
+            if let Some(&var) = var_map.get(&contextual_target_type)
+                && let Some(current_base) = self.primitive_base_of(source_for_inference)
+                && let Some(&first_candidate) = first_direct_primitive_candidate.get(&var)
+            {
+                if let Some(first_base) = self.primitive_base_of(first_candidate)
+                    && first_base != current_base
+                {
+                    return CallResult::ArgumentTypeMismatch {
+                        index: i,
+                        expected: first_candidate,
+                        actual: source_for_inference,
+                        fallback_return: TypeId::ERROR,
+                    };
+                }
+            } else if let Some(&var) = var_map.get(&contextual_target_type)
+                && self.primitive_base_of(source_for_inference).is_some()
+            {
+                first_direct_primitive_candidate.insert(var, source_for_inference);
+            }
 
             // arg_type <: target_type
             self.constrain_types(

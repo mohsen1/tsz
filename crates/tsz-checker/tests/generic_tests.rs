@@ -561,6 +561,27 @@ s = map("", (identity));
 }
 
 #[test]
+fn test_conflicting_direct_candidates_with_callback_emit_ts2345() {
+    let source = r#"
+declare function g<T>(a: T, b: T, c: (t: T) => T): T;
+
+g("", 3, a => a);
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected one TS2345 for the conflicting second argument, got: {diags:?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains("'3'") && ts2345[0].message_text.contains("'\"\"'"),
+        "Expected TS2345 to compare 3 against the first string-literal candidate, got: {:?}",
+        ts2345[0]
+    );
+}
+
+#[test]
 fn test_forward_referencing_type_param_defaults_no_spurious_ts2345() {
     // When type parameter defaults forward-reference later-declared type parameters
     // (flagged by TS2744), the defaults should resolve to error for type-checking
