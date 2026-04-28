@@ -1447,7 +1447,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
     /// Returns the primitive base TypeId for a type if it's a literal or primitive,
     /// or `None` for non-primitive types (objects, arrays, etc.).
-    fn primitive_base_of(&self, ty: TypeId) -> Option<TypeId> {
+    pub(super) fn primitive_base_of(&self, ty: TypeId) -> Option<TypeId> {
         // Check well-known primitive TypeIds first
         if matches!(
             ty,
