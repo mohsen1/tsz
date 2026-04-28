@@ -913,8 +913,8 @@ pub struct CheckerContext<'a> {
     /// Part of the `DefId` migration to decouple Solver from Binder.
     pub definition_store: Arc<DefinitionStore>,
 
-    /// Whether owner-file symbol type results should be mirrored into the shared
-    /// cross-file result cache.
+    /// Whether per-run type results should be mirrored into the shared
+    /// `DefinitionStore` result caches.
     ///
     /// Batch project checking enables this through `ProjectEnv`; interactive/LSP
     /// callers keep it disabled so persistent shared stores do not accumulate
