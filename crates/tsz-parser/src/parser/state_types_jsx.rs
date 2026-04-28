@@ -1633,8 +1633,19 @@ impl ParserState {
                     children.push(self.parse_jsx_text());
                 }
                 SyntaxKind::EndOfFileToken => {
-                    // TS17008: JSX element has no corresponding closing tag
-                    if let Some(tag_name_idx) = opening_tag_name {
+                    // TS17008: JSX element has no corresponding closing tag.
+                    // Suppress when the scanner already reported a Git merge
+                    // conflict marker — tsc treats the marker as terminating
+                    // recovery and does not also emit the unclosed-tag error.
+                    let has_conflict_marker = self
+                        .scanner
+                        .get_scanner_diagnostics()
+                        .iter()
+                        .any(|d| {
+                            d.code
+                                == tsz_common::diagnostics::diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED
+                        });
+                    if !has_conflict_marker && let Some(tag_name_idx) = opening_tag_name {
                         self.emit_jsx_unclosed_tag_error(tag_name_idx);
                     }
                     break;
