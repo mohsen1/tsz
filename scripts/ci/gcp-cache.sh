@@ -327,7 +327,7 @@ suite_needs_rust_compile() {
   local suite
   suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
   case "$suite" in
-    all|full|build|lint|unit|wasm|wasm-web|dist-binaries|unit-archive) return 0 ;;
+    all|full|build|lint|unit|wasm|wasm-web|wasm-all|dist-binaries|unit-archive) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -344,6 +344,7 @@ suite_needs_rust_compile() {
 #   scripts-node-modules     — scripts/node_modules
 #   typescript-harness       — TypeScript/built/local
 #   typescript-node-modules  — TypeScript/node_modules
+#   wasm-pack-cache          — wasm-pack's wasm-bindgen CLI install cache
 #   dist-fast-commit         — commit-keyed dist-fast binary tarball
 #
 # Per-profile cargo target-dir caches (cargo-target-deps, etc.) are
@@ -362,12 +363,17 @@ suite_caches() {
       # tooling. cargo-home (registry) is the only useful restore.
       echo "cargo-home"
       ;;
-    build|dist-binaries|unit-archive|unit|wasm|wasm-web)
+    build|dist-binaries|unit-archive|unit)
       # cargo build / cargo nextest: workspace crates and tests reference
-      # TypeScript/src/lib (and tests/cases for some integration tests),
-      # and the wasm post-build step copies TypeScript/src/lib into the
-      # pkg output. Need TS source even though no Node tooling is run.
+      # TypeScript/src/lib (and tests/cases for some integration tests).
+      # Need TS source even though no Node tooling is run.
       echo "cargo-home typescript-source"
+      ;;
+    wasm|wasm-web|wasm-all)
+      # wasm-pack installs the matching wasm-bindgen CLI into
+      # ~/.cache/.wasm-pack on demand. Without an explicit cache, some
+      # runners spend ~2 minutes compiling that host CLI from scratch.
+      echo "cargo-home typescript-source wasm-pack-cache"
       ;;
     unit-shard)
       # Downloads the nextest archive directly from GCS. No cache restore.
@@ -435,9 +441,32 @@ suite_target_caches() {
     dist-binaries)         echo "cargo-target-deps" ;;
     unit-archive|unit)     echo "cargo-target-unit" ;;
     lint)                  echo "" ;;
-    wasm|wasm-web)         echo "cargo-target-wasm" ;;
+    wasm|wasm-web|wasm-all) echo "cargo-target-wasm" ;;
     *)                     echo "" ;;
   esac
+}
+
+wasm_bindgen_version() {
+  awk '
+    $0 == "[[package]]" { in_pkg = 0 }
+    $0 == "name = \"wasm-bindgen\"" { in_pkg = 1; next }
+    in_pkg && $1 == "version" {
+      gsub(/"/, "", $3)
+      print $3
+      exit
+    }
+  ' Cargo.lock
+}
+
+host_platform_key() {
+  printf '%s-%s\n' "$(uname -s)" "$(uname -m)" | tr '[:upper:]' '[:lower:]'
+}
+
+wasm_pack_cache_key() {
+  printf '%s-%s-%s\n' \
+    "$(wasm_bindgen_version)" \
+    "$(host_platform_key)" \
+    "$(rustc_version_hash)"
 }
 
 restore_typescript() {
@@ -478,7 +507,7 @@ restore_typescript() {
 }
 
 restore_caches() {
-  local cargo_hash node_hash ts_ref ts_deps_hash commit cargo_target_key
+  local cargo_hash node_hash ts_ref ts_deps_hash commit cargo_target_key wasm_pack_key
   cargo_hash="$(cargo_lock_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
@@ -526,6 +555,16 @@ restore_caches() {
     # the right tool for "same source, same compile flags, skip rustc."
   else
     echo "Cache restore skipped: cargo-home + cargo-target (suite does not compile Rust)"
+  fi
+
+  if suite_has_cache wasm-pack-cache; then
+    wasm_pack_key="$(wasm_pack_cache_key)"
+    restore_archive \
+      "wasm-pack-${wasm_pack_key}" \
+      "$(cache_uri "wasm-pack/${wasm_pack_key}.tar.gz")" \
+      ".ci-cache"
+  else
+    echo "Cache restore skipped: wasm-pack cache (suite does not build WASM)"
   fi
 
   if suite_has_cache npm; then
@@ -587,7 +626,7 @@ restore_caches() {
 }
 
 save_caches() {
-  local cargo_hash node_hash ts_ref ts_deps_hash commit cargo_target_key
+  local cargo_hash node_hash ts_ref ts_deps_hash commit cargo_target_key wasm_pack_key
   cargo_hash="$(cargo_lock_hash)"
   node_hash="$(scripts_deps_hash)"
   ts_ref="$(typescript_ref)"
@@ -626,6 +665,15 @@ save_caches() {
       "$(cache_uri "cargo-target-wasm/${cargo_target_key}.tar.gz")" \
       "." \
       .target/wasm32-unknown-unknown
+  fi
+
+  if suite_has_cache wasm-pack-cache; then
+    wasm_pack_key="$(wasm_pack_cache_key)"
+    save_archive \
+      "wasm-pack-${wasm_pack_key}" \
+      "$(cache_uri "wasm-pack/${wasm_pack_key}.tar.gz")" \
+      ".ci-cache" \
+      wasm-pack
   fi
 
   save_archive \
