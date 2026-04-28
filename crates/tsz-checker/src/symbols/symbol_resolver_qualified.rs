@@ -81,6 +81,19 @@ impl<'a> CheckerState<'a> {
             let lib_binders = self.get_lib_binders();
             return match self.resolve_identifier_symbol_in_type_position(idx) {
                 TypeSymbolResolution::Type(sym_id) => {
+                    let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
+                    if symbol.is_some_and(|symbol| {
+                        symbol.has_any_flags(symbol_flags::ALIAS)
+                            && symbol.has_any_flags(
+                                symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+                            )
+                            && symbol
+                                .exports
+                                .as_ref()
+                                .is_some_and(|exports| !exports.is_empty())
+                    }) {
+                        return TypeSymbolResolution::Type(sym_id);
+                    }
                     if self
                         .ctx
                         .binder
@@ -185,6 +198,17 @@ impl<'a> CheckerState<'a> {
                     .resolve_alias_symbol(member_sym, visited_aliases)
                     .unwrap_or(member_sym);
                 return TypeSymbolResolution::Type(member_sym);
+            }
+
+            if left_symbol.has_any_flags(symbol_flags::ALIAS)
+                && left_symbol
+                    .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                && left_symbol
+                    .exports
+                    .as_ref()
+                    .is_some_and(|exports| !exports.is_empty())
+            {
+                return TypeSymbolResolution::NotFound;
             }
 
             let unresolved_left_symbol = self
@@ -334,15 +358,24 @@ impl<'a> CheckerState<'a> {
             Some(name) => name,
             None => return TypeSymbolResolution::NotFound,
         };
-
         // Look up the symbol across binders (file + libs).
         // After alias resolution, left_sym may point to a symbol in a different
         // file's binder. Use get_cross_file_symbol to avoid SymbolId collisions.
         let original_left_sym = left_sym;
-        let Some(left_symbol) = self
-            .get_cross_file_symbol(left_sym)
-            .or_else(|| self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders))
-        else {
+        let local_left_symbol = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders);
+        let prefer_local_merged_alias_namespace = local_left_symbol.is_some_and(|symbol| {
+            symbol.has_any_flags(symbol_flags::ALIAS)
+                && symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                && symbol
+                    .exports
+                    .as_ref()
+                    .is_some_and(|exports| !exports.is_empty())
+        });
+        let Some(left_symbol) = (if prefer_local_merged_alias_namespace {
+            local_left_symbol
+        } else {
+            self.get_cross_file_symbol(left_sym).or(local_left_symbol)
+        }) else {
             return TypeSymbolResolution::NotFound;
         };
         // First try direct exports
@@ -361,6 +394,17 @@ impl<'a> CheckerState<'a> {
                 self.resolve_alias_symbol(member_sym, visited_aliases)
                     .unwrap_or(member_sym),
             );
+        }
+
+        if left_symbol.has_any_flags(symbol_flags::ALIAS)
+            && left_symbol
+                .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+            && left_symbol
+                .exports
+                .as_ref()
+                .is_some_and(|exports| !exports.is_empty())
+        {
+            return TypeSymbolResolution::NotFound;
         }
 
         // If not found in direct exports, check for re-exports
