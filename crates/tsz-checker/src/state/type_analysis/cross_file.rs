@@ -212,6 +212,77 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn try_resolve_cross_arena_named_alias_without_child(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let (module_name, import_name) = {
+            let symbol = self.get_cross_file_symbol(sym_id)?;
+            if symbol.flags & symbol_flags::ALIAS == 0 {
+                return None;
+            }
+            let module_name = symbol.import_module.clone()?;
+            let import_name = symbol.import_name.clone()?;
+            if import_name == "*" || import_name == "default" {
+                return None;
+            }
+            (module_name, import_name)
+        };
+
+        let alias_file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let target_sym_id = self.resolve_cross_file_export_from_file(
+            &module_name,
+            &import_name,
+            Some(alias_file_idx),
+        )?;
+        if target_sym_id == sym_id {
+            return None;
+        }
+
+        let target_flags = self
+            .get_cross_file_symbol(target_sym_id)
+            .map(|symbol| symbol.flags)?;
+        if target_flags & symbol_flags::ALIAS != 0 {
+            return None;
+        }
+
+        let target_binder = self
+            .ctx
+            .resolve_symbol_file_index(target_sym_id)
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .unwrap_or(self.ctx.binder);
+        if self
+            .ctx
+            .alias_partner_for(target_binder, target_sym_id)
+            .is_some()
+        {
+            return None;
+        }
+
+        let target_is_interface_value_merge = target_flags & symbol_flags::INTERFACE != 0
+            && target_flags & (symbol_flags::VARIABLE | symbol_flags::FUNCTION) != 0;
+        if target_is_interface_value_merge {
+            return None;
+        }
+
+        let mut result = self.get_type_of_symbol(target_sym_id);
+        result = self.apply_module_augmentations(&module_name, &import_name, result);
+        if matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        self.ctx.symbol_types.insert(sym_id, result);
+        if self.ctx.share_owner_symbol_type_results {
+            self.ctx.definition_store.cache_resolved_symbol_type(
+                sym_id.0,
+                alias_file_idx as u32,
+                result,
+            );
+        }
+
+        Some(result)
+    }
+
     /// Delegate symbol resolution to a checker using the correct arena.
     ///
     /// When a symbol's arena differs from the current arena (cross-file symbol),
@@ -509,8 +580,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Both caches missed → about to do real work (boxed child checker
-            // construction + recursion).
+            if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
+                return Some((result, Vec::new()));
+            }
+
+            // Both caches and the alias shortcut missed → about to do real work
+            // (boxed child checker construction + recursion).
             tsz_common::perf_counters::inc(&perf.delegate_cross_arena_misses);
             let miss_source = if needs_cross_file_delegation {
                 CrossArenaSymbolMissSource::SymbolFileTarget
