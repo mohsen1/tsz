@@ -876,8 +876,8 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         identifier_idx: NodeIndex,
     ) -> Option<String> {
-        self.reference_declared_type_annotation_text(identifier_idx)
-            .or_else(|| self.function_parameter_type_text(func, identifier_idx))
+        self.function_parameter_type_text(func, identifier_idx)
+            .or_else(|| self.reference_declared_type_annotation_text(identifier_idx))
     }
 
     pub(in crate::declaration_emitter) fn function_return_identifier_declared_type_id(
@@ -885,8 +885,8 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         identifier_idx: NodeIndex,
     ) -> Option<tsz_solver::types::TypeId> {
-        self.reference_declared_type_id(identifier_idx)
-            .or_else(|| self.function_parameter_type_id(func, identifier_idx))
+        self.function_parameter_type_id(func, identifier_idx)
+            .or_else(|| self.reference_declared_type_id(identifier_idx))
     }
 
     pub(in crate::declaration_emitter) fn function_parameter_type_text(

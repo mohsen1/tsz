@@ -451,18 +451,26 @@ impl<'a> CheckerState<'a> {
         {
             return format!("typeof {}", ident.escaped_text);
         }
-        let is_element_access_receiver =
-            self.ctx
+        let is_element_access_receiver = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            || self
+                .ctx
                 .arena
-                .get(idx)
+                .node_info(idx)
+                .and_then(|info| self.ctx.arena.get(info.parent))
                 .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                || self
-                    .access_receiver_for_diagnostic_node(idx)
-                    .is_some_and(|expr| {
-                        self.ctx.arena.get(expr).is_some_and(|node| {
-                            node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                        })
-                    });
+            || self
+                .access_receiver_for_diagnostic_node(idx)
+                .is_some_and(|receiver| {
+                    self.ctx
+                        .arena
+                        .node_info(receiver)
+                        .and_then(|info| self.ctx.arena.get(info.parent))
+                        .is_some_and(|node| node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                });
 
         if is_element_access_receiver {
             if let Some(display) =
@@ -1439,7 +1447,12 @@ impl<'a> CheckerState<'a> {
         // Helper closure to emit TS2339 for a missing property
         let emit_ts2339_for_missing_prop =
             |prop_name_str: &str, object_type: TypeId, expr_idx: NodeIndex, checker: &mut Self| {
-                let object_str = checker.property_receiver_display_for_node(object_type, expr_idx);
+                let object_str =
+                    if checker.is_object_literal_backed_element_access_receiver(expr_idx) {
+                        checker.format_type_for_assignability_message(object_type)
+                    } else {
+                        checker.property_receiver_display_for_node(object_type, expr_idx)
+                    };
                 let message =
                     format!("Property '{prop_name_str}' does not exist on type '{object_str}'.");
                 checker.error_at_anchor(
