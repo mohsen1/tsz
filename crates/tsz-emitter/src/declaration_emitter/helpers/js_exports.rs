@@ -35,6 +35,17 @@ use super::{
 };
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn is_js_function_initializer(
+        &self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        self.arena.get(node_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        })
+    }
+
     pub(crate) fn collect_js_export_equals_names(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -836,10 +847,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            if self.arena.get(initializer).is_some_and(|init_node| {
-                init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            }) {
+            if self.is_js_function_initializer(initializer) {
                 function_statements.insert(stmt_idx, (name_idx, initializer));
                 continue;
             }
@@ -964,10 +972,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let init_node = self.arena.get(initializer)?;
-        if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-        {
+        if self.is_js_function_initializer(initializer) {
             return Some((name_idx, initializer));
         }
 
@@ -1166,9 +1171,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         for &stmt_idx in &source_file.statements.nodes {
-            if self
-                .js_class_static_method_augmentation_for_statement(stmt_idx)
-                .is_some()
+            if let Some((class_name, method_name, _, _)) =
+                self.js_class_static_method_augmentation_for_statement(stmt_idx)
+                && static_methods.contains_key(&(class_name, method_name))
                 && !augmentations.statements.contains_key(&stmt_idx)
             {
                 augmentations.skipped_statements.insert(stmt_idx);
@@ -1731,7 +1736,6 @@ impl<'a> DeclarationEmitter<'a> {
         let rhs = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(binary.right);
-        let rhs_node = self.arena.get(rhs)?;
         let receiver = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
@@ -1739,9 +1743,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.js_commonjs_expando_receiver(receiver, js_export_equals_names)?;
 
         if is_prototype {
-            if rhs_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || rhs_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-            {
+            if self.is_js_function_initializer(rhs) {
                 return Some((
                     root_name,
                     lhs_access.name_or_argument,
@@ -1752,9 +1754,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        if rhs_node.kind == syntax_kind_ext::ARROW_FUNCTION
-            || rhs_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-        {
+        if self.is_js_function_initializer(rhs) {
             return Some((
                 root_name,
                 lhs_access.name_or_argument,
@@ -1948,9 +1948,7 @@ impl<'a> DeclarationEmitter<'a> {
         let initializer = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(binary.right);
-        let init_node = self.arena.get(initializer)?;
-        let is_supported = init_node.kind == syntax_kind_ext::ARROW_FUNCTION
-            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        let is_supported = self.is_js_function_initializer(initializer)
             || self.js_namespace_object_member_initializer_supported(initializer);
         if !is_supported {
             return None;
