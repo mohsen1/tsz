@@ -2606,11 +2606,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.increase_indent();
 
         if let Some(jsdoc) = self.function_like_jsdoc_for_node(jsdoc_anchor) {
-            for line in Self::normalize_jsdoc_block(&jsdoc).lines() {
-                self.write_indent();
-                self.write(line.trim_end());
-                self.write_line();
-            }
+            self.emit_multiline_jsdoc_comment(&jsdoc);
         }
         self.write_indent();
         self.write("constructor(");
