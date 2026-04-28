@@ -4471,6 +4471,16 @@ async function main() {
         } catch (err) {
             const elapsed = Date.now() - startTime;
             const errMsg = err.message || String(err);
+            const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
+            const bridgeLikelyUnhealthy =
+                timedOut ||
+                errMsg.includes("Stream closed before complete message was read") ||
+                errMsg.includes("Unexpected empty response body") ||
+                errMsg.includes("Broken pipe");
+            if (bridgeLikelyUnhealthy) {
+                shouldRestartBridge = true;
+                restartReason = `post-failure recovery for ${testName}`;
+            }
             if (isTemporarilyAllowedParityFailure(testName, errMsg)) {
                 process.send({
                     type: "result",
@@ -4481,19 +4491,9 @@ async function main() {
                     xfailed: true,
                     error: errMsg,
                     elapsed,
-                    timedOut: false,
+                    timedOut,
                 });
             } else {
-                const timedOut = elapsed >= perTestTimeout || errMsg.includes("Timeout");
-                const bridgeLikelyUnhealthy =
-                    timedOut ||
-                    errMsg.includes("Stream closed before complete message was read") ||
-                    errMsg.includes("Unexpected empty response body") ||
-                    errMsg.includes("Broken pipe");
-                if (bridgeLikelyUnhealthy) {
-                    shouldRestartBridge = true;
-                    restartReason = `post-failure recovery for ${testName}`;
-                }
                 process.send({
                     type: "result", workerId, testFile, testName,
                     passed: false, error: errMsg, elapsed, timedOut,

@@ -169,8 +169,9 @@ class TszServerBridge {
     }
 
     resetSession() {
+        const requestSeq = ++this._requestSeq;
         const requestBody = JSON.stringify({
-            seq: ++this._requestSeq,
+            seq: requestSeq,
             type: "request",
             command: "tsz/reset",
             arguments: {},
@@ -181,6 +182,11 @@ class TszServerBridge {
             response = JSON.parse(responseBody);
         } catch (err) {
             throw new Error(`Invalid reset response: ${err.message}`);
+        }
+        if (response?.command !== "tsz/reset" || response?.request_seq !== requestSeq) {
+            throw new Error(
+                `Stale reset response: expected command=tsz/reset request_seq=${requestSeq}, got ${responseBody}`
+            );
         }
         if (!response || response.success !== true) {
             const message = response && response.message ? response.message : responseBody;
