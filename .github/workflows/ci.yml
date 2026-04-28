@@ -328,25 +328,8 @@ jobs:
           path: .
       - name: Unpack node harness
         run: tar -xf node-harness.tar
-      - name: Run emit shard
+      - name: Run emit suite
         run: scripts/ci/github-suite.sh emit-shard
-
-  emit-aggregate:
-    name: emit-aggregate
-    needs: [gate, emit]
-    if: needs.gate.outputs.should_run == 'true' && !cancelled()
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 15
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_EMIT_SHARD_COUNT: 1
-      TSZ_CI_CACHE_SAVE: "0"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Aggregate emit results
-        run: scripts/ci/github-suite.sh emit-aggregate
 
   fourslash:
     # Each matrix shard runs on its own 8-vCPU cloud runner. Run 25058599510

@@ -75,18 +75,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         };
 
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             arena.as_ref(),
             binder.as_ref(),
             self.ctx.types,
             source_file.file_name.clone(),
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
+        );
 
         let ty = checker.get_type_of_symbol(sym_id);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
@@ -119,18 +123,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         };
 
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             arena.as_ref(),
             binder.as_ref(),
             self.ctx.types,
             source_file.file_name.clone(),
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
+        );
 
         let ty = checker.infer_descriptor_parameter_type_in_current_checker(owner_idx, param_idx);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
@@ -162,18 +170,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         };
 
-        let mut checker = Box::new(CheckerState::with_parent_cache(
+        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             arena.as_ref(),
             binder.as_ref(),
             self.ctx.types,
             source_file.file_name.clone(),
             self.ctx.compiler_options.clone(),
             self,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut checker.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
+        );
 
         let ty = checker.infer_getter_return_type(body_idx);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
