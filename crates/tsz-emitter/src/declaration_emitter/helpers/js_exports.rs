@@ -356,30 +356,6 @@ impl<'a> DeclarationEmitter<'a> {
         Some((lhs_access.name_or_argument, rhs))
     }
 
-    pub(in crate::declaration_emitter) fn current_file_has_anonymous_module_exports_named_members_root(
-        &self,
-    ) -> bool {
-        let Some(source_file_idx) = self.current_source_file_idx else {
-            return false;
-        };
-        let Some(source_file_node) = self.arena.get(source_file_idx) else {
-            return false;
-        };
-        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
-            return false;
-        };
-
-        source_file
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .any(|stmt_idx| {
-                self.js_anonymous_module_exports_named_members_initializer(stmt_idx)
-                    .is_some()
-            })
-    }
-
     pub(in crate::declaration_emitter) fn js_anonymous_module_exports_named_members_initializer(
         &self,
         stmt_idx: NodeIndex,
@@ -551,7 +527,9 @@ impl<'a> DeclarationEmitter<'a> {
                 let rhs_idx = self
                     .arena
                     .skip_parenthesized_and_assertions_and_comma(rhs_idx);
-                let local_name = self.get_identifier_text(rhs_idx);
+                let local_name = self
+                    .get_identifier_text(rhs_idx)
+                    .or_else(|| self.module_exports_property_reference_name(rhs_idx));
                 let entry = alias_map
                     .entry(export_name.clone())
                     .or_insert_with(|| (String::new(), Vec::new()));
@@ -632,7 +610,9 @@ impl<'a> DeclarationEmitter<'a> {
         let rhs = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(binary.right);
-        let local_name = self.get_identifier_text(rhs)?;
+        let local_name = self
+            .get_identifier_text(rhs)
+            .or_else(|| self.module_exports_property_reference_name(rhs))?;
         Some((export_name, local_name, stmt_idx))
     }
 
@@ -830,6 +810,9 @@ impl<'a> DeclarationEmitter<'a> {
         let mut function_statements = FxHashMap::default();
         let mut value_statements = FxHashMap::default();
         if !self.source_file_is_js(source_file) {
+            return (exported_names, function_statements, value_statements);
+        }
+        if !self.js_export_equals_names.is_empty() {
             return (exported_names, function_statements, value_statements);
         }
 
@@ -1796,10 +1779,28 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         stmt_idx: NodeIndex,
     ) -> Option<(NodeIndex, NodeIndex)> {
-        self.js_commonjs_named_export_for_statement_with_options(
-            stmt_idx,
-            self.current_file_has_anonymous_module_exports_named_members_root(),
-        )
+        self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+    }
+
+    pub(in crate::declaration_emitter) fn module_exports_property_reference_name(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        if !self.is_module_exports_reference(receiver) {
+            return None;
+        }
+        self.get_identifier_text(access.name_or_argument)
     }
 
     pub(in crate::declaration_emitter) fn js_namespace_export_alias_for_statement(

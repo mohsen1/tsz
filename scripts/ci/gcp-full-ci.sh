@@ -628,8 +628,13 @@ build_test_binaries() {
     return 0
   fi
 
-  cargo build --profile dist-fast -p tsz-cli --bin tsz --bin tsz-server
-  cargo build --profile dist-fast -p tsz-conformance --bin tsz-conformance --bin generate-tsc-cache
+  cargo build --profile dist-fast \
+    -p tsz-cli \
+    -p tsz-conformance \
+    --bin tsz \
+    --bin tsz-server \
+    --bin tsz-conformance \
+    --bin generate-tsc-cache
   mkdir -p .target/release
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"

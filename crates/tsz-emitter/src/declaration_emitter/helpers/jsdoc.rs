@@ -802,6 +802,15 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                decl_name,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let func_type_id = cache
                 .node_types
@@ -830,6 +839,13 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_function_like_class_if_needed(
+            decl_name,
+            &func.parameters,
+            func.body,
+            is_exported,
+            initializer,
+        );
         self.emit_js_namespace_export_aliases_for_name(decl_name);
         true
     }
@@ -1376,7 +1392,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(eof_pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                self.emit_rendered_jsdoc_type_alias(decl, true);
+                self.emit_rendered_jsdoc_type_alias(decl, self.js_export_equals_names.is_empty());
             }
         }
     }

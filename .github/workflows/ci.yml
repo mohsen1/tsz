@@ -130,6 +130,7 @@ jobs:
           path: dist-fast-binaries.tar
           retention-days: 1
           if-no-files-found: error
+          compression-level: 1
 
   unit-archive:
     name: unit-archive

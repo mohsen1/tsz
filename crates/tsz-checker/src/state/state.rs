@@ -1,14 +1,26 @@
-//! Type checker orchestration state.
+//! # `CheckerState` - Type Checker Orchestration Layer
 //!
-//! `CheckerState` owns the request-scoped context used by the checker and keeps
-//! the entry points, cross-arena delegation, cache access, and depth/fuel limits
-//! close together. Most type computation, flow analysis, symbol resolution, and
-//! diagnostic construction lives in focused submodules under `state/`.
+//! This module is the orchestration layer for the TypeScript type checker. It
+//! owns shared checker state and coordinates specialized modules for type
+//! resolution, type analysis, type environment, state checking, member checking,
+//! symbol resolution, flow analysis, and diagnostics.
 //!
-//! Keep this file as the wiring layer: add feature logic to the specialized
-//! modules first, and only keep code here when it coordinates shared state or
-//! protects checker-wide invariants.
-
+//! ## Performance Optimizations
+//!
+//! - **Node Type Cache**: Avoids recomputing types for the same node
+//! - **Symbol Type Cache**: Caches computed types for symbols
+//! - **Fuel Management**: Prevents infinite loops and timeouts
+//! - **Cycle Detection**: Detects circular type references
+//!
+//! ## Usage
+//!
+//! ```text
+//! use crate::state::CheckerState;
+//!
+//! let mut checker = CheckerState::new(&arena, &binder, &types, file_name, options);
+//! checker.check_source_file(root_idx);
+//! ```
+//!
 use crate::CheckerContext;
 use crate::context::{CheckerOptions, RequestCacheKey, TypingRequest};
 use crate::query_boundaries::common::QueryDatabase;

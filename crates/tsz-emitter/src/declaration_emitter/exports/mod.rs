@@ -573,6 +573,15 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                func.name,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if func_body.is_some()
             && self.emit_js_returned_define_property_function_type(func_body)
         {
@@ -693,6 +702,16 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        if self.source_is_js_file {
+            self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                true,
+                func_idx,
+            );
+            self.emit_js_namespace_export_aliases_for_name(func.name);
+        }
     }
 
     pub(crate) fn emit_export_default_class(&mut self, class_idx: NodeIndex) {
@@ -1304,6 +1323,15 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                func.name,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if func_body.is_some()
             && self.emit_js_returned_define_property_function_type(func_body)
         {
@@ -1362,6 +1390,16 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        if self.source_is_js_file {
+            self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                true,
+                func_idx,
+            );
+            self.emit_js_namespace_export_aliases_for_name(func.name);
+        }
     }
 
     pub(crate) fn emit_exported_type_alias(&mut self, alias_idx: NodeIndex) {
