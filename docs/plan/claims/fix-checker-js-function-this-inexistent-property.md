@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-js-function-this-inexistent-property`
-- **PR**: TBD
+- **PR**: #1700
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 
