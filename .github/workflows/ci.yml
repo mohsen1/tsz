@@ -248,6 +248,11 @@ jobs:
         run: scripts/ci/github-suite.sh unit-shard
 
   conformance:
+    # Conformance shards are currently well below the unit critical path
+    # (2026-04-28 sample: max shard ~2m after dist-binaries, while unit
+    # archive + unit shard is ~12m). Keep enough parallelism for timeout
+    # headroom, but avoid burning 16 runners when it does not improve wall
+    # clock time.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true'
@@ -256,11 +261,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 16
-      TSZ_CI_CONFORMANCE_SHARDS: 16
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 8
+      TSZ_CI_CONFORMANCE_SHARDS: 8
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -287,8 +292,8 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 16
-      TSZ_CI_CONFORMANCE_SHARDS: 16
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 8
+      TSZ_CI_CONFORMANCE_SHARDS: 8
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
@@ -355,6 +360,10 @@ jobs:
         run: scripts/ci/github-suite.sh emit-aggregate
 
   fourslash:
+    # Fourslash also finishes comfortably before the unit path (2026-04-28
+    # sample: max shard ~3.5m after dist/node harness prep). Four shards keeps
+    # runtime under the existing 20m timeout while reducing queue pressure and
+    # artifact/cache setup overhead.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.should_run == 'true'
@@ -363,10 +372,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
       TSZ_CI_FOURSLASH_WORKERS: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -407,7 +416,7 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
