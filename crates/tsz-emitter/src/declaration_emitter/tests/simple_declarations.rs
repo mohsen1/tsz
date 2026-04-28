@@ -1617,6 +1617,90 @@ export function Point(x, y) {
 }
 
 #[test]
+fn test_js_function_like_prototype_accessors_and_proto_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} len
+ */
+export function Vec(len) {
+    /**
+     * @type {number[]}
+     */
+    this.storage = new Array(len);
+}
+Vec.prototype = {
+    /**
+     * @param {Vec} other
+     */
+    dot(other) {
+        if (other.storage.length !== this.storage.length) {
+            throw new Error("bad");
+        }
+        let sum = 0;
+        for (let i = 0; i < this.storage.length; i++) {
+            sum += this.storage[i] * other.storage[i];
+        }
+        return sum;
+    }
+};
+
+/**
+ * @param {number} x
+ * @param {number} y
+ */
+export function Point2D(x, y) {
+    if (!(this instanceof Point2D)) {
+        return new Point2D(x, y);
+    }
+    Vec.call(this, 2);
+    this.x = x;
+    this.y = y;
+}
+Point2D.prototype = {
+    __proto__: Vec,
+    get x() {
+        return this.storage[0];
+    },
+    /**
+     * @param {number} x
+     */
+    set x(x) {
+        this.storage[0] = x;
+    }
+};
+"#,
+    );
+
+    assert!(
+        output
+            .contains("/**\n * @param {number} len\n */\nexport function Vec(len: number): void;"),
+        "Expected hoisted function JSDoc to stay multiline: {output}"
+    );
+    assert!(
+        output.contains("dot(other: Vec): number;"),
+        "Expected local accumulator return type to recover as number: {output}"
+    );
+    assert!(
+        !output.contains("x: number | undefined;"),
+        "Expected prototype accessor to suppress constructor-inferred x property: {output}"
+    );
+    let set_pos = output
+        .find("set x(x: number);")
+        .expect("missing setter in output");
+    let get_pos = output
+        .find("get x(): number;")
+        .expect("missing getter in output");
+    let proto_pos = output
+        .find("__proto__: typeof Vec;")
+        .expect("missing __proto__ surface in output");
+    assert!(
+        set_pos < get_pos && get_pos < proto_pos,
+        "Expected setter/getter before deferred __proto__ member: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_equals_class_expression_shadowing_preserves_root_name() {
     let output = emit_js_dts(
         r#"
