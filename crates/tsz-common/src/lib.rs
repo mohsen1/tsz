@@ -44,3 +44,9 @@ pub use checker_options::CheckerOptions;
 pub use options::checker as checker_options;
 pub mod primitives;
 pub use primitives::numeric;
+
+// Process-wide performance counters used to drive the perf-architectural
+// plan in `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Gated by the
+// `TSZ_PERF_COUNTERS` env var; cheap (one relaxed atomic add) on hot
+// paths even when the gate is off.
+pub mod perf_counters;

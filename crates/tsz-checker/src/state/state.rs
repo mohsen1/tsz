@@ -225,6 +225,12 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
+        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Each per-file
+        // and each cross-arena delegation creates a fresh CheckerState; the
+        // count is one of the headline numbers we need to watch.
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().checker_state_constructed,
+        );
         CheckerState {
             ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
@@ -300,6 +306,14 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         parent: &Self,
     ) -> Self {
+        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Every
+        // cross-arena delegation in the deep recursive cascade allocates
+        // one of these. PR 3 should remove most of them by replacing the
+        // child-checker construction with a memoized cross-file query.
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters()
+                .checker_state_with_parent_cache_constructed,
+        );
         CheckerState {
             ctx: CheckerContext::with_parent_cache(
                 arena,

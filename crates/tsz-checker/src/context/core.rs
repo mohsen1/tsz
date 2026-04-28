@@ -152,6 +152,17 @@ impl<'a> CheckerContext<'a> {
     pub fn copy_symbol_file_targets_to(&self, child: &mut CheckerContext<'_>) {
         let overlay = self.cross_file_symbol_targets.borrow();
         if !overlay.is_empty() {
+            // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. The clone
+            // here showed up at ~14% of CPU samples in the deep
+            // `delegate_cross_arena_symbol_resolution` cascade. PR 1 just
+            // instruments it; PRs 3 and 5 should remove the overlay
+            // altogether by replacing it with a query API.
+            let perf = tsz_common::perf_counters::counters();
+            tsz_common::perf_counters::inc(&perf.copy_symbol_file_targets_calls);
+            tsz_common::perf_counters::add(
+                &perf.copy_symbol_file_targets_entries_total,
+                overlay.len() as u64,
+            );
             *child.cross_file_symbol_targets.borrow_mut() = overlay.clone();
         }
     }

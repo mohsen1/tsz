@@ -419,12 +419,18 @@ impl<'a> CheckerState<'a> {
         };
 
         if should_delegate {
+            // PERF: count cross-arena delegation calls for the perf plan.
+            // See `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+            let perf = tsz_common::perf_counters::counters();
+            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_calls);
+
             // Fast path: check lib delegation cache by SymbolId.
             // Each lib SymbolId is delegated at most once; subsequent lookups
             // return the cached result directly.
             if !needs_cross_file_delegation
                 && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
             {
+                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_lib);
                 self.ctx.symbol_types.insert(sym_id, cached_type);
                 return Some((cached_type, Vec::new()));
             }
@@ -439,10 +445,17 @@ impl<'a> CheckerState<'a> {
                     .definition_store
                     .get_resolved_symbol_type(sym_id.0, target_file_idx as u32)
                 {
+                    tsz_common::perf_counters::inc(
+                        &perf.delegate_cross_arena_cache_hits_cross_file,
+                    );
                     self.ctx.symbol_types.insert(sym_id, cached_type);
                     return Some((cached_type, Vec::new()));
                 }
             }
+
+            // Both caches missed → about to do real work (boxed child checker
+            // construction + recursion).
+            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_misses);
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
