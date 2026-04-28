@@ -1529,8 +1529,16 @@ impl<'a> CheckerState<'a> {
         for &key in &module_keys {
             if let Some(exports) = self.ctx.module_exports_for_module(binder, key) {
                 // Check if the symbol is exported under a different name
-                // by looking through all export names
+                // by looking through all export names. Skip the synthetic
+                // `"export="` key — `export = Foo` is not a "renamed export"
+                // for TS2460 purposes; tsc falls through to TS2497/TS2616
+                // ("module can only be referenced via default-export") in
+                // that case, so we let the caller emit the export-equals
+                // diagnostic.
                 for (export_name, sym_id) in exports.iter() {
+                    if export_name.as_str() == "export=" {
+                        continue;
+                    }
                     if let Some(sym) = binder.symbols.get(*sym_id) {
                         let decl_arena = if sym.decl_file_idx == u32::MAX {
                             self.ctx.arena
@@ -1556,6 +1564,9 @@ impl<'a> CheckerState<'a> {
             && let Some(exports) = self.ctx.module_exports_for_module(binder, fname)
         {
             for (export_name, sym_id) in exports.iter() {
+                if export_name.as_str() == "export=" {
+                    continue;
+                }
                 if let Some(sym) = binder.symbols.get(*sym_id) {
                     let decl_arena = if sym.decl_file_idx == u32::MAX {
                         self.ctx.arena
