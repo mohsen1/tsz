@@ -241,6 +241,8 @@ impl<'a> DeclarationEmitter<'a> {
         type_id: tsz_solver::types::TypeId,
         printed_type_text: &str,
     ) -> String {
+        let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
+
         if type_id == tsz_solver::types::TypeId::ANY
             && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
         {
@@ -258,6 +260,16 @@ impl<'a> DeclarationEmitter<'a> {
             self.typeof_prefix_for_value_entity(initializer, true, Some(type_id))
         {
             return typeof_text;
+        }
+
+        if type_id != tsz_solver::types::TypeId::ANY
+            && type_id != tsz_solver::types::TypeId::ERROR
+            && self
+                .arena
+                .get(initializer)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+        {
+            return printed_type_text.to_string();
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY

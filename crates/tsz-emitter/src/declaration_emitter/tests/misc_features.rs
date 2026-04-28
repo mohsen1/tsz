@@ -573,6 +573,70 @@ fn test_export_type_with_resolution_mode_attributes_is_preserved() {
 }
 
 #[test]
+fn test_inferred_printer_reduces_conditional_alias_applications() {
+    use tsz_solver::types::{ConditionalType, TypeParamInfo};
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+
+    let mut foreign_parser = ParserState::new(
+        "lib.d.ts".to_string(),
+        "type Select<T> = T extends string ? 1 : 2;".to_string(),
+    );
+    let _ = foreign_parser.parse_source_file();
+    let alias_decl = foreign_parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing conditional type alias declaration");
+
+    let mut binder = BinderState::new();
+    let select_sym = binder
+        .symbols
+        .alloc(symbol_flags::TYPE_ALIAS, "Select".to_string());
+    binder
+        .symbols
+        .get_mut(select_sym)
+        .expect("missing synthetic conditional alias symbol")
+        .declarations
+        .push(alias_decl);
+
+    let interner = TypeInterner::new();
+    let type_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let cond = interner.conditional(ConditionalType {
+        check_type: interner.type_param(type_param),
+        extends_type: TypeId::STRING,
+        true_type: interner.literal_number(1.0),
+        false_type: interner.literal_number(2.0),
+        is_distributive: false,
+    });
+
+    let def_id = DefId(99);
+    let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(def_id, select_sym);
+    type_cache.def_types.insert(def_id.0, cond);
+    type_cache
+        .def_type_params
+        .insert(def_id.0, vec![type_param]);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    assert_eq!(emitter.print_type_id(app), "Select<string>");
+    assert_eq!(emitter.print_type_id_for_inferred_declaration(app), "1");
+}
+
+#[test]
 fn test_asserted_import_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts(
         r#"
