@@ -654,6 +654,13 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     None
                 };
+                let jsdoc_satisfies_param =
+                    if self.source_is_js_file && self.use_jsdoc_satisfies_parameter_fallback {
+                        self.jsdoc_satisfies_param_decl_for_parameter(param_idx, i)
+                    } else {
+                        None
+                    };
+                let effective_jsdoc_param = jsdoc_param.as_ref().or(jsdoc_satisfies_param.as_ref());
                 let is_parameter_property = self.in_constructor_params
                     && self.parameter_has_property_modifier(&param.modifiers);
 
@@ -692,7 +699,7 @@ impl<'a> DeclarationEmitter<'a> {
                     param.initializer.is_some() && !param.question_token && i < last_required_idx;
 
                 if param.question_token
-                    || jsdoc_param
+                    || effective_jsdoc_param
                         .as_ref()
                         .is_some_and(|decl| decl.optional && !decl.rest)
                     || (param.initializer.is_some() && !has_initializer_before_required)
@@ -717,12 +724,12 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" | undefined");
                         }
                     }
-                } else if let Some(ref jsdoc_param) = jsdoc_param
+                } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && !Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                 {
                     self.write(": ");
                     self.write(&jsdoc_param.type_text);
-                } else if let Some(ref jsdoc_param) = jsdoc_param
+                } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                     && let Some(converted) =
                         Self::convert_jsdoc_function_type(&jsdoc_param.type_text)
