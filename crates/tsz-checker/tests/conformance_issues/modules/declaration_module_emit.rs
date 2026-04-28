@@ -1008,8 +1008,14 @@ fn test_export_type_star_collides_with_value_star_reexport() {
     let files = [
         ("a.ts", "export type A = number;\n"),
         ("b.ts", "export type * from './a';\n"),
+        (
+            "c.ts",
+            "import { A } from './b';\nconst A = 1;\nexport { A };\n",
+        ),
+        ("d.ts", "import { A } from './c';\nA;\ntype _ = A;\n"),
         ("e.ts", "export const A = 1;\n"),
         ("f.ts", "export * from './e';\nexport type * from './a';\n"),
+        ("g.ts", "import { A } from './f';\nA;\ntype _ = A;\n"),
     ];
     let options = CheckerOptions {
         module: tsz_common::common::ModuleKind::CommonJS,
@@ -1018,13 +1024,29 @@ fn test_export_type_star_collides_with_value_star_reexport() {
         ..CheckerOptions::default()
     };
 
-    let diagnostics = compile_named_files_get_diagnostics_with_options(&files, "f.ts", options);
+    let d_diagnostics =
+        compile_named_files_get_diagnostics_with_options(&files, "d.ts", options.clone());
+    assert!(
+        d_diagnostics.iter().all(|(code, _)| *code != 2749),
+        "`export {{ A }}` must preserve the imported type meaning when local A also has a value. Got: {d_diagnostics:#?}"
+    );
+
+    let f_diagnostics =
+        compile_named_files_get_diagnostics_with_options(&files, "f.ts", options.clone());
 
     assert!(
-        diagnostics
+        f_diagnostics
             .iter()
             .any(|(code, msg)| { *code == 2308 && msg.contains("\"./e\"") && msg.contains("'A'") }),
-        "Expected TS2308 for type-only star export colliding with value star export. Got: {diagnostics:#?}"
+        "Expected TS2308 for type-only star export colliding with value star export. Got: {f_diagnostics:#?}"
+    );
+
+    let g_diagnostics = compile_named_files_get_diagnostics_with_options(&files, "g.ts", options);
+    assert!(
+        g_diagnostics
+            .iter()
+            .any(|(code, msg)| { *code == 2749 && msg.contains("'A' refers to a value") }),
+        "Expected TS2749 follow-on after ambiguous value/type star re-export. Got: {g_diagnostics:#?}"
     );
 }
 
