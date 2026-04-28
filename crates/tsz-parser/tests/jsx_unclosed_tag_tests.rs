@@ -66,6 +66,25 @@ fn test_jsx_eof_unclosed() {
 }
 
 #[test]
+fn test_jsx_unclosed_tag_suppressed_after_conflict_marker() {
+    // `<div>` followed by a Git merge conflict marker — tsc emits TS1185 for
+    // the marker but does NOT emit TS17008 for the unclosed `<div>`. tsz
+    // matches.
+    let source = "const x = <div>\n<<<<<<< HEAD\n";
+    let errors = get_parser_errors(source, "test.tsx");
+    let ts17008: Vec<_> = errors.iter().filter(|(c, _)| *c == 17008).collect();
+    assert!(
+        ts17008.is_empty(),
+        "Conflict marker should suppress TS17008, got: {errors:?}"
+    );
+    let ts1185: Vec<_> = errors.iter().filter(|(c, _)| *c == 1185).collect();
+    assert!(
+        !ts1185.is_empty(),
+        "Expected TS1185 for conflict marker, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_jsx_nested_eof_unclosed() {
     // <div><span> at EOF → TS17008 on both 'div' and 'span'
     let errors = get_parser_errors("let x = <div><span>", "test.tsx");
