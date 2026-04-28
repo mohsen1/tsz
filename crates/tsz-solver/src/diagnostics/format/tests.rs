@@ -1709,6 +1709,41 @@ fn format_keyof_intersection_distributes() {
 }
 
 #[test]
+fn format_keyof_nullish_collapses_to_never() {
+    // tsc reduces `keyof null`, `keyof undefined`, `keyof void`, `keyof never`
+    // to `never` in error messages. The evaluator already maps these to
+    // TypeId::NEVER; the formatter must not bypass that reduction.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    assert_eq!(fmt.format(db.keyof(TypeId::NULL)), "never");
+    assert_eq!(fmt.format(db.keyof(TypeId::UNDEFINED)), "never");
+    assert_eq!(fmt.format(db.keyof(TypeId::VOID)), "never");
+    assert_eq!(fmt.format(db.keyof(TypeId::NEVER)), "never");
+}
+
+#[test]
+fn format_keyof_intersection_with_empty_object_does_not_distribute() {
+    // tsc preserves `keyof (T & {})` undistributed in error messages.
+    // Distributing to `keyof T | keyof {}` is technically equivalent but
+    // breaks fingerprint parity (e.g. unknownControlFlow.ts ff3).
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let t = db.type_param(TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let empty_obj = db.object(vec![]);
+    let intersection = db.intersection2(t, empty_obj);
+    let keyof = db.keyof(intersection);
+
+    assert_eq!(fmt.format(keyof), "keyof (T & {})");
+}
+
+#[test]
 fn format_readonly_type() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
