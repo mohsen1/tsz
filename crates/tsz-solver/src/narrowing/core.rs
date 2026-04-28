@@ -1,11 +1,13 @@
-use crate::relations::subtype::TypeResolver;
+use crate::def::DefId;
+use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{FunctionShape, LiteralValue, ParamInfo, TypeData, TypeId};
 use crate::utils::{TypeIdExt, union_or_single};
 use crate::visitor::{
-    index_access_parts, intersection_list_id, is_function_type_through_type_constraints,
-    is_object_like_type_through_type_constraints, lazy_def_id, literal_value, object_shape_id,
-    object_with_index_shape_id, template_literal_id, type_param_info, union_list_id,
+    application_id, index_access_parts, intersection_list_id,
+    is_function_type_through_type_constraints, is_object_like_type_through_type_constraints,
+    lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
+    type_param_info, union_list_id,
 };
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashMap;
@@ -718,18 +720,21 @@ impl<'a> NarrowingContext<'a> {
                 members.len(),
                 target_type.0
             );
-            let matching: Vec<TypeId> = members
+            let mut matching: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
                     if let Some(narrowed) = self.narrow_type_param(member, target_type) {
                         return Some(narrowed);
+                    }
+                    if self.is_assignable_to(member, target_type) {
+                        return Some(member);
                     }
                     // Resolve Application/Lazy types before assignability check.
                     // Without this, generic instantiations like ArrayLike<any>
                     // remain opaque Application types and structural assignability
                     // to object targets (e.g. { length: unknown }) fails.
                     let resolved_member = self.resolve_type(member);
-                    if self.is_assignable_to(resolved_member, target_type) {
+                    if resolved_member != member && self.is_assignable_to(resolved_member, target_type) {
                         return Some(member);
                     }
                     // Reverse subtype check: target <: member.
@@ -771,6 +776,7 @@ impl<'a> NarrowingContext<'a> {
                     None
                 })
                 .collect();
+            self.remove_redundant_intersection_members(&mut matching);
 
             if matching.is_empty() {
                 trace!("No matching members found, returning NEVER");
@@ -1495,6 +1501,10 @@ impl<'a> NarrowingContext<'a> {
             return true;
         }
 
+        if self.is_class_subtype_for_narrowing(source, target) {
+            return true;
+        }
+
         // Literal to base type
         if let Some(lit) = literal_value(self.db, source) {
             match (lit, target) {
@@ -1555,6 +1565,10 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
+        if self.is_subtype_for_narrowing(source, target) {
+            return true;
+        }
+
         // Fallback: use full structural/nominal subtype check.
         // This handles class inheritance (Derived extends Base), interface
         // implementations, and other structural relationships that the
@@ -1567,11 +1581,7 @@ impl<'a> NarrowingContext<'a> {
         if resolved_source == resolved_target {
             return true;
         }
-        if crate::relations::subtype::is_subtype_of_with_db(
-            self.db,
-            resolved_source,
-            resolved_target,
-        ) {
+        if self.is_subtype_for_narrowing(resolved_source, resolved_target) {
             return true;
         }
 
@@ -1581,6 +1591,93 @@ impl<'a> NarrowingContext<'a> {
         // `ArrayLike<any>` (ObjectWithIndex) being assignable to
         // `{ length: unknown }` (Object) during type predicate narrowing.
         self.is_structurally_assignable_to_object(resolved_source, resolved_target)
+    }
+
+    fn is_subtype_for_narrowing(&self, source: TypeId, target: TypeId) -> bool {
+        if let Some(resolver) = self.resolver {
+            let mut checker = SubtypeChecker::with_resolver(self.db.as_type_database(), &resolver)
+                .with_query_db(self.db);
+            checker.is_subtype_of(source, target)
+        } else {
+            crate::relations::subtype::is_subtype_of_with_db(self.db, source, target)
+        }
+    }
+
+    fn is_class_subtype_for_narrowing(&self, source: TypeId, target: TypeId) -> bool {
+        let Some(source_def) = self.class_def_id_for_narrowing(source) else {
+            return false;
+        };
+        let Some(target_def) = self.class_def_id_for_narrowing(target) else {
+            return false;
+        };
+
+        if self.class_defs_equivalent_for_narrowing(source_def, target_def) {
+            return true;
+        }
+
+        let Some(resolver) = self.resolver else {
+            return false;
+        };
+        let mut current = source_def;
+        let mut fuel = 50;
+        while fuel > 0 {
+            fuel -= 1;
+            let Some(parent) = resolver.get_class_extends(current) else {
+                return false;
+            };
+            if self.class_defs_equivalent_for_narrowing(parent, target_def) {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    fn class_def_id_for_narrowing(&self, type_id: TypeId) -> Option<DefId> {
+        let resolver = self.resolver?;
+
+        if let Some(def_id) = lazy_def_id(self.db, type_id)
+            && let Some(crate::def::DefKind::Class) = resolver.get_def_kind(def_id)
+        {
+            return Some(def_id);
+        }
+
+        if let Some(app_id) = application_id(self.db, type_id) {
+            let app = self.db.type_application(app_id);
+            if let Some(def_id) = lazy_def_id(self.db, app.base)
+                && let Some(crate::def::DefKind::Class) = resolver.get_def_kind(def_id)
+            {
+                return Some(def_id);
+            }
+        }
+
+        resolver.class_def_for_instance_type(type_id)
+    }
+
+    fn class_defs_equivalent_for_narrowing(&self, left: DefId, right: DefId) -> bool {
+        if left == right {
+            return true;
+        }
+        self.resolver
+            .map(|resolver| resolver.defs_are_equivalent(left, right))
+            .unwrap_or(false)
+    }
+
+    fn remove_redundant_intersection_members(&self, members: &mut Vec<TypeId>) {
+        if members.len() <= 1 {
+            return;
+        }
+
+        let snapshot = members.clone();
+        members.retain(|member| {
+            let Some(intersection_id) = intersection_list_id(self.db, *member) else {
+                return true;
+            };
+            let intersection_members = self.db.type_list(intersection_id);
+            !snapshot.iter().any(|other| {
+                other != member && intersection_members.iter().any(|part| part == other)
+            })
+        });
     }
 
     /// Direct structural check: does `source` have all properties required
@@ -1978,6 +2075,9 @@ impl<'a> NarrowingContext<'a> {
                                 // intersection to preserve the target's structure.
                                 let narrowed = self.narrow_to_type(source_type, *target_type);
                                 if narrowed == source_type && narrowed != *target_type {
+                                    if self.is_subtype_for_narrowing(source_type, *target_type) {
+                                        return source_type;
+                                    }
                                     // Source was unchanged — intersect to preserve
                                     // target-side structure such as index signatures.
                                     self.db.intersection2(source_type, *target_type)
