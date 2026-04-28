@@ -28,7 +28,7 @@
  *   --tsz-server=PATH     Path to tsz-server binary (required)
  *   --max=N               Maximum number of tests to run
  *   --offset=N            Skip first N tests (applied after --shard)
- *   --shard=I/N           Run shard I of N; tests interleaved by index
+ *   --shard=I/N           Run shard I of N; tests assigned by stable path hash
  *   --filter=PATTERN      Only run tests matching pattern (substring)
  *   --test-dir=DIR        Test directory relative to TypeScript root
  *   --verbose             Show detailed output for each test
@@ -166,6 +166,18 @@ function discoverTests(testDir, filter) {
 
     files.sort();
     return files;
+}
+
+function stableShardForPath(filePath, shardTotal) {
+    const relPath = path.relative(process.cwd(), filePath).replace(/\\/g, "/");
+    let hash = 0xcbf29ce484222325n;
+    const prime = 0x100000001b3n;
+    const mask = 0xffffffffffffffffn;
+    for (const byte of Buffer.from(relPath, "utf8")) {
+        hash ^= BigInt(byte);
+        hash = (hash * prime) & mask;
+    }
+    return Number(hash % BigInt(shardTotal));
 }
 
 // =============================================================================
@@ -1874,11 +1886,11 @@ async function main() {
     const testFiles = discoverTests(opts.testDir, opts.filter);
     const totalAvailable = testFiles.length;
     let testsToRun = testFiles;
-    // --shard=I/N interleaves by index so heavy-test clusters spread evenly
-    // across shards. Applied before --offset/--max so those still trim within
-    // the shard if explicitly passed.
+    // --shard=I/N uses a stable path hash so slow clusters in sorted directory
+    // order do not all land on the same CI shard. Applied before --offset/--max
+    // so those still trim within the shard if explicitly passed.
     if (opts.shardTotal > 0) {
-        testsToRun = testFiles.filter((_, idx) => idx % opts.shardTotal === opts.shardId);
+        testsToRun = testFiles.filter(file => stableShardForPath(file, opts.shardTotal) === opts.shardId);
     }
     if (opts.offset > 0) testsToRun = testsToRun.slice(opts.offset);
     if (opts.max > 0) testsToRun = testsToRun.slice(0, opts.max);

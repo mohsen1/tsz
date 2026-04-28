@@ -771,10 +771,19 @@ for path in test_dir.rglob("*"):
         continue
     if "APISample" in path_str or "APILibCheck" in path_str:
         continue
-    files.append(path_str)
+    files.append(path)
 
 files.sort()
-selected = [path for i, path in enumerate(files) if i % count == index]
+
+def stable_shard(path):
+    rel = path.relative_to(test_dir).as_posix()
+    h = 1469598103934665603
+    for byte in rel.encode("utf-8"):
+        h ^= byte
+        h = (h * 1099511628211) & 0xffffffffffffffff
+    return h % count
+
+selected = [path.as_posix() for path in files if stable_shard(path) == index]
 passed = sum(1 for path in selected if baseline_status.get(path) == "PASS")
 print(passed, len(selected))
 PY
