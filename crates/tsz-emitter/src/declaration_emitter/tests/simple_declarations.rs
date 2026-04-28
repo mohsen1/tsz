@@ -1007,6 +1007,25 @@ exports.foo = foo;
 }
 
 #[test]
+fn test_js_commonjs_named_function_export_is_not_static_augmentation_skip() {
+    let output = emit_js_dts(
+        r#"
+module.exports.foo = function foo() {}
+module.exports.foo.label = "ok";
+"#,
+    );
+
+    assert!(
+        output.contains("export function foo(): void;"),
+        "Expected direct CommonJS function exports to emit a named function declaration: {output}"
+    );
+    assert!(
+        !output.trim().eq("export {};"),
+        "CommonJS function export should not be swallowed as a skipped static-method augmentation: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_function_expandos_emit_as_namespace_exports() {
     let source = r#"
 function foo() {}

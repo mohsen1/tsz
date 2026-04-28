@@ -411,9 +411,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(init_node) = self.arena.get(initializer) else {
             return;
         };
-        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
-            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
-        {
+        if !self.is_js_function_initializer(initializer) {
             return;
         }
         let Some(func) = self.arena.get_function(init_node) else {
