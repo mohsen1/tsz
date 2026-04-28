@@ -18,6 +18,10 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    get_diagnostics_with_options(source, CheckerOptions::default())
+}
+
+fn get_diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -30,7 +34,7 @@ fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        CheckerOptions::default(),
+        options,
     );
 
     checker.check_source_file(root);
@@ -56,6 +60,10 @@ fn has_error(source: &str, code: u32) -> bool {
 
 fn no_errors(source: &str) -> bool {
     get_codes(source).is_empty()
+}
+
+fn no_errors_with_options(source: &str, options: CheckerOptions) -> bool {
+    get_diagnostics_with_options(source, options).is_empty()
 }
 
 // ============================================================================
@@ -2202,5 +2210,42 @@ fn inheritance_merged_overload_pairs_last_source_sig_for_inference() {
         !codes.contains(&2769),
         "Cross-interface inference must NOT emit TS2769 (no overload matches).\n\
          Got: {codes:?}"
+    );
+}
+
+#[test]
+fn union_receiver_inherited_promise_this_return_preserves_class_identity() {
+    let source = r#"
+interface PromiseLike<T> {
+    then<TResult1 = T>(
+        onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null
+    ): PromiseLike<TResult1>;
+}
+interface Promise<T> extends PromiseLike<T> {}
+
+declare class Foo {
+    doThing(): Promise<this>;
+}
+declare class Bar extends Foo {
+    bar: number;
+}
+declare class Baz extends Foo {
+    baz: number;
+}
+
+declare const a: Bar | Baz;
+a.doThing().then((result: Bar | Baz) => {});
+"#;
+
+    assert!(
+        no_errors_with_options(
+            source,
+            CheckerOptions {
+                strict: true,
+                ..CheckerOptions::default()
+            },
+        ),
+        "Inherited Promise<this> calls on union receivers should keep each \
+         substituted class instance assignable to the matching nominal class"
     );
 }
