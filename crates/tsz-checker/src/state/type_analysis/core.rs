@@ -22,6 +22,9 @@ type TypeParamPushResult = (
 
 impl<'a> CheckerState<'a> {
     fn cache_resolved_symbol_type_for_owner(&self, sym_id: SymbolId, type_id: TypeId) {
+        if !self.ctx.share_owner_symbol_type_results {
+            return;
+        }
         if type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
             return;
         }
