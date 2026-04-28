@@ -2,8 +2,104 @@
 
 > Source: external compiler-perf expert review of the April 2026 perf session.
 > Status as of plan creation: 4 PRs landed (#1618, #1619, #1623, #1626) with PR #1626 giving a measured −5.4% on subset3. None of those address the underlying architectural issue; they were point optimizations on top of the wrong topology.
+>
+> **Revised 2026-04-28 (after reviewing the public benchmark page at <https://tsz.dev/benchmarks/>)**: see "Revised diagnosis" below. The 200×+ gap is **a scale cliff on monorepo-shaped workloads**, not a checker-throughput problem. tsz already beats tsgo by 2×–5× on most local fixtures (`utility-types-project` 152ms vs 255ms, `ts-toolbelt-project` 230ms vs 1.1s, `ts-essentials-project` 278ms vs 1s). Don't rewrite the local checker. Find the cliff.
 
-## The diagnosis
+## Revised diagnosis (2026-04-28)
+
+> **The local checker is healthy. The program-scale state model is not.**
+
+The public benchmark page shows tsz wins or is competitive on every workload that fits in a single package:
+
+| Fixture                 | tsz   | tsgo  | Winner |
+|-------------------------|------:|------:|--------|
+| `utility-types-project` | 152ms | 255ms | tsz (1.7×) |
+| `ts-toolbelt-project`   | 230ms | 1100ms| tsz (4.8×) |
+| `ts-essentials-project` | 278ms | 1000ms| tsz (3.6×) |
+| `type-fest-project`     | 341ms | 216ms | tsgo (1.6×) |
+| many single-file solver fixtures | — | — | tsz 2×–5× |
+| `large-ts-repo-project` | **unavailable** | 478.7s | (failures section) |
+
+So the failure mode is specifically: **many files × many packages × cross-file symbol delegation × per-file checker state × global interner contention**. Not "Rust solver slow," not "mapped types slow," not "single-file inference slow."
+
+That changes the priority order:
+
+- **Demote**: rewriting mapped/conditional/relation algorithms.
+- **Promote**: finding the *exact transition point* where tsz goes from faster-than-tsgo to catastrophically worse.
+
+The plan below (PRs 2–7) was written assuming a broad architectural rewrite. The revised view says: **most of those PRs are still right, but their justification is "remove the cliff," not "make local checking faster."** Specifically:
+
+- PR 2 (checker-local interner) — still correct: removes global contention that only matters at scale.
+- PR 3 (no child checker) — *promoted*: this is the headline bug. 17,329 child-checker constructions on a 1429-file project (data from PR #1630).
+- PR 4 (shared lib/global binder) — still correct: per-file lib-symbol merge is the duplication multiplier.
+- PR 5 (overlay replacement) — *promoted*: 12.8B entries copied is per-delegation, scales with the cliff.
+- PR 6 (resolver VFS cache) — still correct.
+- PR 7 (deterministic checker groups) — still correct.
+
+But before any of those: **build the scale-up fixtures and find the cliff**. Without that, PRs 2–7 are guesses about which interaction is the multiplier.
+
+## Step 0 (do this BEFORE any of PRs 2–7): scale-up fixtures + ratio measurements
+
+Create six synthetic monorepo fixtures that interpolate between "tsz wins" and "tsz explodes":
+
+```
+monorepo-001:  1 package, 100 files
+monorepo-002:  10 packages, 100 files each (1000 files)
+monorepo-003:  50 packages, project-relative imports (5000 files)
+monorepo-004:  same as 003 + shared lib/global declarations
+monorepo-005:  same as 004 + one heavy barrel/export file
+monorepo-006:  same as 005 + mapped/conditional types crossing package boundaries
+```
+
+Then for each fixture, record the **per-file ratio** of:
+
+```
+wall time
+CPU time
+max RSS
+allocator retained bytes
+file count
+package count
+import count
+module-resolution syscalls / import
+CheckerState created / file
+::with_parent_cache created / file
+delegate_cross_arena calls / file
+overlay entries copied / file
+type-interner inserts / file
+read_package_json calls / file
+```
+
+The moment any of these ratios stops being roughly constant, the cliff is right there. Example failure modes the ratios will reveal:
+
+```
+100 files:    2 checker states/file
+1,000 files:  2 checker states/file
+6,000 files:  700 checker states/file       ← cliff is between 1k and 6k files
+```
+
+```
+100 files:    50 types interned/file
+1,000 files:  80 types interned/file
+6,000 files:  40,000 types interned/file    ← cliff is in interner reuse rate
+```
+
+The PR #1630 instrumentation already produces most of these numbers; what's missing is a) the synthetic fixtures and b) a small driver that runs each fixture, parses the counter dump, and emits a CSV.
+
+**Also**: the public benchmark page reports `large-ts-repo` as `tsz unavailable / tsgo 478.7s`, but my local profile reports `tsz 706s / tsgo 2.45s`. Those are different machines / different bench commands / different modes. Before any architectural call, the team needs ONE canonical bench command for `large-ts-repo` that records:
+
+```
+bench-large-ts-repo-cold
+bench-large-ts-repo-warm
+bench-large-ts-repo-no-check
+bench-large-ts-repo-check-only
+bench-large-ts-repo-single-thread
+bench-large-ts-repo-N-checkers
+```
+
+So the same name doesn't hide different workloads.
+
+## Original diagnosis (kept for context)
 
 We are not looking at "Rust is slower than Go." We are looking at a **compiler-state topology bug**.
 
