@@ -1053,6 +1053,36 @@ declare namespace foo {
 }
 
 #[test]
+fn test_js_function_value_expandos_emit_merged_namespace_members() {
+    let output = emit_js_dts(
+        r#"
+export function foo() {}
+foo.label = "ok";
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    let label: string;\n}"),
+        "Expected JS function value expandos to emit as merged namespace members: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_named_function_value_expandos_emit_namespace_members() {
+    let output = emit_js_dts(
+        r#"
+module.exports.foo = function foo() {}
+module.exports.foo.label = "ok";
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    let label: string;\n}"),
+        "Expected CommonJS named function value expandos to emit as merged namespace members: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_like_class_emits_companion_class() {
     let output = emit_js_dts(
         r#"

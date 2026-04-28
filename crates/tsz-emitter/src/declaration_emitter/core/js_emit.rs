@@ -501,6 +501,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(name_idx);
+        self.emit_ts_late_bound_function_namespace_from_members(
+            name_idx,
+            is_exported,
+            &late_bound_members,
+        );
         self.emit_js_function_like_class_if_needed(
             name_idx,
             &func.parameters,
