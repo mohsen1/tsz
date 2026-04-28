@@ -1213,14 +1213,29 @@ impl<'a> CheckerContext<'a> {
         };
 
         if let Some(idx) = self.global_file_name_index.as_ref() {
+            // 1. Direct file-name hit (fully-qualified specifier).
             if let Some(&target_idx) = idx.get(&normalized_specifier) {
                 return Some(target_idx);
             }
+            // 2. Extension-stem fan-out: the linear scan also matched on
+            //    `strip_ts_extension(spec) == strip_ts_extension(file_name)`,
+            //    which lets a `.js` import resolve to a `.ts` source. Probe
+            //    the index with every TS/JS extension applied to the stem.
             let stripped = Self::strip_ts_extension(&normalized_specifier);
-            if stripped != normalized_specifier
-                && let Some(&target_idx) = idx.get(stripped)
-            {
-                return Some(target_idx);
+            const FAN_OUT_EXTS: &[&str] = &[
+                ".ts", ".tsx", ".d.ts", ".d.tsx", ".mts", ".cts", ".d.mts", ".d.cts", ".js",
+                ".jsx", ".mjs", ".cjs",
+            ];
+            // Reuse a single buffer across the fan-out attempts to avoid
+            // per-extension `String` allocation.
+            let mut buf = String::with_capacity(stripped.len() + 6);
+            for ext in FAN_OUT_EXTS {
+                buf.clear();
+                buf.push_str(stripped);
+                buf.push_str(ext);
+                if let Some(&target_idx) = idx.get(&buf) {
+                    return Some(target_idx);
+                }
             }
         }
 
