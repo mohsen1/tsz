@@ -1567,6 +1567,7 @@ impl<'a> CheckerState<'a> {
             }
             if prop.optional
                 && self.ctx.strict_null_checks()
+                && !self.ctx.exact_optional_property_types()
                 && prop_type != TypeId::ANY
                 && prop_type != TypeId::UNDEFINED
             {
