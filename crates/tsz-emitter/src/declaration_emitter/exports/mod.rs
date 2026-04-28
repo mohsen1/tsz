@@ -1281,6 +1281,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return;
             }
         }
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
 
         self.write_indent();
         if self.should_emit_export_keyword() {
@@ -1390,6 +1391,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_ts_late_bound_function_namespace_from_members(
+            func.name,
+            true,
+            &late_bound_members,
+        );
         if self.source_is_js_file {
             self.emit_js_function_like_class_if_needed(
                 func.name,
