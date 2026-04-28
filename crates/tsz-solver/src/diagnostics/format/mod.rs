@@ -1392,16 +1392,28 @@ impl<'a> TypeFormatter<'a> {
                 // named/lazy refs, or applications), not concrete structural types like `{}`.
                 // Exception: if any member is a structural object or intrinsic, preserve the
                 // undistributed form (e.g. `keyof (T & {})` stays as-is).
-                let any_member_structural = |list_id: TypeListId| -> bool {
+                // tsc preserves `keyof (T & {})` undistributed because the
+                // empty-object intersection is a non-nullish constraint, not
+                // a structural-shape contributor. Restrict the no-distribute
+                // guard to that specific shape — generic intersections with
+                // *any* structural member (e.g. `T & string`) still
+                // distribute as before.
+                let any_member_empty_object = |list_id: TypeListId| -> bool {
                     self.interner.type_list(list_id).iter().any(|&m| {
                         matches!(
                             self.interner.lookup(m),
-                            Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
-                        ) || m.is_intrinsic()
+                            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id))
+                                if {
+                                    let shape = self.interner.object_shape(shape_id);
+                                    shape.properties.is_empty()
+                                        && shape.string_index.is_none()
+                                        && shape.number_index.is_none()
+                                }
+                        )
                     })
                 };
                 let distributed = match self.interner.lookup(*operand) {
-                    Some(TypeData::Union(list_id)) if !any_member_structural(list_id) => {
+                    Some(TypeData::Union(list_id)) if !any_member_empty_object(list_id) => {
                         let members = self.interner.type_list(list_id);
                         let parts: Vec<String> = members
                             .iter()
@@ -1425,7 +1437,7 @@ impl<'a> TypeFormatter<'a> {
                             .collect();
                         Some(parts.join(" & "))
                     }
-                    Some(TypeData::Intersection(list_id)) if !any_member_structural(list_id) => {
+                    Some(TypeData::Intersection(list_id)) if !any_member_empty_object(list_id) => {
                         let members = self.interner.type_list(list_id);
                         let parts: Vec<String> = members
                             .iter()
@@ -1459,11 +1471,11 @@ impl<'a> TypeFormatter<'a> {
                 // via the formatter's alias-reverse-lookup.  tsc preserves the
                 // user's spelling (`keyof (T & {})`) in error messages.
                 let inline_compound = match self.interner.lookup(*operand) {
-                    Some(TypeData::Union(list_id)) if any_member_structural(list_id) => Some((
+                    Some(TypeData::Union(list_id)) if any_member_empty_object(list_id) => Some((
                         list_id,
                         " | ",
                     )),
-                    Some(TypeData::Intersection(list_id)) if any_member_structural(list_id) => {
+                    Some(TypeData::Intersection(list_id)) if any_member_empty_object(list_id) => {
                         Some((list_id, " & "))
                     }
                     _ => None,
