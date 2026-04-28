@@ -933,6 +933,17 @@ impl<'a> Completions<'a> {
             return false;
         }
         let prefix = self.source_text[..end].trim_end();
+        // Strip a single trailing block comment (e.g. `0./** comment */`) so
+        // the previous-token check sees the literal, not the comment trivia.
+        // tsc's completion provider works at the token level and skips trivia
+        // when looking back; this text-based check needs the same treatment.
+        let prefix = match prefix.strip_suffix("*/") {
+            Some(without_close) => match without_close.rfind("/*") {
+                Some(idx) => prefix[..idx].trim_end(),
+                None => prefix,
+            },
+            None => prefix,
+        };
         let line_start = prefix.rfind('\n').map_or(0, |idx| idx + 1);
         let line = prefix[line_start..].trim_end();
         let Some(before_dot) = line.strip_suffix('.') else {
