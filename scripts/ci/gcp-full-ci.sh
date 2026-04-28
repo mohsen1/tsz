@@ -1151,6 +1151,7 @@ run_fourslash_shard() {
     --skip-cargo-build \
     --skip-ts-build \
     --shard="${shard_index}/${shard_count}" \
+    --shard-strategy="${TSZ_CI_FOURSLASH_SHARD_STRATEGY:-weighted}" \
     --workers="$FOURSLASH_WORKERS" \
     --memory-limit=512 \
     --json-out="$detail_json" \
@@ -1158,24 +1159,50 @@ run_fourslash_shard() {
   local rc="$?"
   set -e
 
-  local results passed total
+  local results passed total timed_out
   results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard_index}.log" | tail -1 || true)"
-  passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
-  total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+  if [[ -f "$detail_json" ]]; then
+    passed="$(jq -r '.summary.passed // 0' "$detail_json")"
+    total="$(jq -r '.summary.total // 0' "$detail_json")"
+    timed_out="$(jq -r '.summary.timedOut // 0' "$detail_json")"
+  else
+    passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
+    total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+    timed_out=0
+  fi
   passed="$(num_or_zero "$passed")"
   total="$(num_or_zero "$total")"
+  timed_out="$(num_or_zero "$timed_out")"
 
-  local result_json
-  result_json="$(printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s}' "$shard_index" "$rc" "$passed" "$total")"
-  echo "$result_json" > "$METRICS_DIR/fourslash-shard-${shard_index}.json"
-  echo "FOURSLASH_SHARD shard=${shard_index} rc=${rc} passed=${passed}/${total}"
+  if [[ -f "$detail_json" ]]; then
+    local enriched_json
+    enriched_json="${detail_json}.enriched"
+    jq \
+      --argjson shard "$shard_index" \
+      --argjson rc "$rc" \
+      --argjson passed "$passed" \
+      --argjson total "$total" \
+      --argjson timed_out "$timed_out" \
+      '. + {shard:$shard, rc:$rc, passed:$passed, total:$total, timedOut:$timed_out, slowest:(.summary.slowest // [])}' \
+      "$detail_json" >"$enriched_json"
+    mv "$enriched_json" "$detail_json"
+  else
+    printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s,"timedOut":%s,"slowest":[]}\n' \
+      "$shard_index" "$rc" "$passed" "$total" "$timed_out" >"$detail_json"
+  fi
+
+  echo "FOURSLASH_SHARD shard=${shard_index} rc=${rc} passed=${passed}/${total} timeout=${timed_out}"
+  if [[ -f "$detail_json" ]]; then
+    echo "Fourslash slowest tests for shard ${shard_index}:"
+    jq -r '.slowest[:10][]? | "  \(.elapsed)ms \(.status) \(.name)"' "$detail_json" || true
+  fi
   if [[ "$rc" -ne 0 ]]; then
     show_log_tail "$LOG_DIR/fourslash/shard-${shard_index}.log"
   fi
 
   if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
     local prefix="${bucket%/}/fourslash-runs/${run_key}"
-    gsutil cp "$METRICS_DIR/fourslash-shard-${shard_index}.json" "${prefix}/shard-${shard_index}.json" \
+    gsutil cp "$detail_json" "${prefix}/shard-${shard_index}.json" \
       && echo "Uploaded fourslash shard result: shard-${shard_index}.json" \
       || echo "warning: failed to upload fourslash shard result (non-fatal)" >&2
   fi
@@ -1204,15 +1231,24 @@ run_fourslash_aggregate() {
     return 1
   fi
 
-  local total_passed=0 total_tests=0 shard_count=0
+  local total_passed=0 total_tests=0 shard_count=0 failed_shards=0 timed_out=0
   for f in "$tmp_dir"/shard-*.json; do
     [[ -f "$f" ]] || continue
-    total_passed=$((total_passed + $(num_or_zero "$(jq -r '.passed // 0' "$f")")))
-    total_tests=$((total_tests   + $(num_or_zero "$(jq -r '.total // 0'  "$f")")))
+    total_passed=$((total_passed + $(num_or_zero "$(jq -r '.passed // .summary.passed // 0' "$f")")))
+    total_tests=$((total_tests   + $(num_or_zero "$(jq -r '.total // .summary.total // 0'  "$f")")))
+    timed_out=$((timed_out + $(num_or_zero "$(jq -r '.timedOut // .summary.timedOut // 0' "$f")")))
+    if [[ "$(num_or_zero "$(jq -r '.rc // 0' "$f")")" -ne 0 ]]; then
+      failed_shards=$((failed_shards + 1))
+    fi
     shard_count=$((shard_count + 1))
   done
 
-  echo "Fourslash aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards"
+  echo "Fourslash aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards (timeout=${timed_out}, failed_shards=${failed_shards})"
+  echo "Fourslash aggregate slowest tests:"
+  jq -s -r '[.[] | (.slowest // .summary.slowest // [])[]] | sort_by(.elapsed) | reverse | .[:10][]? | "  \(.elapsed)ms \(.status) \(.name)"' "$tmp_dir"/shard-*.json || true
+  if [[ "$failed_shards" -gt 0 ]]; then
+    echo "warning: ${failed_shards} fourslash shard(s) returned non-zero; aggregate still applies the baseline floor" >&2
+  fi
 
   if [[ "$shard_count" -lt "$expected_shards" ]]; then
     echo "error: only ${shard_count}/${expected_shards} fourslash shards collected; some shards may have crashed" >&2

@@ -334,8 +334,8 @@ jobs:
     # Each matrix shard runs on its own 8-vCPU cloud runner. The 2026-04-28
     # 9m15s sample spent the critical path in fourslash-3 (323s in the runner)
     # while the aggregate itself was only ~20s. Keep the 4-shard runner
-    # footprint, but let each shard use the full runner instead of pinning it
-    # to half the CPUs.
+    # footprint, let each shard use the full runner, and use snapshot timings
+    # to spread known slow tests across shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.should_run == 'true'
@@ -348,6 +348,7 @@ jobs:
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
       TSZ_CI_FOURSLASH_WORKERS: 8
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
