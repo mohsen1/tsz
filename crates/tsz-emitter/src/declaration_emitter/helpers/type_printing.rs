@@ -75,15 +75,78 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
+    fn should_preserve_named_application_for_inferred_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        interner: &tsz_solver::TypeInterner,
+    ) -> bool {
+        if !self.should_preserve_named_application_for_emit(type_id, interner) {
+            return false;
+        }
+
+        let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) else {
+            return true;
+        };
+        let app = interner.type_application(app_id);
+        let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, app.base) else {
+            return true;
+        };
+        let Some(cache) = self.type_cache.as_ref() else {
+            return true;
+        };
+        let Some(base_type) = cache.def_types.get(&def_id.0).copied() else {
+            return true;
+        };
+
+        tsz_solver::visitor::conditional_type_id(interner, base_type).is_none()
+    }
+
     fn display_alias_for_declaration_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
         interner: &tsz_solver::TypeInterner,
     ) -> tsz_solver::types::TypeId {
+        self.display_alias_for_policy(
+            type_id,
+            interner,
+            Self::should_preserve_named_application_for_emit,
+        )
+    }
+
+    fn display_alias_for_policy(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        interner: &tsz_solver::TypeInterner,
+        preserve_named_application: fn(
+            &Self,
+            tsz_solver::types::TypeId,
+            &tsz_solver::TypeInterner,
+        ) -> bool,
+    ) -> tsz_solver::types::TypeId {
         interner
             .get_display_alias(type_id)
-            .filter(|&alias| self.should_preserve_named_application_for_emit(alias, interner))
+            .filter(|&alias| preserve_named_application(self, alias, interner))
             .unwrap_or(type_id)
+    }
+
+    fn reduce_conditional_alias_application_for_inferred_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        let cache = self.type_cache.as_ref()?;
+        let app_id = tsz_solver::visitor::application_id(interner, type_id)?;
+        let app = interner.type_application(app_id);
+        let def_id = tsz_solver::visitor::lazy_def_id(interner, app.base)?;
+        let body = cache.def_types.get(&def_id.0).copied()?;
+        tsz_solver::visitor::conditional_type_id(interner, body)?;
+
+        let type_params = cache.def_type_params.get(&def_id.0)?;
+        let instantiated = tsz_solver::instantiate_generic(interner, body, type_params, &app.args);
+        let resolver = DtsCacheResolver { cache };
+        let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
+        evaluator.set_max_mapped_keys(1_024);
+        Some(evaluator.evaluate(instantiated))
     }
 
     pub(crate) fn get_node_type_or_names(
@@ -236,27 +299,35 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
-    pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
+    fn print_type_id_with_policy(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        preserve_named_application: fn(
+            &Self,
+            tsz_solver::types::TypeId,
+            &tsz_solver::TypeInterner,
+        ) -> bool,
+    ) -> String {
         if let Some(interner) = self.type_interner {
-            let type_id = self.display_alias_for_declaration_emit(type_id, interner);
+            let type_id =
+                self.display_alias_for_policy(type_id, interner, preserve_named_application);
             // Evaluate the type before printing to expand mapped types over
             // literal union constraints (e.g., `{[k in "ar"|"bg"]?: T}` becomes
             // `{ar?: T; bg?: T}`).  This matches tsc's behavior in declaration
             // emit where mapped types are fully resolved.
-            let type_id = if self.should_preserve_named_application_for_emit(type_id, interner) {
+            let type_id = if preserve_named_application(self, type_id, interner) {
                 type_id
             } else if let Some(cache) = &self.type_cache {
                 let resolver = DtsCacheResolver { cache };
                 let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
-                self.display_alias_for_declaration_emit(evaluated, interner)
+                self.display_alias_for_policy(evaluated, interner, preserve_named_application)
             } else {
                 let mut evaluator = tsz_solver::TypeEvaluator::new(interner);
                 evaluator.set_max_mapped_keys(1_024);
                 let evaluated = evaluator.evaluate(type_id);
-                self.display_alias_for_declaration_emit(evaluated, interner)
+                self.display_alias_for_policy(evaluated, interner, preserve_named_application)
             };
 
             let module_path_resolver = |sym_id| self.resolve_symbol_module_path(sym_id);
@@ -301,13 +372,32 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Print a `TypeId` as TypeScript syntax using `TypePrinter`.
+    pub(crate) fn print_type_id(&self, type_id: tsz_solver::types::TypeId) -> String {
+        self.print_type_id_with_policy(type_id, Self::should_preserve_named_application_for_emit)
+    }
+
+    pub(crate) fn print_type_id_for_inferred_declaration(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> String {
+        if let Some(reduced) = self.reduce_conditional_alias_application_for_inferred_emit(type_id)
+        {
+            return self.print_type_id(reduced);
+        }
+        self.print_type_id_with_policy(
+            type_id,
+            Self::should_preserve_named_application_for_inferred_emit,
+        )
+    }
+
     pub(crate) fn resolve_declaration_type_text(
         &self,
         related_nodes: &[NodeIndex],
         initializer: Option<NodeIndex>,
     ) -> Option<ResolvedDeclarationTypeText> {
         let type_id = self.get_node_type_or_names(related_nodes)?;
-        let canonical_type_text = self.print_type_id(type_id);
+        let canonical_type_text = self.print_type_id_for_inferred_declaration(type_id);
         let emitted_type_text = initializer
             .map(|initializer| {
                 self.declaration_emittable_type_text(initializer, type_id, &canonical_type_text)
