@@ -106,10 +106,10 @@ fn test_jsx_missing_closing_tag_anchor_after_conflict_marker_uses_opening_end() 
     // Anchor must be at end of `<div>`. The opening tag occupies bytes 10..15
     // (`<div>`); its end is byte 15.
     let opening_end = source.find("<div>").unwrap() as u32 + "<div>".len() as u32;
+    let actual_start = ts1005[0].start;
     assert_eq!(
-        ts1005[0].start, opening_end,
-        "TS1005 must anchor at the end of `<div>` (offset {opening_end}), got offset {}",
-        ts1005[0].start
+        actual_start, opening_end,
+        "TS1005 must anchor at the end of `<div>` (offset {opening_end}), got offset {actual_start}",
     );
 }
 
