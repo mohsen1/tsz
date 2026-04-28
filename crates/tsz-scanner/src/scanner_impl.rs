@@ -1312,14 +1312,24 @@ impl ScannerState {
             }
 
             // Numeric separator immediately after a leading zero (e.g. `0_0`,
-            // `0_1.5`) — tsc treats this as a legacy-octal-style leading zero
-            // and rejects the separator with TS6188. The integer part of a
-            // decimal literal that starts with a `0` followed by `_<digit>`
+            // `0_1.5`, `0__0`) — tsc treats this as a legacy-octal-style
+            // leading zero and rejects the separator with TS6188. The
+            // integer part of a decimal literal that starts with a `0`
+            // followed by `_` and any continuation (digit OR another `_`)
             // is not a valid form. Emit the diagnostic at the `_` position
             // and fall through to `scan_decimal_number` so the rest of the
             // literal still produces the expected NumericLiteral token.
+            //
+            // The `_<digit>` arm catches `0_0`. The `_<_>` arm catches
+            // `0__0` (regression: `parser.numericSeparators.decmialNegative.ts`
+            // files 18/31/44, where a consecutive-separator run after the
+            // leading zero ends in a digit; the inner loop emits TS6189 at
+            // the second `_`, but the leading-zero TS6188 at the first `_`
+            // was missing without this check).
             if next == CharacterCodes::UNDERSCORE
-                && self.char_code_at(self.pos + 2).is_some_and(is_digit)
+                && self
+                    .char_code_at(self.pos + 2)
+                    .is_some_and(|c| is_digit(c) || c == CharacterCodes::UNDERSCORE)
             {
                 self.scanner_diagnostics.push(ScannerDiagnostic {
                     pos: self.pos + 1,
@@ -4075,5 +4085,29 @@ mod tests {
         // Also fires when followed by a fraction or exponent.
         assert_eq!(scan_separator_diagnostics("0_0.5_5"), vec![(1, ts6188)]);
         assert_eq!(scan_separator_diagnostics("0_0e5_5"), vec![(1, ts6188)]);
+    }
+
+    #[test]
+    fn separator_after_leading_zero_followed_by_double_underscore() {
+        // Regression: `parser.numericSeparators.decmialNegative.ts` files 18,
+        // 31, 44 (`0__0.0e0`, `0__0.0e+0`, `0__0.0e-0`). The leading-zero
+        // TS6188 rule must fire when the `_` after `0` is followed by another
+        // `_` (which itself starts a consecutive-separator run that ends in
+        // a digit), not just by a digit. tsc emits both TS6188 at the first
+        // `_` AND TS6189 at the second `_` for these inputs.
+        let ts6188 = diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE;
+        let ts6189 = diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED;
+        assert_eq!(
+            scan_separator_diagnostics("0__0.0e0"),
+            vec![(1, ts6188), (2, ts6189)]
+        );
+        assert_eq!(
+            scan_separator_diagnostics("0__0.0e+0"),
+            vec![(1, ts6188), (2, ts6189)]
+        );
+        assert_eq!(
+            scan_separator_diagnostics("0__0.0e-0"),
+            vec![(1, ts6188), (2, ts6189)]
+        );
     }
 }
