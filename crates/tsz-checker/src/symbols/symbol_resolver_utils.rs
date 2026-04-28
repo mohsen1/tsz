@@ -709,36 +709,28 @@ impl<'a> CheckerState<'a> {
 
     /// Report a type query missing member error.
     ///
-    /// For `typeof A.B` or a type-reference name `A.B` where `B` is not found
-    /// in `A`'s exports, emits TS2694.
+    /// For `typeof A.B` where `B` is not found in `A`'s exports, emits TS2694.
     /// Returns true if an error was reported.
     pub(crate) fn report_type_query_missing_member(&mut self, idx: NodeIndex) -> bool {
         let node = match self.ctx.arena.get(idx) {
             Some(node) => node,
             None => return false,
         };
-
-        let (left_idx, right_idx) = if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
-                return false;
-            };
-            (qn.left, qn.right)
-        } else if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let Some(access) = self.ctx.arena.get_access_expr(node) else {
-                return false;
-            };
-            (access.expression, access.name_or_argument)
-        } else {
+        if node.kind != syntax_kind_ext::QUALIFIED_NAME {
             return false;
+        }
+        let qn = match self.ctx.arena.get_qualified_name(node) {
+            Some(qn) => qn,
+            None => return false,
         };
 
-        let left_sym = match self.resolve_qualified_symbol(left_idx) {
+        let left_sym = match self.resolve_qualified_symbol(qn.left) {
             Some(sym) => sym,
             None => {
                 // The left side couldn't be fully resolved. For nested qualified names
                 // like X.Y.Z where Y doesn't exist in X, the resolution of X.Y fails.
                 // Recursively check if we can report TS2694 on the left sub-expression.
-                return self.report_type_query_missing_member(left_idx);
+                return self.report_type_query_missing_member(qn.left);
             }
         };
         let lib_binders = self.get_lib_binders();
@@ -764,7 +756,7 @@ impl<'a> CheckerState<'a> {
         let right_name = match self
             .ctx
             .arena
-            .get(right_idx)
+            .get(qn.right)
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())
         {
@@ -803,7 +795,7 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_default();
                 let req = crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
                     right_name,
-                    right_idx,
+                    qn.right,
                     left_sym,
                     export_names,
                 );
@@ -834,7 +826,7 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_default();
         let req = crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
             right_name,
-            right_idx,
+            qn.right,
             left_sym,
             export_names,
         );
