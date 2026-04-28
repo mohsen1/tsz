@@ -586,6 +586,31 @@ impl<'a> CheckerState<'a> {
         out
     }
 
+    pub(super) fn jsdoc_template_constraints_before_typedef_host(
+        jsdoc: &str,
+    ) -> Vec<(String, Option<String>)> {
+        let mut prefix = String::new();
+        for raw_line in jsdoc.lines() {
+            let trimmed = raw_line
+                .trim()
+                .trim_start_matches("/**")
+                .trim_start_matches("/*")
+                .trim_start_matches('*')
+                .trim()
+                .trim_end_matches("*/")
+                .trim();
+            if trimmed.starts_with("@typedef")
+                || trimmed.starts_with("@callback")
+                || trimmed.starts_with("@overload")
+            {
+                break;
+            }
+            prefix.push_str(raw_line);
+            prefix.push('\n');
+        }
+        Self::jsdoc_template_constraints(&prefix)
+    }
+
     // -----------------------------------------------------------------
     // JSDoc typedef / callback / import parsing
     // -----------------------------------------------------------------
@@ -600,10 +625,11 @@ impl<'a> CheckerState<'a> {
             callback: None,
         };
         let mut wrapped_typedef_body: Option<Vec<String>> = None;
-        let template_params: Vec<JsdocTemplateParamInfo> = Self::jsdoc_template_constraints(jsdoc)
-            .into_iter()
-            .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
-            .collect();
+        let template_params: Vec<JsdocTemplateParamInfo> =
+            Self::jsdoc_template_constraints_before_typedef_host(jsdoc)
+                .into_iter()
+                .map(|(name, constraint)| JsdocTemplateParamInfo { name, constraint })
+                .collect();
         for raw_line in jsdoc.lines() {
             // Normalize both multiline (`/** ... */`) and single-line (`/** ... */`)
             // JSDoc block-comment lines into tag content before parsing.

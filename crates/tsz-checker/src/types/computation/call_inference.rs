@@ -578,6 +578,34 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn return_context_types_share_outer_structure(&mut self, left: TypeId, right: TypeId) -> bool {
+        let left_application = common::application_info(self.ctx.types, left).or_else(|| {
+            let evaluated = self.evaluate_for_return_context_substitution(left);
+            (evaluated != left).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+        let right_application = common::application_info(self.ctx.types, right).or_else(|| {
+            let evaluated = self.evaluate_for_return_context_substitution(right);
+            (evaluated != right).then(|| common::application_info(self.ctx.types, evaluated))?
+        });
+        if let (Some((left_base, _)), Some((right_base, _))) = (left_application, right_application)
+            && self.return_context_application_bases_match(left_base, right_base)
+        {
+            return true;
+        }
+
+        let left_eval = self.evaluate_for_return_context_substitution(left);
+        let right_eval = self.evaluate_for_return_context_substitution(right);
+        matches!(
+            (
+                common::object_shape_for_type(self.ctx.types, left_eval).is_some(),
+                common::object_shape_for_type(self.ctx.types, right_eval).is_some(),
+                call_checker::get_contextual_signature(self.ctx.types, left_eval).is_some(),
+                call_checker::get_contextual_signature(self.ctx.types, right_eval).is_some(),
+            ),
+            (true, true, _, _) | (_, _, true, true)
+        )
+    }
+
     pub(crate) fn collect_return_context_substitution(
         &mut self,
         source: TypeId,
@@ -642,6 +670,72 @@ impl<'a> CheckerState<'a> {
                 substitution.insert(tp.name, source);
             }
             return;
+        }
+
+        if let (Some(source_members), Some(target_members)) = (
+            common::union_members(self.ctx.types, source),
+            common::union_members(self.ctx.types, target),
+        ) {
+            let source_members: Vec<_> = source_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+                .collect();
+            let target_members: Vec<_> = target_members
+                .into_iter()
+                .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
+                .collect();
+            let all_source_members_are_tracked_params = !source_members.is_empty()
+                && source_members.iter().all(|member| {
+                    common::type_param_info(self.ctx.types, *member)
+                        .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+                });
+            if all_source_members_are_tracked_params && source_members.len() == target_members.len()
+            {
+                for (source_member, target_member) in source_members
+                    .iter()
+                    .copied()
+                    .zip(target_members.iter().copied())
+                {
+                    if let Some(tp) = common::type_param_info(self.ctx.types, source_member)
+                        && substitution.get(tp.name).is_none()
+                        && target_member != TypeId::UNKNOWN
+                        && target_member != TypeId::ERROR
+                        && !self.target_contains_blocking_return_context_type_params(
+                            target_member,
+                            tracked_type_params,
+                        )
+                    {
+                        substitution.insert(tp.name, target_member);
+                    }
+                }
+                if !substitution.is_empty() {
+                    return;
+                }
+            }
+            let mut matched_structured_member = false;
+            for source_member in source_members.iter().copied() {
+                if common::type_param_info(self.ctx.types, source_member)
+                    .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+                {
+                    continue;
+                }
+                for target_member in target_members.iter().copied() {
+                    if self.return_context_types_share_outer_structure(source_member, target_member)
+                    {
+                        matched_structured_member = true;
+                        self.collect_return_context_substitution(
+                            source_member,
+                            target_member,
+                            tracked_type_params,
+                            substitution,
+                            visited,
+                        );
+                    }
+                }
+            }
+            if matched_structured_member {
+                return;
+            }
         }
 
         // When source (return type) is a union like `E | null`, decompose it
@@ -844,6 +938,24 @@ impl<'a> CheckerState<'a> {
 
         let source_eval = self.evaluate_for_return_context_substitution(source);
         let target_eval = self.evaluate_for_return_context_substitution(target);
+
+        if let (Some((source_base, source_args)), Some((target_base, target_args))) =
+            (source_application.as_ref(), target_application.as_ref())
+            && self.return_context_application_bases_match(*source_base, *target_base)
+            && source_args.len() == target_args.len()
+        {
+            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
+                self.collect_return_context_substitution(
+                    *source_arg,
+                    *target_arg,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
+            return;
+        }
+
         let function_info = match (
             call_checker::get_contextual_signature(self.ctx.types, source),
             call_checker::get_contextual_signature(self.ctx.types, target),
@@ -982,23 +1094,6 @@ impl<'a> CheckerState<'a> {
                 substitution,
                 visited,
             );
-            return;
-        }
-
-        if let (Some((source_base, source_args)), Some((target_base, target_args))) =
-            (source_application.as_ref(), target_application.as_ref())
-            && self.return_context_application_bases_match(*source_base, *target_base)
-            && source_args.len() == target_args.len()
-        {
-            for (source_arg, target_arg) in source_args.iter().zip(target_args.iter()) {
-                self.collect_return_context_substitution(
-                    *source_arg,
-                    *target_arg,
-                    tracked_type_params,
-                    substitution,
-                    visited,
-                );
-            }
             return;
         }
 

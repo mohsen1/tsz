@@ -179,6 +179,37 @@ tmp_archive() {
   printf '/tmp/tsz-cache-%s-%s.tar.gz\n' "$label" "$$"
 }
 
+create_archive() {
+  local archive="$1" base="$2"
+  shift 2
+  COPYFILE_DISABLE=1 tar --exclude='._*' -czf "$archive" -C "$base" "$@"
+}
+
+validate_typescript_cache_tree() {
+  local ref="$1"
+  python3 - "$ref" <<'PY'
+import sys
+from pathlib import Path
+
+ref = sys.argv[1]
+root = Path("TypeScript")
+ref_file = root / ".tsz-cache-ref"
+
+if not (root / "src/lib/es5.d.ts").is_file():
+    print("warning: TypeScript cache missing src/lib/es5.d.ts", file=sys.stderr)
+    raise SystemExit(1)
+
+if not ref_file.is_file() or ref_file.read_text(encoding="utf-8", errors="replace").strip() != ref:
+    print("warning: TypeScript cache ref marker mismatch", file=sys.stderr)
+    raise SystemExit(1)
+
+bad = next(root.rglob("._*"), None)
+if bad is not None:
+    print(f"warning: TypeScript cache contains AppleDouble file: {bad}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
 _restore_cargo_target_profile() {
   local label="$1" hash="$2"
   local uri fallback_uri
@@ -277,7 +308,7 @@ save_archive() {
   local archive
   archive="$(tmp_archive "$label")"
   local t0=$SECONDS
-  tar -czf "$archive" -C "$base" "${existing[@]}"
+  create_archive "$archive" "$base" "${existing[@]}"
   local pack_secs=$((SECONDS - t0))
   local size_h
   size_h="$(du -h "$archive" 2>/dev/null | awk '{print $1}')"
@@ -420,8 +451,7 @@ restore_typescript() {
     echo "TypeScript cache hit: ${cache}"
     if gsutil -q cp "$cache" "$archive" \
       && tar --warning=no-unknown-keyword -xzf "$archive" -C . \
-      && [[ -f TypeScript/src/lib/es5.d.ts ]] \
-      && [[ "$(tr -d '[:space:]' < TypeScript/.tsz-cache-ref)" == "$ref" ]]; then
+      && validate_typescript_cache_tree "$ref"; then
       return 0
     fi
     echo "warning: TypeScript cache was unusable; refetching ${ref}" >&2
@@ -440,7 +470,8 @@ restore_typescript() {
     -o "${archive}.upstream"
   tar -xzf "${archive}.upstream" -C TypeScript --strip-components=1
   echo "$ref" > TypeScript/.tsz-cache-ref
-  tar -czf "$archive" TypeScript
+  validate_typescript_cache_tree "$ref"
+  create_archive "$archive" . TypeScript
   gsutil -q cp "$archive" "$cache"
 
   test -f TypeScript/src/lib/es5.d.ts

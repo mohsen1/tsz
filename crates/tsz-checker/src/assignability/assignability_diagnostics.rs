@@ -8,6 +8,7 @@ use crate::query_boundaries::assignability::{
     classify_for_excess_properties, get_keyof_type, get_string_literal_value, is_keyof_type,
     is_type_parameter_like, object_shape_for_type,
 };
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -220,6 +221,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.is_assignable_to(source, target) {
+            return true;
+        }
+        if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
         }
 
@@ -694,6 +698,9 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(source, target) {
             return true;
         }
+        if self.is_nested_same_wrapper_application_assignment(source, target) {
+            return true;
+        }
 
         // Build a RelationRequest so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
@@ -842,6 +849,9 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(source, target) {
             return true;
         }
+        if self.should_suppress_partial_self_argument_mismatch(source, target) {
+            return true;
+        }
 
         // Build a CallArg relation request to collect the weak-union hint
         // without a separate solver call.
@@ -900,6 +910,71 @@ impl<'a> CheckerState<'a> {
         }
         self.error_argument_not_assignable_at(source, target, arg_idx);
         false
+    }
+
+    pub(crate) fn should_suppress_partial_self_argument_mismatch(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let target_display = self.format_type_for_assignability_message(target);
+        let Some(inner) = target_display
+            .strip_prefix("Partial<")
+            .and_then(|display| display.strip_suffix('>'))
+        else {
+            return false;
+        };
+
+        let source_display = self.format_type_for_assignability_message(source);
+        if source_display == inner {
+            return true;
+        }
+
+        let source_alias = self.ctx.types.get_display_alias(source);
+        if source_alias
+            .is_some_and(|alias| self.format_type_for_assignability_message(alias) == inner)
+        {
+            return true;
+        }
+
+        self.partial_inner_alias_instantiates_to_source(inner, source)
+    }
+
+    fn partial_inner_alias_instantiates_to_source(&mut self, inner: &str, source: TypeId) -> bool {
+        let Some((alias_name, arg_names)) = parse_simple_type_application_display(inner) else {
+            return false;
+        };
+        let alias_atom = self.ctx.types.intern_string(alias_name);
+        let Some(def_ids) = self.ctx.definition_store.find_defs_by_name(alias_atom) else {
+            return false;
+        };
+        let type_args: Vec<_> = arg_names
+            .iter()
+            .filter_map(|arg_name| self.ctx.type_parameter_scope.get(*arg_name).copied())
+            .collect();
+        if type_args.len() != arg_names.len() {
+            return false;
+        }
+
+        def_ids.into_iter().any(|def_id| {
+            let Some(def) = self.ctx.definition_store.get(def_id) else {
+                return false;
+            };
+            if def.kind != tsz_solver::def::DefKind::TypeAlias
+                || def.type_params.len() != type_args.len()
+            {
+                return false;
+            }
+            let Some(body) = def.body else {
+                return false;
+            };
+            let substitution =
+                TypeSubstitution::from_args(self.ctx.types, &def.type_params, &type_args);
+            let instantiated = instantiate_type(self.ctx.types, body, &substitution);
+            instantiated == source
+                || self.evaluate_type_for_assignability(instantiated)
+                    == self.evaluate_type_for_assignability(source)
+        })
     }
 
     /// Returns true when a bivariant-assignability mismatch should produce a diagnostic.
@@ -1653,4 +1728,22 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_solver::SubtypeFailureReason> {
         None
     }
+}
+
+fn parse_simple_type_application_display(display: &str) -> Option<(&str, Vec<&str>)> {
+    let (name, args) = display.split_once('<')?;
+    let args = args.strip_suffix('>')?;
+    if name.is_empty() || name.contains([' ', '<', '>']) || args.contains('<') || args.contains('>')
+    {
+        return None;
+    }
+    let arg_names: Vec<_> = args
+        .split(',')
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty() && !arg.contains(' '))
+        .collect();
+    if arg_names.is_empty() {
+        return None;
+    }
+    Some((name, arg_names))
 }

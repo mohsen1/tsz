@@ -925,7 +925,13 @@ impl<'a> CheckerState<'a> {
                             .function_like_return_parameter_type_params(&shape)
                             .into_iter()
                             .collect();
-                        if !return_param_names.is_empty() {
+                        let same_return_context_application =
+                            common::application_info(self.ctx.types, shape.return_type)
+                                .zip(common::application_info(self.ctx.types, ctx_type))
+                                .is_some_and(|((return_base, _), (ctx_base, _))| {
+                                    return_base == ctx_base
+                                });
+                        if !return_param_names.is_empty() && !same_return_context_application {
                             let mut filtered =
                                 crate::query_boundaries::common::TypeSubstitution::new();
                             for (&name, &type_id) in return_context_substitution.map() {
@@ -2175,7 +2181,11 @@ impl<'a> CheckerState<'a> {
                 .function_like_return_parameter_type_params(&shape)
                 .into_iter()
                 .collect();
-            if !return_param_names.is_empty() {
+            let same_return_context_application =
+                common::application_info(self.ctx.types, return_type)
+                    .zip(common::application_info(self.ctx.types, ctx_type))
+                    .is_some_and(|((return_base, _), (ctx_base, _))| return_base == ctx_base);
+            if !return_param_names.is_empty() && !same_return_context_application {
                 let mut filtered = crate::query_boundaries::common::TypeSubstitution::new();
                 for (&name, &type_id) in return_context_substitution.map() {
                     if !return_param_names.contains(&name) {

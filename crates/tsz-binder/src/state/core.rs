@@ -1243,8 +1243,12 @@ impl BinderState {
                     continue;
                 }
 
-                // Check if this is a module/namespace symbol
+                // Check if this is a module/namespace symbol.
+                // Type-only namespace imports (e.g., `import type * as X from 'mod'`)
+                // must NOT leak their members into file_exports — those members are
+                // only visible in type position, not value position.
                 if symbol.is_exported
+                    && !symbol.is_type_only
                     && (symbol.flags
                         & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
                         != 0

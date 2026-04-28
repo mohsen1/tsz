@@ -561,8 +561,11 @@ impl<'a> CheckerState<'a> {
             if body_type == TypeId::ERROR {
                 return None;
             }
-            if type_params.is_empty() || type_args.is_empty() {
+            if type_args.is_empty() {
                 return Some(body_type);
+            }
+            if type_params.is_empty() {
+                return None;
             }
 
             use crate::query_boundaries::common::instantiate_generic;
@@ -606,8 +609,11 @@ impl<'a> CheckerState<'a> {
         if body_type == TypeId::ERROR {
             return None;
         }
-        if type_params.is_empty() || type_args.is_empty() {
+        if type_args.is_empty() {
             return Some(body_type);
+        }
+        if type_params.is_empty() {
+            return None;
         }
         // Directly instantiate the type body with the provided type arguments.
         // Do NOT evaluate here — the caller (jsdoc_satisfies_annotation_with_pos)
@@ -1616,8 +1622,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let (body_type, type_params) = self.type_from_jsdoc_typedef(best_def?)?;
-        if type_params.is_empty() || type_args.is_empty() {
+        if type_args.is_empty() {
             return Some(body_type);
+        }
+        if type_params.is_empty() {
+            return None;
         }
 
         use crate::query_boundaries::common::instantiate_generic;

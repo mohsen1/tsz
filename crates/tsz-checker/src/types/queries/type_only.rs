@@ -81,7 +81,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         expr_idx: NodeIndex,
     ) -> bool {
-        if !self.is_type_only_import_equals_namespace_expr(expr_idx) {
+        let type_only = self.is_type_only_import_equals_namespace_expr(expr_idx);
+        if !type_only {
             return false;
         }
 
@@ -290,6 +291,14 @@ impl<'a> CheckerState<'a> {
         };
 
         if !symbol.has_any_flags(symbol_flags::ALIAS) {
+            return false;
+        }
+
+        // Only `import type X = require('...')` (with the `type` keyword) is a
+        // type-only import-equals. Plain `import X = require('...')` is a value
+        // import that yields the module namespace type `typeof import("mod")`, and
+        // property-access diagnostics on it should be TS2339, not TS1361.
+        if !symbol.is_type_only {
             return false;
         }
 

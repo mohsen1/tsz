@@ -1124,21 +1124,99 @@ impl<'a> CheckerState<'a> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let jsx_sym_id = self.resolve_jsx_namespace_target_symbol_id(jsx_sym_id)?;
         let file_idx = self.ctx.resolve_symbol_file_index(jsx_sym_id);
-        let export_sym_id = if let Some(symbol) = self.get_cross_file_symbol(jsx_sym_id) {
-            symbol.exports.as_ref()?.get(export_name)?
+        let direct_export_sym_id = if let Some(symbol) = self.get_cross_file_symbol(jsx_sym_id) {
+            symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(export_name))
         } else {
             let lib_binders = self.get_lib_binders();
             let symbol = self
                 .ctx
                 .binder
                 .get_symbol_with_libs(jsx_sym_id, &lib_binders)?;
-            symbol.exports.as_ref()?.get(export_name)?
+            symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(export_name))
         };
-        if let Some(file_idx) = file_idx {
-            self.ctx
-                .register_symbol_file_target(export_sym_id, file_idx);
+        if let Some(export_sym_id) = direct_export_sym_id {
+            if let Some(file_idx) = file_idx {
+                self.ctx
+                    .register_symbol_file_target(export_sym_id, file_idx);
+            }
+            return Some(export_sym_id);
         }
-        Some(export_sym_id)
+
+        self.resolve_jsx_namespace_merged_export_symbol_id(export_name)
+    }
+
+    pub(crate) fn resolve_jsx_namespace_merged_export_symbol_id(
+        &mut self,
+        export_name: &str,
+    ) -> Option<SymbolId> {
+        if let Some(sym_id) = self.jsx_export_from_binder(self.ctx.binder, None, export_name) {
+            return Some(sym_id);
+        }
+
+        if let Some(all_binders) = self.ctx.all_binders.as_ref().map(std::sync::Arc::clone) {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                if let Some(sym_id) =
+                    self.jsx_export_from_binder(binder, Some(file_idx), export_name)
+                {
+                    return Some(sym_id);
+                }
+            }
+        }
+
+        let lib_binders = self.get_lib_binders();
+        for binder in lib_binders.iter() {
+            if let Some(sym_id) = self.jsx_export_from_binder(binder, None, export_name) {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
+    fn jsx_export_from_binder(
+        &self,
+        binder: &tsz_binder::BinderState,
+        file_idx: Option<usize>,
+        export_name: &str,
+    ) -> Option<SymbolId> {
+        let mut candidates: Vec<SymbolId> = Vec::new();
+        if let Some(augmentations) = binder.global_augmentations.get("JSX") {
+            candidates.extend(
+                augmentations.iter().filter_map(|augmentation| {
+                    binder.node_symbols.get(&augmentation.node.0).copied()
+                }),
+            );
+        }
+        if let Some(sym_id) = binder.file_locals.get("JSX") {
+            candidates.push(sym_id);
+        }
+
+        for jsx_sym_id in candidates {
+            let Some(symbol) = binder.get_symbol(jsx_sym_id) else {
+                continue;
+            };
+            let Some(export_sym_id) = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(export_name))
+            else {
+                continue;
+            };
+            if let Some(file_idx) = file_idx {
+                self.ctx.register_symbol_file_target(jsx_sym_id, file_idx);
+                self.ctx
+                    .register_symbol_file_target(export_sym_id, file_idx);
+            }
+            return Some(export_sym_id);
+        }
+
+        None
     }
 
     pub(in crate::checkers_domain::jsx) fn resolve_jsx_namespace_target_symbol_id(

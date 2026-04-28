@@ -1165,9 +1165,22 @@ pub(super) fn collect_diagnostics(
                     .collect()
             } else {
                 tsz::parallel::ensure_rayon_global_pool();
+                // PERF: force `with_min_len(1)` so rayon's work-stealing
+                // scheduler doesn't pre-chunk the file list into large blocks.
+                // Per-file check time varies wildly (a file with one type
+                // alias is ~ms; a file that triggers a deep
+                // `delegate_cross_arena_symbol_resolution` cascade through
+                // ts-essentials/react.d.ts can take seconds). With default
+                // chunking the worker that draws the heavy chunk gates the
+                // entire batch. Sample profiles on subset3 (1429 files, only
+                // one worker active for the bulk of the check phase)
+                // confirmed this skew. Fine-grained stealing lets idle
+                // workers grab one file at a time from the busy worker's
+                // queue.
                 work_items
                     .par_iter()
                     .zip(per_file_binders.into_par_iter())
+                    .with_min_len(1)
                     .map(|(&file_idx, binder)| {
                         let context = CheckFileForParallelContext {
                             file_idx,
