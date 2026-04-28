@@ -2514,6 +2514,20 @@ impl ScannerState {
             return self.token;
         }
 
+        // A merge-conflict marker (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`)
+        // can appear inside JSX child content. Check before the LESS_THAN
+        // angle-bracket path: a 7-`<` run at line start is a conflict marker,
+        // not the start of a nested JSX tag. Mirrors the regular-mode handler
+        // which checks `is_conflict_marker_trivia()` first for `<`/`=`/`>`/`|`.
+        if self.is_conflict_marker_trivia() {
+            self.scan_conflict_marker_trivia();
+            if self.skip_trivia {
+                return self.scan_jsx_token(allow_multiline_jsx_text);
+            }
+            self.token = SyntaxKind::ConflictMarkerTrivia;
+            return self.token;
+        }
+
         let ch = self.char_code_unchecked(self.pos);
 
         // Check for JSX opening/closing angle brackets
