@@ -212,6 +212,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::Identifier as u16
                 || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION =>
             {
+                if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && self.get_node_type(expr_idx) == Some(tsz_solver::types::TypeId::ANY)
+                {
+                    return Some("any".to_string());
+                }
                 self.reference_declared_type_annotation_text(expr_idx)
                     .or_else(|| self.value_reference_symbol_type_text(expr_idx))
                     .or_else(|| self.undefined_identifier_type_text(expr_idx))
