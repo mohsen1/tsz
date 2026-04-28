@@ -7,11 +7,7 @@ use super::*;
 #[test]
 fn test_function_declaration() {
     let source = "export function add(a: number, b: number): number { return a + b; }";
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let root = parser.parse_source_file();
-
-    let mut emitter = DeclarationEmitter::new(&parser.arena);
-    let output = emitter.emit(root);
+    let output = emit_dts_with_usage_analysis(source);
 
     assert!(
         output.contains("export declare function add"),
@@ -1062,6 +1058,136 @@ export function Point(x, y) {
     assert!(
         output.contains("x: number | undefined;") && output.contains("y: number | undefined;"),
         "Expected this-assigned properties to be recovered on the companion class: {output}"
+    );
+}
+
+#[test]
+fn test_ts_late_bound_function_assignments_emit_namespace() {
+    let source = r#"
+export function foo() {}
+foo.bar = 12;
+const strMem = "strMemName";
+foo[strMem] = "ok";
+const dashStrMem = "dashed-str-mem";
+foo[dashStrMem] = "ok";
+const numMem = 42;
+foo[numMem] = "ok";
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let func_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::FUNCTION_DECLARATION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing function declaration");
+    let func_node = parser.arena.get(func_idx).expect("missing function node");
+    let func = parser
+        .arena
+        .get_function(func_node)
+        .expect("missing function data");
+    let member_names: Vec<String> = emitter
+        .collect_ts_late_bound_assignment_members(func.name)
+        .into_iter()
+        .map(|member| member.property_name_text)
+        .collect();
+    assert_eq!(
+        member_names,
+        vec!["bar", "strMemName", "\"dashed-str-mem\"", "42"],
+        "Expected late-bound assignment collection to preserve declaration key text",
+    );
+
+    let output = emitter.emit(root);
+    let expected = r#"export declare function foo(): void;
+export declare namespace foo {
+    var bar: number;
+    var strMemName: string;
+}"#;
+    assert!(
+        output.contains(expected),
+        "Expected TS late-bound function assignments to emit a merged namespace: {output}"
+    );
+}
+
+#[test]
+fn test_ts_late_bound_arrow_assignments_preserve_key_text_and_types() {
+    let source = r#"
+const c = "C";
+const num = 1;
+const numStr = "10";
+const withWhitespace = "foo bar";
+const emoji = "🤷‍♂️";
+export const arrow = () => {};
+arrow["B"] = "bar";
+export const arrow2 = () => {};
+arrow2[c] = 100;
+export const arrow3 = () => {};
+arrow3[77] = 0;
+export const arrow4 = () => {};
+arrow4[num] = 0;
+export const arrow5 = () => {};
+arrow5["101"] = 0;
+export const arrow6 = () => {};
+arrow6[numStr] = 0;
+export const arrow7 = () => {};
+arrow7["qwe rty"] = 0;
+export const arrow8 = () => {};
+arrow8[withWhitespace] = 0;
+export const arrow9 = () => {};
+arrow9[emoji] = 0;
+"#;
+
+    let output = emit_dts_with_usage_analysis(source);
+    let expected = r#"export declare const arrow: {
+    (): void;
+    B: string;
+};
+export declare const arrow2: {
+    (): void;
+    C: number;
+};
+export declare const arrow3: {
+    (): void;
+    77: number;
+};
+export declare const arrow4: {
+    (): void;
+    1: number;
+};
+export declare const arrow5: {
+    (): void;
+    "101": number;
+};
+export declare const arrow6: {
+    (): void;
+    "10": number;
+};
+export declare const arrow7: {
+    (): void;
+    "qwe rty": number;
+};
+export declare const arrow8: {
+    (): void;
+    "foo bar": number;
+};
+export declare const arrow9: {
+    (): void;
+    "\uD83E\uDD37\u200D\u2642\uFE0F": number;
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected TS late-bound arrow assignments to preserve declaration key text and types: {output}"
     );
 }
 

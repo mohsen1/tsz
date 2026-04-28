@@ -128,15 +128,25 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
-                && (self.function_initializer_has_inline_parameter_comments(initializer)
+                && (self.emit_ts_late_bound_function_initializer_type_annotation(
+                    decl_name,
+                    initializer,
+                ) || ((self.function_initializer_has_inline_parameter_comments(initializer)
                     || self.function_initializer_is_self_returning_for(initializer, decl_name)
                     || self.function_initializer_returns_unique_identifier(initializer)
                     || self.function_initializer_has_typeof_in_param_annotations(initializer)
                     || self.function_initializer_has_destructured_parameters(initializer))
-                && {
-                    self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
-                    self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
-                }
+                    && {
+                        self.maybe_emit_non_portable_function_return_diagnostic(
+                            decl_name,
+                            initializer,
+                        );
+                        self.emit_function_initializer_type_annotation(
+                            decl_idx,
+                            decl_name,
+                            initializer,
+                        )
+                    }))
             {
             } else if let Some(resolved_type) = self.resolve_declaration_type_text(
                 &[decl_idx, decl_name],
