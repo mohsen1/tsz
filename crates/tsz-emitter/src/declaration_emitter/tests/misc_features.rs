@@ -785,6 +785,24 @@ fn test_destructuring_variable_declaration_groups_typed_bindings() {
 }
 
 #[test]
+fn test_destructured_parameter_with_defaulted_property_uses_multiline_object_type() {
+    let output = emit_dts("const k = ({ x: z = 'y' }) => {};");
+    assert!(
+        output.contains("declare const k: ({ x: z }: {\n    x?: string;\n}) => void;"),
+        "Expected defaulted object binding parameter to emit a multiline object type: {output}"
+    );
+}
+
+#[test]
+fn test_destructured_parameter_defaulting_from_any_emits_any() {
+    let output = emit_dts("var a; function f({ p: {} = a } = a) {}");
+    assert!(
+        output.contains("declare function f({ p: {} }?: any): void;"),
+        "Expected destructured parameter defaulting from any to emit any: {output}"
+    );
+}
+
+#[test]
 fn test_destructuring_parameter_properties_emit_individual_class_properties() {
     let source = "class C { constructor(public [x, y]: [string, number]) {} }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

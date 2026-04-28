@@ -888,6 +888,18 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        if param_initializer.is_some()
+            && (self.binding_pattern_initializer_is_unannotated_var(param_initializer)
+                || (self
+                    .get_node_type_or_names(&[param_initializer])
+                    .is_none_or(|type_id| type_id.is_any_unknown_or_error())
+                    && self
+                        .allowlisted_initializer_type_text(param_initializer)
+                        .is_none()))
+        {
+            return Some("any".to_string());
+        }
+
         let source_type = self
             .parameter_type_from_enclosing_signature(param_idx)
             .or_else(|| {
@@ -898,6 +910,29 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.binding_pattern_type_text(param_name, source_type, param_initializer)
             .or_else(|| self.synthesize_destructured_param_type(param_name))
+    }
+
+    fn binding_pattern_initializer_is_unannotated_var(&self, initializer: NodeIndex) -> bool {
+        let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(sym_id) = self.value_reference_symbol(initializer) else {
+            return false;
+        };
+        binder
+            .symbols
+            .get(sym_id)
+            .and_then(|symbol| symbol.declarations.first().copied())
+            .and_then(|decl_idx| self.arena.get(decl_idx))
+            .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+            .is_some_and(|decl| decl.type_annotation.is_none() && decl.initializer.is_none())
     }
 
     fn binding_pattern_type_text(
@@ -1173,16 +1208,13 @@ impl<'a> DeclarationEmitter<'a> {
             member_text.push(';');
             members.push(member_text);
         }
-        if members.len() > 1 {
-            let member_indent = "    ".repeat((self.indent_level + 1) as usize);
-            let closing_indent = "    ".repeat(self.indent_level as usize);
-            let lines: Vec<String> = members
-                .into_iter()
-                .map(|member| format!("{member_indent}{member}"))
-                .collect();
-            return Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")));
-        }
-        Some(format!("{{ {} }}", members.join(" ")))
+        let member_indent = "    ".repeat((self.indent_level + 1) as usize);
+        let closing_indent = "    ".repeat(self.indent_level as usize);
+        let lines: Vec<String> = members
+            .into_iter()
+            .map(|member| format!("{member_indent}{member}"))
+            .collect();
+        Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
     }
 
     fn type_text_from_initializer(&self, initializer: NodeIndex) -> Option<String> {
