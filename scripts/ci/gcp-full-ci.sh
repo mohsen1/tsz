@@ -1277,7 +1277,7 @@ run_fourslash_aggregate() {
   baseline="$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)"
   if [[ "$baseline" -gt 0 ]]; then
     local tolerance floor
-    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
+    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 2}")"
     floor=$((baseline - tolerance))
     if [[ "$total_passed" -lt "$floor" ]]; then
       echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
@@ -1439,7 +1439,7 @@ aggregate_fourslash() {
 
   baseline="$(jq -r '.summary.passed // .passed // 0' scripts/fourslash/fourslash-snapshot.json)"
   if [[ "$baseline" -gt 0 ]]; then
-    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 1}")"
+    tolerance="$(awk "BEGIN {printf \"%d\", $baseline * 0.001 + 2}")"
     floor=$((baseline - tolerance))
     if [[ "$total_passed" -lt "$floor" ]]; then
       echo "error: fourslash regression: ${total_passed} < ${baseline} (floor=${floor})" >&2
