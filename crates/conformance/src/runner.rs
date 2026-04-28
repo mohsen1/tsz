@@ -310,6 +310,19 @@ fn is_appledouble_file(path: &Path) -> bool {
         .is_some_and(|name| name.starts_with("._"))
 }
 
+fn stable_shard_for_path(path: &Path, test_dir: &Path, shard_count: usize) -> usize {
+    let key = path
+        .strip_prefix(test_dir)
+        .unwrap_or(path)
+        .to_string_lossy();
+    let mut hash = 1_469_598_103_934_665_603_u64;
+    for byte in key.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    (hash as usize) % shard_count
+}
+
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -894,9 +907,8 @@ impl Runner {
         if let Some((shard_index, shard_count)) = self.parse_shard_spec()? {
             files = files
                 .into_iter()
-                .enumerate()
-                .filter_map(|(index, path)| {
-                    if index % shard_count == shard_index {
+                .filter_map(|path| {
+                    if stable_shard_for_path(&path, test_dir, shard_count) == shard_index {
                         Some(path)
                     } else {
                         None
