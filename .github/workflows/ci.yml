@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, labeled]
   merge_group:
   push:
     branches: [main]
@@ -37,12 +37,36 @@ jobs:
           set -euo pipefail
           should_run=true
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # The `labeled` event triggers on every label add. We only care
+            # about the `ci-approved` label (used to opt fork PRs into CI).
+            # For any other label, this would just duplicate the existing
+            # CI run from the same SHA's open/sync events, so skip.
+            if [[ "${{ github.event.action }}" == "labeled" \
+                  && "${{ github.event.label.name }}" != "ci-approved" ]]; then
+              echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
+              should_run=false
+            fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
               should_run=false
             fi
             if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
-              echo "Skipping self-hosted CI for fork PRs."
-              should_run=false
+              # Fork PRs cannot use self-hosted runners by default (untrusted
+              # code on shared infra). A maintainer must add the
+              # `ci-approved` label after reviewing the diff to opt the PR
+              # into full CI. Without that label, only the lightweight
+              # ubuntu-latest checks run, which means heavy regressions
+              # (e.g. conformance) cannot be caught — which is exactly how
+              # PR #1608 slipped 72 conformance regressions into main.
+              has_label=$(gh api \
+                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
+                --jq '.labels // [] | map(.name) | index("ci-approved") // empty' \
+                2>/dev/null || true)
+              if [[ -n "$has_label" ]]; then
+                echo "Fork PR has ci-approved label — running full CI on self-hosted runners."
+              else
+                echo "Skipping self-hosted CI for fork PRs (add 'ci-approved' label to enable)."
+                should_run=false
+              fi
             fi
           elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
             # Skip redundant main CI when the push is a PR merge already validated by PR CI.
