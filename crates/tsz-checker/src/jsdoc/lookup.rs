@@ -20,6 +20,7 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::SourceFileData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -93,6 +94,29 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn source_file_has_jsdoc_typedef_named(source_file: &SourceFileData, name: &str) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        if source_file.comments.is_empty() {
+            return false;
+        }
+
+        let text = &source_file.text;
+        if !text.contains("@typedef") && !text.contains("@callback") && !text.contains("@import") {
+            return false;
+        }
+
+        source_file.comments.iter().any(|comment| {
+            if !is_jsdoc_comment(comment, text) {
+                return false;
+            }
+            let content = get_jsdoc_content(comment, text);
+            Self::parse_jsdoc_typedefs(&content)
+                .iter()
+                .any(|(typedef_name, _)| typedef_name == name)
+        })
+    }
+
     pub(crate) fn jsdoc_callable_type_annotation_for_node(
         &mut self,
         idx: NodeIndex,
@@ -161,6 +185,7 @@ impl<'a> CheckerState<'a> {
             .source_files
             .iter()
             .enumerate()
+            .filter(|(_, source_file)| Self::source_file_has_jsdoc_typedef_named(source_file, name))
             .map(|(source_file_idx, source_file)| {
                 (
                     source_file_idx,
@@ -206,6 +231,10 @@ impl<'a> CheckerState<'a> {
             }
 
             for source_file in &arena.source_files {
+                if !Self::source_file_has_jsdoc_typedef_named(source_file, name) {
+                    continue;
+                }
+
                 let comments = source_file.comments.clone();
                 let source_text = source_file.text.to_string();
                 let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
