@@ -442,7 +442,7 @@ impl<'a> CheckerState<'a> {
             // Thread-safe fast path: check the global resolved_symbol_types cache.
             // When parallel checking is enabled, another thread may have already
             // resolved this symbol's type via cross-file delegation.
-            if needs_cross_file_delegation {
+            if needs_cross_file_delegation && self.ctx.share_owner_symbol_type_results {
                 let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
                 if let Some(cached_type) = self
                     .ctx
@@ -705,7 +705,10 @@ impl<'a> CheckerState<'a> {
             }
 
             // Write through to the global resolved_symbol_types cache for parallel threads.
-            if needs_cross_file_delegation && result != TypeId::ERROR {
+            if needs_cross_file_delegation
+                && self.ctx.share_owner_symbol_type_results
+                && result != TypeId::ERROR
+            {
                 let target_file_idx = cross_file_idx.unwrap_or(self.ctx.current_file_idx);
                 self.ctx.definition_store.cache_resolved_symbol_type(
                     sym_id.0,
@@ -741,7 +744,8 @@ impl<'a> CheckerState<'a> {
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx = self.ctx.get_file_idx_for_arena(symbol_arena);
-        if let Some(file_idx) = query_file_idx
+        if self.ctx.share_owner_symbol_type_results
+            && let Some(file_idx) = query_file_idx
             && let Some((cached_type, cached_params)) =
                 self.ctx.definition_store.get_resolved_cross_file_query(
                     CROSS_FILE_QUERY_CLASS_INSTANCE_TYPE,
@@ -808,7 +812,8 @@ impl<'a> CheckerState<'a> {
         checker.ctx.ensure_type_env_has_definition_store();
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
-        if let (Some(file_idx), Some((type_id, params))) = (query_file_idx, result.as_ref())
+        if self.ctx.share_owner_symbol_type_results
+            && let (Some(file_idx), Some((type_id, params))) = (query_file_idx, result.as_ref())
             && *type_id != TypeId::UNKNOWN
             && *type_id != TypeId::ERROR
         {
@@ -870,7 +875,8 @@ impl<'a> CheckerState<'a> {
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx =
             delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
-        if let Some(file_idx) = query_file_idx
+        if self.ctx.share_owner_symbol_type_results
+            && let Some(file_idx) = query_file_idx
             && let Some((cached_type, _)) = self.ctx.definition_store.get_resolved_cross_file_query(
                 CROSS_FILE_QUERY_INTERFACE_TYPE,
                 file_idx as u32,
@@ -1011,7 +1017,9 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_to_def(result, def_id);
-            if let Some(file_idx) = query_file_idx {
+            if self.ctx.share_owner_symbol_type_results
+                && let Some(file_idx) = query_file_idx
+            {
                 self.ctx.definition_store.cache_resolved_cross_file_query(
                     CROSS_FILE_QUERY_INTERFACE_TYPE,
                     file_idx as u32,
@@ -1045,6 +1053,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
             .unwrap_or(self.ctx.binder);
         if type_args.is_none()
+            && self.ctx.share_owner_symbol_type_results
             && let Some(file_idx) = delegate_file_idx
             && let Some((cached_type, _)) = self.ctx.definition_store.get_resolved_cross_file_query(
                 CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
@@ -1139,6 +1148,7 @@ impl<'a> CheckerState<'a> {
 
         if result != TypeId::UNKNOWN && result != TypeId::ERROR {
             if type_args.is_none()
+                && self.ctx.share_owner_symbol_type_results
                 && let Some(file_idx) = delegate_file_idx
             {
                 self.ctx.definition_store.cache_resolved_cross_file_query(
