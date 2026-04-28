@@ -672,6 +672,13 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(accessor_body)
                 {
                     self.write(": void");
+                } else if type_id == tsz_solver::types::TypeId::ANY
+                    && accessor_body.is_some()
+                    && let Some(return_text) =
+                        self.function_body_preferred_return_type_text(accessor_body)
+                {
+                    self.write(": ");
+                    self.write(&return_text);
                 } else {
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
@@ -715,9 +722,15 @@ impl<'a> DeclarationEmitter<'a> {
 
         let parent_idx = self.arena.get_extended(accessor_idx)?.parent;
         let parent_node = self.arena.get(parent_idx)?;
-        let class_decl = self.arena.get_class(parent_node)?;
+        let member_nodes = if let Some(class_decl) = self.arena.get_class(parent_node) {
+            class_decl.members.nodes.clone()
+        } else if let Some(object) = self.arena.get_literal_expr(parent_node) {
+            object.elements.nodes.clone()
+        } else {
+            return None;
+        };
 
-        for &member_idx in &class_decl.members.nodes {
+        for member_idx in member_nodes {
             if member_idx == accessor_idx {
                 continue;
             }
@@ -762,6 +775,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.comment_emit_idx = saved_comment_idx;
                 self.pending_source_pos = saved_pending_source_pos;
                 return Some(type_writer.take_output());
+            }
+
+            if let Some(decl) = self.jsdoc_param_decl_for_parameter(param_idx, 0) {
+                return Some(decl.type_text);
             }
 
             if let Some(type_id) = self.get_node_type_or_names(&[param_idx, param.name]) {

@@ -1419,6 +1419,11 @@ impl<'a> DeclarationEmitter<'a> {
                     "void".to_string()
                 } else if let Some(text) = self
                     .preferred_expression_type_text(ret.expression)
+                    .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
+                } else if let Some(text) = self
+                    .local_variable_initializer_type_text(ret.expression)
                     .filter(|text| !text.is_empty())
                 {
                     text
@@ -1446,14 +1451,20 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .get_if_statement(stmt_node)
                 .is_some_and(|if_data| {
+                    if if_data.else_statement.is_none() {
+                        let mut ignored = preferred.clone();
+                        return self.collect_unique_return_type_text_from_statement(
+                            if_data.then_statement,
+                            &mut ignored,
+                        );
+                    }
                     self.collect_unique_return_type_text_from_statement(
                         if_data.then_statement,
                         preferred,
-                    ) && if_data.else_statement.is_some()
-                        && self.collect_unique_return_type_text_from_statement(
-                            if_data.else_statement,
-                            preferred,
-                        )
+                    ) && self.collect_unique_return_type_text_from_statement(
+                        if_data.else_statement,
+                        preferred,
+                    )
                 }),
             k if k == syntax_kind_ext::TRY_STATEMENT => {
                 self.arena.get_try(stmt_node).is_some_and(|try_data| {
@@ -1485,6 +1496,32 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    fn local_variable_initializer_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if !var_decl.initializer.is_some() {
+                continue;
+            }
+            if let Some(type_text) = self
+                .preferred_expression_type_text(var_decl.initializer)
+                .or_else(|| self.infer_fallback_type_text_at(var_decl.initializer, 0))
+            {
+                return Some(type_text);
+            }
+        }
+        None
     }
 
     fn function_expression_type_text_from_ast(&self, expr_idx: NodeIndex) -> Option<String> {

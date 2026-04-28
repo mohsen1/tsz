@@ -667,7 +667,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain =
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
-        self.emit_jsdoc_comment_chain(&jsdoc_chain);
+        if jsdoc_chain.len() == 1
+            && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
+        {
+            self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+        } else {
+            self.emit_jsdoc_comment_chain(&jsdoc_chain);
+        }
         let saved_comment_idx = self.comment_emit_idx;
         self.comment_emit_idx = self
             .all_comments
