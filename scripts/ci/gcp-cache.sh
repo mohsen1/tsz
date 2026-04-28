@@ -395,11 +395,11 @@ suite_caches() {
       echo "typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
       ;;
     emit-shard|fourslash-shard)
-      # Shards get TS harness via the node-harness artifact and tsz via
-      # the dist-fast-binaries artifact, so no harness/dist-fast restore
-      # is needed beyond TS source for path resolution + scripts deps for
-      # Node tooling.
-      echo "typescript-source npm scripts-node-modules"
+      # Shards get scripts/node_modules, scripts/emit/dist, TypeScript/built,
+      # and TypeScript/node_modules via the node-harness artifact, and tsz via
+      # the dist-fast-binaries artifact. Restore only TypeScript source here;
+      # restoring npm/scripts-node_modules from GCS is redundant artifact I/O.
+      echo "typescript-source"
       ;;
     node-harness-prep)
       # Builds TypeScript/built/local + scripts/emit/dist for downstream
