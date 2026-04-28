@@ -589,6 +589,33 @@ impl<'a> CheckerState<'a> {
     pub(super) fn jsdoc_template_constraints_before_typedef_host(
         jsdoc: &str,
     ) -> Vec<(String, Option<String>)> {
+        // tsc collects all `@template` tags in a typedef-hosting JSDoc and
+        // applies them to the typedef regardless of position relative to the
+        // `@typedef` tag (templates may appear before OR after).  When the
+        // JSDoc carries only one `@typedef`/`@callback`/`@overload` host,
+        // collect the full set of templates so post-host placements still
+        // bind. Multi-host JSDocs fall back to the pre-host slice to avoid
+        // over-applying templates across distinct typedefs.
+        let host_count = jsdoc
+            .lines()
+            .filter(|raw_line| {
+                let trimmed = raw_line
+                    .trim()
+                    .trim_start_matches("/**")
+                    .trim_start_matches("/*")
+                    .trim_start_matches('*')
+                    .trim()
+                    .trim_end_matches("*/")
+                    .trim();
+                trimmed.starts_with("@typedef")
+                    || trimmed.starts_with("@callback")
+                    || trimmed.starts_with("@overload")
+            })
+            .count();
+        if host_count <= 1 {
+            return Self::jsdoc_template_constraints(jsdoc);
+        }
+
         let mut prefix = String::new();
         for raw_line in jsdoc.lines() {
             let trimmed = raw_line
@@ -1027,5 +1054,100 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::state::CheckerState;
+
+    #[test]
+    fn parse_jsdoc_typedefs_collects_templates_after_typedef() {
+        // tsc binds `@template` tags placed after `@typedef` to the typedef
+        // (the order in source doesn't matter when there is exactly one
+        // typedef-style host in the JSDoc).
+        let jsdoc = "/**\n\
+             * @typedef {{ value: T }} Box\n\
+             * @template T\n\
+             */";
+        let typedefs = CheckerState::parse_jsdoc_typedefs(jsdoc);
+        assert_eq!(
+            typedefs.len(),
+            1,
+            "expected one typedef, got len={}",
+            typedefs.len()
+        );
+        let (name, info) = &typedefs[0];
+        assert_eq!(name, "Box");
+        assert_eq!(
+            info.template_params.len(),
+            1,
+            "expected `T` template applied to typedef `Box`, got len={}",
+            info.template_params.len()
+        );
+        assert_eq!(info.template_params[0].name, "T");
+    }
+
+    #[test]
+    fn parse_jsdoc_typedefs_collects_constrained_templates_after_typedef() {
+        // The contravariantOnlyInferenceFromAnnotatedFunctionJs scenario: a
+        // mapped-type typedef with two `@template` tags placed after the
+        // `@typedef` line, including a constrained template.
+        let jsdoc = "/**\n\
+             * @typedef {{ [K in keyof B]: { fn: (a: A, b: B) => void; thing: B[K]; } }} Funcs\n\
+             * @template A\n\
+             * @template {Record<string, unknown>} B\n\
+             */";
+        let typedefs = CheckerState::parse_jsdoc_typedefs(jsdoc);
+        assert_eq!(
+            typedefs.len(),
+            1,
+            "expected one typedef, got len={}",
+            typedefs.len()
+        );
+        let (name, info) = &typedefs[0];
+        assert_eq!(name, "Funcs");
+        let names: Vec<&str> = info
+            .template_params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["A", "B"],
+            "expected `A` and `B` templates applied to typedef `Funcs`, got len={}",
+            info.template_params.len()
+        );
+        assert_eq!(
+            info.template_params[1].constraint.as_deref(),
+            Some("Record<string, unknown>"),
+            "expected constraint preserved on `B`",
+        );
+    }
+
+    #[test]
+    fn parse_jsdoc_typedefs_keeps_pre_host_templates_for_multi_typedef_jsdoc() {
+        // When a single JSDoc carries multiple typedefs, fall back to the
+        // pre-host slice so templates don't bleed across typedefs.
+        let jsdoc = "/**\n\
+             * @template T\n\
+             * @typedef {T[]} ArrayLike\n\
+             * @typedef {{ value: T }} Box\n\
+             */";
+        let typedefs = CheckerState::parse_jsdoc_typedefs(jsdoc);
+        assert_eq!(
+            typedefs.len(),
+            2,
+            "expected two typedefs, got len={}",
+            typedefs.len()
+        );
+        for (name, info) in &typedefs {
+            assert_eq!(
+                info.template_params.len(),
+                1,
+                "expected `T` template applied to typedef `{name}`, got len={}",
+                info.template_params.len()
+            );
+        }
     }
 }
