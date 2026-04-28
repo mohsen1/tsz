@@ -2462,6 +2462,33 @@ function* f() {
     );
 }
 
+/// `<div>` followed by a Git merge conflict marker (and EOF) parses as a
+/// type assertion in `.ts` context. tsc anchors the missing-expression
+/// TS1109 at the position right after `>`, not at EOF after the conflict
+/// marker.
+#[test]
+fn test_type_assertion_missing_operand_anchors_at_after_gt_after_conflict_marker() {
+    let source = "const x = <div>\n<<<<<<< HEAD";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let ts1109: Vec<_> = parser
+        .parse_diagnostics
+        .iter()
+        .filter(|d| d.code == 1109)
+        .collect();
+    assert_eq!(
+        ts1109.len(),
+        1,
+        "Expected exactly one TS1109, got: {ts1109:?}",
+    );
+    let after_gt = source.find("<div>").unwrap() as u32 + "<div>".len() as u32;
+    let actual_start = ts1109[0].start;
+    assert_eq!(
+        actual_start, after_gt,
+        "TS1109 must anchor at end of `<div>` (offset {after_gt}), got offset {actual_start}",
+    );
+}
+
 #[test]
 fn test_yield_with_parens_after_type_assertion_is_valid() {
     // yield with parentheses after type assertion should be valid

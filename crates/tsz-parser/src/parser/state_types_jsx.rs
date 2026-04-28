@@ -607,7 +607,24 @@ impl ParserState {
             );
         }
 
+        // When a Git merge conflict marker terminated trivia scanning before
+        // the type-assertion's operand and the next token is EOF, anchor the
+        // missing-expression diagnostic at the position right after the `>`
+        // of the type assertion (matching tsc), not at the EOF position.
+        let has_conflict_marker_before_operand = self.is_token(SyntaxKind::EndOfFileToken)
+            && self.scanner.get_scanner_diagnostics().iter().any(|d| {
+                d.code == tsz_common::diagnostics::diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED
+            });
         let expression = if yield_after_gt {
+            NodeIndex::NONE
+        } else if has_conflict_marker_before_operand {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                after_gt_full_start,
+                0,
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
             NodeIndex::NONE
         } else {
             self.parse_unary_expression()
