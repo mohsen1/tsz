@@ -582,9 +582,18 @@ impl<'a> CheckerState<'a> {
         // 3. Collect prototype property assignments for constructor functions
         surface.prototype_members = self.collect_prototype_exports_for_file(target_file_idx);
 
+        // A file with `Object.defineProperty(exports, ...)` calls is a CommonJS
+        // module even when every name argument resolves to a non-literal
+        // expression. Without this, the file's synthesized export type is
+        // dropped and import-side accesses fall back to ANY rather than
+        // surfacing as TS2339. (tsc's binder recognizes the `defineProperty`
+        // shape as an export indicator regardless of name extractability.)
+        let has_define_property_call = self.file_has_define_property_export_call(target_file_idx);
+
         surface.has_commonjs_exports = surface.direct_export_type.is_some()
             || !surface.named_exports.is_empty()
-            || !surface.prototype_members.is_empty();
+            || !surface.prototype_members.is_empty()
+            || has_define_property_call;
 
         surface
     }
