@@ -183,21 +183,7 @@ impl<'a> CheckerState<'a> {
             .strip_prefix("./")
             .or_else(|| module_specifier.strip_prefix("../"))
             .unwrap_or(module_specifier);
-        stripped
-            .strip_suffix(".d.ts")
-            .or_else(|| stripped.strip_suffix(".d.tsx"))
-            .or_else(|| stripped.strip_suffix(".d.mts"))
-            .or_else(|| stripped.strip_suffix(".d.cts"))
-            .or_else(|| stripped.strip_suffix(".ts"))
-            .or_else(|| stripped.strip_suffix(".tsx"))
-            .or_else(|| stripped.strip_suffix(".mts"))
-            .or_else(|| stripped.strip_suffix(".cts"))
-            .or_else(|| stripped.strip_suffix(".js"))
-            .or_else(|| stripped.strip_suffix(".jsx"))
-            .or_else(|| stripped.strip_suffix(".mjs"))
-            .or_else(|| stripped.strip_suffix(".cjs"))
-            .unwrap_or(stripped)
-            .to_string()
+        tsz_common::file_extensions::strip_known_extension(stripped).to_string()
     }
 
     fn import_type_namespace_name(&self, module_specifier: &str) -> String {

@@ -847,38 +847,19 @@ impl<'a> CheckerState<'a> {
     fn current_file_explicit_js_module_specifier(&self) -> Option<&str> {
         let paths = self.ctx.resolved_module_paths.as_ref()?;
         paths.iter().find_map(|((_, specifier), &target_idx)| {
-            (target_idx == self.ctx.current_file_idx
-                && matches!(
-                    specifier,
-                    s if s.ends_with(".js")
-                        || s.ends_with(".jsx")
-                        || s.ends_with(".mjs")
-                        || s.ends_with(".cjs")
-                ))
-            .then_some(specifier.as_str())
+            let ends_with_js_ext = tsz_common::file_extensions::JS_FAMILY_EXTENSIONS
+                .iter()
+                .any(|ext| specifier.ends_with(ext));
+            (target_idx == self.ctx.current_file_idx && ends_with_js_ext)
+                .then_some(specifier.as_str())
         })
     }
 
     fn strip_known_module_extension(path: &str) -> &str {
-        for ext in &[
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(stripped) = path.strip_suffix(ext) {
-                return stripped;
-            }
-        }
-        path
+        tsz_common::file_extensions::strip_known_extension(path)
     }
 
     fn strip_typescript_module_extension(path: &str) -> &str {
-        for ext in &[
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts",
-        ] {
-            if let Some(stripped) = path.strip_suffix(ext) {
-                return stripped;
-            }
-        }
-        path
+        tsz_common::file_extensions::strip_ts_extension(path)
     }
 }
