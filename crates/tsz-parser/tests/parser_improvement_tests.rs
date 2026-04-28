@@ -2479,14 +2479,13 @@ fn test_type_assertion_missing_operand_anchors_at_after_gt_after_conflict_marker
     assert_eq!(
         ts1109.len(),
         1,
-        "Expected exactly one TS1109, got: {:?}",
-        ts1109
+        "Expected exactly one TS1109, got: {ts1109:?}",
     );
     let after_gt = source.find("<div>").unwrap() as u32 + "<div>".len() as u32;
+    let actual_start = ts1109[0].start;
     assert_eq!(
-        ts1109[0].start, after_gt,
-        "TS1109 must anchor at end of `<div>` (offset {after_gt}), got offset {}",
-        ts1109[0].start
+        actual_start, after_gt,
+        "TS1109 must anchor at end of `<div>` (offset {after_gt}), got offset {actual_start}",
     );
 }
 
