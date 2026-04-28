@@ -700,8 +700,46 @@ impl ParserState {
                     // Reuse the child's closing element as our own
                     child_closing_idx
                 } else {
-                    // Parse our own closing element
-                    let closing = self.parse_jsx_closing_element();
+                    // When a Git merge conflict marker terminated JSX child
+                    // scanning before any closing tag and we're at EOF, tsc
+                    // anchors the missing `</` error at the end of the opening
+                    // element rather than at the EOF position. Emit our own
+                    // diagnostic at that anchor and synthesize an empty
+                    // closing element so `parse_jsx_closing_element` doesn't
+                    // re-emit at EOF.
+                    let has_conflict_marker = self
+                        .scanner
+                        .get_scanner_diagnostics()
+                        .iter()
+                        .any(|d| {
+                            d.code
+                                == tsz_common::diagnostics::diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED
+                        });
+                    let closing = if has_conflict_marker
+                        && self.is_token(SyntaxKind::EndOfFileToken)
+                        && let Some(opening_node) = self.arena.get(opening)
+                    {
+                        let anchor = opening_node.end;
+                        self.parse_error_at(
+                            anchor,
+                            0,
+                            "'</' expected.",
+                            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        );
+                        // Synthesize a closing element that mirrors the opener
+                        // so the downstream tag-mismatch check stays quiet
+                        // (we already emitted the TS1005 above).
+                        self.arena.add_jsx_closing(
+                            syntax_kind_ext::JSX_CLOSING_ELEMENT,
+                            anchor,
+                            anchor,
+                            crate::parser::node::JsxClosingData {
+                                tag_name: opening_tag_name.unwrap_or(NodeIndex::NONE),
+                            },
+                        )
+                    } else {
+                        self.parse_jsx_closing_element()
+                    };
                     // Check for tag name mismatch
                     if let Some(open_tag) = opening_tag_name
                         && let Some(close_node) = self.arena.get(closing)
