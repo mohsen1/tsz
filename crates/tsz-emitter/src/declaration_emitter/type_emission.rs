@@ -139,12 +139,22 @@ impl<'a> DeclarationEmitter<'a> {
             // Union type
             k if k == syntax_kind_ext::UNION_TYPE => {
                 if let Some(union) = self.arena.get_composite_type(type_node) {
+                    let multiline_named_tuple_union = self.indent_level > 0
+                        && union
+                            .types
+                            .nodes
+                            .iter()
+                            .all(|&type_idx| self.is_named_tuple_type_node(type_idx));
                     let mut first = true;
                     for &type_idx in &union.types.nodes {
                         if !first {
                             self.write(" | ");
                         }
                         first = false;
+                        if multiline_named_tuple_union {
+                            self.emit_named_tuple_type_multiline(type_idx);
+                            continue;
+                        }
                         let needs_parens = self.arena.get(type_idx).is_some_and(|n| {
                             n.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
@@ -673,6 +683,44 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_node(type_idx);
             }
         }
+    }
+
+    fn is_named_tuple_type_node(&self, type_idx: NodeIndex) -> bool {
+        self.arena.get(type_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::TUPLE_TYPE
+                && self.arena.get_tuple_type(node).is_some_and(|tuple| {
+                    tuple.elements.nodes.iter().any(|&elem_idx| {
+                        self.arena
+                            .get(elem_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER)
+                    })
+                })
+        })
+    }
+
+    fn emit_named_tuple_type_multiline(&mut self, tuple_idx: NodeIndex) {
+        let Some(tuple_node) = self.arena.get(tuple_idx) else {
+            self.emit_type(tuple_idx);
+            return;
+        };
+        let Some(tuple) = self.arena.get_tuple_type(tuple_node) else {
+            self.emit_type(tuple_idx);
+            return;
+        };
+        self.write("[");
+        self.write_line();
+        self.increase_indent();
+        for (index, &elem_idx) in tuple.elements.nodes.iter().enumerate() {
+            self.write_indent();
+            self.emit_type(elem_idx);
+            if index + 1 < tuple.elements.nodes.len() {
+                self.write(",");
+            }
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write_indent();
+        self.write("]");
     }
 
     /// Emit a `<T1, T2, ...>` type argument list.
