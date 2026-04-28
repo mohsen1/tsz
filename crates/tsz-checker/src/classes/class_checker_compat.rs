@@ -276,6 +276,34 @@ impl<'a> CheckerState<'a> {
             if let Some(decl_node) = decl_arena.get(decl_idx)
                 && let Some(decl_iface) = decl_arena.get_interface(decl_node)
             {
+                let delegatable_member_indices: Vec<NodeIndex> =
+                    if std::ptr::eq(decl_arena, self.ctx.arena) {
+                        Vec::new()
+                    } else {
+                        decl_iface
+                            .members
+                            .nodes
+                            .iter()
+                            .copied()
+                            .filter(|&member_idx| {
+                                decl_arena.get(member_idx).is_some_and(|member_node| {
+                                    member_node.kind == METHOD_SIGNATURE
+                                        || member_node.kind == PROPERTY_SIGNATURE
+                                })
+                            })
+                            .collect()
+                    };
+                let delegated_member_types = if delegatable_member_indices.is_empty() {
+                    None
+                } else {
+                    self.delegate_cross_arena_interface_member_simple_types(
+                        decl_idx,
+                        &delegatable_member_indices,
+                        decl_arena,
+                        None,
+                    )
+                };
+
                 for &member_idx in &decl_iface.members.nodes {
                     let Some(member_node) = decl_arena.get(member_idx) else {
                         continue;
@@ -291,10 +319,9 @@ impl<'a> CheckerState<'a> {
                             )
                     {
                         derived_member_names.insert(name.clone());
-                        let type_id = self
-                            .delegate_cross_arena_interface_member_simple_type(
-                                decl_idx, member_idx, decl_arena, None,
-                            )
+                        let type_id = delegated_member_types
+                            .as_ref()
+                            .and_then(|types| types.get(&member_idx).copied())
                             .unwrap_or_else(|| self.get_type_of_interface_member(member_idx));
                         derived_members.push((
                             name,
@@ -655,6 +682,33 @@ impl<'a> CheckerState<'a> {
                     &level_type_params,
                     &substitution_args,
                 );
+                let delegatable_member_indices: Vec<NodeIndex> =
+                    if std::ptr::eq(iface_arena, self.ctx.arena) {
+                        Vec::new()
+                    } else {
+                        iface
+                            .members
+                            .nodes
+                            .iter()
+                            .copied()
+                            .filter(|&member_idx| {
+                                iface_arena.get(member_idx).is_some_and(|member_node| {
+                                    member_node.kind == METHOD_SIGNATURE
+                                        || member_node.kind == PROPERTY_SIGNATURE
+                                })
+                            })
+                            .collect()
+                    };
+                let delegated_member_types = if delegatable_member_indices.is_empty() {
+                    None
+                } else {
+                    self.delegate_cross_arena_interface_member_simple_types(
+                        iface_decl_idx,
+                        &delegatable_member_indices,
+                        iface_arena,
+                        Some(&substitution_args),
+                    )
+                };
 
                 let mut base_method_counts: rustc_hash::FxHashMap<String, usize> =
                     rustc_hash::FxHashMap::default();
@@ -714,19 +768,16 @@ impl<'a> CheckerState<'a> {
                             };
                         (
                             name,
-                            self.delegate_cross_arena_interface_member_simple_type(
-                                iface_decl_idx,
-                                member_idx,
-                                iface_arena,
-                                Some(&substitution_args),
-                            )
-                            .unwrap_or_else(|| {
-                                instantiate_type(
-                                    self.ctx.types,
-                                    self.get_type_of_interface_member_simple(member_idx),
-                                    &substitution,
-                                )
-                            }),
+                            delegated_member_types
+                                .as_ref()
+                                .and_then(|types| types.get(&member_idx).copied())
+                                .unwrap_or_else(|| {
+                                    instantiate_type(
+                                        self.ctx.types,
+                                        self.get_type_of_interface_member_simple(member_idx),
+                                        &substitution,
+                                    )
+                                }),
                             sig.question_token,
                         )
                     } else {
