@@ -339,10 +339,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
       TSZ_CI_FOURSLASH_WORKERS: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -383,7 +383,7 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 8
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
