@@ -851,10 +851,10 @@ impl ParserState {
         // Arrow functions cannot be generators (there's no `*=>` syntax)
         // Clear generator context to allow 'yield' as an identifier
         // Example: function * foo(a = yield => yield) {} - both 'yield' are identifiers
-        self.context_flags &= !(CONTEXT_FLAG_GENERATOR
-            | CONTEXT_FLAG_ASYNC
-            | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER
-            | CONTEXT_FLAG_STATIC_BLOCK);
+        // Keep STATIC_BLOCK set — inside a static block, 'await' is reserved even
+        // in arrow function parameters, matching tsc behavior.
+        self.context_flags &=
+            !(CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_CLASS_FIELD_INITIALIZER);
 
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
@@ -875,18 +875,21 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseParenToken);
             params
         } else {
-            // Single identifier parameter: x => or async => (where async is used as identifier)
+            // Single identifier parameter: x => or await => (where await is used as identifier)
             let param_start = self.token_pos();
+
+            // In static blocks and async contexts, 'await' is reserved and cannot be
+            // used as a parameter name. Emit TS1109 "Expression expected." at the
+            // 'await' token position, matching tsc behavior.
+            if self.is_token(SyntaxKind::AwaitKeyword)
+                && (self.in_static_block_context() || self.in_async_context())
+            {
+                self.error_expression_expected();
+            }
+
             // Use parse_identifier_name to allow keywords like 'async' as parameter names
             let name = self.parse_identifier_name();
             let param_end = self.token_end();
-
-            // Check if 'await' is used as parameter name in a context where it's reserved
-            // (static block or async context). This should emit TS1005 at the arrow position.
-            let name_kind = self.arena.kind_at(name);
-            let is_await_param = name_kind == Some(SyntaxKind::AwaitKeyword as u16);
-            let is_await_reserved =
-                is_await_param && (self.in_static_block_context() || self.in_async_context());
 
             let param = self.arena.add_parameter(
                 syntax_kind_ext::PARAMETER,
@@ -901,10 +904,6 @@ impl ParserState {
                     initializer: NodeIndex::NONE,
                 },
             );
-            // Emit TS1005 at arrow position if 'await' was used as parameter in reserved context
-            if is_await_reserved && self.is_token(SyntaxKind::EqualsGreaterThanToken) {
-                self.error_token_expected(";");
-            }
             self.make_node_list(vec![param])
         };
 
@@ -953,6 +952,10 @@ impl ParserState {
 
         // Async context was already set at the start of this function for parameter parsing
         // and remains set for body parsing
+
+        // Clear STATIC_BLOCK before body — the body is a new scope where
+        // 'await' is a valid identifier (unless the function is async).
+        self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
 
         // Parse body (block or expression)
         // Push a new label scope for arrow function bodies

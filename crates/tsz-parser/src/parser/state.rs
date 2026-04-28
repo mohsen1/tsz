@@ -816,6 +816,17 @@ impl ParserState {
             || (self.is_token(SyntaxKind::Identifier)
                 && self.scanner.get_token_value_ref() == "await");
 
+        // In static blocks, 'await' used as a class member computed property name
+        // should emit TS1109 "Expression expected", not TS1213. Check this before
+        // the general class-member modifier check so tsc parity is preserved.
+        if self.in_class_member_name()
+            && self.in_static_block_context()
+            && self.is_token(SyntaxKind::AwaitKeyword)
+        {
+            self.error_expression_expected();
+            return true;
+        }
+
         // Class members reject modifier-like keywords as computed property names.
         // This emits TS1213 in class member context while leaving object/literal contexts unchanged.
         if self.in_class_member_name()
