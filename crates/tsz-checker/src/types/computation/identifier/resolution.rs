@@ -644,13 +644,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let mut checker = Box::new(CheckerState::with_parent_cache(
+            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 arena.as_ref(),
                 binder.as_ref(),
                 self.ctx.types,
                 source_file.file_name.clone(),
                 self.ctx.compiler_options.clone(),
                 self,
+                tsz_common::perf_counters::CheckerCreationReason::IdentifierResolution,
             ));
             checker.ctx.copy_cross_file_state_from(&self.ctx);
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();

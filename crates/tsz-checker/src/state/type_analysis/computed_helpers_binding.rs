@@ -563,17 +563,21 @@ impl<'a> CheckerState<'a> {
                     .map(|sf| sf.file_name.clone())
                     .unwrap_or_else(|| self.ctx.file_name.clone());
 
-                let mut checker = Box::new(CheckerState::with_parent_cache(
+                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                     arena.as_ref(),
                     delegate_binder,
                     self.ctx.types,
                     delegate_file_name,
                     self.ctx.compiler_options.clone(),
                     self,
+                    tsz_common::perf_counters::CheckerCreationReason::BindingHelpers,
                 ));
                 checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
                 checker.ctx.copy_cross_file_state_from(&self.ctx);
-                self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+                self.ctx.copy_symbol_file_targets_to_attributed(
+                    &mut checker.ctx,
+                    tsz_common::perf_counters::CheckerCreationReason::BindingHelpers,
+                );
                 checker.ctx.current_file_idx = file_idx;
                 for &id in &self.ctx.class_instance_resolution_set {
                     checker.ctx.class_instance_resolution_set.insert(id);
