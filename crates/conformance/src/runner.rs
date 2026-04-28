@@ -304,6 +304,12 @@ fn mark_known_conformance_debt(test_key: &str, mut result: TestResult) -> TestRe
     result
 }
 
+fn is_appledouble_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("._"))
+}
+
 /// Collects paths of crashed, timed-out, and fingerprint-only-mismatch tests for the final summary.
 #[derive(Default)]
 struct ProblemTests {
@@ -842,6 +848,10 @@ impl Runner {
 
             // Skip directories
             if path.is_dir() {
+                continue;
+            }
+
+            if is_appledouble_file(path) {
                 continue;
             }
 
@@ -1660,6 +1670,16 @@ mod tests {
     fn cwd_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn appledouble_files_are_not_discoverable_tests() {
+        assert!(is_appledouble_file(Path::new(
+            "TypeScript/tests/cases/._foo.ts"
+        )));
+        assert!(is_appledouble_file(Path::new("._bar.js")));
+        assert!(!is_appledouble_file(Path::new("foo.ts")));
+        assert!(!is_appledouble_file(Path::new("dir/regular.js")));
     }
 
     fn with_temp_cwd<F, T>(create_fast_binary: bool, f: F) -> T
