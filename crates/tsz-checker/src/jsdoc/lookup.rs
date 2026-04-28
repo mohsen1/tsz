@@ -30,6 +30,8 @@ use tsz_solver::TypeId;
 /// statement's source position and length for diagnostic anchoring.
 type OrphanedExtendsTag = (&'static str, Option<(u32, u32)>);
 
+const JSDOC_TYPEDEF_PRESCAN_MIN_FILES: usize = 256;
+
 impl<'a> CheckerState<'a> {
     fn global_source_file_idx_for_name(&self, file_name: &str) -> Option<usize> {
         if self.ctx.file_name == file_name {
@@ -185,13 +187,20 @@ impl<'a> CheckerState<'a> {
 
         let current_file_name = self.ctx.file_name.clone();
         let current_file_idx = self.ctx.current_file_idx;
+        let use_typedef_prescan = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .is_some_and(|arenas| arenas.len() >= JSDOC_TYPEDEF_PRESCAN_MIN_FILES);
         let mut current_arena_sources: Vec<_> = self
             .ctx
             .arena
             .source_files
             .iter()
             .enumerate()
-            .filter(|(_, source_file)| Self::source_file_has_jsdoc_typedef_named(source_file, name))
+            .filter(|(_, source_file)| {
+                !use_typedef_prescan || Self::source_file_has_jsdoc_typedef_named(source_file, name)
+            })
             .map(|(source_file_idx, source_file)| {
                 (
                     source_file_idx,
@@ -237,7 +246,9 @@ impl<'a> CheckerState<'a> {
             }
 
             for source_file in &arena.source_files {
-                if !Self::source_file_has_jsdoc_typedef_named(source_file, name) {
+                if use_typedef_prescan
+                    && !Self::source_file_has_jsdoc_typedef_named(source_file, name)
+                {
                     continue;
                 }
 
