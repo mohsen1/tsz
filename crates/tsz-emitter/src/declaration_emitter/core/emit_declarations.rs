@@ -263,10 +263,43 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_hoisted_js_export_default_statements(source_file);
         }
 
+        if self.source_is_js_file {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+                let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    self.arena.get_function(stmt_node).is_some_and(|func| {
+                        self.arena
+                            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                            || self.is_js_named_exported_name(func.name)
+                    })
+                } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    self.arena
+                        .get_export_decl(stmt_node)
+                        .and_then(|export| self.arena.get(export.export_clause))
+                        .is_some_and(|clause| clause.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+                } else {
+                    false
+                };
+                if !should_hoist {
+                    continue;
+                }
+                self.js_hoisted_function_declarations.insert(stmt_idx);
+                self.emit_hoisted_js_function_statement(stmt_idx);
+            }
+        }
+
         for &stmt_idx in &source_file.statements.nodes {
             if deferred_js_namespace_objects.contains(&stmt_idx)
                 && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
             {
+                continue;
+            }
+            if self.js_hoisted_function_declarations.contains(&stmt_idx) {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
                 continue;
             }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
@@ -490,6 +523,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_leading_jsdoc_comments(stmt_node.pos);
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
+        self.suppress_current_statement_jsdoc_comments = false;
 
         let has_effective_export = self.statement_has_effective_export(stmt_idx);
         match kind {
@@ -549,6 +583,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             self.pending_source_pos = None;
         } else {
+            if self.suppress_current_statement_jsdoc_comments && before_len > before_jsdoc_len {
+                let emitted = self.writer.get_output()[before_len..].to_string();
+                self.writer.truncate(before_jsdoc_len);
+                self.write(&emitted);
+            }
             // Track whether we emitted a scope marker or a non-exported declaration.
             // This is used to decide whether `export {};` is needed at the end.
             let is_scope_marker = kind == syntax_kind_ext::EXPORT_ASSIGNMENT
@@ -616,6 +655,38 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+        self.suppress_current_statement_jsdoc_comments = false;
+        self.current_statement_jsdoc_chain.clear();
+    }
+
+    fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        self.current_statement_jsdoc_chain =
+            self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
+        let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
+        self.emit_jsdoc_comment_chain(&jsdoc_chain);
+        let saved_comment_idx = self.comment_emit_idx;
+        self.comment_emit_idx = self
+            .all_comments
+            .iter()
+            .position(|comment| comment.end > stmt_node.pos)
+            .unwrap_or(self.all_comments.len());
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.emit_function_declaration(stmt_idx);
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                self.emit_export_declaration(stmt_idx);
+            }
+            _ => {}
+        }
+
+        self.emitted_module_indicator = true;
+        self.comment_emit_idx = saved_comment_idx;
         self.current_statement_jsdoc_chain.clear();
     }
 

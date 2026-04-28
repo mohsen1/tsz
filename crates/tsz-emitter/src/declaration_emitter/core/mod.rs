@@ -179,8 +179,16 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_grouped_reexports: FxHashMap<NodeIndex, Vec<NodeIndex>>,
     /// JS re-export declarations skipped because they are emitted by an earlier merged group.
     pub(super) js_skipped_reexports: FxHashSet<NodeIndex>,
+    /// Top-level JS function declarations hoisted ahead of other declarations.
+    pub(super) js_hoisted_function_declarations: FxHashSet<NodeIndex>,
     /// Synthetic JSDoc type aliases already emitted for the current file.
     pub(super) emitted_jsdoc_type_aliases: FxHashSet<String>,
+    /// Scoped flag for JS `const fn = (...) => {}` emit, where `@satisfies`
+    /// can supply fallback parameter types without affecting real functions.
+    pub(super) use_jsdoc_satisfies_parameter_fallback: bool,
+    /// Suppress the variable statement's leading JSDoc when re-emitting it as
+    /// a synthetic JS function declaration.
+    pub(super) suppress_current_statement_jsdoc_comments: bool,
     /// Local declarations emitted on-demand to support synthetic class base aliases.
     pub(super) emitted_synthetic_dependency_symbols: FxHashSet<SymbolId>,
     /// Diagnostics collected during declaration emit (e.g., TS2883 for non-portable types).
