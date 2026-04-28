@@ -291,6 +291,7 @@ impl<'a> CheckerState<'a> {
             {
                 self.check_compound_assignment_type_compatibility(
                     expr_idx,
+                    right_idx,
                     operator,
                     left_read_type,
                     right_type,
@@ -355,6 +356,7 @@ impl<'a> CheckerState<'a> {
                 if !had_per_operand_error && !emitted_operator_error {
                     self.check_compound_assignment_type_compatibility(
                         expr_idx,
+                        right_idx,
                         operator,
                         left_read_type,
                         right_type,
@@ -376,6 +378,7 @@ impl<'a> CheckerState<'a> {
             if !had_per_operand_error && !emitted_operator_error {
                 self.check_compound_assignment_type_compatibility(
                     expr_idx,
+                    right_idx,
                     operator,
                     left_read_type,
                     right_type,
