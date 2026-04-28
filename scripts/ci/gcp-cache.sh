@@ -655,21 +655,25 @@ save_caches() {
     # blob; new write policy (main-only) plus profile isolation makes
     # the dedicated lint cache redundant.
     cargo_target_key="$(cargo_target_cache_key)"
-    save_archive \
-      "cargo-target-deps-${cargo_target_key}" \
-      "$(cache_uri "cargo-target-deps/${cargo_target_key}.tar.gz")" \
-      "." \
-      .target/dist-fast
-    save_archive \
-      "cargo-target-unit-${cargo_target_key}" \
-      "$(cache_uri "cargo-target-unit/${cargo_target_key}.tar.gz")" \
-      "." \
-      .target/ci-unit
-    save_archive \
-      "cargo-target-wasm-${cargo_target_key}" \
-      "$(cache_uri "cargo-target-wasm/${cargo_target_key}.tar.gz")" \
-      "." \
-      .target/wasm32-unknown-unknown
+    if [[ "${TSZ_CI_CACHE_SAVE_CARGO_TARGETS:-1}" == "1" ]]; then
+      save_archive \
+        "cargo-target-deps-${cargo_target_key}" \
+        "$(cache_uri "cargo-target-deps/${cargo_target_key}.tar.gz")" \
+        "." \
+        .target/dist-fast
+      save_archive \
+        "cargo-target-unit-${cargo_target_key}" \
+        "$(cache_uri "cargo-target-unit/${cargo_target_key}.tar.gz")" \
+        "." \
+        .target/ci-unit
+      save_archive \
+        "cargo-target-wasm-${cargo_target_key}" \
+        "$(cache_uri "cargo-target-wasm/${cargo_target_key}.tar.gz")" \
+        "." \
+        .target/wasm32-unknown-unknown
+    else
+      echo "Cache save skipped: cargo-target-* (TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0)"
+    fi
   fi
 
   if suite_has_cache wasm-pack-cache; then
