@@ -2463,6 +2463,11 @@ fn package_type_from_json(package_json: Option<&PackageJson>) -> Option<PackageT
 }
 
 fn read_package_json(path: &Path) -> Option<PackageJson> {
+    // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Resolver hot path
+    // — package.json reads dominate sample profiles on full large-ts-repo.
+    tsz_common::perf_counters::inc(
+        &tsz_common::perf_counters::counters().resolver_read_package_json_calls,
+    );
     let contents = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&contents).ok()
 }

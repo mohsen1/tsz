@@ -419,12 +419,18 @@ impl<'a> CheckerState<'a> {
         };
 
         if should_delegate {
+            // PERF: count cross-arena delegation calls for the perf plan.
+            // See `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+            let perf = tsz_common::perf_counters::counters();
+            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_calls);
+
             // Fast path: check lib delegation cache by SymbolId.
             // Each lib SymbolId is delegated at most once; subsequent lookups
             // return the cached result directly.
             if !needs_cross_file_delegation
                 && let Some(&cached_type) = self.ctx.lib_delegation_cache.get(&sym_id)
             {
+                tsz_common::perf_counters::inc(&perf.delegate_cross_arena_cache_hits_lib);
                 self.ctx.symbol_types.insert(sym_id, cached_type);
                 return Some((cached_type, Vec::new()));
             }
@@ -439,10 +445,17 @@ impl<'a> CheckerState<'a> {
                     .definition_store
                     .get_resolved_symbol_type(sym_id.0, target_file_idx as u32)
                 {
+                    tsz_common::perf_counters::inc(
+                        &perf.delegate_cross_arena_cache_hits_cross_file,
+                    );
                     self.ctx.symbol_types.insert(sym_id, cached_type);
                     return Some((cached_type, Vec::new()));
                 }
             }
+
+            // Both caches missed → about to do real work (boxed child checker
+            // construction + recursion).
+            tsz_common::perf_counters::inc(&perf.delegate_cross_arena_misses);
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
@@ -504,13 +517,14 @@ impl<'a> CheckerState<'a> {
             // interdependent lib types (Array → ReadonlyArray → Iterator → ...) can
             // create deep call stacks, and CheckerState is too large to stack-allocate
             // at every level without risking stack overflow.
-            let mut checker = Box::new(CheckerState::with_parent_cache(
+            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 symbol_arena,
                 delegate_binder,
                 self.ctx.types,
                 delegate_file_name,
                 self.ctx.compiler_options.clone(),
                 self, // Share parent's cache to fix Cache Isolation Bug
+                tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
             ));
             // Copy lib contexts for global symbol resolution (Array, Promise, etc.)
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
@@ -519,7 +533,10 @@ impl<'a> CheckerState<'a> {
             checker.ctx.copy_cross_file_state_from(&self.ctx);
             // Copy cross-file symbol targets (local overlay only; global index
             // is already shared via copy_cross_file_state_from)
-            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+            self.ctx.copy_symbol_file_targets_to_attributed(
+                &mut checker.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaSymbol,
+            );
             checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
             // The parent cache is cloned into the child for performance, but raw
             // SymbolIds can still collide across binders in direct multi-file tests.
