@@ -421,6 +421,7 @@ impl<'a> TypePrinter<'a> {
         needs_typeof: bool,
     ) -> Option<String> {
         if let Some(name) = self.resolve_symbol_qualified_name(sym_id)
+            && Self::is_valid_qualified_name(&name)
             && (self.can_reference_symbol_by_name(sym_id) || self.is_global_symbol(sym_id))
         {
             return Some(if needs_typeof {
@@ -467,6 +468,11 @@ impl<'a> TypePrinter<'a> {
 
         None
     }
+
+    fn is_valid_qualified_name(name: &str) -> bool {
+        name.split('.').all(Self::is_valid_identifier)
+    }
+
     pub(crate) fn symbol_is_import_qualifiable(&self, sym_id: SymbolId) -> bool {
         let Some(arena) = self.symbol_arena else {
             return true;
