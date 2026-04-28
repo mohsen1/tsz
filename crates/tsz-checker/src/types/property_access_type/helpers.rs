@@ -219,6 +219,12 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         result_type: TypeId,
     ) -> TypeId {
+        if crate::query_boundaries::common::index_access_types(self.ctx.types, result_type)
+            .is_none()
+        {
+            return result_type;
+        }
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return result_type;
         };
