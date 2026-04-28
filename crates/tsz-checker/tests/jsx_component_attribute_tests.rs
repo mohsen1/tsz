@@ -4432,6 +4432,53 @@ let err =
 }
 
 #[test]
+fn jsx_react_component_render_prop_multiple_children_emit_child_ts2322_not_ts2746() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    type ReactText = string | number;
+    interface ReactElement<P> {{ props: P; }}
+    type ReactChild = ReactElement<any> | ReactText;
+    interface ReactNodeArray {{
+        [n: number]: ReactChild | ReactNodeArray | boolean;
+    }}
+    type ReactFragment = {{}} | ReactNodeArray;
+    type ReactNode = ReactChild | ReactFragment | boolean;
+    class Component<P, S> {{
+        props: P & {{ children?: ReactNode }};
+    }}
+}}
+
+interface User {{
+    name: string;
+}}
+interface Prop {{
+    children: (user: User) => JSX.Element;
+}}
+class FetchUser extends React.Component<Prop, any> {{}}
+let err =
+    <FetchUser>
+        {{ user => <div /> }}
+        {{ user => <div /> }}
+    </FetchUser>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "React-style multiple render-prop children should emit child-level TS2322 diagnostics, got: {diags:?}"
+    );
+    assert!(
+        !has_code(
+            &diags,
+            diagnostic_codes::THIS_JSX_TAGS_PROP_EXPECTS_A_SINGLE_CHILD_OF_TYPE_BUT_MULTIPLE_CHILDREN_WERE_PRO
+        ),
+        "React-style multiple render-prop children should not collapse to TS2746, got: {diags:?}"
+    );
+}
+
+#[test]
 fn jsx_array_children_text_child_emits_ts2745_not_ts2747() {
     let source = format!(
         r#"
