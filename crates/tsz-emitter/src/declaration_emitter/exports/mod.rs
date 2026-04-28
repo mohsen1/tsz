@@ -720,7 +720,7 @@ impl<'a> DeclarationEmitter<'a> {
                 true,
                 func_idx,
             );
-            self.emit_js_namespace_export_aliases_for_name(func.name);
+            self.emit_js_namespace_export_aliases_for_name(func.name, true);
         }
     }
 
@@ -1424,7 +1424,7 @@ impl<'a> DeclarationEmitter<'a> {
                 true,
                 func_idx,
             );
-            self.emit_js_namespace_export_aliases_for_name(func.name);
+            self.emit_js_namespace_export_aliases_for_name(func.name, true);
         }
     }
 

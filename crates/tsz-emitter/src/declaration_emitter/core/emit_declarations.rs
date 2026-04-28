@@ -158,6 +158,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_namespace_export_aliases =
             self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
+        let js_namespace_class_expando_declarations =
+            self.collect_js_namespace_class_expando_declarations(source_file);
         let js_commonjs_expando_declarations = self
             .collect_js_commonjs_expando_declarations(source_file, &self.js_export_equals_names);
         self.js_deferred_function_export_statements = js_commonjs_expando_declarations
@@ -178,6 +180,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_value_export_statements.extend(
             js_commonjs_named_value_exports.into_iter().map(
                 |(stmt_idx, (name_idx, initializer))| (stmt_idx, (name_idx, initializer, true)),
+            ),
+        );
+        self.js_deferred_value_export_statements.extend(
+            js_namespace_class_expando_declarations.into_iter().map(
+                |(stmt_idx, (name_idx, initializer))| (stmt_idx, (name_idx, initializer, false)),
             ),
         );
         // Remove CJS export alias statements from deferred maps.
@@ -241,7 +248,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_pending_js_export_equals_for_name(name_idx);
                 let _ =
                     self.emit_js_named_class_expression_declaration(name_idx, initializer, false);
-                self.emit_js_namespace_export_aliases_for_name(name_idx);
+                self.emit_js_namespace_export_aliases_for_name(name_idx, false);
             } else if let Some(initializer) =
                 self.js_anonymous_export_equals_class_expression_initializer(stmt_idx)
             {
@@ -1073,7 +1080,7 @@ impl<'a> DeclarationEmitter<'a> {
         ) {
             self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         }
-        self.emit_js_namespace_export_aliases_for_name(func.name);
+        self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
 
         // Skip comments within the function body to prevent them from
         // leaking as leading comments on the next statement.
@@ -1234,7 +1241,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("}");
         self.write_line();
         if shadow_alias.is_none() {
-            self.emit_js_namespace_export_aliases_for_name(class.name);
+            self.emit_js_namespace_export_aliases_for_name(class.name, is_exported);
         }
     }
 

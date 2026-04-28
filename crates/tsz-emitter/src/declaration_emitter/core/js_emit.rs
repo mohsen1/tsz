@@ -324,7 +324,7 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.emit_pending_js_export_equals_for_name(name_idx);
             let _ = self.emit_js_named_class_expression_declaration(name_idx, initializer, false);
-            self.emit_js_namespace_export_aliases_for_name(name_idx);
+            self.emit_js_namespace_export_aliases_for_name(name_idx, false);
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
@@ -515,7 +515,7 @@ impl<'a> DeclarationEmitter<'a> {
             initializer,
         );
         if is_exported {
-            self.emit_js_namespace_export_aliases_for_name(name_idx);
+            self.emit_js_namespace_export_aliases_for_name(name_idx, true);
             self.emitted_module_indicator = true;
         }
     }
