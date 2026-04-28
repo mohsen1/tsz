@@ -31,9 +31,11 @@ mod request_cache;
 mod resolver;
 pub(crate) mod speculation;
 mod strict_mode;
+mod symbol_file_targets;
 pub mod typing_request;
 pub use aliases::*;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
+pub use symbol_file_targets::SymbolFileTargetsOverlay;
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -954,14 +956,11 @@ pub struct CheckerContext<'a> {
     /// Private constructor types (`TypeIds`) produced for private constructors.
     pub private_constructor_types: FxHashSet<TypeId>,
 
-    /// Maps cross-file `SymbolIds` to their source file index.
-    /// Populated by `resolve_cross_file_export/resolve_cross_file_namespace_exports`
-    /// so `delegate_cross_arena_symbol_resolution` can find the correct arena.
+    /// Maps dynamically-discovered cross-file `SymbolIds` to their source file index.
     ///
-    /// This is the local overlay for dynamically discovered mappings. For lookups,
-    /// use `resolve_symbol_file_index()` which checks this overlay first, then
-    /// falls back to the shared `global_symbol_file_index`.
-    pub cross_file_symbol_targets: RefCell<FxHashMap<SymbolId, usize>>,
+    /// Child checkers inherit this as a parent+delta snapshot rather than cloning
+    /// the full overlay map on every cross-arena delegation.
+    pub cross_file_symbol_targets: RefCell<SymbolFileTargetsOverlay>,
 
     /// Shared base map: `SymbolId` → owning file index (pre-built from `ProjectEnv`).
     ///

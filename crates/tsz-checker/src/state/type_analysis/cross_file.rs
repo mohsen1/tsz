@@ -942,13 +942,8 @@ impl<'a> CheckerState<'a> {
         // resolving qualified names like `server.IWorkspace` where IWorkspace
         // belongs to server.ts). Without this merge, the parent cannot look up
         // these symbols in the correct binder, causing SymbolId collisions.
-        let child_targets = checker.ctx.cross_file_symbol_targets.borrow();
-        for (&sym_id, &file_idx) in child_targets.iter() {
-            if !self.ctx.has_symbol_file_index(sym_id) {
-                self.ctx.register_symbol_file_target(sym_id, file_idx);
-            }
-        }
-        drop(child_targets);
+        self.ctx
+            .merge_missing_symbol_file_targets_from(&checker.ctx);
 
         self.ctx.leave_recursion();
         Self::leave_cross_arena_delegation();
