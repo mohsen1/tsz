@@ -1,7 +1,7 @@
 //! Test for conditional expression literal preservation under generic keyof contexts.
 
 use crate::diagnostics::diagnostic_codes;
-use crate::test_utils::check_source_diagnostics;
+use crate::test_utils::{check_source_code_messages, check_source_diagnostics};
 
 #[test]
 fn conditional_expression_union_assignable_to_keyof_constraint_has_no_ts2345() {
@@ -31,6 +31,57 @@ fn conditional_expression_union_assignable_to_keyof_constraint_has_no_ts2345() {
     assert!(
         ts2345_errors.is_empty(),
         "Expected no TS2345 for conditional expression in generic keyof call, got: {ts2345_errors:?}"
+    );
+}
+
+#[test]
+fn generic_receiver_property_miss_reports_constraint_union_ts2339() {
+    let source = r#"
+        type AA = { tag: 'A', id: number };
+        type BB = { tag: 'B', id: number, foo: number };
+        type MyUnion = AA | BB;
+
+        function fn2<T extends MyUnion>(value: T): MyUnion {
+            value.foo;
+            return value;
+        }
+    "#;
+
+    let errors = check_source_code_messages(source);
+    assert!(
+        errors.iter().any(|(code, message)| {
+            *code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                && message.contains("Property 'foo' does not exist on type 'MyUnion'.")
+        }),
+        "Expected TS2339 on constrained generic receiver to display the union constraint. Got: {errors:?}"
+    );
+}
+
+#[test]
+fn conditional_alias_assignable_to_partial_of_itself_has_no_ts2345() {
+    let source = r#"
+        type Partial<T> = { [P in keyof T]?: T[P] };
+        type SqlInsertSet<T> = T extends undefined ? {} : { [P in keyof T]: unknown };
+
+        class SqlTable<T> {
+            protected validateRow(_row: Partial<SqlInsertSet<T>>): void {
+            }
+            public insertRow(row: SqlInsertSet<T>) {
+                this.validateRow(row);
+            }
+        }
+    "#;
+
+    let errors = check_source_diagnostics(source);
+    let ts2345_errors: Vec<_> = errors
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        })
+        .collect();
+    assert!(
+        ts2345_errors.is_empty(),
+        "Expected no TS2345 for S assignable to Partial<S>. Got: {errors:?}"
     );
 }
 

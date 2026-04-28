@@ -2446,16 +2446,15 @@ impl<'a> CheckerState<'a> {
                                     access.name_or_argument,
                                 );
                             } else {
-                                // Suppress TS2339 for bare type parameters,
-                                // for index access types (like T[keyof T]), or for
-                                // unknown/error types that result from unresolved generics.
-                                // Use is_type_parameter_like which correctly handles
-                                // mapped types (their iteration variable is not "unresolved").
+                                // Suppress TS2339 for index access types (like T[keyof T])
+                                // or for unknown/error types that result from unresolved generics.
+                                //
+                                // Do not suppress bare type parameters here: tsc reports property
+                                // misses on generic receivers and formats constrained type parameters
+                                // through their constraint (for example, `T extends A | B` reports
+                                // the miss on `A | B`).
                                 let should_suppress_inner =
-                                    crate::query_boundaries::common::is_type_parameter_like(
-                                        self.ctx.types,
-                                        display_object_type,
-                                    ) || crate::query_boundaries::common::is_index_access_type(
+                                    crate::query_boundaries::common::is_index_access_type(
                                         self.ctx.types,
                                         display_object_type,
                                     ) || display_object_type == TypeId::UNKNOWN
@@ -2469,16 +2468,14 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            // Suppress TS2339 for bare type parameters,
-                            // for index access types (like T[keyof T]), or for
-                            // unknown/error types that result from unresolved generics.
-                            // Use is_type_parameter_like which correctly handles
-                            // mapped types (their iteration variable is not "unresolved").
+                            // Suppress TS2339 for index access types (like T[keyof T])
+                            // or for unknown/error types that result from unresolved generics.
+                            //
+                            // Do not suppress bare type parameters here: tsc reports property
+                            // misses on generic receivers and formats constrained type parameters
+                            // through their constraint.
                             let should_suppress =
-                                crate::query_boundaries::common::is_type_parameter_like(
-                                    self.ctx.types,
-                                    display_object_type,
-                                ) || crate::query_boundaries::common::is_index_access_type(
+                                crate::query_boundaries::common::is_index_access_type(
                                     self.ctx.types,
                                     display_object_type,
                                 ) || display_object_type == TypeId::UNKNOWN
