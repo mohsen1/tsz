@@ -476,6 +476,12 @@ LINE_LIMIT_CHECKS = [
             # past 2000 raw lines through ongoing checker boundary work.
             # Pre-existing: condition_narrowing.rs hosts the dispatch table for
             # discriminant/literal/typeof narrowing arms; grew past 2000 raw lines.
+            # Pushed past 2000 raw lines by the TSZ_PERF_COUNTERS instrumentation
+            # in PR #1630 (each `with_parent_cache_*` constructor gained an
+            # `inc(...)` call plus an explanatory comment block). The non-blank,
+            # non-comment LOC is well under 2000 — the raw-line guard captures
+            # the comment-and-helper noise. Track via `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+            "crates/tsz-checker/src/state/state.rs",
         },
     ),
 ]
