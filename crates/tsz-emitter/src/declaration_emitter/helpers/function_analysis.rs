@@ -27,7 +27,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-use super::JsDefinedPropertyDecl;
+use super::{JsDefinedPropertyDecl, LateBoundAssignmentMember};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn js_returned_define_property_function_info(
@@ -310,6 +310,372 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             name.to_string()
         }
+    }
+
+    fn escape_non_ascii_for_double_quote(text: &str) -> String {
+        let mut result = String::with_capacity(text.len() + 8);
+        for ch in text.chars() {
+            match ch {
+                '\\' => result.push_str("\\\\"),
+                '"' => result.push_str("\\\""),
+                '\n' => result.push_str("\\n"),
+                '\r' => result.push_str("\\r"),
+                '\t' => result.push_str("\\t"),
+                '\0' => result.push_str("\\0"),
+                ch if ch as u32 > 0x7E => {
+                    let cp = ch as u32;
+                    if cp > 0xFFFF {
+                        let hi = 0xD800 + ((cp - 0x10000) >> 10);
+                        let lo = 0xDC00 + ((cp - 0x10000) & 0x3FF);
+                        result.push_str(&format!("\\u{hi:04X}\\u{lo:04X}"));
+                    } else {
+                        result.push_str(&format!("\\u{cp:04X}"));
+                    }
+                }
+                _ => result.push(ch),
+            }
+        }
+        result
+    }
+
+    fn late_bound_string_property_name_parts(text: &str) -> (String, Option<String>) {
+        if Self::is_unquoted_property_name(text)
+            && !tsz_solver::utils::is_numeric_literal_name(text)
+        {
+            (text.to_string(), Some(text.to_string()))
+        } else {
+            (
+                format!("\"{}\"", Self::escape_non_ascii_for_double_quote(text)),
+                None,
+            )
+        }
+    }
+
+    fn resolved_const_late_bound_assignment_key(
+        &self,
+        sym_id: SymbolId,
+        depth: u8,
+    ) -> Option<(String, Option<String>)> {
+        if depth > 8 {
+            return None;
+        }
+
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let decl_idx = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .find(|decl| decl.is_some())?
+        };
+        if !self.arena.is_const_variable_declaration(decl_idx) {
+            return None;
+        }
+
+        let decl_node = self.arena.get(decl_idx)?;
+        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+        let init_idx = var_decl.initializer;
+        if init_idx.is_none() {
+            return None;
+        }
+        let init_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(init_idx);
+        let init_node = self.arena.get(init_idx)?;
+
+        match init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let literal = self.arena.get_literal(init_node)?;
+                Some(Self::late_bound_string_property_name_parts(&literal.text))
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => {
+                let literal = self.arena.get_literal(init_node)?;
+                Some((Self::normalize_numeric_literal(literal.text.as_ref()), None))
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(init_node)?;
+                let operand_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(unary.operand);
+                let operand_node = self.arena.get(operand_idx)?;
+                if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                    return None;
+                }
+                let literal = self.arena.get_literal(operand_node)?;
+                let normalized = Self::normalize_numeric_literal(literal.text.as_ref());
+                match unary.operator {
+                    k if k == SyntaxKind::MinusToken as u16 => {
+                        Some((format!("-{normalized}"), None))
+                    }
+                    k if k == SyntaxKind::PlusToken as u16 => Some((normalized, None)),
+                    _ => None,
+                }
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                let name = self.get_identifier_text(init_idx)?;
+                let next_sym = binder.file_locals.get(&name)?;
+                self.resolved_const_late_bound_assignment_key(next_sym, depth + 1)
+            }
+            _ => None,
+        }
+    }
+
+    fn late_bound_assignment_property_key_parts(
+        &self,
+        access_idx: NodeIndex,
+    ) -> Option<(String, Option<String>)> {
+        let access_node = self.arena.get(access_idx)?;
+        let access = self.arena.get_access_expr(access_node)?;
+
+        match access_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let name = self.get_identifier_text(access.name_or_argument)?;
+                Some((name.clone(), Some(name)))
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let key_idx = self
+                    .arena
+                    .skip_parenthesized_and_assertions_and_comma(access.name_or_argument);
+                let key_node = self.arena.get(key_idx)?;
+                match key_node.kind {
+                    k if k == SyntaxKind::StringLiteral as u16
+                        || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                    {
+                        let literal = self.arena.get_literal(key_node)?;
+                        Some(Self::late_bound_string_property_name_parts(&literal.text))
+                    }
+                    k if k == SyntaxKind::NumericLiteral as u16 => {
+                        let literal = self.arena.get_literal(key_node)?;
+                        Some((Self::normalize_numeric_literal(literal.text.as_ref()), None))
+                    }
+                    k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                        let unary = self.arena.get_unary_expr(key_node)?;
+                        let operand_idx = self
+                            .arena
+                            .skip_parenthesized_and_assertions_and_comma(unary.operand);
+                        let operand_node = self.arena.get(operand_idx)?;
+                        if operand_node.kind != SyntaxKind::NumericLiteral as u16 {
+                            return None;
+                        }
+                        let literal = self.arena.get_literal(operand_node)?;
+                        let normalized = Self::normalize_numeric_literal(literal.text.as_ref());
+                        match unary.operator {
+                            k if k == SyntaxKind::MinusToken as u16 => {
+                                Some((format!("-{normalized}"), None))
+                            }
+                            k if k == SyntaxKind::PlusToken as u16 => Some((normalized, None)),
+                            _ => None,
+                        }
+                    }
+                    k if k == SyntaxKind::Identifier as u16 => {
+                        let binder = self.binder?;
+                        let ident = self.get_identifier_text(key_idx)?;
+                        binder
+                            .file_locals
+                            .get(&ident)
+                            .and_then(|sym_id| {
+                                self.resolved_const_late_bound_assignment_key(sym_id, 0)
+                            })
+                            .or_else(|| Some((format!("[{ident}]"), None)))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn late_bound_assignment_member_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+        root_name: &str,
+    ) -> Option<LateBoundAssignmentMember> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+
+        let lhs_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let lhs_node = self.arena.get(lhs_idx)?;
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+
+        let lhs_access = self.arena.get_access_expr(lhs_node)?;
+        let receiver_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        if self.get_identifier_text(receiver_idx).as_deref() != Some(root_name) {
+            return None;
+        }
+
+        let rhs_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+        let (property_name_text, namespace_member_name) =
+            self.late_bound_assignment_property_key_parts(lhs_idx)?;
+        let type_text = self
+            .preferred_object_member_initializer_type_text(rhs_idx, self.indent_level + 1)
+            .or_else(|| {
+                self.resolve_declaration_type_text(&[rhs_idx], Some(rhs_idx))
+                    .map(|resolved| resolved.emitted_type_text)
+            })
+            .unwrap_or_else(|| "any".to_string());
+
+        Some(LateBoundAssignmentMember {
+            property_name_text,
+            namespace_member_name,
+            type_text,
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn collect_ts_late_bound_assignment_members(
+        &self,
+        root_name_idx: NodeIndex,
+    ) -> Vec<LateBoundAssignmentMember> {
+        if self.source_is_js_file || self.source_is_declaration_file {
+            return Vec::new();
+        }
+
+        let Some(root_name) = self.get_identifier_text(root_name_idx) else {
+            return Vec::new();
+        };
+        let Some(source_file) = self.arena.source_files.first() else {
+            return Vec::new();
+        };
+
+        let mut members = Vec::new();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(member) =
+                self.late_bound_assignment_member_for_statement(stmt_idx, &root_name)
+            else {
+                continue;
+            };
+
+            if let Some(existing) =
+                members
+                    .iter_mut()
+                    .find(|existing: &&mut LateBoundAssignmentMember| {
+                        existing.property_name_text == member.property_name_text
+                    })
+            {
+                *existing = member;
+            } else {
+                members.push(member);
+            }
+        }
+
+        members
+    }
+
+    pub(in crate::declaration_emitter) fn emit_ts_late_bound_function_initializer_type_annotation(
+        &mut self,
+        decl_name: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let members = self.collect_ts_late_bound_assignment_members(decl_name);
+        if members.is_empty() {
+            return false;
+        }
+
+        self.write(": {");
+        self.write_line();
+        self.increase_indent();
+        self.write_indent();
+        if !self.emit_function_initializer_call_signature(initializer) {
+            self.decrease_indent();
+            return false;
+        }
+        self.write(";");
+        self.write_line();
+
+        for member in members {
+            self.write_indent();
+            self.write(&member.property_name_text);
+            self.write(": ");
+            self.write(&member.type_text);
+            self.write(";");
+            self.write_line();
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn emit_ts_late_bound_function_namespace_from_members(
+        &mut self,
+        name_idx: NodeIndex,
+        is_exported: bool,
+        members: &[LateBoundAssignmentMember],
+    ) {
+        if members.is_empty() {
+            return;
+        }
+
+        let namespace_members: Vec<LateBoundAssignmentMember> = members
+            .iter()
+            .filter(|&member| member.namespace_member_name.is_some())
+            .cloned()
+            .collect();
+
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
+        if self.should_emit_declare_keyword(is_exported) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
+        self.emit_node(name_idx);
+
+        if namespace_members.is_empty() {
+            self.write(" { }");
+            self.write_line();
+            return;
+        }
+
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+        for member in namespace_members {
+            let Some(namespace_member_name) = member.namespace_member_name.as_deref() else {
+                continue;
+            };
+            self.write_indent();
+            self.write("var ");
+            self.write(namespace_member_name);
+            self.write(": ");
+            self.write(&member.type_text);
+            self.write(";");
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
     }
 
     pub(in crate::declaration_emitter) fn statement_returns_identifier(

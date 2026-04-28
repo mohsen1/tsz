@@ -103,6 +103,13 @@ pub(in crate::declaration_emitter) struct JsDefinedPropertyDecl {
 }
 
 #[derive(Clone)]
+pub(crate) struct LateBoundAssignmentMember {
+    pub(crate) property_name_text: String,
+    pub(crate) namespace_member_name: Option<String>,
+    pub(crate) type_text: String,
+}
+
+#[derive(Clone)]
 pub(crate) struct JsdocParamDecl {
     pub(crate) name: String,
     pub(crate) type_text: String,

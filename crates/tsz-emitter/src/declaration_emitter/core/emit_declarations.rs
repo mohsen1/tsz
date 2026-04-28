@@ -726,6 +726,7 @@ impl<'a> DeclarationEmitter<'a> {
         if self.should_skip_ns_internal_member(&func.modifiers, Some(func_idx)) {
             return;
         }
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
 
         // Get function name as string for overload tracking
         let function_name = self.get_function_name(func_idx);
@@ -1036,6 +1037,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_ts_late_bound_function_namespace_from_members(
+            func.name,
+            is_exported,
+            &late_bound_members,
+        );
         if !self.emit_js_function_like_class_if_needed(
             func.name,
             &func.parameters,
