@@ -20,19 +20,21 @@ mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE"
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
 
 # Cap CARGO_BUILD_JOBS by memory to prevent rustc/linker SIGKILL during large
-# crate compiles. tsz-checker with ci-unit profile (codegen-units=16) spawns
-# many parallel codegen threads per rustc, so the practical per-job RSS at
-# peak (linker time) reaches ~12 GiB. 32 jobs × 12 GiB = 384 GiB, exceeding the
-# 128 GiB cloud-runner ceiling — kernel OOM-kills rustc.
+# crate compiles. tsz-checker spawns many parallel codegen threads per rustc,
+# so the practical per-job RSS at peak (linker time) is bounded by the
+# `codegen-units` setting on the active profile. With dist-fast/ci-unit at
+# codegen-units=8, peak per-job RSS is ~7 GiB (down from ~12 GiB at cgu=16).
 #
-# We compute `memory_mb / mb_per_compile_job`, default 12288 MiB/job, then take
-# min(cpu, mem). On 32 vCPU × 128 GiB → min(32, 10) = 10 jobs (~120 GiB peak,
-# leaving headroom for cargo metadata + the OS).
+# We compute `memory_mb / mb_per_compile_job`, default 7168 MiB/job, then take
+# min(cpu, mem). Sizing examples:
+#   8 vCPU × 32 GiB  → min(8, 4)   = 4 jobs   (~28 GiB peak)
+#   16 vCPU × 64 GiB → min(16, 9)  = 9 jobs   (~63 GiB peak)
+#   32 vCPU × 128 GiB → min(32, 18) = 18 jobs (~126 GiB peak)
 default_cargo_build_jobs() {
   local cpu_jobs mem_mb mem_per_job_mb mem_jobs
   cpu_jobs="$HOST_CPUS"
   mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
-  mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-12288}"
+  mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
   if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_job_mb" =~ ^[0-9]+$ && "$mem_per_job_mb" -gt 0 ]]; then
     mem_jobs=$((mem_mb / mem_per_job_mb))
     if (( mem_jobs < 1 )); then mem_jobs=1; fi
