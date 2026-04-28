@@ -14,7 +14,9 @@ use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
     get_message_template,
 };
-use crate::types::{IntrinsicKind, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo};
+use crate::types::{
+    IntrinsicKind, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -1471,10 +1473,9 @@ impl<'a> TypeFormatter<'a> {
                 // via the formatter's alias-reverse-lookup.  tsc preserves the
                 // user's spelling (`keyof (T & {})`) in error messages.
                 let inline_compound = match self.interner.lookup(*operand) {
-                    Some(TypeData::Union(list_id)) if any_member_empty_object(list_id) => Some((
-                        list_id,
-                        " | ",
-                    )),
+                    Some(TypeData::Union(list_id)) if any_member_empty_object(list_id) => {
+                        Some((list_id, " | "))
+                    }
                     Some(TypeData::Intersection(list_id)) if any_member_empty_object(list_id) => {
                         Some((list_id, " & "))
                     }
@@ -1482,8 +1483,10 @@ impl<'a> TypeFormatter<'a> {
                 };
                 if let Some((list_id, sep)) = inline_compound {
                     let members = self.interner.type_list(list_id);
-                    let parts: Vec<String> =
-                        members.iter().map(|&m| self.format(m).into_owned()).collect();
+                    let parts: Vec<String> = members
+                        .iter()
+                        .map(|&m| self.format(m).into_owned())
+                        .collect();
                     return format!("keyof ({})", parts.join(sep)).into();
                 }
                 let operand_str = self.format(*operand);
