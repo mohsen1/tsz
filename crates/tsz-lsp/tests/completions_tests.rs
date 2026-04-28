@@ -3739,3 +3739,29 @@ fn test_completions_type_arg_generic_retained() {
         "Generic Foo<T> should not be treated as non-generic"
     );
 }
+
+#[test]
+fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
+    // `0./** comment */` ends with a JSDoc comment, but the previous *token*
+    // is a complete decimal NumericLiteral `0.`. tsc's completion provider
+    // suppresses completions at the position right after this trivia
+    // because the prior token is numeric (not a member access). Lock the
+    // text-based suppression so it skips trailing block comments.
+    // Regression: `completionListAfterNumericLiteral.ts` fourslash test.
+    let source = "0./** comment */";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    // Position at the very end — right after the closing `*/`.
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let completions = Completions::new(arena, &binder, &line_map, source);
+    let items = completions.get_completions(root, position);
+    assert!(
+        items.as_ref().is_none_or(|v| v.is_empty()),
+        "Completions must be suppressed after `0.<jsdoc>` since the prior token is numeric, got: {items:?}"
+    );
+}
