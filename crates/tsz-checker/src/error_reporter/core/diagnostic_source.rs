@@ -1651,12 +1651,14 @@ impl<'a> CheckerState<'a> {
 }
 
 /// Strip file extensions from module specifiers for display.
-/// TSC omits extensions in `typeof import("mod")` output.
-fn strip_module_specifier_extension(module_name: &str) -> &str {
-    // Strip TS-family extensions only. tsc preserves JS-family extensions
-    // (`.js`, `.jsx`, `.mjs`, `.cjs`) in `typeof import("X.js")` display
-    // when the imported module is a JS file (regression:
-    // `lateBoundAssignmentDeclarationSupport2.js`).
+/// TSC usually omits TS-family extensions in `typeof import("mod")` output, but
+/// preserves JS-family extensions (`.js`, `.jsx`, `.mjs`, `.cjs`) so that
+/// `typeof import("X.js")` keeps the `.js` suffix when the imported module is a
+/// JS file (regression: `lateBoundAssignmentDeclarationSupport2.js`).
+///
+/// Element-access diagnostics for current-file `module.exports[...]` can opt into
+/// the raw namespace display name before this generic property-receiver path runs.
+pub(crate) fn strip_module_specifier_extension(module_name: &str) -> &str {
     const EXTS: &[&str] = &[".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"];
     for ext in EXTS {
         if let Some(stripped) = module_name.strip_suffix(ext) {
