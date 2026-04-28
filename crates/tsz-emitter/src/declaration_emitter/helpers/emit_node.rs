@@ -238,6 +238,33 @@ impl<'a> DeclarationEmitter<'a> {
                             }
                         }
                     }
+                    let ends_with_omission =
+                        pattern
+                            .elements
+                            .nodes
+                            .last()
+                            .copied()
+                            .is_some_and(|elem_idx| {
+                                elem_idx.is_none()
+                                    || self.arena.get(elem_idx).is_some_and(|elem_node| {
+                                        elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION
+                                    })
+                            });
+                    let has_source_trailing_comma = self
+                        .source_file_text
+                        .as_deref()
+                        .and_then(|text| text.get(node.pos as usize..node.end as usize))
+                        .is_some_and(|snippet| {
+                            let trimmed = snippet.trim_end();
+                            let trimmed = trimmed.strip_suffix(']').unwrap_or(trimmed).trim_end();
+                            trimmed.ends_with(',')
+                        });
+                    if pattern.elements.has_trailing_comma
+                        || ends_with_omission
+                        || has_source_trailing_comma
+                    {
+                        self.write(",");
+                    }
                     self.write("]");
                 }
             }

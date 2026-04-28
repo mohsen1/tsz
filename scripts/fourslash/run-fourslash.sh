@@ -82,6 +82,8 @@ OPTIONS:
     --max=N             Maximum number of tests to run (default: all)
     --filter=PATTERN    Only run tests matching pattern (substring match)
     --server-tests      Run server-specific tests (tests/cases/fourslash/server/)
+    --shard=I/N         Run one shard of the suite
+    --shard-strategy=M  Shard strategy: weighted or hash (default: weighted)
 
     Parallelism:
     --workers=N         Number of parallel workers (default: CPU count)

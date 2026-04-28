@@ -1567,6 +1567,15 @@ fn print_diagnostics(result: &driver::CompilationResult, elapsed: Duration, exte
         if memory_used > 0 {
             println!("Memory used:                   {memory_used}K");
         }
+
+        // PERF: dump perf counters when TSZ_PERF_COUNTERS is set. Empty
+        // string when the env var isn't present, so the noisy counter dump
+        // only appears in profiling runs. See
+        // `docs/plan/PERF_ARCHITECTURAL_PLAN.md`.
+        let counter_dump = tsz_common::perf_counters::PerfCounters::dump_string();
+        if !counter_dump.is_empty() {
+            print!("{counter_dump}");
+        }
     }
 }
 

@@ -366,6 +366,76 @@ fn malformed_numeric_arrow_body_reports_comma_at_return_semicolon() {
 }
 
 #[test]
+fn async_generator_get_accessor_emits_single_open_paren_expected() {
+    // `async * get x()` is grammatical nonsense (mixing async generator with
+    // accessor syntax). tsc parses `get` as the method name, then expects `(`
+    // at `x` and reports a single TS1005. tsz's recovery used to consume the
+    // `{ return 1 }` body block and then re-emit a redundant TS1005 at the
+    // outer object-literal `}` (or EOF in multi-file conformance fixtures).
+    let source = r#"const o = {
+    async * get x() {
+        return 1;
+    }
+};"#;
+    let (parser, _root) = parse_source(source);
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'(' expected."))
+        .count();
+    assert_eq!(
+        ts1005_count,
+        1,
+        "expected exactly one TS1005 `'(' expected.` for `async * get x()` recovery, got {:?}",
+        parser.get_diagnostics()
+    );
+    let cascade = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'{' expected."))
+        .count();
+    assert_eq!(
+        cascade,
+        0,
+        "recovery should not emit a cascading TS1005 `'{{' expected.` after consuming the body, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn async_generator_property_with_value_emits_single_open_paren_expected() {
+    // `async * x: 1;` is also nonsense — `:` instead of `(` after the name.
+    // The recovery used to fall through `;` and re-emit a redundant TS1005
+    // at the outer object-literal `}`.
+    let source = r#"const o = {
+    async * x: 1;
+};"#;
+    let (parser, _root) = parse_source(source);
+    let ts1005_count = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'(' expected."))
+        .count();
+    assert_eq!(
+        ts1005_count,
+        1,
+        "expected exactly one TS1005 `'(' expected.` for `async * x: 1;` recovery, got {:?}",
+        parser.get_diagnostics()
+    );
+    let cascade = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::EXPECTED && d.message.contains("'{' expected."))
+        .count();
+    assert_eq!(
+        cascade,
+        0,
+        "recovery should not emit a cascading TS1005 `'{{' expected.` after consuming the `;`, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn object_method_arrow_return_token_prefers_brace_expected_then_ts1434() {
     let source = r#"let o = {
     m(n: number) => string {

@@ -451,6 +451,23 @@ fn test_indexed_access_type() {
 }
 
 #[test]
+fn test_indexed_access_variadic_tuple_breaks_multiline() {
+    let output = emit_dts(
+        r#"
+type NTuple<N extends number, Tup extends unknown[] = []> =
+    Tup['length'] extends N ? Tup : NTuple<N, [...Tup, unknown]>;
+
+export type Add<A extends number, B extends number> =
+    [...NTuple<A>, ...NTuple<B>]['length'];
+"#,
+    );
+    assert!(
+        output.contains("type Add<A extends number, B extends number> = [\n    ...NTuple<A>,\n    ...NTuple<B>\n]['length'];"),
+        "Expected variadic tuple indexed access to break across lines: {output}"
+    );
+}
+
+#[test]
 fn test_typeof_type() {
     let output = emit_dts("declare const x: number;\nexport type T = typeof x;");
     assert!(

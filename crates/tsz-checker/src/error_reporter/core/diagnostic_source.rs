@@ -1659,11 +1659,5 @@ impl<'a> CheckerState<'a> {
 /// Element-access diagnostics for current-file `module.exports[...]` can opt into
 /// the raw namespace display name before this generic property-receiver path runs.
 pub(crate) fn strip_module_specifier_extension(module_name: &str) -> &str {
-    const EXTS: &[&str] = &[".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"];
-    for ext in EXTS {
-        if let Some(stripped) = module_name.strip_suffix(ext) {
-            return stripped;
-        }
-    }
-    module_name
+    tsz_common::file_extensions::strip_ts_extension(module_name)
 }

@@ -89,15 +89,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| module_name.to_string())
         };
         let trimmed = trim_namespace_display_path(&resolved_name);
-        for ext in &[
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(stripped) = trimmed.strip_suffix(ext) {
-                return stripped.to_string();
-            }
-        }
-        trimmed
+        tsz_common::file_extensions::strip_known_extension(&trimmed).to_string()
     }
 
     /// Resolve the display module name for namespace `typeof import("...")`.
@@ -1056,15 +1048,7 @@ impl<'a> CheckerState<'a> {
         let base = file_name.rsplit('/').next().unwrap_or(file_name);
         // Also handle Windows path separators
         let base = base.rsplit('\\').next().unwrap_or(base);
-        for ext in &[
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(stem) = base.strip_suffix(ext) {
-                return stem.to_string();
-            }
-        }
-        base.to_string()
+        tsz_common::file_extensions::strip_known_extension(base).to_string()
     }
 
     fn expression_has_self_file_import_inner(&self, node_idx: NodeIndex, file_stem: &str) -> bool {

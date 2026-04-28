@@ -957,6 +957,40 @@ fn test_await_label_in_static_block_emits_ts1109() {
     );
 }
 
+/// `declare class C extends await {}` in a `.d.ts` file is valid: `await` is
+/// allowed as an identifier in declaration files. Match tsc by suppressing
+/// the parser-level TS1109 emission in `parse_heritage_left_hand_expression_base`.
+#[test]
+fn test_await_as_heritage_identifier_in_declaration_file_no_ts1109() {
+    use crate::parser::test_fixture::parse_source_named;
+    let source = r#"export {};
+declare const await: any;
+declare class C extends await {}
+"#;
+    let (parser, _root) = parse_source_named("index.d.ts", source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "TS1109 must not fire for `await` in heritage clause inside .d.ts, got: {codes:?}"
+    );
+}
+
+/// In a regular `.ts` file, the same `extends await` should still emit TS1109
+/// because `await` is a reserved word at expression positions outside .d.ts.
+#[test]
+fn test_await_as_heritage_identifier_in_ts_file_emits_ts1109() {
+    use crate::parser::test_fixture::parse_source_named;
+    let source = r#"declare const await: any;
+declare class C extends await {}
+"#;
+    let (parser, _root) = parse_source_named("test.ts", source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "Expected TS1109 for `await` in heritage clause inside .ts, got: {codes:?}"
+    );
+}
+
 /// Test that `[await]` as a class member computed property name in a nested class inside
 /// a static block emits TS1109 (Expression expected) instead of TS1213. tsc treats `await`
 /// as a keyword in static blocks, so using it as a computed property name in a class

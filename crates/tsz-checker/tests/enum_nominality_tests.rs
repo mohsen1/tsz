@@ -159,6 +159,20 @@ const x: E = 1;  // ERROR
 }
 
 #[test]
+fn test_negative_number_literal_to_numeric_enum_type() {
+    // Negative numeric literals are not in `E { A = 0, B = 1 }` so the
+    // `-1` argument must keep its literal type and be rejected against the
+    // enum's structural member union (TS2322). Without contextual literal
+    // preservation for enum types, `-1` would widen to `number` and the
+    // open-numeric-enum rule would silently accept the assignment.
+    let source = r"
+enum E { A, B }
+const x: E = -1;
+";
+    test_enum_assignability(source, 1);
+}
+
+#[test]
 fn test_string_enum_opacity() {
     // String literal should NOT be assignable to string enum
     let source = r#"

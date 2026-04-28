@@ -158,6 +158,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_namespace_export_aliases =
             self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
+        let js_namespace_class_expando_declarations =
+            self.collect_js_namespace_class_expando_declarations(source_file);
         let js_commonjs_expando_declarations = self
             .collect_js_commonjs_expando_declarations(source_file, &self.js_export_equals_names);
         self.js_deferred_function_export_statements = js_commonjs_expando_declarations
@@ -178,6 +180,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_value_export_statements.extend(
             js_commonjs_named_value_exports.into_iter().map(
                 |(stmt_idx, (name_idx, initializer))| (stmt_idx, (name_idx, initializer, true)),
+            ),
+        );
+        self.js_deferred_value_export_statements.extend(
+            js_namespace_class_expando_declarations.into_iter().map(
+                |(stmt_idx, (name_idx, initializer))| (stmt_idx, (name_idx, initializer, false)),
             ),
         );
         // Remove CJS export alias statements from deferred maps.
@@ -241,7 +248,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_pending_js_export_equals_for_name(name_idx);
                 let _ =
                     self.emit_js_named_class_expression_declaration(name_idx, initializer, false);
-                self.emit_js_namespace_export_aliases_for_name(name_idx);
+                self.emit_js_namespace_export_aliases_for_name(name_idx, false);
             } else if let Some(initializer) =
                 self.js_anonymous_export_equals_class_expression_initializer(stmt_idx)
             {
@@ -263,10 +270,43 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_hoisted_js_export_default_statements(source_file);
         }
 
+        if self.source_is_js_file {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+                let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    self.arena.get_function(stmt_node).is_some_and(|func| {
+                        self.arena
+                            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                            || self.is_js_named_exported_name(func.name)
+                    })
+                } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    self.arena
+                        .get_export_decl(stmt_node)
+                        .and_then(|export| self.arena.get(export.export_clause))
+                        .is_some_and(|clause| clause.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+                } else {
+                    false
+                };
+                if !should_hoist {
+                    continue;
+                }
+                self.js_hoisted_function_declarations.insert(stmt_idx);
+                self.emit_hoisted_js_function_statement(stmt_idx);
+            }
+        }
+
         for &stmt_idx in &source_file.statements.nodes {
             if deferred_js_namespace_objects.contains(&stmt_idx)
                 && !self.js_namespace_object_stmt_emits_in_source_order(stmt_idx)
             {
+                continue;
+            }
+            if self.js_hoisted_function_declarations.contains(&stmt_idx) {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
                 continue;
             }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
@@ -474,6 +514,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos);
         }
 
+        if kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = self.arena.get_function(stmt_node)
+            && self.is_js_export_equals_name(func.name)
+        {
+            self.emit_pending_js_export_equals_for_name(func.name);
+        }
+
         // Save position before JSDoc comments so we can undo them if the
         // declaration turns out to be invisible (non-exported in namespace, etc.)
         let before_jsdoc_len = self.writer.len();
@@ -483,6 +530,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_leading_jsdoc_comments(stmt_node.pos);
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
+        self.suppress_current_statement_jsdoc_comments = false;
 
         let has_effective_export = self.statement_has_effective_export(stmt_idx);
         match kind {
@@ -542,6 +590,11 @@ impl<'a> DeclarationEmitter<'a> {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             self.pending_source_pos = None;
         } else {
+            if self.suppress_current_statement_jsdoc_comments && before_len > before_jsdoc_len {
+                let emitted = self.writer.get_output()[before_len..].to_string();
+                self.writer.truncate(before_jsdoc_len);
+                self.write(&emitted);
+            }
             // Track whether we emitted a scope marker or a non-exported declaration.
             // This is used to decide whether `export {};` is needed at the end.
             let is_scope_marker = kind == syntax_kind_ext::EXPORT_ASSIGNMENT
@@ -609,6 +662,44 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
+        self.suppress_current_statement_jsdoc_comments = false;
+        self.current_statement_jsdoc_chain.clear();
+    }
+
+    fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+
+        self.current_statement_jsdoc_chain =
+            self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
+        let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
+        if jsdoc_chain.len() == 1
+            && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
+        {
+            self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+        } else {
+            self.emit_jsdoc_comment_chain(&jsdoc_chain);
+        }
+        let saved_comment_idx = self.comment_emit_idx;
+        self.comment_emit_idx = self
+            .all_comments
+            .iter()
+            .position(|comment| comment.end > stmt_node.pos)
+            .unwrap_or(self.all_comments.len());
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.emit_function_declaration(stmt_idx);
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                self.emit_export_declaration(stmt_idx);
+            }
+            _ => {}
+        }
+
+        self.emitted_module_indicator = true;
+        self.comment_emit_idx = saved_comment_idx;
         self.current_statement_jsdoc_chain.clear();
     }
 
@@ -648,6 +739,7 @@ impl<'a> DeclarationEmitter<'a> {
         if self.should_skip_ns_internal_member(&func.modifiers, Some(func_idx)) {
             return;
         }
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
 
         // Get function name as string for overload tracking
         let function_name = self.get_function_name(func_idx);
@@ -722,6 +814,15 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                func.name,
+                &func.parameters,
+            )
+        {
+            self.write(": ");
+            self.write(&return_type_text);
         } else if func_body.is_some()
             && self.emit_js_returned_define_property_function_type(func_body)
         {
@@ -769,6 +870,22 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && self
+                        .should_prefer_source_return_type_text(type_text, effective_return_type_id)
+                {
+                    self.write(": ");
+                    if let Some(ref tp) = func.type_parameters
+                        && !tp.nodes.is_empty()
+                    {
+                        let outer_names = self.collect_type_param_names(tp);
+                        self.write(&Self::rename_shadowed_type_params_in_text(
+                            type_text,
+                            &outer_names,
+                        ));
+                    } else {
+                        self.write(type_text);
+                    }
                 } else if effective_return_type_id == tsz_solver::types::TypeId::ANY
                     && let Some(type_text) = preferred_return
                 {
@@ -949,8 +1066,21 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
-        self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
-        self.emit_js_namespace_export_aliases_for_name(func.name);
+        self.emit_ts_late_bound_function_namespace_from_members(
+            func.name,
+            is_exported,
+            &late_bound_members,
+        );
+        if !self.emit_js_function_like_class_if_needed(
+            func.name,
+            &func.parameters,
+            func.body,
+            is_exported,
+            func_idx,
+        ) {
+            self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+        }
+        self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
 
         // Skip comments within the function body to prevent them from
         // leaking as leading comments on the next statement.
@@ -973,6 +1103,7 @@ impl<'a> DeclarationEmitter<'a> {
             || self.is_js_named_exported_name(class.name);
         if !is_exported
             && !self.should_emit_public_api_member(&class.modifiers)
+            && !self.is_js_export_equals_name(class.name)
             && !self.is_confirmed_public_api_dependency(class.name)
         {
             return;
@@ -1110,7 +1241,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("}");
         self.write_line();
         if shadow_alias.is_none() {
-            self.emit_js_namespace_export_aliases_for_name(class.name);
+            self.emit_js_namespace_export_aliases_for_name(class.name, is_exported);
         }
     }
 

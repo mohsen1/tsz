@@ -180,9 +180,22 @@ impl<'a> CheckerState<'a> {
         ty
     }
 
+    /// tsc's binder-time recognition of `Object.defineProperty(exports, X, ...)`
+    /// only treats X as a synthesizable export name when it is a syntactic
+    /// literal. References to const/let bindings — even ones initialized to a
+    /// string literal — are NOT propagated. The corresponding property is
+    /// never added to the synthesized exports type, and import-side accesses
+    /// surface as TS2339.
     pub(crate) fn constant_define_property_name_in_file(
         &self,
-        target_file_idx: usize,
+        _target_file_idx: usize,
+        arena: &tsz_parser::parser::NodeArena,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        Self::constant_define_property_name_literal_only(arena, idx)
+    }
+
+    fn constant_define_property_name_literal_only(
         arena: &tsz_parser::parser::NodeArena,
         idx: NodeIndex,
     ) -> Option<String> {
@@ -196,23 +209,93 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                 let paren = arena.get_parenthesized(node)?;
-                self.constant_define_property_name_in_file(target_file_idx, arena, paren.expression)
-            }
-            k if k == SyntaxKind::Identifier as u16 => {
-                let ident = arena.get_identifier(node)?;
-                let binder = self.ctx.get_binder_for_file(target_file_idx)?;
-                let sym_id = binder.file_locals.get(&ident.escaped_text)?;
-                let symbol = binder.get_symbol(sym_id)?;
-                let decl_node = arena.get(symbol.value_declaration)?;
-                let var_decl = arena.get_variable_declaration(decl_node)?;
-                self.constant_define_property_name_in_file(
-                    target_file_idx,
-                    arena,
-                    var_decl.initializer,
-                )
+                Self::constant_define_property_name_literal_only(arena, paren.expression)
             }
             _ => None,
         }
+    }
+
+    /// Scan a file for any `Object.defineProperty(exports, ...)` or
+    /// `Object.defineProperty(module.exports, ...)` call, regardless of whether
+    /// the name argument is a syntactic literal.
+    ///
+    /// Used to mark a file as having CommonJS exports so the synthesized
+    /// `typeof import(...)` type is created even when every defineProperty
+    /// call uses a non-literal (binding-resolved) name. tsc's binder
+    /// recognizes the defineProperty pattern as a CommonJS-export indicator
+    /// independently of whether the property name is statically extractable.
+    pub(crate) fn file_has_define_property_export_call(&self, target_file_idx: usize) -> bool {
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(call_node) = target_arena.get(stmt.expression) else {
+                continue;
+            };
+            if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                continue;
+            }
+            let Some(call) = target_arena.get_call_expr(call_node) else {
+                continue;
+            };
+            let Some(callee_node) = target_arena.get(call.expression) else {
+                continue;
+            };
+            if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = target_arena.get_access_expr(callee_node) else {
+                continue;
+            };
+            let is_object_define_property = target_arena
+                .get_identifier_at(access.expression)
+                .is_some_and(|ident| ident.escaped_text == "Object")
+                && target_arena
+                    .get_identifier_at(access.name_or_argument)
+                    .is_some_and(|ident| ident.escaped_text == "defineProperty");
+            if !is_object_define_property {
+                continue;
+            }
+            let Some(args) = &call.arguments else {
+                continue;
+            };
+            if args.nodes.len() < 3 {
+                continue;
+            }
+            let target_expr = args.nodes[0];
+            let is_exports_target = target_arena
+                .get_identifier_at(target_expr)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+            let is_module_exports_target =
+                target_arena.get(target_expr).is_some_and(|target_node| {
+                    if target_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                        return false;
+                    }
+                    let Some(target_access) = target_arena.get_access_expr(target_node) else {
+                        return false;
+                    };
+                    target_arena
+                        .get_identifier_at(target_access.expression)
+                        .is_some_and(|ident| ident.escaped_text == "module")
+                        && target_arena
+                            .get_identifier_at(target_access.name_or_argument)
+                            .is_some_and(|ident| ident.escaped_text == "exports")
+                });
+            if is_exports_target || is_module_exports_target {
+                return true;
+            }
+        }
+        false
     }
 
     pub(crate) fn define_property_info_from_descriptor(
@@ -393,9 +476,12 @@ impl<'a> CheckerState<'a> {
         let has_accessor_descriptor = has_getter || has_setter;
         let has_data_descriptor = has_value || writable_true;
 
-        // TSC treats malformed or mixed descriptors on exports as permissive
-        // open-world properties rather than surfacing readonly/missing-member
-        // behavior at import sites.
+        // tsc treats malformed or mixed descriptors as readonly any-typed
+        // properties: an empty `{}`, a mixed accessor+data shape (`get`+`value`),
+        // and a lone `writable: true` (no `value`, no accessor) all produce
+        // properties that exist for read access but reject writes with TS2540.
+        // Only a paired `value` + `writable: true` data descriptor or an explicit
+        // `set` accessor makes the property writable.
         if (!has_accessor_descriptor && !has_data_descriptor)
             || (has_accessor_descriptor && has_data_descriptor)
             || (writable_true && !has_value && !has_accessor_descriptor)
@@ -405,7 +491,7 @@ impl<'a> CheckerState<'a> {
                 type_id: TypeId::ANY,
                 write_type: TypeId::ANY,
                 optional: false,
-                readonly: false,
+                readonly: true,
                 is_method: false,
                 is_class_prototype: false,
                 visibility: Visibility::Public,

@@ -229,14 +229,21 @@ impl<'a> CheckerState<'a> {
             if let Some((_, params)) = self.resolve_global_jsdoc_typedef_info(base_name) {
                 params.is_empty()
             } else if let Some(sym_id) = resolved_type_symbol {
-                self.type_reference_symbol_type_with_params(sym_id)
-                    .1
+                // `type_reference_symbol_type_with_params` only sees AST-level
+                // `<T>` lists; for JS classes declared with `@template T` JSDoc
+                // (no syntax-level params), use the reference helper which
+                // also surfaces JSDoc-derived params.
+                self.get_reference_type_params_for_symbol(sym_id, base_name)
                     .is_empty()
             } else {
                 matches!(base_name, "Void" | "Undefined")
             };
 
-        if resolved_non_generic {
+        // JSDoc treats `Object<K, V>` as a record-shaped indexed type
+        // (`{ [k: K]: V }`), even though the lib `interface Object` declaration
+        // has no type parameters. tsc accepts this without TS2315 in JS files.
+        let is_jsdoc_object_record = base_name == "Object" && arg_strs.len() == 2;
+        if resolved_non_generic && !is_jsdoc_object_record {
             let base_offset = type_expr[..angle_idx].rfind(base_name).unwrap_or(0);
             let message = crate::diagnostics::format_message(
                 crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_GENERIC,
