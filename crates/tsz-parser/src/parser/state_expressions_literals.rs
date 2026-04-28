@@ -484,50 +484,20 @@ impl ParserState {
         // `check_for_identifier_start_after_numeric_literal` can suppress a
         // colliding TS1351 the same way tsc's `parseErrorAtPosition` does.
 
-        // Check for missing hex digits (e.g., 0x, 0X) - TS1125
-        if (token_flags & TokenFlags::HexSpecifier as u32) != 0 {
-            // Hex literal should be at least 3 chars (0x followed by at least one digit)
-            // If it's just "0x" or "0X", no hex digits were provided
-            if text.len() == 2 {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Hexadecimal digit expected.",
-                    diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
-                );
-            }
-        }
-
-        // Check for missing binary digits (e.g., 0b, 0B) - TS1177
-        if (token_flags & TokenFlags::BinarySpecifier as u32) != 0 {
-            // Binary literal should be at least 3 chars (0b followed by at least one digit)
-            // If it's just "0b" or "0B", no binary digits were provided
-            if text.len() == 2 {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Binary digit expected.",
-                    diagnostic_codes::BINARY_DIGIT_EXPECTED,
-                );
-            }
-        }
-
-        // Check for missing octal digits (e.g., 0o, 0O) - TS1178
-        if (token_flags & TokenFlags::OctalSpecifier as u32) != 0 {
-            // Octal literal should be at least 3 chars (0o followed by at least one digit)
-            // If it's just "0o" or "0O", no octal digits were provided
-            if text.len() == 2 {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    end_pos,
-                    0,
-                    "Octal digit expected.",
-                    diagnostic_codes::OCTAL_DIGIT_EXPECTED,
-                );
-            }
-        }
+        // Note: TS1125/TS1177/TS1178 ("Hexadecimal/Binary/Octal digit expected")
+        // for empty- or invalid-digit prefixed integer literals (`0x`, `0b21010`,
+        // `0o81010`, etc.) are emitted by the scanner in
+        // `scan_integer_base_literal`'s `if !saw_digit` branch at the same
+        // position the parser would re-emit them here. Re-emitting via
+        // `parse_error_at` would dedup against the scanner's diagnostic but
+        // bumps `scanner_diagnostics_high_water_mark` — "consuming" the slot
+        // that subsequent diagnostics like TS1005 (',' expected) at the same
+        // position would otherwise dedup against, leaking spurious TS1005 at
+        // every malformed-base-literal site. Removing the parser-side
+        // duplicates is behavior-preserving for the digit-expected diagnostic
+        // itself (still emitted by the scanner) and lets the position-based
+        // dedup work for cascading parser errors.
+        let _ = end_pos;
 
         // Check if this numeric literal has an invalid separator (for TS1351 check).
         // The scanner has already pushed per-occurrence TS6188/TS6189 diagnostics

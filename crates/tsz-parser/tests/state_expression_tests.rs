@@ -532,3 +532,44 @@ fn invalid_numeric_separator_followed_by_identifier_does_not_emit_ts2304() {
         "TS2304 must NOT fire for the recovered identifier. Got codes: {codes:?}"
     );
 }
+
+#[test]
+fn malformed_binary_literal_does_not_leak_ts1005_alongside_ts1177() {
+    // `var binary = 0b21010;` — `0b` is a complete (zero-digit) binary
+    // NumericLiteral; `2` is not a valid binary digit so the scanner emits
+    // TS1177 ("Binary digit expected") at column 16 (the `2`). The next
+    // token is the decimal NumericLiteral `21010`, also starting at column
+    // 16. Without dedup, the variable-declaration list parser emits TS1005
+    // ("',' expected") followed by `parse_semicolon` emitting TS1005 (";'
+    // expected") at the same position. tsc emits ONLY TS1177 — the parser
+    // errors are suppressed by `parseErrorAtPosition`'s same-position dedup.
+    // Lock the dedup so `invalidBinaryIntegerLiteralAndOctalIntegerLiteral.ts`
+    // keeps passing.
+    let (parser, _root) = parse_source("var binary = 0b21010;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1177),
+        "Expected TS1177 (Binary digit expected) at the `2`, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1005),
+        "TS1005 must NOT fire at the same position as TS1177. Got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn malformed_octal_literal_does_not_leak_ts1005_alongside_ts1178() {
+    // Companion of the binary case for octal (`0o`). tsc emits only TS1178.
+    let (parser, _root) = parse_source("var octal = 0o81010;");
+    let diags = parser.get_diagnostics();
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1178),
+        "Expected TS1178 (Octal digit expected) at the `8`, got codes: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1005),
+        "TS1005 must NOT fire at the same position as TS1178. Got codes: {codes:?}"
+    );
+}
