@@ -908,7 +908,9 @@ impl Runner {
             files = files
                 .into_iter()
                 .filter_map(|path| {
-                    if stable_shard_for_path(&path, test_dir, shard_count) == shard_index {
+                    if stable_shard_for_path(&path, std::path::Path::new(test_dir), shard_count)
+                        == shard_index
+                    {
                         Some(path)
                     } else {
                         None
