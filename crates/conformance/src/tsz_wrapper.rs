@@ -329,6 +329,26 @@ pub fn prepare_test_dir(
                 || lower.contains("/node_modules/")
                 || lower.starts_with("node_modules/")
         });
+    // Names listed in `compilerOptions.types` (when not the `*` wildcard).
+    // Each name like "node" maps to `node_modules/@types/node/...`. When such
+    // a file is BOTH listed in `files` and discoverable via typeRoots, tsc
+    // can load it twice via different absolute paths (e.g. on macOS,
+    // `/var/.../node_modules/@types/node/index.d.ts` from `files` and
+    // `/private/var/.../node_modules/@types/node/index.d.ts` from typeRoots
+    // canonicalization). The double-load produces a synthetic TS2451 for any
+    // block-scoped global like `declare const require`. tsz canonicalizes
+    // paths uniformly and dedupes correctly, so we mirror that here by not
+    // adding the @types file to the explicit `files` array when its package
+    // name is already covered by `types`. typeRoots discovery still loads it.
+    let types_packages_in_options: Vec<String> = options
+        .get("types")
+        .map(|raw| {
+            raw.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && s != "*")
+                .collect()
+        })
+        .unwrap_or_default();
     let explicit_root_files: Option<Vec<String>> =
         if needs_explicit_root_files && !tsc_expects_no_inputs {
             let root_files: Vec<String> = filenames
@@ -347,6 +367,19 @@ pub fn prepare_test_dir(
                     if no_types_and_symbols
                         && (lower.contains("/node_modules/@types/")
                             || lower.starts_with("node_modules/@types/"))
+                    {
+                        return None;
+                    }
+                    // When this @types file is covered by `compilerOptions.types`,
+                    // skip listing it explicitly in `files`. Listing it both
+                    // places causes tsc on macOS to double-load it (because of
+                    // /var → /private/var symlink canonicalization differences
+                    // between the `files` and typeRoots resolution paths),
+                    // producing spurious TS2451 diagnostics for ambient
+                    // block-scoped globals like `declare const require`.
+                    if !types_packages_in_options.is_empty()
+                        && atypes_package_in(lower.as_str())
+                            .is_some_and(|pkg| types_packages_in_options.iter().any(|t| *t == pkg))
                     {
                         return None;
                     }
@@ -1061,6 +1094,32 @@ fn no_types_and_symbols_enabled(options: &HashMap<String, String>) -> bool {
         .get("noTypesAndSymbols")
         .or_else(|| options.get("notypesandsymbols"))
         .is_some_and(|value| value == "true")
+}
+
+/// Extract the `@types/<package>` name from a path containing the `@types/`
+/// segment. Handles both regular packages (`@types/node`) and scoped packages
+/// (`@types/scope__pkg`, the de-mangled form of `@scope/pkg`). The returned
+/// name is normalized to the form that appears in `compilerOptions.types`
+/// (e.g. `node`, `@scope/pkg`).
+fn atypes_package_in(lower_path: &str) -> Option<String> {
+    const NEEDLE_SLASH: &str = "/node_modules/@types/";
+    const NEEDLE_PREFIX: &str = "node_modules/@types/";
+    let rest = if let Some(idx) = lower_path.find(NEEDLE_SLASH) {
+        &lower_path[idx + NEEDLE_SLASH.len()..]
+    } else if lower_path.starts_with(NEEDLE_PREFIX) {
+        &lower_path[NEEDLE_PREFIX.len()..]
+    } else {
+        return None;
+    };
+    let segment = rest.split('/').next()?;
+    if segment.is_empty() {
+        return None;
+    }
+    if let Some((scope, pkg)) = segment.split_once("__") {
+        Some(format!("@{scope}/{pkg}"))
+    } else {
+        Some(segment.to_string())
+    }
 }
 
 /// Convert test directive options to tsconfig compiler options
