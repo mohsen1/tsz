@@ -1194,3 +1194,40 @@ fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() 
         "TS5057 <unknown>:0:0 Cannot find a tsconfig.json file at the specified directory: ''."
     );
 }
+
+#[test]
+fn test_atypes_package_in_extracts_simple_package() {
+    assert_eq!(
+        atypes_package_in("/some/path/node_modules/@types/node/index.d.ts"),
+        Some("node".to_string())
+    );
+    assert_eq!(
+        atypes_package_in("node_modules/@types/node/index.d.ts"),
+        Some("node".to_string())
+    );
+}
+
+#[test]
+fn test_atypes_package_in_extracts_scoped_package() {
+    // tsc de-mangles `@scope/pkg` to `@types/scope__pkg` on disk.
+    assert_eq!(
+        atypes_package_in("/x/node_modules/@types/scope__pkg/index.d.ts"),
+        Some("@scope/pkg".to_string())
+    );
+}
+
+#[test]
+fn test_atypes_package_in_returns_none_for_non_atypes_path() {
+    assert_eq!(atypes_package_in("/foo/bar/baz.ts"), None);
+    assert_eq!(atypes_package_in("node_modules/foo/index.d.ts"), None);
+    assert_eq!(atypes_package_in(""), None);
+}
+
+#[test]
+fn test_atypes_package_in_handles_subdir_paths() {
+    // Sub-paths inside the @types package still resolve to the package name.
+    assert_eq!(
+        atypes_package_in("/p/node_modules/@types/node/fs/promises.d.ts"),
+        Some("node".to_string())
+    );
+}
