@@ -238,11 +238,10 @@ jobs:
         run: scripts/ci/github-suite.sh unit
 
   conformance:
-    # Conformance remains below the current wall-clock tail. In the
-    # 2026-04-28 #1657 sample, 8 shards all finished in <=1m56 while
-    # unit-archive + unit shards were still running. Trim runner fan-out
-    # conservatively; 4 shards would risk making conformance the new tail
-    # once wasm/unit setup gets faster.
+    # Conformance remains comfortably below the current wall-clock tail. In
+    # run 25058599510, 6 shards finished in <=2m21 while unit/fourslash were
+    # still running. Keep enough parallelism to stay off the critical path
+    # while returning runner capacity to the slower suites.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true'
@@ -251,11 +250,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3]
     env:
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
-      TSZ_CI_CONFORMANCE_SHARDS: 6
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
+      TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_SKIP_DIST_RESTORE: "1"
       TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
       TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
@@ -282,8 +281,8 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
-      TSZ_CI_CONFORMANCE_SHARDS: 6
+      _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
+      TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
@@ -350,11 +349,10 @@ jobs:
         run: scripts/ci/github-suite.sh emit-aggregate
 
   fourslash:
-    # Each matrix shard runs on its own 8-vCPU cloud runner. The 2026-04-28
-    # 9m15s sample spent the critical path in fourslash-3 (323s in the runner)
-    # while the aggregate itself was only ~20s. Keep the 4-shard runner
-    # footprint, let each shard use the full runner, and use snapshot timings
-    # to spread known slow tests across shards.
+    # Each matrix shard runs on its own 8-vCPU cloud runner. Run 25058599510
+    # still tailed in fourslash-2 at 6m23, while conformance had spare
+    # capacity. Shift those two runners here; weighted snapshot timings reduce
+    # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.should_run == 'true'
@@ -363,10 +361,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
       TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
       TSZ_CI_FOURSLASH_WORKERS: 8
       TSZ_CI_SKIP_DIST_RESTORE: "1"
@@ -408,7 +406,7 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 4
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
