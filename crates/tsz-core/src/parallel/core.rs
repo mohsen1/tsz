@@ -1450,7 +1450,7 @@ pub struct BoundFile {
     /// `Arc`-wrapped so per-file binders constructed by the CLI driver and
     /// the parallel checker can share via `Arc::clone` (atomic increment)
     /// instead of deep-cloning the underlying `FxHashMap`. Same template as
-    /// the recently-merged `BoundFile` field Arc-wraps (#1399 / #1404 / #1409
+    /// the recently-merged `BoundFile` field `Arc`-wraps (#1399 / #1404 / #1409
     /// / #1416 / #1428 / #1535 / #1559).
     pub symbol_arenas: Arc<FxHashMap<SymbolId, Arc<NodeArena>>>,
     /// Per-file declaration-to-arena mapping captured during binding.
@@ -1466,7 +1466,7 @@ pub struct BoundFile {
     /// `Arc`-wrapped to mirror `BinderState.scopes` so per-file binders
     /// constructed in the cross-file lookup pipeline share via
     /// `Arc::clone` instead of deep-cloning. Same pattern as the recently-
-    /// merged `BoundFile` field Arc-wraps (#1399 / #1404 / #1409 / #1416 /
+    /// merged `BoundFile` field `Arc`-wraps (#1399 / #1404 / #1409 / #1416 /
     /// #1428 / #1535).
     pub scopes: Arc<Vec<Scope>>,
     /// Map from AST node to scope ID.

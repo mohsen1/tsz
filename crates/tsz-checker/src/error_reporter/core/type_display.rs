@@ -939,6 +939,17 @@ impl<'a> CheckerState<'a> {
                 self.normalize_assignability_display_type_inner(evaluated, visiting, depth + 1)
             }
         } else {
+            // For function/callable shapes whose params or return contain a
+            // `TypeQuery`, skip evaluation — `evaluate_type_for_assignability`
+            // expands `TypeQuery` in nested positions, which for self-
+            // referential typeof (e.g. `(t: typeof C.g) => void` where `C.g`
+            // IS that function) produces an extra outer wrapper. tsc keeps
+            // the typeof reference intact in the rendered message.
+            if crate::query_boundaries::common::function_signature_has_typeof(self.ctx.types, ty) {
+                visiting.remove(&ty);
+                return ty;
+            }
+
             let evaluated =
                 if crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
                     && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
@@ -1612,29 +1623,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // For function types with a return type that is a TypeQuery, don't use
-        // the evaluated display. The evaluation would resolve the TypeQuery to
-        // the full function type, causing double arrows like `() => () => typeof fn`.
-        if let Some(fn_shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
-            && crate::query_boundaries::common::is_type_query_type(
-                self.ctx.types,
-                fn_shape.return_type,
-            )
-        {
+        // For function/callable types whose signatures carry a `TypeQuery`
+        // in any param or return position, don't use the evaluated display.
+        // Evaluation would resolve the `TypeQuery` to the full function
+        // type, causing double arrows like `() => () => typeof fn`
+        // (return-side) or extra wrapping like `(t: (t: typeof g) => void)
+        // => void` (param-side, for recursive `typeof X` referring to the
+        // enclosing function).
+        if crate::query_boundaries::common::function_signature_has_typeof(self.ctx.types, ty) {
             return false;
-        }
-
-        // Also check callable types (single call signature)
-        if let Some(callable) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
-            && callable.call_signatures.len() == 1
-        {
-            let sig = &callable.call_signatures[0];
-            if crate::query_boundaries::common::is_type_query_type(self.ctx.types, sig.return_type)
-            {
-                return false;
-            }
         }
 
         // For generic Application types whose type alias body is an IndexedAccess

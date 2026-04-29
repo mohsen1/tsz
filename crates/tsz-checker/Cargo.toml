@@ -136,6 +136,10 @@ name = "type_alias_typeof_circular_tests"
 path = "tests/type_alias_typeof_circular_tests.rs"
 
 [[test]]
+name = "recursive_typeof_param_display_tests"
+path = "tests/recursive_typeof_param_display_tests.rs"
+
+[[test]]
 name = "ts2303_tests"
 path = "tests/ts2303_tests.rs"
 
