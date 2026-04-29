@@ -384,18 +384,13 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         let shape = self.computer.db.function_shape(FunctionShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
-        // For methods (unless suppressed by indexed access context), visit
-        // parameters under method_bivariant_depth so that any target param
-        // occurrences are recorded as COVARIANT (matching tsc's bivariant →
-        // covariant-first behavior). For non-methods, visit normally with
-        // contravariant polarity (strict function types).
-        if shape.is_method && !self.suppress_method_bivariance {
-            self.method_bivariant_depth += 1;
-            for param in &shape.params {
-                self.visit_with_polarity(param.type_id, !current_polarity);
-            }
-            self.method_bivariant_depth -= 1;
-        } else if !shape.is_method {
+        // Method parameters are bivariant in TypeScript compatibility mode.
+        // For generic variance probing, a method-only parameter occurrence
+        // must not make the container covariant or contravariant: both
+        // `Comparer<Animal> = Comparer<Dog>` and the reverse are accepted when
+        // `Comparer<T>` only uses `T` in method parameters. Function-valued
+        // properties still visit parameters contravariantly below.
+        if !shape.is_method {
             for param in &shape.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
             }
@@ -424,21 +419,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Call signatures
         for sig in &callable.call_signatures {
             // For methods (see visit_function for full rationale).
-            if sig.is_method && !self.suppress_method_bivariance {
-                self.method_bivariant_depth += 1;
-                for param in &sig.params {
-                    self.visit_with_polarity(param.type_id, !current_polarity);
-                }
-                self.method_bivariant_depth -= 1;
-            } else if !sig.is_method {
+            if !sig.is_method {
                 for param in &sig.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
             }
-            // When suppress_method_bivariance && is_method: skip params entirely.
-            // Inside indexed access (bivarianceHack pattern), method params
-            // should not contribute to variance since the indexed access
-            // extracts the method as a plain function type.
             // Return type is covariant
             self.visit_with_polarity(sig.return_type, current_polarity);
             if let Some(this_ty) = sig.this_type {
