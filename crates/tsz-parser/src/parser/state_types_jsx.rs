@@ -1209,7 +1209,14 @@ impl ParserState {
                 self.next_token(); // consume :
                 self.scanner.scan_jsx_identifier();
                 let local_name = self.parse_identifier_name();
-                let ns_end = self.token_end();
+                // The namespaced-name node ends at the local name, not at the
+                // next token. Using `token_end()` here would extend the span
+                // over the following `>` (or other trailing token), which then
+                // surfaces as e.g. `'a:b>'` in TS17002 messages.
+                let ns_end = self
+                    .arena
+                    .get(local_name)
+                    .map_or(self.token_end(), |node| node.end);
                 return self.arena.add_jsx_namespaced_name(
                     syntax_kind_ext::JSX_NAMESPACED_NAME,
                     start_pos,
@@ -1232,7 +1239,14 @@ impl ParserState {
             if self.is_token(SyntaxKind::ColonToken) {
                 self.next_token(); // consume :
                 let local_name = self.parse_identifier_name();
-                let end_pos = self.token_end();
+                // The namespaced-name node ends at the local name, not at the
+                // next token. Using `token_end()` here would extend the span
+                // over the following `>` (or other trailing token), which then
+                // surfaces as e.g. `'a:b>'` in TS17002 messages.
+                let end_pos = self
+                    .arena
+                    .get(local_name)
+                    .map_or(self.token_end(), |node| node.end);
                 return self.arena.add_jsx_namespaced_name(
                     syntax_kind_ext::JSX_NAMESPACED_NAME,
                     start_pos,
@@ -1472,7 +1486,11 @@ impl ParserState {
             self.next_token(); // consume :
             // Also allow keywords for the local part of namespaced names
             let local_name = self.parse_identifier_name();
-            let end_pos = self.token_end();
+            // End at the local name, not the next token.
+            let end_pos = self
+                .arena
+                .get(local_name)
+                .map_or(self.token_end(), |node| node.end);
             return self.arena.add_jsx_namespaced_name(
                 syntax_kind_ext::JSX_NAMESPACED_NAME,
                 start_pos,
