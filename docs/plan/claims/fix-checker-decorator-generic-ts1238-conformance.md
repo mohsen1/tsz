@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-decorator-generic-ts1238-conformance`
-- **PR**: TBD
+- **PR**: #1712
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 
@@ -17,5 +17,6 @@ Fix the picked conformance failure `decoratorCallGeneric.ts`, where `tsc` report
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "decoratorCallGeneric" --verbose`
-- Planned: owning crate unit tests via `cargo nextest run`
+- `./scripts/conformance/conformance.sh run --filter "decoratorCallGeneric" --verbose` reproduced the picked failure: expected TS1238, actual no diagnostics.
+- `cargo nextest run -p tsz-checker --test ts1238_generic_decorator_tests -- ts1238_generic_decorator_constraint_mismatch_emits_with_target_es2015` passes in the no-lib checker utility path.
+- A local lib-loaded checker regression test reproduces the conformance miss, but no sound implementation fix is ready yet; speculative solver inference and checker fallback edits were reverted.
