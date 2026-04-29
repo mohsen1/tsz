@@ -47,6 +47,17 @@ function formatEmitExtra(skipped, timeouts = 0) {
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
+function setSuiteFromSnapshotSummary(metrics, key, passed, total, extra = "") {
+  passed = toInt(passed);
+  total = toInt(total);
+  if (passed === null || total === null || total <= 0) {
+    return false;
+  }
+  const rate = (passed / total) * 100;
+  setSuiteMetrics(metrics, key, rate, passed, total, extra);
+  return true;
+}
+
 function parseEmitExtraFromReadmeLine(line) {
   const m = line.match(/\([^)]*tests;\s*([^)]*)\)/);
   if (!m || !m[1]) return "";
@@ -140,8 +151,44 @@ function extractMetrics() {
       )
     : false;
 
+  const conformanceSnapshot = readJsonIfExists(path.join(ROOT, "scripts/conformance/conformance-snapshot.json"));
+  const emitSnapshot = readJsonIfExists(path.join(ROOT, "scripts/emit/emit-snapshot.json"));
+  const emitDetail = readJsonIfExists(path.join(ROOT, "scripts/emit/emit-detail.json"));
+  const fourslashSnapshot = readJsonIfExists(path.join(ROOT, "scripts/fourslash/fourslash-snapshot.json"));
+
+  const hasSnapshotConformance = hasCiConformance
+    || setSuiteFromSnapshotSummary(
+      metrics,
+      "conformance",
+      conformanceSnapshot?.summary?.passed,
+      conformanceSnapshot?.summary?.total_tests ?? conformanceSnapshot?.summary?.total,
+    );
+  const hasSnapshotEmitJs = hasCiEmitJs
+    || setSuiteFromSnapshotSummary(
+      metrics,
+      "emit_js",
+      emitDetail?.summary?.jsPass ?? emitSnapshot?.summary?.jsPass ?? emitSnapshot?.jsPass,
+      emitDetail?.summary?.jsTotal ?? emitSnapshot?.summary?.jsTotal,
+      formatEmitExtra(toInt(emitDetail?.summary?.jsSkip), toInt(emitDetail?.summary?.jsTimeout)),
+    );
+  const hasSnapshotEmitDts = hasCiEmitDts
+    || setSuiteFromSnapshotSummary(
+      metrics,
+      "emit_dts",
+      emitDetail?.summary?.dtsPass ?? emitSnapshot?.summary?.dtsPass ?? emitSnapshot?.dtsPass,
+      emitDetail?.summary?.dtsTotal ?? emitSnapshot?.summary?.dtsTotal,
+      formatEmitExtra(toInt(emitDetail?.summary?.dtsSkip)),
+    );
+  const hasSnapshotFourslash = hasCiFourslash
+    || setSuiteFromSnapshotSummary(
+      metrics,
+      "fourslash",
+      fourslashSnapshot?.summary?.passed ?? fourslashSnapshot?.passed,
+      fourslashSnapshot?.summary?.total ?? fourslashSnapshot?.total,
+    );
+
   if (readme) {
-    if (!hasCiConformance) {
+    if (!hasSnapshotConformance) {
       const confSection = readme.match(
         /<!-- CONFORMANCE_START -->([\s\S]*?)<!-- CONFORMANCE_END -->/,
       );
@@ -159,14 +206,14 @@ function extractMetrics() {
       }
     }
 
-    if (!hasCiEmitJs || !hasCiEmitDts) {
+    if (!hasSnapshotEmitJs || !hasSnapshotEmitDts) {
       const emitSection = readme.match(/<!-- EMIT_START -->([\s\S]*?)<!-- EMIT_END -->/);
       if (emitSection) {
         const lines = emitSection[1].split("\n");
         for (const line of lines) {
           const m = line.match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
           if (!m) continue;
-          if (!hasCiEmitJs && line.includes("JavaScript")) {
+          if (!hasSnapshotEmitJs && line.includes("JavaScript")) {
             setSuiteIfValid(
               metrics,
               "emit_js",
@@ -175,7 +222,7 @@ function extractMetrics() {
               toInt(m[3]),
               parseEmitExtraFromReadmeLine(line),
             );
-          } else if (!hasCiEmitDts && line.includes("Declaration")) {
+          } else if (!hasSnapshotEmitDts && line.includes("Declaration")) {
             setSuiteIfValid(
               metrics,
               "emit_dts",
@@ -189,7 +236,7 @@ function extractMetrics() {
       }
     }
 
-    if (!hasCiFourslash) {
+    if (!hasSnapshotFourslash) {
       const fsSection = readme.match(
         /<!-- FOURSLASH_START -->([\s\S]*?)<!-- FOURSLASH_END -->/,
       );
@@ -210,7 +257,7 @@ function extractMetrics() {
 
   try {
     const output = execSync(
-      "find crates -path '*/target/*' -prune -o -path '*/src/*' -type f -name '*.rs' -print | xargs wc -l",
+      "git ls-files 'crates/*/src/*.rs' 'crates/*/src/**/*.rs' 'crates/*/build.rs' 'crates/tsz-website/rust/**/*.rs' | sort -u | xargs wc -l",
       { cwd: ROOT, encoding: "utf8", maxBuffer: 10 * 1024 * 1024 },
     );
     const lines = output.trim().split("\n");

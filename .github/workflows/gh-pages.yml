@@ -5,12 +5,20 @@ on:
     branches: [main]
     paths:
       - 'crates/tsz-website/**'
+      - 'crates/**/*.rs'
+      - 'crates/**/Cargo.toml'
       - 'docs/**/*.md'
       - 'docs/architecture.html'
       - 'AGENTS.md'
+      - 'scripts/conformance/conformance-snapshot.json'
+      - 'scripts/emit/emit-snapshot.json'
+      - 'scripts/fourslash/fourslash-snapshot.json'
       - '.github/workflows/gh-pages.yml'
   schedule:
     - cron: '0 6 * * *'  # Daily at 6am UTC
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -59,6 +67,15 @@ jobs:
         run: |
           if [ "${{ steps.in_flight.outputs.in_flight }}" = "true" ]; then
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            if [ "${{ github.event.workflow_run.conclusion }}" = "success" ] && [ "${{ github.event.workflow_run.head_branch }}" = "main" ]; then
+              echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "workflow_run was not successful main CI, skipping"
+              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
           if [ "${{ github.event_name }}" != "schedule" ]; then
@@ -164,8 +181,6 @@ jobs:
       - name: Download latest benchmark data from GCS
         run: |
           BUCKET="thirdface-ai-oauth_cloudbuild"
-          OBJECT="tsz-ci-cache/bench-runs/latest.json"
-          URL="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media"
 
           # Get OAuth token from credentials wired by google-github-actions/auth above.
           TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
@@ -173,6 +188,8 @@ jobs:
           if [[ -z "$TOKEN" ]]; then
             echo "No OAuth token — GCP auth step may have failed or secret is missing"
           else
+            OBJECT="tsz-ci-cache/bench-runs/latest.json"
+            URL="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media"
             HTTP=$(curl -s -w "\n%{http_code}" -o /tmp/bench-latest.json \
               -H "Authorization: Bearer ${TOKEN}" "$URL")
             STATUS=$(echo "$HTTP" | tail -1)
@@ -194,6 +211,34 @@ jobs:
               echo "GCS fetch failed HTTP ${STATUS}"
             fi
           fi
+        continue-on-error: true
+
+      - name: Download latest suite metrics from GCS
+        run: |
+          BUCKET="thirdface-ai-oauth_cloudbuild"
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
+
+          if [[ -z "$TOKEN" ]]; then
+            echo "No OAuth token — GCP auth step may have failed or secret is missing"
+            exit 0
+          fi
+
+          mkdir -p .ci-metrics
+          for suite in conformance emit fourslash; do
+            OBJECT="tsz-ci-cache/metrics/latest/${suite}.json"
+            URL="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media"
+            out=".ci-metrics/${suite}.json"
+            HTTP=$(curl -s -w "\n%{http_code}" -o "$out.tmp" \
+              -H "Authorization: Bearer ${TOKEN}" "$URL")
+            STATUS=$(echo "$HTTP" | tail -1)
+            if [[ "$STATUS" == "200" ]] && jq -e type "$out.tmp" >/dev/null 2>&1; then
+              mv "$out.tmp" "$out"
+              echo "Downloaded latest ${suite} metrics"
+            else
+              rm -f "$out.tmp"
+              echo "No latest ${suite} metrics from GCS (HTTP ${STATUS}); website will use repository snapshot/README fallback"
+            fi
+          done
         continue-on-error: true
 
       - name: Download WASM
