@@ -1985,8 +1985,13 @@ declare var x1: A & C & {
 x1.f3();
     "#;
     assert!(
-        has_error(source, 2684),
-        "Union of multi-overload interfaces with no compatible this-pairs should emit TS2684"
+        has_error(source, 2349),
+        "Union of multi-overload interfaces with no compatible this-pairs should emit TS2349 (not callable), matching tsc's getUnionSignatures"
+    );
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2684),
+        "TS2684 must not fire — tsc routes the no-compat case through TS2349 only. Got: {codes:?}"
     );
 }
 
