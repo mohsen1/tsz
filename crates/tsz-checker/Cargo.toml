@@ -511,5 +511,9 @@ path = "tests/jsdoc_param_return_ts2314_tests.rs"
 name = "destructuring_rest_omit_unspreadable_tests"
 path = "tests/destructuring_rest_omit_unspreadable_tests.rs"
 
+[[test]]
+name = "super_keyword_speculation_survival_tests"
+path = "tests/super_keyword_speculation_survival_tests.rs"
+
 [lints]
 workspace = true
