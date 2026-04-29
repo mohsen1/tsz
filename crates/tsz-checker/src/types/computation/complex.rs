@@ -225,68 +225,91 @@ impl<'a> CheckerState<'a> {
                     .get_identifier(expr_node)
                     .map(|ident| ident.escaped_text.as_str())
                     .unwrap_or_default();
-                let direct_symbol = self
-                    .ctx
-                    .binder
-                    .node_symbols
-                    .get(&new_expr.expression.0)
-                    .copied();
-                let fast_symbol = direct_symbol
-                    .or_else(|| self.resolve_identifier_symbol(new_expr.expression))
-                    .filter(|&sym_id| {
-                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            // Accept single-class declarations AND merged class+function
-                            // declarations. Checked-JS class + constructor-variable merges
-                            // stay on this fast path too, but are resolved to the constructor
-                            // variable's value declaration below.
-                            let has_class_decl = symbol.declarations.iter().any(|&d| {
-                                d.is_some()
-                                    && self.ctx.arena.get(d).is_some_and(|decl| {
-                                        decl.kind == syntax_kind_ext::CLASS_DECLARATION
-                                    })
-                            });
-                            symbol.escaped_name == identifier_text
-                                && has_class_decl
-                                && symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
-                                && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE)
-                                && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-                                && (symbol.decl_file_idx == u32::MAX
-                                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
-                        })
-                    });
-                if let Some(sym_id) = fast_symbol {
-                    self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
-                    // The fast path bypasses get_type_of_identifier which
-                    // normally performs TDZ checking. We must check here so
-                    // that `new C()` before `class C {}` still emits TS2449.
-                    if self.check_tdz_violation(sym_id, new_expr.expression, identifier_text, false)
-                    {
+                if let Some(module_name) = self
+                    .source_file_default_import_module_named(new_expr.expression, identifier_text)
+                    && self.current_file_uses_module_exports_require_interop(&module_name)
+                    && let Some(module_exports_type) = self
+                        .resolve_effective_module_exports(&module_name)
+                        .and_then(|exports| exports.get("module.exports"))
+                        .map(|sym_id| self.get_type_of_symbol(sym_id))
+                {
+                    if !crate::query_boundaries::common::has_construct_signatures(
+                        self.ctx.types,
+                        module_exports_type,
+                    ) {
+                        self.error_not_constructable_at(module_exports_type, new_expr.expression);
                         return TypeId::ERROR;
                     }
-                    if self.ctx.is_js_file()
-                        && self.ctx.should_resolve_jsdoc()
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
-                        && symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE)
-                        && !symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
-                        && let Some(preferred_decl) = self.checked_js_constructor_value_declaration(
+                    module_exports_type
+                } else {
+                    let direct_symbol = self
+                        .ctx
+                        .binder
+                        .node_symbols
+                        .get(&new_expr.expression.0)
+                        .copied();
+                    let fast_symbol = direct_symbol
+                        .or_else(|| self.resolve_identifier_symbol(new_expr.expression))
+                        .filter(|&sym_id| {
+                            self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                                // Accept single-class declarations AND merged class+function
+                                // declarations. Checked-JS class + constructor-variable merges
+                                // stay on this fast path too, but are resolved to the constructor
+                                // variable's value declaration below.
+                                let has_class_decl = symbol.declarations.iter().any(|&d| {
+                                    d.is_some()
+                                        && self.ctx.arena.get(d).is_some_and(|decl| {
+                                            decl.kind == syntax_kind_ext::CLASS_DECLARATION
+                                        })
+                                });
+                                symbol.escaped_name == identifier_text
+                                    && has_class_decl
+                                    && symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                                    && symbol.has_any_flags(tsz_binder::symbol_flags::VALUE)
+                                    && !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                                    && (symbol.decl_file_idx == u32::MAX
+                                        || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+                            })
+                        });
+                    if let Some(sym_id) = fast_symbol {
+                        self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+                        // The fast path bypasses get_type_of_identifier which
+                        // normally performs TDZ checking. We must check here so
+                        // that `new C()` before `class C {}` still emits TS2449.
+                        if self.check_tdz_violation(
                             sym_id,
-                            symbol.value_declaration,
-                            &symbol.declarations,
-                        )
-                    {
-                        let value_type =
-                            self.type_of_value_declaration_for_symbol(sym_id, preferred_decl);
-                        if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                            value_type
+                            new_expr.expression,
+                            identifier_text,
+                            false,
+                        ) {
+                            return TypeId::ERROR;
+                        }
+                        if self.ctx.is_js_file()
+                            && self.ctx.should_resolve_jsdoc()
+                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                            && symbol.has_any_flags(tsz_binder::symbol_flags::CLASS)
+                            && symbol.has_any_flags(tsz_binder::symbol_flags::VARIABLE)
+                            && !symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION)
+                            && let Some(preferred_decl) = self
+                                .checked_js_constructor_value_declaration(
+                                    sym_id,
+                                    symbol.value_declaration,
+                                    &symbol.declarations,
+                                )
+                        {
+                            let value_type =
+                                self.type_of_value_declaration_for_symbol(sym_id, preferred_decl);
+                            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                                value_type
+                            } else {
+                                self.get_type_of_symbol(sym_id)
+                            }
                         } else {
                             self.get_type_of_symbol(sym_id)
                         }
                     } else {
-                        self.get_type_of_symbol(sym_id)
+                        self.get_type_of_node_with_request(new_expr.expression, &read_request)
                     }
-                } else {
-                    self.get_type_of_node_with_request(new_expr.expression, &read_request)
                 }
             } else {
                 self.get_type_of_node_with_request(new_expr.expression, &read_request)

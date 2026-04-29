@@ -831,6 +831,68 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    pub(crate) fn source_file_default_import_module_named(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> Option<String> {
+        let mut current = idx;
+        let mut guard = 0u32;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            guard += 1;
+            if guard > 4096 {
+                return None;
+            }
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+            if let Some(node) = self.ctx.arena.get(current)
+                && (node.kind == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE
+                    || node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK)
+            {
+                break;
+            }
+        }
+        let root = self.ctx.arena.get(current)?;
+        if root.kind != tsz_parser::parser::syntax_kind_ext::SOURCE_FILE
+            && root.kind != tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
+        {
+            return None;
+        }
+
+        for stmt_idx in self.ctx.arena.get_children(current) {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != tsz_parser::parser::syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+            if clause.name.is_some()
+                && self.ctx.arena.get_identifier_text(clause.name) == Some(name)
+                && let Some(module_specifier) = self.get_import_module_specifier(import_decl)
+                && !self.is_export_type_only_across_binders(&module_specifier, "default")
+                && !self.is_module_export_equals_type_only(&module_specifier)
+            {
+                return Some(module_specifier);
+            }
+        }
+
+        None
+    }
+
     pub(crate) fn source_file_has_value_import_binding_named(
         &self,
         idx: NodeIndex,
