@@ -3,7 +3,7 @@
 - **Date**: 2026-04-29
 - **Branch**: `fix/conformance-quick-pick-20260429-8`
 - **PR**: #1825
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
@@ -17,14 +17,19 @@ the false-positive in the owning layer, and add a focused Rust regression test.
 
 ## Files Touched
 
-- TBD after implementation.
+- `crates/tsz-checker/src/types/computation/call_helpers.rs`
+- `crates/tsz-checker/tests/ts2304_tests.rs`
+- `docs/plan/claims/fix-conformance-quick-pick-20260429-8.md`
 
 ## Verification
 
-- Planned: `cargo check --package tsz-checker`
-- Planned: `cargo check --package tsz-solver`
-- Planned: `cargo build --profile dist-fast --bin tsz`
-- Planned: owning-crate `cargo nextest run`
-- Planned: `./scripts/conformance/conformance.sh run --filter "emitDecoratorMetadata_isolatedModules" --verbose`
-- Planned: `./scripts/conformance/conformance.sh run --max 200`
-- Planned: `scripts/safe-run.sh ./scripts/conformance/conformance.sh run`
+- `cargo fmt --check`
+- `cargo check --package tsz-checker`
+- `cargo check --package tsz-solver`
+- `cargo build --profile dist-fast --bin tsz`
+- `cargo nextest run -p tsz-checker --test ts2304_tests local_ambient_value_shadows_dom_interface_in_value_position` (1 passed)
+- `cargo nextest run --package tsz-checker --lib` (3023 passed, 10 skipped)
+- `cargo nextest run --package tsz-solver --lib` (5554 passed, 9 skipped)
+- `./scripts/conformance/conformance.sh run --filter "emitDecoratorMetadata_isolatedModules" --verbose` (1/1 passed)
+- `./scripts/conformance/conformance.sh run --max 200` (200/200 passed)
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run` (12270/12582 passed)
