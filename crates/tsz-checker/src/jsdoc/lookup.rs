@@ -30,7 +30,10 @@ use tsz_solver::TypeId;
 /// statement's source position and length for diagnostic anchoring.
 type OrphanedExtendsTag = (&'static str, Option<(u32, u32)>);
 
-const JSDOC_TYPEDEF_PRESCAN_MIN_FILES: usize = 256;
+// Above this size, a cheap textual typedef pre-scan avoids constructing a
+// cross-file child checker for every file that cannot contain the requested
+// JSDoc typedef. The parser-backed check below remains the source of truth.
+const JSDOC_TYPEDEF_PRESCAN_MIN_FILES: usize = 32;
 
 impl<'a> CheckerState<'a> {
     fn global_source_file_idx_for_name(&self, file_name: &str) -> Option<usize> {
