@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-ts5088-mixin-cyclic-false-positive`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1813
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance — false-positive elimination)
 
 ## Intent
