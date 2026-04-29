@@ -259,13 +259,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Look up the symbol for this DefId
-        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
-            return None;
-        };
+        let sym_id = self.ctx.def_to_symbol_id(def_id)?;
         let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
-            return None;
-        };
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
         let name = &symbol.escaped_name;
 
         if self.ctx.binder.global_augmentations.contains_key(name) {
