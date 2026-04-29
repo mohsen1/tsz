@@ -374,9 +374,8 @@ check_prerequisites() {
         echo -e "${GREEN}✓${NC} tsz lib assets: embedded (built-in)"
     fi
 
-    # Check/build tsz with dedicated benchmark target directory unless caller
-    # provided TSZ. CI uses this to benchmark the dist-fast artifact that was
-    # already compiled by the main CI build.
+    # Check/build tsz with the dedicated benchmark target directory unless
+    # caller provided TSZ.
     local need_rebuild=false
 
     if [ "$TSZ_IS_OVERRIDE" = true ]; then
