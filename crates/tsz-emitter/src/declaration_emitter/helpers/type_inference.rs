@@ -779,11 +779,13 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn replace_whole_word_in_text(text: &str, word: &str, replacement: &str) -> String {
+    fn replace_whole_words_in_text(text: &str, replacements: &[(String, String)]) -> String {
+        if replacements.is_empty() {
+            return text.to_string();
+        }
+
         let mut result = String::with_capacity(text.len() + 16);
         let bytes = text.as_bytes();
-        let word_bytes = word.as_bytes();
-        let word_len = word_bytes.len();
         let text_len = bytes.len();
         let mut last_copied = 0usize;
         let mut in_single_quote = false;
@@ -809,18 +811,34 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            if i + word_len <= text_len && &bytes[i..i + word_len] == word_bytes {
+            let mut best_match: Option<(&str, usize)> = None;
+            for (word, replacement) in replacements {
+                let word_bytes = word.as_bytes();
+                let word_len = word_bytes.len();
+                if word_len == 0 || i + word_len > text_len {
+                    continue;
+                }
+                if &bytes[i..i + word_len] != word_bytes {
+                    continue;
+                }
                 let before_ok = i == 0 || !Self::is_ident_char_in_text(bytes[i - 1]);
                 let after_ok =
                     i + word_len >= text_len || !Self::is_ident_char_in_text(bytes[i + word_len]);
                 let qualified_member = i > 0 && bytes[i - 1] == b'.';
-                if before_ok && after_ok && !qualified_member {
-                    result.push_str(&text[last_copied..i]);
-                    result.push_str(replacement);
-                    i += word_len;
-                    last_copied = i;
+                if !before_ok || !after_ok || qualified_member {
                     continue;
                 }
+                if best_match.is_none_or(|(_, best_len)| word_len > best_len) {
+                    best_match = Some((replacement.as_str(), word_len));
+                }
+            }
+
+            if let Some((replacement, word_len)) = best_match {
+                result.push_str(&text[last_copied..i]);
+                result.push_str(replacement);
+                i += word_len;
+                last_copied = i;
+                continue;
             }
             i += 1;
         }
@@ -915,7 +933,7 @@ impl<'a> DeclarationEmitter<'a> {
             return text.to_string();
         };
 
-        let mut rewritten = text.to_string();
+        let mut replacements = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = source_arena.get(stmt_idx) else {
                 continue;
@@ -952,10 +970,10 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             let qualified = format!("import(\"{rel_path}\").{export_name}");
-            rewritten = Self::replace_whole_word_in_text(&rewritten, &export_name, &qualified);
+            replacements.push((export_name, qualified));
         }
 
-        rewritten
+        Self::replace_whole_words_in_text(text, &replacements)
     }
 
     fn type_text_contains_unqualified_foreign_value_export(
@@ -1016,7 +1034,7 @@ impl<'a> DeclarationEmitter<'a> {
             return text.to_string();
         };
 
-        let mut rewritten = text.to_string();
+        let mut replacements = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = source_arena.get(stmt_idx) else {
                 continue;
@@ -1042,7 +1060,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(local_name) = self.identifier_text_from_arena(source_arena, clause.name)
             {
                 let qualified = format!("import(\"{module_specifier}\").default");
-                rewritten = Self::replace_whole_word_in_text(&rewritten, &local_name, &qualified);
+                replacements.push((local_name, qualified));
             }
 
             if clause.named_bindings.is_some()
@@ -1054,8 +1072,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.identifier_text_from_arena(source_arena, bindings.name)
                     {
                         let qualified = format!("typeof import(\"{module_specifier}\")");
-                        rewritten =
-                            Self::replace_whole_word_in_text(&rewritten, &local_name, &qualified);
+                        replacements.push((local_name, qualified));
                     }
                 } else {
                     for &spec_idx in &bindings.elements.nodes {
@@ -1077,14 +1094,13 @@ impl<'a> DeclarationEmitter<'a> {
                             local_name.clone()
                         };
                         let qualified = format!("import(\"{module_specifier}\").{imported_name}");
-                        rewritten =
-                            Self::replace_whole_word_in_text(&rewritten, &local_name, &qualified);
+                        replacements.push((local_name, qualified));
                     }
                 }
             }
         }
 
-        rewritten
+        Self::replace_whole_words_in_text(text, &replacements)
     }
 
     /// Get the type of a node from the type cache, if available.
@@ -1999,6 +2015,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .to_string();
 
             let mut type_param_names = Vec::new();
+            let mut type_param_substitutions = Vec::new();
             if !type_args.is_empty()
                 && let Some(type_params) = func.type_parameters.as_ref()
             {
@@ -2009,11 +2026,11 @@ impl<'a> DeclarationEmitter<'a> {
                             self.identifier_text_from_arena(source_arena, param.name)
                     {
                         type_param_names.push(name_text.clone());
-                        type_text =
-                            Self::replace_whole_word_in_text(&type_text, &name_text, arg_text);
+                        type_param_substitutions.push((name_text, arg_text.clone()));
                     }
                 }
             }
+            type_text = Self::replace_whole_words_in_text(&type_text, &type_param_substitutions);
 
             let source_path = self.get_symbol_source_path(sym_id, binder).or_else(|| {
                 self.arena_to_path
@@ -3601,5 +3618,36 @@ impl<'a> DeclarationEmitter<'a> {
             })
             .unwrap_or(trimmed);
         normalized.parse::<f64>().is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DeclarationEmitter;
+
+    #[test]
+    fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {
+        let rewritten = DeclarationEmitter::replace_whole_words_in_text(
+            "A | B",
+            &[
+                ("A".to_string(), "import(\"./B\").A".to_string()),
+                ("B".to_string(), "import(\"./C\").B".to_string()),
+            ],
+        );
+
+        assert_eq!(rewritten, "import(\"./B\").A | import(\"./C\").B");
+    }
+
+    #[test]
+    fn simultaneous_word_replacement_does_not_chain_type_parameter_substitutions() {
+        let rewritten = DeclarationEmitter::replace_whole_words_in_text(
+            "T | U",
+            &[
+                ("T".to_string(), "Promise<U>".to_string()),
+                ("U".to_string(), "string".to_string()),
+            ],
+        );
+
+        assert_eq!(rewritten, "Promise<U> | string");
     }
 }
