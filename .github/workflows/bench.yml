@@ -50,58 +50,6 @@ jobs:
           _TSZ_CI_SUITE: bench
         run: scripts/ci/gcp-cache.sh restore
 
-      - name: Download dist-fast binaries from CI
-        id: dist-fast-ci-download
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CI_WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
-        run: |
-          deadline=$((SECONDS + 3600))
-          ci_run="$CI_WORKFLOW_RUN_ID"
-          while (( SECONDS < deadline )); do
-            if [[ -n "$ci_run" ]]; then
-              ci_json=$(gh api "repos/${{ github.repository }}/actions/runs/$ci_run" 2>/dev/null || echo '{}')
-              ci_status=$(jq -r '.status // empty' <<<"$ci_json")
-              ci_conclusion=$(jq -r '.conclusion // empty' <<<"$ci_json")
-            else
-              ci_json=$(gh api \
-                "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?branch=main&per_page=20" \
-                2>/dev/null || echo '{"workflow_runs":[]}')
-              ci_run=$(jq -r "[.workflow_runs[] | select(.head_sha == \"${BENCH_TARGET_SHA}\")][0].id // empty" <<<"$ci_json")
-              ci_status=$(jq -r "[.workflow_runs[] | select(.head_sha == \"${BENCH_TARGET_SHA}\")][0].status // empty" <<<"$ci_json")
-              ci_conclusion=$(jq -r "[.workflow_runs[] | select(.head_sha == \"${BENCH_TARGET_SHA}\")][0].conclusion // empty" <<<"$ci_json")
-            fi
-
-            if [[ -n "$ci_run" && "$ci_status" == "completed" && "$ci_conclusion" == "success" ]]; then
-              echo "Found successful CI run $ci_run for this SHA, downloading dist-fast-binaries artifact..."
-              gh run download "$ci_run" -n dist-fast-binaries -D .
-              echo "downloaded=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            if [[ -n "$ci_run" && "$ci_status" == "completed" ]]; then
-              echo "CI run $ci_run completed with conclusion '$ci_conclusion'; refusing to build benchmark binary in Bench."
-              exit 1
-            fi
-
-            if [[ -n "$ci_run" ]]; then
-              echo "CI run $ci_run is ${ci_status:-pending}; waiting for dist-fast-binaries..."
-            else
-              echo "No CI run found yet for ${BENCH_TARGET_SHA}; waiting..."
-            fi
-            sleep 30
-          done
-
-          echo "Timed out waiting for successful CI dist-fast-binaries artifact for ${BENCH_TARGET_SHA}."
-          exit 1
-
-      - name: Unpack dist-fast binaries
-        if: steps.dist-fast-ci-download.outputs.downloaded == 'true'
-        run: |
-          mkdir -p .target/dist-fast
-          tar -C .target/dist-fast -xf dist-fast-binaries.tar
-          ls -lh .target/dist-fast/tsz
-
       - name: Restore bench npm/tool cache
         uses: actions/cache@v4
         with:
@@ -123,15 +71,7 @@ jobs:
           pnpm config set store-dir "$PNPM_STORE_DIR"
 
       - name: Prepare benchmark binary and tools
-        shell: bash
-        run: |
-          if [[ ! -x "$GITHUB_WORKSPACE/.target/dist-fast/tsz" ]]; then
-            echo "Missing precompiled TSZ binary; refusing to build benchmark binary in Bench."
-            exit 1
-          fi
-          export TSZ="$GITHUB_WORKSPACE/.target/dist-fast/tsz"
-          echo "Using precompiled TSZ binary for benchmark prep: $TSZ"
-          ./scripts/bench/bench-vs-tsgo.sh --prepare-only
+        run: ./scripts/bench/bench-vs-tsgo.sh --prepare-only
 
       - name: Save GCS caches
         env:
@@ -139,7 +79,7 @@ jobs:
         run: scripts/ci/gcp-cache.sh save
 
       - name: Pack benchmark prep artifact
-        run: tar -cf bench-prep.tar .target-bench/tools .target/dist-fast
+        run: tar -cf bench-prep.tar .target-bench/tools .target-bench/dist
 
       - name: Upload benchmark prep artifact
         uses: actions/upload-artifact@v4
@@ -228,10 +168,8 @@ jobs:
           _monitor_pid=$!
           trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
 
-          if [[ -x "$GITHUB_WORKSPACE/.target/dist-fast/tsz" ]]; then
-            export TSZ="$GITHUB_WORKSPACE/.target/dist-fast/tsz"
-            echo "Using precompiled TSZ binary: $TSZ"
-          fi
+          export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
+          echo "Using prepared benchmark TSZ binary: $TSZ"
           ./scripts/bench/bench-vs-tsgo.sh \
             --filter '${{ matrix.filter }}' \
             --json \
