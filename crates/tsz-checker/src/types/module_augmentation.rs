@@ -562,6 +562,32 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
+                let delegatable_member_indices: Vec<_> = if std::ptr::eq(arena, self.ctx.arena) {
+                    Vec::new()
+                } else {
+                    interface
+                        .members
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&member_idx| {
+                            arena.get(member_idx).is_some_and(|member_node| {
+                                member_node.kind == PROPERTY_SIGNATURE
+                                    || member_node.kind == METHOD_SIGNATURE
+                            })
+                        })
+                        .collect()
+                };
+                let delegated_member_types = if delegatable_member_indices.is_empty() {
+                    None
+                } else {
+                    self.delegate_cross_arena_interface_member_simple_types(
+                        augmentation.node,
+                        &delegatable_member_indices,
+                        arena,
+                        type_args,
+                    )
+                };
 
                 // Extract members from interface augmentations.
                 for &member_idx in &interface.members.nodes {
@@ -586,13 +612,10 @@ impl<'a> CheckerState<'a> {
                             }
                             type_id
                         } else {
-                            self.delegate_cross_arena_interface_member_simple_type(
-                                augmentation.node,
-                                member_idx,
-                                arena,
-                                type_args,
-                            )
-                            .unwrap_or(TypeId::ANY)
+                            delegated_member_types
+                                .as_ref()
+                                .and_then(|types| types.get(&member_idx).copied())
+                                .unwrap_or(TypeId::ANY)
                         };
 
                         aug_member_order += 1;

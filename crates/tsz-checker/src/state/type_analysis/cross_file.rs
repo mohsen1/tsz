@@ -1043,8 +1043,33 @@ impl<'a> CheckerState<'a> {
         interface_arena: &tsz_parser::NodeArena,
         type_args: Option<&[TypeId]>,
     ) -> Option<TypeId> {
+        self.delegate_cross_arena_interface_member_simple_types(
+            interface_idx,
+            std::slice::from_ref(&member_idx),
+            interface_arena,
+            type_args,
+        )
+        .and_then(|mut results| results.remove(&member_idx))
+    }
+
+    /// Resolve multiple members from the same remote interface with one child checker.
+    ///
+    /// Interface compatibility and module augmentation checks often walk every
+    /// property/method in a remote declaration. Batching keeps the same target
+    /// arena/binder semantics as the single-member path without constructing a
+    /// child checker per member.
+    pub(crate) fn delegate_cross_arena_interface_member_simple_types(
+        &mut self,
+        interface_idx: NodeIndex,
+        member_indices: &[NodeIndex],
+        interface_arena: &tsz_parser::NodeArena,
+        type_args: Option<&[TypeId]>,
+    ) -> Option<rustc_hash::FxHashMap<NodeIndex, TypeId>> {
         if std::ptr::eq(interface_arena, self.ctx.arena) {
             return None;
+        }
+        if member_indices.is_empty() {
+            return Some(rustc_hash::FxHashMap::default());
         }
 
         // O(1) via global_arena_index (replaces O(N) position scan)
@@ -1052,28 +1077,52 @@ impl<'a> CheckerState<'a> {
         let delegate_binder = delegate_file_idx
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
             .unwrap_or(self.ctx.binder);
+
+        let mut results = rustc_hash::FxHashMap::default();
+        let mut misses = Vec::new();
         if type_args.is_none()
             && self.ctx.share_owner_symbol_type_results
             && let Some(file_idx) = delegate_file_idx
-            && let Some((cached_type, _)) = self.ctx.definition_store.get_resolved_cross_file_query(
-                CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
-                file_idx as u32,
-                interface_idx.0,
-                member_idx.0,
-                0,
-            )
-            && cached_type != TypeId::UNKNOWN
-            && cached_type != TypeId::ERROR
         {
-            return Some(cached_type);
+            for &member_idx in member_indices {
+                if let Some((cached_type, _)) =
+                    self.ctx.definition_store.get_resolved_cross_file_query(
+                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                        file_idx as u32,
+                        interface_idx.0,
+                        member_idx.0,
+                        0,
+                    )
+                    && cached_type != TypeId::UNKNOWN
+                    && cached_type != TypeId::ERROR
+                {
+                    results.insert(member_idx, cached_type);
+                } else {
+                    misses.push(member_idx);
+                }
+            }
+        } else {
+            misses.extend_from_slice(member_indices);
+        }
+
+        if misses.is_empty() {
+            return Some(results);
         }
 
         if !Self::enter_cross_arena_delegation() {
-            return None;
+            return if results.is_empty() {
+                None
+            } else {
+                Some(results)
+            };
         }
         if !self.ctx.enter_recursion() {
             Self::leave_cross_arena_delegation();
-            return None;
+            return if results.is_empty() {
+                None
+            } else {
+                Some(results)
+            };
         }
 
         let delegate_file_name = interface_arena
@@ -1125,46 +1174,52 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .map(|type_parameters| checker.push_type_parameters(&Some(type_parameters.clone())))
             .unwrap_or_default();
-        let mut result = checker.get_type_of_interface_member_simple(member_idx);
-        if let Some(type_args) = type_args
-            && !interface_params.is_empty()
-            && interface_params.len() == type_args.len()
-        {
-            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                checker.ctx.types,
-                &interface_params,
-                type_args,
-            );
-            result = crate::query_boundaries::common::instantiate_type(
-                checker.ctx.types,
-                result,
-                &substitution,
-            );
+
+        let substitution = type_args
+            .filter(|type_args| {
+                !interface_params.is_empty() && interface_params.len() == type_args.len()
+            })
+            .map(|type_args| {
+                crate::query_boundaries::common::TypeSubstitution::from_args(
+                    checker.ctx.types,
+                    &interface_params,
+                    type_args,
+                )
+            });
+
+        for member_idx in misses {
+            let mut result = checker.get_type_of_interface_member_simple(member_idx);
+            if let Some(substitution) = substitution.as_ref() {
+                result = crate::query_boundaries::common::instantiate_type(
+                    checker.ctx.types,
+                    result,
+                    substitution,
+                );
+            }
+            if result != TypeId::UNKNOWN && result != TypeId::ERROR {
+                if type_args.is_none()
+                    && self.ctx.share_owner_symbol_type_results
+                    && let Some(file_idx) = delegate_file_idx
+                {
+                    self.ctx.definition_store.cache_resolved_cross_file_query(
+                        CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
+                        file_idx as u32,
+                        interface_idx.0,
+                        member_idx.0,
+                        0,
+                        result,
+                        Vec::new(),
+                    );
+                }
+                results.insert(member_idx, result);
+            }
         }
         checker.pop_type_parameters(interface_updates);
 
         self.ctx.leave_recursion();
         Self::leave_cross_arena_delegation();
 
-        if result != TypeId::UNKNOWN && result != TypeId::ERROR {
-            if type_args.is_none()
-                && self.ctx.share_owner_symbol_type_results
-                && let Some(file_idx) = delegate_file_idx
-            {
-                self.ctx.definition_store.cache_resolved_cross_file_query(
-                    CROSS_FILE_QUERY_INTERFACE_MEMBER_SIMPLE_TYPE,
-                    file_idx as u32,
-                    interface_idx.0,
-                    member_idx.0,
-                    0,
-                    result,
-                    Vec::new(),
-                );
-            }
-            Some(result)
-        } else {
-            None
-        }
+        Some(results)
     }
 
     /// Detect and record cross-file `SymbolIds`.
