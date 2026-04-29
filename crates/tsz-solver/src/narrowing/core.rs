@@ -2029,6 +2029,26 @@ impl<'a> NarrowingContext<'a> {
                                 let narrowed = self.narrow_to_type(source_type, *target_type);
                                 if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
                                     self.db.intersection2(source_type, *target_type)
+                                } else if !crate::visitors::visitor_predicates::is_empty_object_type(
+                                    self.db.as_type_database(),
+                                    self.resolve_type(*target_type),
+                                )
+                                    && crate::visitors::visitor_predicates::is_empty_object_type(
+                                        self.db.as_type_database(),
+                                        self.resolve_type(narrowed),
+                                    )
+                                {
+                                    // Same fix as the non-union branch below: when
+                                    // union filtering collapsed the source to its
+                                    // empty-object member (e.g. `{} | undefined`
+                                    // narrowed to `{}`), upgrade to the
+                                    // structurally-richer target so subsequent
+                                    // property/index access sees the target's
+                                    // shape. Without this, a predicate like
+                                    // `obj is Partial<User>` over `Obj = {} |
+                                    // undefined` leaves `obj` typed as `{}` and
+                                    // trips TS2339 on `obj.name`.
+                                    *target_type
                                 } else {
                                     narrowed
                                 }
