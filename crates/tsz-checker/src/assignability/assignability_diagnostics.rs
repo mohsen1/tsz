@@ -908,6 +908,9 @@ impl<'a> CheckerState<'a> {
         if self.try_elaborate_assignment_source_error(arg_idx, target) {
             return false;
         }
+        if self.try_elaborate_callback_body_diagnostics(arg_idx, target) {
+            return false;
+        }
         self.error_argument_not_assignable_at(source, target, arg_idx);
         false
     }
