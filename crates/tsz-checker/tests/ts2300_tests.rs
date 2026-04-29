@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
-use tsz_checker::context::CheckerOptions;
+use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -35,6 +35,23 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     }
 
     lib_files
+}
+
+fn load_symbol_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    [
+        manifest_dir.join("../../TypeScript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/lib/lib.es2015.symbol.d.ts"),
+        manifest_dir.join("../../TypeScript/lib/lib.es2015.symbol.wellknown.d.ts"),
+    ]
+    .into_iter()
+    .map(|lib_path| {
+        let content = std::fs::read_to_string(&lib_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", lib_path.display()));
+        let file_name = lib_path.file_name().unwrap().to_string_lossy().to_string();
+        Arc::new(LibFile::from_source(file_name, content))
+    })
+    .collect()
 }
 
 fn get_line_and_col(source: &str, offset: u32) -> (u32, u32) {
@@ -169,6 +186,79 @@ fn verify_errors(
     }
 
     diagnostics
+}
+
+#[test]
+fn duplicate_identifier_with_default_lib_symbol_reports_lib_locations() {
+    let lib_files = load_symbol_lib_files_for_test();
+    let mut files = vec![("test.ts".to_string(), "class Symbol {}".to_string())];
+    files.extend(lib_files.iter().map(|lib| {
+        (
+            lib.file_name.clone(),
+            lib.arena
+                .source_files
+                .first()
+                .map(|source_file| source_file.text.to_string())
+                .unwrap_or_default(),
+        )
+    }));
+
+    let mut arenas = Vec::new();
+    let mut binders = Vec::new();
+    let mut roots = Vec::new();
+    for (file_name, source) in &files {
+        let mut parser = ParserState::new(file_name.clone(), source.clone());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let types = TypeInterner::new();
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let mut checker = CheckerState::new(
+        all_arenas[0].as_ref(),
+        all_binders[0].as_ref(),
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(0);
+
+    checker.check_source_file(roots[0]);
+
+    let mut duplicate_files: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300 && diag.message_text == "Duplicate identifier 'Symbol'.")
+        .map(|diag| {
+            Path::new(&diag.file)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+    duplicate_files.sort();
+
+    assert_eq!(
+        duplicate_files,
+        vec![
+            "lib.es2015.symbol.d.ts",
+            "lib.es2015.symbol.wellknown.d.ts",
+            "lib.es5.d.ts",
+            "test.ts",
+        ]
+    );
 }
 
 #[test]
