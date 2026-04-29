@@ -11,6 +11,13 @@ function readJsonIfExists(p) {
   }
 }
 
+function sanitizeLegacyBenchmarkResults(data) {
+  if (data?.validation?.hyperfine_exit_codes_required === true) {
+    return data.results || [];
+  }
+  return (data?.results || []).filter((row) => row.name !== "large-ts-repo");
+}
+
 function loadBenchmarks() {
   const artifactsDir = path.join(ROOT, "artifacts");
   const ciLatest = path.join(artifactsDir, "bench-vs-tsgo-gcs-latest.json");
@@ -30,11 +37,11 @@ function loadBenchmarks() {
 
   for (const location of artifactFiles) {
     const data = readJsonIfExists(location);
-    if (data?.results?.length) return data.results;
+    if (data?.results?.length) return sanitizeLegacyBenchmarkResults(data);
   }
 
   const snapshot = readJsonIfExists(path.join(ROOT, "crates/tsz-website/bench-snapshot.json"));
-  if (snapshot?.results?.length) return snapshot.results;
+  if (snapshot?.results?.length) return sanitizeLegacyBenchmarkResults(snapshot);
 
   return [];
 }

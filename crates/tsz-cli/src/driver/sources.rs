@@ -417,6 +417,7 @@ pub(super) fn collect_type_root_files(
         Some(roots) => roots.clone(),
         None => default_type_roots(base_dir),
     };
+    let mut resolution_cache = ModuleResolutionCache::default();
     if roots.is_empty() {
         // When no valid type roots exist, try to resolve explicitly requested types
         // via node_modules fallback before marking them as unresolved.
@@ -429,12 +430,13 @@ pub(super) fn collect_type_root_files(
                     continue;
                 }
                 if let Some(entry) =
-                    crate::driver::resolution::resolve_type_reference_from_node_modules(
+                    crate::driver::resolution::resolve_type_reference_from_node_modules_with_cache(
                         name,
                         &synthetic_from_file,
                         base_dir,
                         None,
                         options,
+                        &mut resolution_cache,
                     )
                 {
                     files.insert(entry);
@@ -457,15 +459,23 @@ pub(super) fn collect_type_root_files(
             let synthetic_from_file = base_dir.join("__types__.ts");
             let explicit_type_roots = options.type_roots.is_some();
             for name in types {
-                if let Some(entry) = resolve_type_package_from_roots(name, &roots, options) {
+                if let Some(entry) =
+                    crate::driver::resolution::resolve_type_package_from_roots_with_cache(
+                        name,
+                        &roots,
+                        options,
+                        &mut resolution_cache,
+                    )
+                {
                     files.insert(entry);
                 } else if let Some(entry) =
-                    crate::driver::resolution::resolve_type_reference_from_node_modules(
+                    crate::driver::resolution::resolve_type_reference_from_node_modules_with_cache(
                         name,
                         &synthetic_from_file,
                         base_dir,
                         None,
                         options,
+                        &mut resolution_cache,
                     )
                 {
                     // `compilerOptions.types` still owes TS2688 when explicit
@@ -485,7 +495,11 @@ pub(super) fn collect_type_root_files(
 
     for root in roots {
         for package_root in collect_type_packages_from_root(&root) {
-            if let Some(entry) = resolve_type_package_entry(&package_root, options) {
+            if let Some(entry) = crate::driver::resolution::resolve_type_package_entry_with_cache(
+                &package_root,
+                options,
+                &mut resolution_cache,
+            ) {
                 files.insert(entry);
             }
         }
@@ -784,10 +798,13 @@ pub(super) fn read_source_files(
                         for root in &type_roots {
                             for candidate in &candidates {
                                 let package_root = root.join(candidate);
-                                if package_root.is_dir()
+                                if resolution_cache.package_root_dir_exists(&package_root)
                                     && let Some(entry) =
-                                    crate::driver::resolution::resolve_type_package_entry_with_mode(
-                                        &package_root, mode, options,
+                                    crate::driver::resolution::resolve_type_package_entry_with_mode_and_cache(
+                                        &package_root,
+                                        mode,
+                                        options,
+                                        &mut resolution_cache,
                                     )
                                 {
                                     result = Some(entry);
@@ -800,19 +817,25 @@ pub(super) fn read_source_files(
                         }
                         result
                     } else {
-                        resolve_type_package_from_roots(&type_name, &type_roots, options)
+                        crate::driver::resolution::resolve_type_package_from_roots_with_cache(
+                            &type_name,
+                            &type_roots,
+                            options,
+                            &mut resolution_cache,
+                        )
                     };
                     // If type roots resolution failed, fall back to searching node_modules/
                     // directly. tsc's resolveTypeReferenceDirective always uses node_modules
                     // walk-up as a secondary fallback after typeRoots, regardless of the
                     // configured module resolution mode (including Classic).
                     let resolved = resolved.or_else(|| {
-                        crate::driver::resolution::resolve_type_reference_from_node_modules(
+                        crate::driver::resolution::resolve_type_reference_from_node_modules_with_cache(
                             &type_name,
                             &path,
                             base_dir,
                             effective_resolution_mode.map(|s| s.as_str()),
                             options,
+                            &mut resolution_cache,
                         )
                     });
                     if let Some(resolved) = resolved {
@@ -835,12 +858,13 @@ pub(super) fn read_source_files(
                     if invalid_mode {
                         for mode in &["import", "require"] {
                             if let Some(alt) =
-                                crate::driver::resolution::resolve_type_reference_from_node_modules(
+                                crate::driver::resolution::resolve_type_reference_from_node_modules_with_cache(
                                     &type_name,
                                     &path,
                                     base_dir,
                                     Some(mode),
                                     options,
+                                    &mut resolution_cache,
                                 )
                             {
                                 let canonical = normalize(&alt, options);
