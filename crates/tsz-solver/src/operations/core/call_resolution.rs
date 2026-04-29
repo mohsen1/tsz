@@ -829,8 +829,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let sig_lists = self.collect_union_call_signature_lists(&members);
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
-        let mut force_not_callable_with_this_mismatch = false;
-        let mut force_union_this_type = None;
+        // `force_not_callable_with_this_mismatch` controls a fallback in
+        // `build_union_call_result` that turns all-this-mismatch failure sets
+        // into a NotCallable result. The 2026-04 fix for TS2349 vs TS2684 in
+        // multi-overload unions now returns NotCallable directly from the
+        // resolve path, so neither flag is set here in this function — but the
+        // build helper still accepts the flag for callers that need it.
+        let force_not_callable_with_this_mismatch = false;
+        let force_union_this_type: Option<TypeId> = None;
 
         if has_multi_overload_members >= 2 {
             if let Some(unified_sigs) = self.find_union_compatible_signatures(&sig_lists) {
@@ -860,32 +866,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // generic signatures, so only report NotCallable when all overloads
                 // across multi-overload members are non-generic. For generic
                 // overloads, fall through to per-member resolution.
+                //
+                // tsc reports TS2349 here regardless of whether the actual `this`
+                // happens to satisfy the intersection of all members' `this`
+                // types — the union is fundamentally not callable, and we do
+                // NOT route it through the deferred this-mismatch path (which
+                // would emit TS2684 instead of TS2349). Mirrors the
+                // single-multi-overload branch below.
                 let all_non_generic = sig_lists
                     .iter()
                     .filter(|(_, sigs)| sigs.len() > 1)
                     .all(|(_, sigs)| sigs.iter().all(|s| s.type_params.is_empty()));
                 if all_non_generic {
-                    let mut this_types = Vec::new();
-                    for (_, sigs) in &sig_lists {
-                        for sig in sigs {
-                            if let Some(this_type) = sig.this_type {
-                                this_types.push(this_type);
-                            }
-                        }
-                    }
-                    if this_types.is_empty() {
-                        return CallResult::NotCallable {
-                            type_id: union_type,
-                        };
-                    }
-
-                    let mut combined_this = this_types[0];
-                    for &this_type in &this_types[1..] {
-                        combined_this = self.interner.intersection2(combined_this, this_type);
-                    }
-                    force_union_this_type = Some(combined_this);
-
-                    force_not_callable_with_this_mismatch = true;
+                    return CallResult::NotCallable {
+                        type_id: union_type,
+                    };
                 }
             }
         } else if has_multi_overload_members == 1 {
