@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/parser-static-block-await-target-fingerprint`
-- **PR**: TBD
+- **PR**: #1831
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance)
 
