@@ -55,3 +55,29 @@ interface I23 extends Identifiable<T1 & { b: number}> {
         "TS2430 should preserve the explicit intersection type argument. Got: {messages:?}"
     );
 }
+
+#[test]
+fn interface_extends_generic_intersection_argument_preserves_nested_generic_close() {
+    let source = r#"
+type T1 = { a: number };
+type Box<T> = { value: T };
+type Identifiable<T> = { _id: string } & T;
+interface I24 extends Identifiable<T1 & Box<string>> {
+    a: string;
+}
+"#;
+    let messages: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code == 2430)
+        .map(|(_, message)| message)
+        .collect();
+
+    assert!(
+        messages.iter().any(|msg| {
+            msg.contains(
+                "Interface 'I24' incorrectly extends interface 'Identifiable<T1 & Box<string>>'",
+            )
+        }),
+        "TS2430 should preserve the nested generic close in intersection type arguments. Got: {messages:?}"
+    );
+}
