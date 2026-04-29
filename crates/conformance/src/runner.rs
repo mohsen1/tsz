@@ -136,15 +136,26 @@ fn filter_lib_diagnostics_tsc(
     });
 
     let had_lib = fps.iter().any(is_lib_diagnostic);
-    if !had_lib {
-        return (codes, fps);
+    if had_lib {
+        fps.retain(|fp| !is_lib_diagnostic(fp));
+        // Remove TS6053 from error codes if no non-.lib/ TS6053 remains
+        if !fps.iter().any(|fp| fp.code == 6053) {
+            codes.retain(|c| *c != 6053);
+        }
     }
 
-    fps.retain(|fp| !is_lib_diagnostic(fp));
-    // Remove TS6053 from error codes if no non-.lib/ TS6053 remains
-    if !fps.iter().any(|fp| fp.code == 6053) {
-        codes.retain(|c| *c != 6053);
+    // Normalize machine-specific absolute paths in "File 'X' not found." messages.
+    // The tsc cache was generated on macOS where temp dirs sit under
+    // /var/folders/XX/YY/T/... — paths that escape the temp root resolve to
+    // machine-specific absolute paths like "/var/folders/6z/src/harness/...".
+    // Normalize those to the portable form so comparison against tsz output works.
+    for fp in &mut fps {
+        let normalized = tsz_wrapper::normalize_file_not_found_message_key(&fp.message_key);
+        if normalized != fp.message_key {
+            fp.message_key = normalized;
+        }
     }
+
     (codes, fps)
 }
 
