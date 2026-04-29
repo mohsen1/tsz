@@ -621,19 +621,40 @@ impl<'a> TypeFormatter<'a> {
             return (ordered, formatted);
         }
 
-        let ranks: Vec<_> = formatted
+        // Rank order matching tsc's union printer:
+        //   1. primitives (string, number, bigint, ...)  → rank 0
+        //   2. boolean false literal display              → rank 1
+        //   3. boolean true literal display               → rank 2
+        //   4. everything else (objects, classes, etc.)   → rank 3
+        // Within a rank, original index breaks ties (stable sort by source order).
+        // Without rank 0, `false | number` and `false | string` would stay in
+        // construction order even though tsc renders them as `number | false`
+        // and `string | false`. With rank 3 below boolean, `false | D1` (class)
+        // remains `false | D1` because the class type ranks AFTER false, not
+        // before, matching tsc's `Type 'false | D1' is not assignable …`.
+        const PRIMITIVE_DISPLAYS: &[&str] = &[
+            "string", "number", "bigint", "symbol", "void", "object", "any", "unknown", "never",
+        ];
+
+        let ranks: Vec<u8> = formatted
             .iter()
             .map(|display| {
+                let trimmed = display.as_str();
+                if PRIMITIVE_DISPLAYS.contains(&trimmed) {
+                    return 0u8;
+                }
                 let has_false = display.contains("false");
                 let has_true = display.contains("true");
                 match (has_false, has_true) {
-                    (true, false) => Some(0u8),
-                    (false, true) => Some(1u8),
-                    _ => None,
+                    (true, false) => 1u8,
+                    (false, true) => 2u8,
+                    _ => 3u8,
                 }
             })
             .collect();
-        if !ranks.iter().any(Option::is_some) {
+
+        // Skip when no boolean literal participates — leave the natural order.
+        if !ranks.iter().any(|&r| r == 1 || r == 2) {
             return (ordered, formatted);
         }
 
@@ -642,7 +663,7 @@ impl<'a> TypeFormatter<'a> {
             .zip(formatted)
             .zip(ranks)
             .enumerate()
-            .map(|(idx, ((type_id, display), rank))| (idx, rank.unwrap_or(2), type_id, display))
+            .map(|(idx, ((type_id, display), rank))| (idx, rank, type_id, display))
             .collect();
         indexed.sort_by_key(|&(idx, rank, _, _)| (rank, idx));
         let ordered = indexed.iter().map(|(_, _, type_id, _)| *type_id).collect();
