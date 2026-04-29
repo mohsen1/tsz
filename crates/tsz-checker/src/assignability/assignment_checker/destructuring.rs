@@ -1114,11 +1114,15 @@ impl<'a> CheckerState<'a> {
         let type_node = self.ctx.arena.get(var_decl.type_annotation)?;
         let type_lit = self.ctx.arena.get_type_literal(type_node)?;
         for &member_idx in &type_lit.members.nodes {
-            let member_node = self.ctx.arena.get(member_idx)?;
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
             if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
                 continue;
             }
-            let prop = self.ctx.arena.get_property_decl(member_node)?;
+            let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                continue;
+            };
             if self.property_name_text(prop.name).as_deref() == Some(property_name) {
                 return Some(prop.name);
             }
