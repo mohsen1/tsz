@@ -1040,6 +1040,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn inline_type_property_offset(line: &str, property_name: &str) -> Option<usize> {
+        if property_name.is_empty() {
+            return None;
+        }
         let mut search_start = 0usize;
         while let Some(offset) = line[search_start..].find(property_name) {
             let match_start = search_start + offset;
@@ -1057,7 +1060,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn is_inline_type_identifier_char(ch: u8) -> bool {
+    const fn is_inline_type_identifier_char(ch: u8) -> bool {
         ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
     }
 
@@ -1378,5 +1381,17 @@ mod tests {
             CheckerState::inline_type_property_offset("{ foo_bar: string }", "foo"),
             None
         );
+    }
+
+    #[test]
+    fn inline_type_property_offset_returns_none_for_empty_property_name() {
+        // Guard against an infinite loop when property_name is the empty string:
+        // `find("")` returns Some(0), and match_end == match_start would never advance
+        // search_start if the byte at match_end happened to be an identifier char.
+        assert_eq!(
+            CheckerState::inline_type_property_offset("{ a: string }", ""),
+            None
+        );
+        assert_eq!(CheckerState::inline_type_property_offset("", ""), None);
     }
 }
