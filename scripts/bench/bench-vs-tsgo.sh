@@ -232,6 +232,59 @@ run_with_timeout() {
     return "$exit_code"
 }
 
+hyperfine_mean_for() {
+    local json_file="$1"
+    local command_name="$2"
+    jq -r --arg command_name "$command_name" \
+        '.results[] | select(.command == $command_name) | .mean // empty' \
+        "$json_file" 2>/dev/null || true
+}
+
+hyperfine_exit_status_for() {
+    local json_file="$1"
+    local command_name="$2"
+    local exit_count
+    local nonzero_count
+    local exit_codes
+
+    exit_count=$(jq -r --arg command_name "$command_name" \
+        '[.results[] | select(.command == $command_name) | .exit_codes[]?] | length' \
+        "$json_file" 2>/dev/null || echo "0")
+    if [ "$exit_count" = "0" ]; then
+        echo "missing exit codes"
+        return 1
+    fi
+
+    nonzero_count=$(jq -r --arg command_name "$command_name" \
+        '[.results[] | select(.command == $command_name) | .exit_codes[]? | select(. != 0)] | length' \
+        "$json_file" 2>/dev/null || echo "1")
+    if [ "$nonzero_count" != "0" ]; then
+        exit_codes=$(jq -r --arg command_name "$command_name" \
+            '[.results[] | select(.command == $command_name) | .exit_codes[]?] | unique | map(tostring) | join("|")' \
+            "$json_file" 2>/dev/null || echo "unknown")
+        echo "exit codes ${exit_codes}"
+        return 1
+    fi
+
+    echo "ok"
+    return 0
+}
+
+sum_ts_lines() {
+    local src_dir="$1"
+    find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+        | while IFS= read -r -d '' file; do
+            wc -l < "$file" 2>/dev/null || true
+        done \
+        | awk '{ total += $1 } END { print total + 0 }'
+}
+
+sum_ts_bytes() {
+    local src_dir="$1"
+    find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -type f -print0 2>/dev/null \
+        | xargs -0 cat 2>/dev/null | wc -c | tr -d ' '
+}
+
 # Timeout for pre-validation checks (seconds). Generous enough for heavy
 # type-level libraries but catches infinite loops.
 BENCH_TIMEOUT="${BENCH_TIMEOUT:-60}"
@@ -638,8 +691,22 @@ run_benchmark() {
     
     # Extract times and calculate throughput
     if [ -f "$json_file" ] && command -v jq &>/dev/null; then
-        local tsz_mean=$(jq -r '.results[] | select(.command | contains("tsz")) | .mean' "$json_file" 2>/dev/null || echo "0")
-        local tsgo_mean=$(jq -r '.results[] | select(.command | contains("tsgo")) | .mean' "$json_file" 2>/dev/null || echo "0")
+        local tsz_exit_status
+        local tsgo_exit_status
+        tsz_exit_status="$(hyperfine_exit_status_for "$json_file" "tsz" || true)"
+        tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
+        if [ "$tsz_exit_status" != "ok" ] || [ "$tsgo_exit_status" != "ok" ]; then
+            local status=""
+            [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
+            [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
+            echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+            rm -f "$json_file"
+            return
+        fi
+
+        local tsz_mean=$(hyperfine_mean_for "$json_file" "tsz")
+        local tsgo_mean=$(hyperfine_mean_for "$json_file" "tsgo")
         
         if [ -n "$tsz_mean" ] && [ -n "$tsgo_mean" ] && [ "$tsz_mean" != "0" ] && [ "$tsgo_mean" != "0" ]; then
             # Calculate throughput (lines/sec) and format times (2 decimal places)
@@ -677,10 +744,10 @@ run_project_benchmark() {
     BENCHMARKS_RUN=$((BENCHMARKS_RUN + 1))
 
     # Count total TS/TSX source lines in the project
-    local lines=$(find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -print0 2>/dev/null \
-        | xargs -0 wc -l 2>/dev/null | tail -1 | awk '{print $1}')
-    local bytes=$(find "$src_dir" \( -name '*.ts' -o -name '*.tsx' \) -print0 2>/dev/null \
-        | xargs -0 cat 2>/dev/null | wc -c | tr -d ' ')
+    local lines
+    local bytes
+    lines=$(sum_ts_lines "$src_dir")
+    bytes=$(sum_ts_bytes "$src_dir")
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB (project)"
 
@@ -696,11 +763,9 @@ run_project_benchmark() {
     fi
 
     # For project fixtures (except nextjs and large-ts-repo), require
-    # a clean tsc pass before benchmarking.
-    # large-ts-repo skips the tsc fixture gate: tsconfig.flat.bench.json
-    # extends the workspace's own base config (with JSX packages) which tsc
-    # 6.x rejects due to --jsx not being set in the flat override. tsgo
-    # handles it fine, and the benchmark is tsgo-only for this fixture anyway.
+    # a clean tsc pass before benchmarking. large-ts-repo is too expensive
+    # to validate twice, so its hyperfine result is validated via exit_codes
+    # before any timing is recorded as a valid compiler pass.
     if [ "$name" != "nextjs" ] && [ "$name" != "large-ts-repo" ]; then
         local project_tsc_timeout
         project_tsc_timeout=$((BENCH_TIMEOUT * 2))
@@ -722,10 +787,8 @@ run_project_benchmark() {
     # Pre-validate with timeout: record errors/timeouts in summary table.
     # Project-level benchmarks get a longer timeout since they check many files.
     # large-ts-repo skips pre-validation entirely (the cold check itself takes
-    # several minutes for both compilers; pre-validation would always timeout
-    # and block the hyperfine run). Both are verified during the actual
-    # hyperfine run instead, with `--ignore-failure` so a long cold path or
-    # OOM on either side records a row rather than aborting the bench.
+    # several minutes for both compilers). Its measured run is rejected below
+    # unless hyperfine reports zero exit codes for every measured iteration.
     local project_timeout=$((BENCH_TIMEOUT * 2))
     local tsz_check=0
     local tsgo_check=0
@@ -736,7 +799,7 @@ run_project_benchmark() {
 
     # `tsz_failed_expected` is reserved for fixtures where tsz is known to fail.
     # large-ts-repo is no longer pre-validated (see comment above); the actual
-    # hyperfine run determines whether tsz produces a number or a TIMEOUT row.
+    # hyperfine run determines whether tsz produces a valid zero-exit timing.
     local tsz_failed_expected=false
 
     if { [ "$tsz_check" -ne 0 ] && [ "$tsz_failed_expected" = false ]; } || [ "$tsgo_check" -ne 0 ]; then
@@ -798,9 +861,10 @@ run_project_benchmark() {
         # runners. Bump to 25min so tsz can record a real number instead of
         # being treated as "unavailable", which previously hard-skipped the
         # tsz arm of this benchmark via a bench-script bypass.
-        # 1 warmup + 1 measured run keeps total wall-clock under ~50min.
+        # BENCH_COLD=1 clears build-info before each run; a warmup would just
+        # duplicate the same cold check and roughly double large fixture cost.
         run_timeout=1500
-        proj_warmup=1
+        proj_warmup=0
         proj_min=1
         proj_max=2
     else
@@ -843,8 +907,15 @@ run_project_benchmark() {
             return
         fi
         if [ -f "$json_file" ] && command -v jq &>/dev/null; then
+            local tsgo_exit_status
+            tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
+            if [ "$tsgo_exit_status" != "ok" ]; then
+                RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},N/A,ERR,N/A,N/A,error,0,tsz unavailable; tsgo ${tsgo_exit_status}\n"
+                rm -f "$json_file"
+                return
+            fi
             local tsgo_mean
-            tsgo_mean=$(jq -r '.results[] | select(.command | contains("tsgo")) | .mean' "$json_file" 2>/dev/null || echo "0")
+            tsgo_mean=$(hyperfine_mean_for "$json_file" "tsgo")
             if [ -n "$tsgo_mean" ] && [ "$tsgo_mean" != "0" ]; then
                 local tsgo_lps
                 tsgo_lps=$(printf "%.0f" "$(echo "$lines / $tsgo_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")
@@ -875,8 +946,22 @@ run_project_benchmark() {
 
     # Extract times and calculate throughput
     if [ -f "$json_file" ] && command -v jq &>/dev/null; then
-        local tsz_mean=$(jq -r '.results[] | select(.command | contains("tsz")) | .mean' "$json_file" 2>/dev/null || echo "0")
-        local tsgo_mean=$(jq -r '.results[] | select(.command | contains("tsgo")) | .mean' "$json_file" 2>/dev/null || echo "0")
+        local tsz_exit_status
+        local tsgo_exit_status
+        tsz_exit_status="$(hyperfine_exit_status_for "$json_file" "tsz" || true)"
+        tsgo_exit_status="$(hyperfine_exit_status_for "$json_file" "tsgo" || true)"
+        if [ "$tsz_exit_status" != "ok" ] || [ "$tsgo_exit_status" != "ok" ]; then
+            local status=""
+            [ "$tsz_exit_status" != "ok" ] && status="tsz ${tsz_exit_status}"
+            [ "$tsgo_exit_status" != "ok" ] && status="${status:+${status}; }tsgo ${tsgo_exit_status}"
+            echo -e "${YELLOW}$name${NC} - ${RED}ERROR${NC} (${status})" >&2
+            RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
+            rm -f "$json_file"
+            return
+        fi
+
+        local tsz_mean=$(hyperfine_mean_for "$json_file" "tsz")
+        local tsgo_mean=$(hyperfine_mean_for "$json_file" "tsgo")
 
         if [ -n "$tsz_mean" ] && [ -n "$tsgo_mean" ] && [ "$tsz_mean" != "0" ] && [ "$tsgo_mean" != "0" ]; then
             local tsz_lps=$(printf "%.0f" "$(echo "$lines / $tsz_mean" | bc -l 2>/dev/null)" 2>/dev/null || echo "N/A")

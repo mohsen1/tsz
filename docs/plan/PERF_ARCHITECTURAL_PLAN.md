@@ -4,6 +4,8 @@
 > Status as of plan creation: 4 PRs landed (#1618, #1619, #1623, #1626) with PR #1626 giving a measured −5.4% on subset3. None of those address the underlying architectural issue; they were point optimizations on top of the wrong topology.
 >
 > **Revised 2026-04-28 (after reviewing the public benchmark page at <https://tsz.dev/benchmarks/>)**: see "Revised diagnosis" below. The 200×+ gap is **a scale cliff on monorepo-shaped workloads**, not a checker-throughput problem. tsz already beats tsgo by 2×–5× on most local fixtures (`utility-types-project` 152ms vs 255ms, `ts-toolbelt-project` 230ms vs 1.1s, `ts-essentials-project` 278ms vs 1s). Don't rewrite the local checker. Find the cliff.
+>
+> **Benchmark integrity update 2026-04-29**: the `large-ts-repo` public ratio is not currently a valid speed claim. The 2026-04-29 bench shard recorded non-zero hyperfine exit codes for both `tsz` and `tsgo`, but the harness still published positive timings because it used `--ignore-failure` and did not inspect `exit_codes`. A raw local `tsgo --noEmit -p tsconfig.flat.bench.json` run on `large-ts-repo@3b08149` exits `2` with 144,097 diagnostic lines. Treat `large-ts-repo` as an invalid fixture until it type-checks cleanly and the harness rejects non-zero exits.
 
 ## Revised diagnosis (2026-04-28)
 
@@ -86,7 +88,7 @@ The moment any of these ratios stops being roughly constant, the cliff is right 
 
 The PR #1630 instrumentation already produces most of these numbers; what's missing is a) the synthetic fixtures and b) a small driver that runs each fixture, parses the counter dump, and emits a CSV.
 
-**Also**: the public benchmark page reports `large-ts-repo` as `tsz unavailable / tsgo 478.7s`, but my local profile reports `tsz 706s / tsgo 2.45s`. Those are different machines / different bench commands / different modes. Before any architectural call, the team needs ONE canonical bench command for `large-ts-repo` that records:
+**Also**: the public benchmark page has reported incompatible `large-ts-repo` states over time (`tsz unavailable / tsgo 478.7s`, then `tsz 19.7s / tsgo 468.6s` with both compilers exiting non-zero), while local profiles have reported other modes such as `tsz 706s / tsgo 2.45s`. Those are different machines / different bench commands / different modes, and at least one published row timed a failed compiler pass. Before any architectural call, the team needs ONE canonical bench command for `large-ts-repo` that records:
 
 ```
 bench-large-ts-repo-cold
