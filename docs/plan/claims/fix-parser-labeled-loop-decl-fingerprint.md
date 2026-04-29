@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/parser-labeled-loop-decl-fingerprint`
-- **PR**: TBD
+- **PR**: #1713
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
@@ -17,11 +17,11 @@ surface with `tsc`.
 
 ## Files Touched
 
-- `docs/plan/claims/fix-parser-labeled-loop-decl-fingerprint.md` (claim)
-- Parser files TBD after verbose diagnosis.
+- `crates/tsz-parser/src/parser/state_expressions_literals.rs`
+- `crates/tsz-parser/tests/state_statement_tests.rs`
+- `docs/plan/claims/fix-parser-labeled-loop-decl-fingerprint.md`
 
 ## Verification
 
-- Planned: `cargo nextest run --package tsz-parser --lib`
-- Planned: `./scripts/conformance/conformance.sh run --filter "labeledStatementDeclarationListInLoopNoCrash4" --verbose`
-- Planned: quick conformance regression check for nearby parser failures.
+- `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' cargo nextest run --package tsz-parser parse_unterminated_template_recovery_reports --no-fail-fast` (2 tests pass)
+- Blocked by local disk space: `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 RUSTFLAGS='-C debuginfo=0' ./scripts/conformance/conformance.sh run --filter "labeledStatementDeclarationListInLoopNoCrash4" --verbose` failed during dist-fast dependency build with `No space left on device`.
