@@ -558,6 +558,12 @@ impl<'a> CheckerState<'a> {
                 if name == "const" {
                     continue;
                 }
+                // Skip variance modifier keywords (e.g., `@template in T`,
+                // `@template out T`). Mirror the skip in
+                // `jsdoc_template_type_params` — see that fn's comment.
+                if name == "in" || name == "out" {
+                    continue;
+                }
 
                 let mut lookahead = cursor;
                 while lookahead < bytes.len() && (bytes[lookahead] as char).is_ascii_whitespace() {
