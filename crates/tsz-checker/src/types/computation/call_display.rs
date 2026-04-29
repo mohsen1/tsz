@@ -88,6 +88,73 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to_with_env(source_fn, target_fn)
     }
 
+    pub(crate) fn is_assignable_via_generator_never_yield_callback(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source_shape =
+            call_checker::get_contextual_signature(self.ctx.types, source).or_else(|| {
+                let evaluated = self.evaluate_type_with_env(source);
+                call_checker::get_contextual_signature(self.ctx.types, evaluated)
+            });
+        let target_shape =
+            call_checker::get_contextual_signature(self.ctx.types, target).or_else(|| {
+                let evaluated = self.evaluate_type_with_env(target);
+                call_checker::get_contextual_signature(self.ctx.types, evaluated)
+            });
+        if source_shape
+            .as_ref()
+            .zip(target_shape.as_ref())
+            .is_some_and(|(source_shape, target_shape)| {
+                source_shape.params.len() > target_shape.params.len()
+            })
+        {
+            return false;
+        }
+
+        let source_return_type = source_shape
+            .as_ref()
+            .map(|shape| shape.return_type)
+            .or_else(|| common::return_type_for_type(self.ctx.types, source));
+        let target_return_type = target_shape
+            .as_ref()
+            .map(|shape| shape.return_type)
+            .or_else(|| common::return_type_for_type(self.ctx.types, target));
+        let (Some(source_return_type), Some(target_return_type)) =
+            (source_return_type, target_return_type)
+        else {
+            return false;
+        };
+        let Some(source_yield) = self.get_generator_yield_type_argument(source_return_type) else {
+            return false;
+        };
+        if source_yield != TypeId::NEVER {
+            return false;
+        }
+        let Some(source_return) = self.get_generator_return_type_argument(source_return_type)
+        else {
+            return false;
+        };
+        let Some(target_return) = self.get_generator_return_type_argument(target_return_type)
+        else {
+            return false;
+        };
+        if !self.is_assignable_to_with_env(source_return, target_return) {
+            return false;
+        }
+
+        match (
+            self.get_generator_next_type_argument(source_return_type),
+            self.get_generator_next_type_argument(target_return_type),
+        ) {
+            (Some(source_next), Some(target_next)) => {
+                self.is_assignable_to_with_env(target_next, source_next)
+            }
+            _ => true,
+        }
+    }
+
     fn generic_arg_refresh_context_is_concrete(&self, type_id: TypeId) -> bool {
         type_id != TypeId::UNKNOWN
             && type_id != TypeId::ERROR

@@ -53,6 +53,11 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_partial_self_argument_mismatch(arg_type, param_type) {
             return;
         }
+        if self.is_callback_like_argument(idx)
+            && self.is_assignable_via_generator_never_yield_callback(arg_type, param_type)
+        {
+            return;
+        }
 
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
         if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {
