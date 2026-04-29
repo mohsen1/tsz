@@ -2,25 +2,29 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-destructuring-spread-ts2339-fingerprint`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1740
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
 
-Fix the fingerprint-only TS2339 conformance mismatch for
+Fixes the fingerprint-only TS2339 conformance mismatch for
 `TypeScript/tests/cases/conformance/es6/destructuring/destructuringSpread.ts`.
-The slice will diagnose why tsz emits the right diagnostic code but a
-different diagnostic fingerprint than `tsc`, then adjust the owning checker,
-solver boundary, or diagnostic rendering path without adding a local
-suppression.
+Nested object-literal spreads were carrying their source object's local
+`declaration_order` into the containing literal, so display order collided
+with later explicit properties and the TS2339 receiver type printed as
+`{ c; f; d; e }` instead of tsc's `{ f; e; d; c }`.
 
 ## Files Touched
 
 - `docs/plan/claims/fix-checker-destructuring-spread-ts2339-fingerprint.md`
-- Implementation files TBD after verbose conformance investigation.
+- `crates/tsz-checker/src/types/computation/object_literal/computation.rs`
+- `crates/tsz-checker/tests/spread_rest_tests.rs`
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "destructuringSpread" --verbose`
-- Planned: targeted `cargo nextest run` for the owning crate tests changed.
+- `cargo fmt --check`
+- `cargo check -p tsz-checker`
+- `cargo nextest run -p tsz-checker --test spread_rest_tests` (69/69)
+- `./scripts/conformance/conformance.sh run --filter "destructuringSpread" --verbose` (1/1)
+- `./scripts/conformance/conformance.sh run --max 200` (200/200)
