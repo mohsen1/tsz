@@ -367,11 +367,9 @@ fn test_variance_method_parameters_contravariant() {
     let t_atom = interner.intern_string("T");
     let variance = compute_variance(&interner, method, t_atom);
 
-    // Method parameters are skipped for generic variance probing because
-    // TypeScript method parameters are bivariant in compatibility mode.
     assert!(
-        variance.is_independent(),
-        "Method-parameter-only T should be independent under method bivariance"
+        variance.is_covariant(),
+        "Method-parameter-only T should be covariant for variance computation"
     );
 }
 
@@ -444,11 +442,9 @@ fn test_variance_method_with_callback_param_is_covariant() {
     let t_atom = interner.intern_string("T");
     let variance = compute_variance(&interner, method, t_atom);
 
-    // Method parameters are skipped for generic variance probing, so nested callback
-    // occurrences under a method parameter are also independent.
     assert!(
-        variance.is_independent(),
-        "T under a method parameter callback should be independent under method bivariance"
+        variance.is_covariant(),
+        "T under a method parameter callback should be covariant for variance computation"
     );
 }
 

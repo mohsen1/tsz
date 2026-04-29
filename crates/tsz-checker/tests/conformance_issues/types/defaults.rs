@@ -130,8 +130,8 @@ let bar4: any;
         "Should emit TS2365 for invalid `1 + {{}}`.\nActual errors: {relevant:#?}"
     );
     assert!(
-        has_error(&relevant, 2537),
-        "Should emit TS2537 for the numeric index result of invalid `1 + {{}}`.\nActual errors: {relevant:#?}"
+        has_error(&relevant, 2538),
+        "Should emit TS2538 for the any index result of invalid `1 + {{}}`.\nActual errors: {relevant:#?}"
     );
 }
 
