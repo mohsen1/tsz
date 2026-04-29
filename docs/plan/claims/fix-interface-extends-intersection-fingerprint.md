@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/interface-extends-intersection-fingerprint`
-- **PR**: TBD
+- **PR**: #1717
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
@@ -22,5 +22,6 @@ the owning checker/solver boundary.
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "interfaceExtendsObjectIntersectionErrors" --verbose`
-- Planned: targeted `cargo nextest run` for touched crate tests.
+- `cargo check --package tsz-checker` (passes)
+- `cargo nextest run --package tsz-checker --test interface_heritage_display_tests` (2 tests pass)
+- `./scripts/conformance/conformance.sh run --filter "interfaceExtendsObjectIntersectionErrors" --verbose` (still fingerprint-only; this WIP removes the alias-name extra fingerprints, but remaining missing diagnostics are tuple/class/index-signature/union-heritage emission gaps)

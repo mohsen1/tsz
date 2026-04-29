@@ -152,6 +152,10 @@ name = "namespace_qualified_diagnostic_tests"
 path = "tests/namespace_qualified_diagnostic_tests.rs"
 
 [[test]]
+name = "interface_heritage_display_tests"
+path = "tests/interface_heritage_display_tests.rs"
+
+[[test]]
 name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 
