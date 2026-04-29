@@ -624,6 +624,13 @@ impl<'a> CheckerState<'a> {
                 strip_module_specifier_extension(module_name)
             );
         }
+        let evaluated = self.evaluate_type_for_assignability(ty);
+        if evaluated != ty
+            && self.named_type_display_name(evaluated).is_some()
+            && crate::query_boundaries::common::type_application(self.ctx.types, ty).is_some()
+        {
+            return self.format_type_for_assignability_message(evaluated);
+        }
         let application_display =
             crate::query_boundaries::common::type_application(self.ctx.types, ty)
                 .map(|_| ty)

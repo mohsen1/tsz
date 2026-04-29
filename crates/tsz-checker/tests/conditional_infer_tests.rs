@@ -158,12 +158,9 @@ const l1: L1 = 2; // Must not error
 ///
 /// Without the `match_rest_infer_tuple` fix, `Prepend<any, I>` collapsed
 /// to `any` and `BuildTree` never terminated, producing a false TS2741.
-/// With the fix, the unit-level Prepend behaviour above is correct, but
-/// the recursive conditional-type instantiation here still emits TS2741
-/// because of separate recursion/fuel limits in the conditional-type
-/// evaluator. Tracked as follow-up: see PR #1374 description for next
-/// steps. Unignore once the recursion/fuel issue is resolved.
-#[ignore = "follow-up: recursive conditional-type fuel/limit still trips on BuildTree"]
+/// With the fix, the unit-level Prepend behaviour above is correct and the
+/// instantiated indexed-access key is deferred until the resolver can expand
+/// aliases like `Length<I>`.
 #[test]
 fn test_build_tree_no_false_ts2741() {
     // Without the fix, Prepend evaluated to `any`, causing BuildTree never to
@@ -200,6 +197,101 @@ const grandUser: GrandUser = {
     assert!(
         !codes.contains(&2741),
         "Must NOT emit TS2741 — BuildTree must terminate at depth 2 without false property-missing errors, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_conditional_key_selects_depth_terminal_branch() {
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type PickDepth<T, N extends number, I extends any[]> = {
+  1: T;
+  0: T & { children: any[] };
+}[Length<I> extends N ? 1 : 0];
+
+interface User {
+  name: string;
+}
+
+type Depth2 = PickDepth<User, 2, [any, any]>;
+const user: Depth2 = { name: "Grandson" };
+"#;
+    let codes = tsz_checker::test_utils::check_source_codes(source);
+    assert!(
+        !codes.contains(&2741),
+        "Concrete depth selector must choose terminal branch without children, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_tuple_length_conditional_with_numeric_literal() {
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type IsTwo = Length<[any, any]> extends 2 ? "yes" : "no";
+const value: IsTwo = "yes";
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Tuple length conditional should resolve to true branch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_object_index_with_tuple_length_conditional_key() {
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type Selected = {
+  1: "terminal";
+  0: { children: any[] };
+}[Length<[any, any]> extends 2 ? 1 : 0];
+const value: Selected = "terminal";
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Object index should use evaluated conditional key, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_object_index_with_numeric_literal_key() {
+    let source = r#"
+type Selected<T> = {
+  1: T;
+  0: T & { children: any[] };
+}[1];
+
+interface User {
+  name: string;
+}
+
+type Depth2 = Selected<User>;
+const user: Depth2 = { name: "Grandson" };
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Generic object index should select numeric literal key, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_generic_object_index_with_instantiated_conditional_key() {
+    let source = r#"
+type Length<T extends any[]> = T["length"];
+type Selected<N extends number, I extends any[]> = {
+  1: "terminal";
+  0: { children: any[] };
+}[Length<I> extends N ? 1 : 0];
+
+type Depth2 = Selected<2, [any, any]>;
+const value: Depth2 = "terminal";
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Generic object index should use instantiated conditional key, got: {diagnostics:?}"
     );
 }
 

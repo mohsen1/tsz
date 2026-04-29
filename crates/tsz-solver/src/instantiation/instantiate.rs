@@ -1348,7 +1348,10 @@ impl<'a> TypeInstantiator<'a> {
                 {
                     return self.interner.index_access(inst_obj, inst_idx);
                 }
-                if self.preserve_meta_types {
+                if self.preserve_meta_types
+                    || index_access_operand_needs_resolver(self.interner, inst_obj)
+                    || index_access_operand_needs_resolver(self.interner, inst_idx)
+                {
                     return self.interner.index_access(inst_obj, inst_idx);
                 }
                 // Evaluate immediately to achieve O(1) equality
@@ -2008,6 +2011,29 @@ fn mapped_constraint_needs_resolver(interner: &dyn TypeDatabase, type_id: TypeId
         TypeData::Application(_) | TypeData::Lazy(_) | TypeData::TypeQuery(_) => true,
         _ => false,
     }
+}
+
+/// Check whether an instantiated indexed-access operand should be evaluated by
+/// the outer evaluator instead of the instantiator's `NoopResolver`.
+///
+/// Eagerly reducing `T[K]` is useful for simple concrete keys, but resolver-backed
+/// meta-types inside either operand can still need alias expansion. For example,
+/// `{ 1: T; 0: U }[Length<I> extends N ? 1 : 0]` must let the real evaluator
+/// resolve `Length<I>` after `I` and `N` are substituted; reducing it here can
+/// take the false branch because `Length` is still an unresolvable application.
+fn index_access_operand_needs_resolver(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::visitors::visitor_predicates::contains_type_matching(interner, type_id, |key| {
+        matches!(
+            key,
+            TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::Mapped(_)
+        )
+    })
 }
 
 /// Check whether `type_id` references a type parameter with the given `name`.
