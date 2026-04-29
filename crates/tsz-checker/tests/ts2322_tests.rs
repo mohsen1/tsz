@@ -216,6 +216,36 @@ function diamondTop<Top>() {
     );
 }
 
+#[test]
+fn test_ts2322_narrowed_string_literal_residual_union_to_never_display() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+type Variants = "a" | "b" | "c" | "d";
+
+function fx1(x: Variants) {
+    if (x === "a" || x === "b") {
+    } else {
+        const y: never = x;
+    }
+}
+"#,
+    );
+
+    let message = diagnostics
+        .iter()
+        .find_map(|(code, message)| {
+            (*code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("is not assignable to type 'never'."))
+            .then_some(message.as_str())
+        })
+        .expect("expected TS2322 diagnostic for narrowed residual union assigned to never");
+
+    assert!(
+        message.contains(r#"Type '"d" | "c"' is not assignable to type 'never'."#),
+        "expected residual string-literal union display to match tsc, got: {message}"
+    );
+}
+
 fn compile_with_options(
     source: &str,
     file_name: &str,
