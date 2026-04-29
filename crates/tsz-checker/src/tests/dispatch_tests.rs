@@ -2339,3 +2339,44 @@ fn("C" satisfies string);
         ts2345.iter().map(|d| &d.message_text).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2322_nested_generic_alias_two_levels() {
+    // Box<Box<number>> should not be assignable to Box<Box<string>>
+    let diags = check_source_diagnostics(
+        r#"
+type Box<T> = { value: T };
+declare const x: Box<Box<number>>;
+declare let y: Box<Box<string>>;
+y = x;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected 1 TS2322 for Box<Box<number>> vs Box<Box<string>>, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2322_nested_fn_alias_four_levels() {
+    // Cb<Cb<Cb<Cb<number>>>> should not be assignable to Cb<Cb<Cb<Cb<string>>>>
+    // where Cb<T> = {noAlias: () => T}["noAlias"]
+    let diags = check_source_diagnostics(
+        r#"
+type Cb<T> = {noAlias: () => T}["noAlias"];
+declare const x: Cb<Cb<Cb<Cb<number>>>>;
+declare let y: Cb<Cb<Cb<Cb<string>>>>;
+y = x;
+"#,
+    );
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected 1 TS2322 for Cb<Cb<Cb<Cb<number>>>> vs Cb<Cb<Cb<Cb<string>>>>, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}

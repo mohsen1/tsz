@@ -684,6 +684,14 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
+        // This heuristic accepts `Wrapper<Wrapper<T>>` as assignable to `Wrapper<U>`
+        // when the TARGET's argument is NOT also the same wrapper (e.g., `Wrapper<V>`
+        // where V is a plain type, not `Wrapper<something>`).
+        //
+        // This correctly handles `PromiseLike<PromiseLike<T>>` vs `PromiseLike<T>`
+        // (coinductively compatible via the then-method cycle) while correctly
+        // rejecting `Box<Box<number>>` vs `Box<Box<string>>` (target arg is also
+        // a nested wrapper with a different inner type — requires actual type checking).
         if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
             self.application_info_or_display_alias(source),
             self.application_info_or_display_alias(target),
@@ -693,6 +701,9 @@ impl<'a> CheckerState<'a> {
             && self
                 .application_info_or_display_alias(source_args[0])
                 .is_some_and(|(nested_base, _)| nested_base == source_base)
+            && !self
+                .application_info_or_display_alias(target_args[0])
+                .is_some_and(|(nested_base, _)| nested_base == target_base)
         {
             return true;
         }
@@ -709,12 +720,17 @@ impl<'a> CheckerState<'a> {
         if generic_head(&target_display) != Some(source_head) {
             return false;
         }
-        let Some((_, source_args)) = source_display.split_once('<') else {
+        let Some((_, source_arg_str)) = source_display.split_once('<') else {
             return false;
         };
-        source_args
-            .trim_start()
-            .starts_with(&format!("{source_head}<"))
+        let Some((_, target_arg_str)) = target_display.split_once('<') else {
+            return false;
+        };
+        // Source arg starts with same wrapper head, but target arg does NOT.
+        // If target's arg also starts with the same wrapper, require actual type checking.
+        let prefix = format!("{source_head}<");
+        source_arg_str.trim_start().starts_with(&prefix)
+            && !target_arg_str.trim_start().starts_with(&prefix)
     }
 
     /// Centralized suppression for TS2322-style assignability diagnostics.
