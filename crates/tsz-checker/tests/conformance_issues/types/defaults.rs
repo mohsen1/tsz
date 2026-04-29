@@ -126,12 +126,12 @@ let bar4: any;
         .collect();
 
     assert!(
-        has_error(&relevant, 2538),
-        "Should emit TS2538 (not TS2537) for `any`-typed result of invalid `1 + {{}}`.\nActual errors: {relevant:#?}"
+        has_error(&relevant, 2365),
+        "Should emit TS2365 for invalid `1 + {{}}`.\nActual errors: {relevant:#?}"
     );
     assert!(
-        !relevant.iter().any(|(code, _)| *code == 2537),
-        "Should NOT emit TS2537 when key type is `any`.\nActual errors: {relevant:#?}"
+        has_error(&relevant, 2538),
+        "Should emit TS2538 for the any index result of invalid `1 + {{}}`.\nActual errors: {relevant:#?}"
     );
 }
 

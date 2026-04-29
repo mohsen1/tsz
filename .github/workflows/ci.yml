@@ -402,3 +402,57 @@ jobs:
           fetch-depth: 1
       - name: Aggregate fourslash results
         run: scripts/ci/github-suite.sh fourslash-aggregate
+
+  ci-summary:
+    name: CI Summary
+    needs:
+      - gate
+      - lint
+      - dist-binaries
+      - wasm
+      - wasm-web
+      - node-harness-prep
+      - unit
+      - conformance-aggregate
+      - emit
+      - fourslash-aggregate
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify required CI jobs
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          gate = needs["gate"]
+          should_run = gate.get("outputs", {}).get("should_run") == "true"
+
+          if gate.get("result") != "success":
+              print(f"gate did not pass: {gate.get('result')}")
+              sys.exit(1)
+
+          if not should_run:
+              print("CI gated off; summary passes because heavy jobs were intentionally skipped.")
+              sys.exit(0)
+
+          failures = []
+          for name, data in needs.items():
+              if name == "gate":
+                  continue
+              if data.get("result") != "success":
+                  failures.append(f"{name}: {data.get('result')}")
+
+          if failures:
+              print("Required CI jobs did not pass:")
+              for failure in failures:
+                  print(f"  - {failure}")
+              sys.exit(1)
+
+          print("All required CI jobs passed.")
+          PY
