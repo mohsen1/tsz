@@ -1184,7 +1184,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         var_map,
                         s_fn.type_predicate.as_ref(),
                         t_fn.type_predicate.as_ref(),
-                        priority,
+                        return_priority,
                     );
                 } else {
                     // Generic source function - instantiate with fresh inference variables
@@ -1327,14 +1327,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // This handles chains like: compose(unbox, unlist) where
                     // unlist's U is related to B through Array<U> = B, and C = U.
                     // Without unification, U gets no direct candidates.
+                    let return_priority = priority.max(crate::types::InferencePriority::ReturnType);
                     if let (Some(&s_var), Some(&t_var)) = (
                         combined_var_map.get(&instantiated_return),
                         combined_var_map.get(&t_fn.return_type),
                     ) {
                         let _ = ctx.unify_vars(s_var, t_var);
                     } else {
-                        let return_priority =
-                            priority.max(crate::types::InferencePriority::ReturnType);
                         self.constrain_types(
                             ctx,
                             &combined_var_map,
@@ -1350,7 +1349,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &combined_var_map,
                         instantiated_predicate.as_ref(),
                         t_fn.type_predicate.as_ref(),
-                        priority,
+                        return_priority,
                     );
                 }
             }

@@ -220,7 +220,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Constrain type predicates if both have them.
         // Predicates are marked as a type-annotation source so literal predicate
         // types (e.g. `x is 'B'`) are not marked fresh and won't be widened.
-        self.constrain_type_predicates(ctx, var_map, source_pred, target_pred, priority);
+        self.constrain_type_predicates(ctx, var_map, source_pred, target_pred, return_priority);
     }
 
     pub(super) fn constrain_function_to_call_signature(
