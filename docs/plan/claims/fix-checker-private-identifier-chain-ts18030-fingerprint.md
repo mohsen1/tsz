@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-private-identifier-chain-ts18030-fingerprint`
-- **PR**: TBD
+- **PR**: #1744
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
