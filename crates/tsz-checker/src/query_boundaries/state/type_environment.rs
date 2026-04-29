@@ -435,10 +435,34 @@ impl tsz_solver::type_queries::DeclarationTypeCycleHost for CheckerDeclarationCy
     }
 
     fn is_application_alias_serialization_exempt(&self, base_def_id: tsz_solver::DefId) -> bool {
-        self.state
+        if self
+            .state
             .ctx
             .def_to_symbol_id(base_def_id)
             .is_some_and(|sym_id| self.state.ctx.symbol_is_from_actual_lib(sym_id))
+        {
+            return true;
+        }
+        // Fallback: when the alias is registered against a file other than
+        // the one currently being declaration-emitted, the .d.ts emitter can
+        // reference it by name and never needs to inline-walk its body for
+        // cycle detection. `symbol_is_from_actual_lib` uses `Arc::ptr_eq`
+        // against the leading lib contexts and misses lib-defined symbols
+        // (e.g. `Awaited`, `Iterator`, `PromiseLike`) whose
+        // `binder.symbol_arenas` Arc differs from the lib_contexts arena
+        // instance — those symbols are merged into the user binder's arena
+        // by `merge_lib_contexts_into_binder`, so the pointer comparison
+        // fails. Comparing the alias' defining file index against the
+        // current source file catches those cases without weakening
+        // same-file recursive-alias detection: the only TS5088 positive in
+        // the corpus (`arrayFakeFlatNoCrashInferenceDeclarations.ts`)
+        // defines `BadFlatArray` in the same file as `foo`, so its
+        // `file_idx` matches `current_file_idx` and it is correctly *not*
+        // exempted.
+        self.state
+            .ctx
+            .def_file_idx(base_def_id)
+            .is_some_and(|idx| idx != self.state.ctx.current_file_idx as u32)
     }
 }
 

@@ -83,6 +83,50 @@ pub fn is_function_interface_structural(db: &dyn TypeDatabase, type_id: TypeId) 
         && shape.properties.iter().any(|p| p.name == bind)
 }
 
+pub fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_may_display_iterator_protocol_inner(db, type_id, 0)
+}
+
+fn type_may_display_iterator_protocol_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: usize,
+) -> bool {
+    if depth > 4 {
+        return true;
+    }
+    if let Some(alias) = db.get_display_alias(type_id)
+        && alias != type_id
+        && type_may_display_iterator_protocol_inner(db, alias, depth + 1)
+    {
+        return true;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Application(_))
+        | Some(TypeData::Function(_))
+        | Some(TypeData::Callable(_))
+        | Some(TypeData::Lazy(_))
+        | Some(TypeData::Recursive(_))
+        | Some(TypeData::Conditional(_))
+        | Some(TypeData::Mapped(_))
+        | Some(TypeData::IndexAccess(_, _))
+        | Some(TypeData::TypeParameter(_))
+        | Some(TypeData::BoundParameter(_))
+        | Some(TypeData::Infer(_))
+        | Some(TypeData::ThisType)
+        | Some(TypeData::NoInfer(_)) => true,
+        Some(TypeData::Object(_)) | Some(TypeData::ObjectWithIndex(_)) => {
+            super::data::type_has_property_by_str(db, type_id, "next")
+        }
+        Some(TypeData::Union(list_id)) | Some(TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|member| type_may_display_iterator_protocol_inner(db, *member, depth + 1)),
+        _ => false,
+    }
+}
+
 /// Get the number of elements in a fixed-length tuple type.
 ///
 /// Returns `Some(len)` for tuple types with no rest elements, `None` otherwise

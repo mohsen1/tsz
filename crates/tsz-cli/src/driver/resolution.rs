@@ -14,9 +14,45 @@ use tsz::scanner::SyntaxKind;
 #[derive(Default)]
 pub(crate) struct ModuleResolutionCache {
     package_type_by_dir: FxHashMap<PathBuf, Option<PackageType>>,
+    package_json_by_path: FxHashMap<PathBuf, Option<PackageJson>>,
+    node_modules_dir_by_path: FxHashMap<PathBuf, bool>,
+    package_root_dir_by_path: FxHashMap<PathBuf, bool>,
 }
 
 impl ModuleResolutionCache {
+    fn read_package_json(&mut self, path: &Path) -> Option<PackageJson> {
+        if let Some(cached) = self.package_json_by_path.get(path) {
+            return cached.clone();
+        }
+
+        let parsed = read_package_json_uncached(path);
+        self.package_json_by_path
+            .insert(path.to_path_buf(), parsed.clone());
+        parsed
+    }
+
+    fn node_modules_dir_exists(&mut self, path: &Path) -> bool {
+        if let Some(&exists) = self.node_modules_dir_by_path.get(path) {
+            return exists;
+        }
+
+        let exists = path.is_dir();
+        self.node_modules_dir_by_path
+            .insert(path.to_path_buf(), exists);
+        exists
+    }
+
+    pub(crate) fn package_root_dir_exists(&mut self, path: &Path) -> bool {
+        if let Some(&exists) = self.package_root_dir_by_path.get(path) {
+            return exists;
+        }
+
+        let exists = path.is_dir();
+        self.package_root_dir_by_path
+            .insert(path.to_path_buf(), exists);
+        exists
+    }
+
     fn package_type_for_dir(&mut self, dir: &Path, base_dir: &Path) -> Option<PackageType> {
         let mut current = dir;
         let mut visited = Vec::new();
@@ -31,7 +67,7 @@ impl ModuleResolutionCache {
 
             visited.push(current.to_path_buf());
 
-            if let Some(package_json) = read_package_json(&current.join("package.json")) {
+            if let Some(package_json) = self.read_package_json(&current.join("package.json")) {
                 let value = package_type_from_json(Some(&package_json));
                 for path in visited {
                     self.package_type_by_dir.insert(path, value);
@@ -57,10 +93,11 @@ impl ModuleResolutionCache {
     }
 }
 
-pub(crate) fn resolve_type_package_from_roots(
+pub(crate) fn resolve_type_package_from_roots_with_cache(
     name: &str,
     roots: &[PathBuf],
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     for root in roots {
         let candidates = type_package_candidates_for_root(name, root);
@@ -69,13 +106,16 @@ pub(crate) fn resolve_type_package_from_roots(
         }
         for candidate in &candidates {
             let package_root = root.join(candidate);
-            if package_root.is_dir()
-                && let Some(entry) = resolve_type_package_entry(&package_root, options)
+            if resolution_cache.package_root_dir_exists(&package_root)
+                && let Some(entry) =
+                    resolve_type_package_entry_with_cache(&package_root, options, resolution_cache)
             {
                 return Some(entry);
             }
 
-            if let Some(entry) = resolve_declaration_package_entry(root, candidate, options, None) {
+            if let Some(entry) =
+                resolve_declaration_package_entry(root, candidate, options, None, resolution_cache)
+            {
                 return Some(entry);
             }
         }
@@ -95,17 +135,18 @@ pub(crate) fn resolve_type_package_from_roots(
 /// The resolution mode is determined by either:
 /// - The explicit `resolution-mode` attribute (if present)
 /// - The source file's module format (CJS → `require`, ESM → `import`)
-pub(crate) fn resolve_type_reference_from_node_modules(
+pub(crate) fn resolve_type_reference_from_node_modules_with_cache(
     name: &str,
     from_file: &Path,
     base_dir: &Path,
     resolution_mode: Option<&str>,
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     // Determine effective resolution mode from explicit attribute or file format
-    let effective_mode = resolution_mode
-        .map(String::from)
-        .unwrap_or_else(|| implied_resolution_mode_for_file(from_file, base_dir));
+    let effective_mode = resolution_mode.map(String::from).unwrap_or_else(|| {
+        implied_resolution_mode_for_file_with_cache(from_file, base_dir, resolution_cache)
+    });
 
     // Generate all candidate package names (original + @types mangled form)
     let candidates = type_package_candidates(name);
@@ -114,18 +155,28 @@ pub(crate) fn resolve_type_reference_from_node_modules(
 
     loop {
         let node_modules = current.join("node_modules");
-        for candidate in &candidates {
-            let package_root = node_modules.join(candidate);
-            if package_root.is_dir() {
-                let resolved =
-                    resolve_type_package_entry_with_mode(&package_root, &effective_mode, options);
-                if resolved.is_some() {
-                    return resolved;
-                }
-                // Fall back to non-conditional resolution (types/typings/main/index)
-                let resolved = resolve_type_package_entry(&package_root, options);
-                if resolved.is_some() {
-                    return resolved;
+        if resolution_cache.node_modules_dir_exists(&node_modules) {
+            for candidate in &candidates {
+                let package_root = node_modules.join(candidate);
+                if resolution_cache.package_root_dir_exists(&package_root) {
+                    let resolved = resolve_type_package_entry_with_mode_and_cache(
+                        &package_root,
+                        &effective_mode,
+                        options,
+                        resolution_cache,
+                    );
+                    if resolved.is_some() {
+                        return resolved;
+                    }
+                    // Fall back to non-conditional resolution (types/typings/main/index)
+                    let resolved = resolve_type_package_entry_with_cache(
+                        &package_root,
+                        options,
+                        resolution_cache,
+                    );
+                    if resolved.is_some() {
+                        return resolved;
+                    }
                 }
             }
         }
@@ -152,6 +203,15 @@ pub(crate) fn resolve_type_reference_from_node_modules(
 ///   - `"type": "module"` → "import"
 ///   - otherwise → "require"
 pub(super) fn implied_resolution_mode_for_file(file: &Path, base_dir: &Path) -> String {
+    let mut cache = ModuleResolutionCache::default();
+    implied_resolution_mode_for_file_with_cache(file, base_dir, &mut cache)
+}
+
+fn implied_resolution_mode_for_file_with_cache(
+    file: &Path,
+    base_dir: &Path,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> String {
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     match ext {
@@ -164,9 +224,7 @@ pub(super) fn implied_resolution_mode_for_file(file: &Path, base_dir: &Path) -> 
     let mut current = file.parent().unwrap_or(base_dir);
     loop {
         let pkg_json_path = current.join("package.json");
-        if pkg_json_path.is_file()
-            && let Some(pj) = read_package_json(&pkg_json_path)
-        {
+        if let Some(pj) = resolution_cache.read_package_json(&pkg_json_path) {
             if pj.package_type.as_deref() == Some("module") {
                 return "import".to_string();
             }
@@ -328,11 +386,21 @@ pub(crate) fn collect_type_packages_from_root(root: &Path) -> Vec<PathBuf> {
     packages
 }
 
+#[cfg(test)]
 pub(crate) fn resolve_type_package_entry(
     package_root: &Path,
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
-    let package_json = read_package_json(&package_root.join("package.json"));
+    let mut cache = ModuleResolutionCache::default();
+    resolve_type_package_entry_with_cache(package_root, options, &mut cache)
+}
+
+pub(crate) fn resolve_type_package_entry_with_cache(
+    package_root: &Path,
+    options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> Option<PathBuf> {
+    let package_json = resolution_cache.read_package_json(&package_root.join("package.json"));
 
     // In node10/classic module resolution, type package fallback resolution
     // should NOT try .d.mts/.d.cts extensions (those require exports map).
@@ -378,6 +446,7 @@ pub(crate) fn resolve_type_package_entry(
             package_json.as_ref(),
             &conditions,
             options,
+            resolution_cache,
         )?;
         is_declaration_file(&resolved).then_some(resolved)
     }
@@ -388,12 +457,28 @@ pub(crate) fn resolve_type_package_entry(
 /// When `resolution_mode` is "import" or "require", the exports map is consulted
 /// with the corresponding condition. This implements the `resolution-mode` attribute
 /// of `/// <reference types="..." resolution-mode="..." />` directives.
+#[cfg(test)]
 pub(crate) fn resolve_type_package_entry_with_mode(
     package_root: &Path,
     resolution_mode: &str,
     options: &ResolvedCompilerOptions,
 ) -> Option<PathBuf> {
-    let package_json = read_package_json(&package_root.join("package.json"));
+    let mut cache = ModuleResolutionCache::default();
+    resolve_type_package_entry_with_mode_and_cache(
+        package_root,
+        resolution_mode,
+        options,
+        &mut cache,
+    )
+}
+
+pub(crate) fn resolve_type_package_entry_with_mode_and_cache(
+    package_root: &Path,
+    resolution_mode: &str,
+    options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
+) -> Option<PathBuf> {
+    let package_json = resolution_cache.read_package_json(&package_root.join("package.json"));
     let package_json = package_json.as_ref()?;
 
     // Build conditions based on resolution mode
@@ -1124,7 +1209,13 @@ pub(crate) fn resolve_module_specifier(
             return None;
         }
         if options.resolve_package_json_imports {
-            return resolve_package_imports_specifier(from_file, &specifier, base_dir, options);
+            return resolve_package_imports_specifier(
+                from_file,
+                &specifier,
+                base_dir,
+                options,
+                resolution_cache,
+            );
         }
         return None;
     }
@@ -1261,7 +1352,13 @@ pub(crate) fn resolve_module_specifier(
     }
 
     if allow_node_modules {
-        return resolve_node_module_specifier(from_file, &specifier, base_dir, options);
+        return resolve_node_module_specifier(
+            from_file,
+            &specifier,
+            base_dir,
+            options,
+            resolution_cache,
+        );
     }
 
     None
@@ -1709,7 +1806,7 @@ const NODE16_MODULE_EXTENSION_CANDIDATES: [&str; 7] =
 const NODE16_COMMONJS_EXTENSION_CANDIDATES: [&str; 7] =
     ["cts", "d.cts", "ts", "tsx", "d.ts", "mts", "d.mts"];
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct PackageJson {
     #[serde(default)]
     name: Option<String>,
@@ -1831,6 +1928,7 @@ fn resolve_node_module_specifier(
     module_specifier: &str,
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let (package_name, subpath) = split_package_specifier(module_specifier)?;
     let conditions = export_conditions(options);
@@ -1842,9 +1940,7 @@ fn resolve_node_module_specifier(
         let mut dir = from_file.parent().unwrap_or(base_dir);
         loop {
             let pj_path = dir.join("package.json");
-            if pj_path.is_file()
-                && let Some(pj) = read_package_json(&pj_path)
-            {
+            if let Some(pj) = resolution_cache.read_package_json(&pj_path) {
                 if pj.name.as_deref() == Some(&package_name) {
                     let resolved = resolve_package_specifier(
                         dir,
@@ -1852,6 +1948,7 @@ fn resolve_node_module_specifier(
                         Some(&pj),
                         &conditions,
                         options,
+                        resolution_cache,
                     );
                     if resolved.is_some() {
                         return resolved;
@@ -1896,53 +1993,60 @@ fn resolve_node_module_specifier(
 
     loop {
         // 1. Look for the package itself in node_modules
-        let package_root = current.join("node_modules").join(&package_name);
-        if package_root.is_dir() {
-            let package_json = read_package_json(&package_root.join("package.json"));
-            let resolved = resolve_package_specifier(
-                &package_root,
-                subpath.as_deref(),
-                package_json.as_ref(),
-                &conditions,
-                options,
-            );
-            if resolved.is_some() {
-                return resolved;
-            }
-        } else if subpath.is_none()
-            && options.effective_module_resolution() == ModuleResolutionKind::Bundler
-        {
-            let candidates = expand_module_path_candidates(&package_root, options, None);
-            for candidate in candidates {
-                if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
-                    return Some(normalize_resolved_path(&candidate, options));
-                }
-            }
-        }
-
-        // 2. Look for @types package (if not already looking for one)
-        // TypeScript looks up @types/foo for 'foo', and @types/scope__pkg for '@scope/pkg'
-        if !options.checker.no_types_and_symbols && !package_name.starts_with("@types/") {
-            let types_package_name = if let Some(scope_pkg) = package_name.strip_prefix('@') {
-                // Scoped package: @scope/pkg -> @types/scope__pkg
-                // Skip the '@' (1 char) and replace '/' with '__'
-                format!("@types/{}", scope_pkg.replace('/', "__"))
-            } else {
-                format!("@types/{package_name}")
-            };
-
-            let types_root = current.join("node_modules").join(&types_package_name);
-            if types_root.is_dir() {
-                let package_json = read_package_json(&types_root.join("package.json"));
+        let node_modules = current.join("node_modules");
+        if resolution_cache.node_modules_dir_exists(&node_modules) {
+            let package_root = node_modules.join(&package_name);
+            if resolution_cache.package_root_dir_exists(&package_root) {
+                let package_json =
+                    resolution_cache.read_package_json(&package_root.join("package.json"));
                 let resolved = resolve_package_specifier(
-                    &types_root,
+                    &package_root,
                     subpath.as_deref(),
                     package_json.as_ref(),
                     &conditions,
                     options,
+                    resolution_cache,
                 );
                 if resolved.is_some() {
                     return resolved;
+                }
+            } else if subpath.is_none()
+                && options.effective_module_resolution() == ModuleResolutionKind::Bundler
+            {
+                let candidates = expand_module_path_candidates(&package_root, options, None);
+                for candidate in candidates {
+                    if candidate.is_file() && is_valid_module_or_js_file(&candidate) {
+                        return Some(normalize_resolved_path(&candidate, options));
+                    }
+                }
+            }
+
+            // 2. Look for @types package (if not already looking for one)
+            // TypeScript looks up @types/foo for 'foo', and @types/scope__pkg for '@scope/pkg'
+            if !options.checker.no_types_and_symbols && !package_name.starts_with("@types/") {
+                let types_package_name = if let Some(scope_pkg) = package_name.strip_prefix('@') {
+                    // Scoped package: @scope/pkg -> @types/scope__pkg
+                    // Skip the '@' (1 char) and replace '/' with '__'
+                    format!("@types/{}", scope_pkg.replace('/', "__"))
+                } else {
+                    format!("@types/{package_name}")
+                };
+
+                let types_root = node_modules.join(&types_package_name);
+                if resolution_cache.package_root_dir_exists(&types_root) {
+                    let package_json =
+                        resolution_cache.read_package_json(&types_root.join("package.json"));
+                    let resolved = resolve_package_specifier(
+                        &types_root,
+                        subpath.as_deref(),
+                        package_json.as_ref(),
+                        &conditions,
+                        options,
+                        resolution_cache,
+                    );
+                    if resolved.is_some() {
+                        return resolved;
+                    }
                 }
             }
         }
@@ -1965,8 +2069,12 @@ fn resolve_node_module_specifier(
             .type_roots
             .clone()
             .unwrap_or_else(|| default_type_roots(base_dir));
-        if let Some(resolved) = resolve_type_package_from_roots(&package_name, &type_roots, options)
-        {
+        if let Some(resolved) = resolve_type_package_from_roots_with_cache(
+            &package_name,
+            &type_roots,
+            options,
+            resolution_cache,
+        ) {
             return Some(resolved);
         }
     }
@@ -1979,19 +2087,21 @@ fn resolve_package_imports_specifier(
     module_specifier: &str,
     base_dir: &Path,
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let conditions = export_conditions(options);
     let mut current = from_file.parent().unwrap_or(base_dir);
 
     loop {
         let package_json_path = current.join("package.json");
-        if package_json_path.is_file()
-            && let Some(package_json) = read_package_json(&package_json_path)
+        if let Some(package_json) = resolution_cache.read_package_json(&package_json_path)
             && let Some(imports) = package_json.imports.as_ref()
             && let Some(target) = resolve_imports_subpath(imports, module_specifier, &conditions)
         {
             let package_type = package_type_from_json(Some(&package_json));
-            if let Some(resolved) = resolve_package_entry(current, &target, options, package_type) {
+            if let Some(resolved) =
+                resolve_package_entry(current, &target, options, package_type, resolution_cache)
+            {
                 return Some(resolved);
             }
             // Output-to-source remapping for package imports.
@@ -2034,6 +2144,7 @@ fn resolve_package_specifier(
     package_json: Option<&PackageJson>,
     conditions: &[&str],
     options: &ResolvedCompilerOptions,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let package_type = package_type_from_json(package_json);
     if let Some(package_json) = package_json {
@@ -2062,6 +2173,7 @@ fn resolve_package_specifier(
                     types_versions,
                     options,
                     package_type,
+                    resolution_cache,
                 ) {
                     return Some(resolved);
                 }
@@ -2079,6 +2191,7 @@ fn resolve_package_specifier(
                 types_versions,
                 options,
                 package_type,
+                resolution_cache,
             ) {
                 return Some(resolved);
             }
@@ -2086,10 +2199,22 @@ fn resolve_package_specifier(
     }
 
     if let Some(subpath) = subpath {
-        return resolve_package_entry(package_root, subpath, options, package_type);
+        return resolve_package_entry(
+            package_root,
+            subpath,
+            options,
+            package_type,
+            resolution_cache,
+        );
     }
 
-    resolve_package_root(package_root, package_json, options, package_type)
+    resolve_package_root(
+        package_root,
+        package_json,
+        options,
+        package_type,
+        resolution_cache,
+    )
 }
 
 fn split_package_specifier(specifier: &str) -> Option<(String, Option<String>)> {
@@ -2114,15 +2239,20 @@ fn resolve_package_root(
     package_json: Option<&PackageJson>,
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     if let Some(package_json) = package_json {
         for entry in [package_json.types.as_ref(), package_json.typings.as_ref()]
             .into_iter()
             .flatten()
         {
-            if let Some(resolved) =
-                resolve_declaration_package_entry(package_root, entry, options, package_type)
-            {
+            if let Some(resolved) = resolve_declaration_package_entry(
+                package_root,
+                entry,
+                options,
+                package_type,
+                resolution_cache,
+            ) {
                 return Some(resolved);
             }
         }
@@ -2132,7 +2262,7 @@ fn resolve_package_root(
             .flatten()
         {
             if let Some(resolved) =
-                resolve_package_entry(package_root, entry, options, package_type)
+                resolve_package_entry(package_root, entry, options, package_type, resolution_cache)
             {
                 return Some(resolved);
             }
@@ -2150,7 +2280,13 @@ fn resolve_package_root(
         .unwrap_or(false);
     let has_package_json = package_json.is_some();
     if (!is_symlinked_package_root || !has_package_json)
-        && let Some(resolved) = resolve_package_entry(package_root, "index", options, package_type)
+        && let Some(resolved) = resolve_package_entry(
+            package_root,
+            "index",
+            options,
+            package_type,
+            resolution_cache,
+        )
     {
         return Some(resolved);
     }
@@ -2163,6 +2299,7 @@ fn resolve_declaration_package_entry(
     entry: &str,
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let entry = entry.trim();
     if entry.is_empty() {
@@ -2186,7 +2323,7 @@ fn resolve_declaration_package_entry(
     }
 
     if path.is_dir()
-        && let Some(pj) = read_package_json(&path.join("package.json"))
+        && let Some(pj) = resolution_cache.read_package_json(&path.join("package.json"))
     {
         let sub_type = package_type_from_json(Some(&pj));
         for entry in [pj.types.as_ref(), pj.typings.as_ref()]
@@ -2194,7 +2331,7 @@ fn resolve_declaration_package_entry(
             .flatten()
         {
             if let Some(resolved) =
-                resolve_declaration_package_entry(&path, entry, options, sub_type)
+                resolve_declaration_package_entry(&path, entry, options, sub_type, resolution_cache)
             {
                 return Some(resolved);
             }
@@ -2209,6 +2346,7 @@ fn resolve_package_entry(
     entry: &str,
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let entry = entry.trim();
     if entry.is_empty() {
@@ -2250,7 +2388,7 @@ fn resolve_package_entry(
     // Check subpath's package.json for types/main fields
     if !is_esm_no_index
         && path.is_dir()
-        && let Some(pj) = read_package_json(&path.join("package.json"))
+        && let Some(pj) = resolution_cache.read_package_json(&path.join("package.json"))
     {
         let sub_type = package_type_from_json(Some(&pj));
         // Try types/typings field
@@ -2259,7 +2397,7 @@ fn resolve_package_entry(
             .flatten()
         {
             if let Some(resolved) =
-                resolve_declaration_package_entry(&path, types, options, sub_type)
+                resolve_declaration_package_entry(&path, types, options, sub_type, resolution_cache)
             {
                 return Some(resolved);
             }
@@ -2463,7 +2601,7 @@ fn package_type_from_json(package_json: Option<&PackageJson>) -> Option<PackageT
     }
 }
 
-fn read_package_json(path: &Path) -> Option<PackageJson> {
+fn read_package_json_uncached(path: &Path) -> Option<PackageJson> {
     // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Resolver hot path
     // — package.json reads dominate sample profiles on full large-ts-repo.
     tsz_common::perf_counters::inc(
@@ -2504,6 +2642,7 @@ fn resolve_types_versions(
     types_versions: &serde_json::Value,
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
+    resolution_cache: &mut ModuleResolutionCache,
 ) -> Option<PathBuf> {
     let compiler_version = types_versions_compiler_version(options);
     let paths = select_types_versions_paths(types_versions, compiler_version)?;
@@ -2556,9 +2695,13 @@ fn resolve_types_versions(
 
     for target in targets {
         let substituted = substitute_path_target(target, &best_wildcard);
-        if let Some(resolved) =
-            resolve_package_entry(package_root, &substituted, options, package_type)
-        {
+        if let Some(resolved) = resolve_package_entry(
+            package_root,
+            &substituted,
+            options,
+            package_type,
+            resolution_cache,
+        ) {
             return Some(resolved);
         }
     }

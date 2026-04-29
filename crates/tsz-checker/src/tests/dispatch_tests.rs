@@ -1234,6 +1234,42 @@ let answer = new Zet(1).add(3, { nested: 4 });
 }
 
 #[test]
+fn jsdoc_constructor_identifier_argument_uses_typeof_source_display() {
+    let diags = check_js_source_diagnostics(
+        r#"
+/**
+ * @param {function(new: { length: number }, number): number} c
+ * @return {function(new: { length: number }, number): number}
+ */
+function id2(c) {
+    return c;
+}
+
+/**
+ * @constructor
+ * @param {number} n
+ */
+var E = function(n) {
+  this.not_length_on_purpose = n;
+};
+
+id2(E);
+"#,
+    );
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(ts2345.len(), 1, "Expected one TS2345, got: {diags:?}");
+    let message = &ts2345[0].message_text;
+    assert!(
+        message.contains("Argument of type 'typeof E'"),
+        "Expected JS constructor identifier source display to use `typeof E`, got: {message:?}"
+    );
+    assert!(
+        !message.contains("new (n: number)"),
+        "Expected diagnostic not to expand the constructor signature, got: {message:?}"
+    );
+}
+
+#[test]
 fn jsdoc_generic_constructor_prototype_object_literal_methods_use_instance_this() {
     let diags = check_js_source_diagnostics(
         r#"

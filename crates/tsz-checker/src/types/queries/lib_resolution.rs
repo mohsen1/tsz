@@ -12,6 +12,8 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::is_compiler_managed_type;
 
+use super::lib_scoped_heritage::LibHeritageBase;
+
 /// Index from identifier text to `(file_idx, SymbolId)` entries in `file_locals`.
 pub(crate) type FileLocalsIndex = FxHashMap<String, Vec<(usize, tsz_binder::SymbolId)>>;
 
@@ -222,30 +224,23 @@ pub(crate) fn augmentation_def_id_from_node(
     .map(|sym_id| ctx.get_lib_def_id(sym_id))
 }
 
-/// Resolve a `NodeIndex` to a `SymbolId` by searching across multiple
-/// declaration arenas.
-///
-/// This is the stable resolution path for lib lowering.  It replaces the
-/// per-call resolver closures that previously duplicated this logic (and
-/// sometimes added redundant local caches).
-///
-/// The lookup order is:
-/// 1. Iterate `decl_arenas`; for each arena that yields identifier text at
-///    `node_idx`, check `binder.file_locals`.
-/// 2. If no declaration arena matched, try `fallback_arena`.
-///
-/// Returns `None` when the identifier is a compiler-managed type (e.g.,
-/// `__String`) or when no matching symbol is found.
+/// Resolve a lib node through node bindings, lexical scopes, and file-level symbols.
 pub(crate) fn resolve_lib_node_in_arenas(
     binder: &tsz_binder::BinderState,
     node_idx: NodeIndex,
     decl_arenas: &[(NodeIndex, &NodeArena)],
     fallback_arena: &NodeArena,
 ) -> Option<tsz_binder::SymbolId> {
+    if let Some(sym_id) = binder.get_node_symbol(node_idx) {
+        return Some(sym_id);
+    }
     for (_, arena) in decl_arenas {
         if let Some(ident_name) = arena.get_identifier_text(node_idx) {
             if is_compiler_managed_type(ident_name) {
                 continue;
+            }
+            if let Some(sym_id) = resolve_scope_chain(binder, arena, node_idx) {
+                return Some(sym_id);
             }
             if let Some(found_sym) = binder.file_locals.get(ident_name) {
                 return Some(found_sym);
@@ -255,6 +250,9 @@ pub(crate) fn resolve_lib_node_in_arenas(
     if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
         if is_compiler_managed_type(ident_name) {
             return None;
+        }
+        if let Some(sym_id) = resolve_scope_chain(binder, fallback_arena, node_idx) {
+            return Some(sym_id);
         }
         if let Some(found_sym) = binder.file_locals.get(ident_name) {
             return Some(found_sym);
@@ -416,7 +414,7 @@ impl<'a> CheckerState<'a> {
     // Section 45: Symbol Resolution Utilities
     // ----------------------------------------
 
-    fn resolve_lib_symbol_by_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
+    pub(super) fn resolve_lib_symbol_by_name(&self, name: &str) -> Option<tsz_binder::SymbolId> {
         let lib_binders = self.get_lib_binders();
         self.ctx.binder.file_locals.get(name).or_else(|| {
             self.ctx
@@ -567,12 +565,7 @@ impl<'a> CheckerState<'a> {
 
         // Collect base type info: name and type argument node indices with their arena.
         // We collect these first to avoid borrow conflicts during resolution.
-        struct HeritageBase<'a> {
-            name: String,
-            type_arg_indices: Vec<NodeIndex>,
-            arena: &'a NodeArena,
-        }
-        let mut bases: Vec<HeritageBase<'_>> = Vec::new();
+        let mut bases: Vec<LibHeritageBase<'_>> = Vec::new();
 
         for &(decl_idx, arena) in &decls_with_arenas {
             let Some(node) = arena.get(decl_idx) else {
@@ -619,8 +612,9 @@ impl<'a> CheckerState<'a> {
                         let type_arg_indices = type_arguments
                             .map(|args| args.nodes.clone())
                             .unwrap_or_default();
-                        bases.push(HeritageBase {
+                        bases.push(LibHeritageBase {
                             name: base_name.to_string(),
+                            expr_idx,
                             type_arg_indices,
                             arena,
                         });
@@ -631,7 +625,10 @@ impl<'a> CheckerState<'a> {
 
         // Now resolve each base type and merge, applying type argument substitution
         for base in &bases {
-            if let Some(mut base_type) = self.resolve_lib_type_by_entity_name(&base.name) {
+            if let Some(mut base_type) = self
+                .resolve_scoped_lib_typeof_class_heritage(base, &lib_contexts)
+                .or_else(|| self.resolve_lib_type_by_entity_name(&base.name))
+            {
                 // If there are type arguments, resolve them and substitute
                 if !base.type_arg_indices.is_empty() {
                     let base_sym = self.resolve_lib_symbol_by_entity_name(&base.name);
@@ -890,7 +887,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     &resolver,
                     &def_id_resolver,
-                    &no_value_resolver,
+                    &resolver,
                 )
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);

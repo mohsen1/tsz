@@ -659,6 +659,13 @@ impl<'a> CheckerContext<'a> {
         self.def_to_symbol_id(def_id)
     }
 
+    /// Look up the file index where a `DefId`'s definition was registered.
+    pub fn def_file_idx(&self, def_id: DefId) -> Option<u32> {
+        self.definition_store
+            .get(def_id)
+            .and_then(|info| info.file_id)
+    }
+
     /// Get or create a `DefId` for a symbol and register its type parameters in one step.
     ///
     /// Consolidates the common two-step pattern of `get_or_create_def_id` +

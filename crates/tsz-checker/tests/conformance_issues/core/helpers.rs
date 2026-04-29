@@ -525,6 +525,11 @@ pub(crate) fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
             })
             .collect()
     };
+    // Match the CLI/LSP convention: assign the user file a stable file_idx
+    // (0) so checker-side `def_file_idx` lookups can distinguish user-defined
+    // aliases from merged-in lib symbols, matching how the conformance and
+    // single-file CLI runners stamp `DefinitionInfo.file_id`.
+    binder.set_file_idx(0);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
