@@ -112,9 +112,19 @@ pub fn compute_type_param_variances_with_resolver(
     computer.compute_def_variances(def_id)
 }
 
+pub fn compute_actual_type_param_variances_with_resolver(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    def_id: DefId,
+) -> Option<Arc<[Variance]>> {
+    let mut computer = VarianceComputer::new_actual(db, resolver);
+    computer.compute_def_variances(def_id)
+}
+
 struct VarianceComputer<'a> {
     db: &'a dyn TypeDatabase,
     resolver: &'a dyn TypeResolver,
+    use_declared_variance: bool,
     active_defs: FxHashSet<DefId>,
     cached_def_variances: FxHashMap<DefId, Option<Arc<[Variance]>>>,
 }
@@ -124,6 +134,17 @@ impl<'a> VarianceComputer<'a> {
         Self {
             db,
             resolver,
+            use_declared_variance: true,
+            active_defs: FxHashSet::default(),
+            cached_def_variances: FxHashMap::default(),
+        }
+    }
+
+    fn new_actual(db: &'a dyn TypeDatabase, resolver: &'a dyn TypeResolver) -> Self {
+        Self {
+            db,
+            resolver,
+            use_declared_variance: false,
             active_defs: FxHashSet::default(),
             cached_def_variances: FxHashMap::default(),
         }
@@ -135,6 +156,12 @@ impl<'a> VarianceComputer<'a> {
     }
 
     fn compute_def_variances(&mut self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        if self.use_declared_variance
+            && let Some(declared) = self.resolver.get_type_param_variance(def_id)
+        {
+            return Some(declared);
+        }
+
         if let Some(cached) = self.cached_def_variances.get(&def_id) {
             return cached.clone();
         }

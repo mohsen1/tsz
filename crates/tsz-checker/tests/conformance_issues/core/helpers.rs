@@ -1238,6 +1238,69 @@ vs1 = vs12;
 }
 
 #[test]
+fn test_declared_out_variance_controls_application_assignability_even_when_invalid() {
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+interface Controller<out T> {
+  createAnimal: () => T;
+  run: (animal: T) => void;
+}
+
+interface Animal {
+  run(): void;
+}
+
+class Dog implements Animal {
+  run() {}
+  bark() {}
+}
+
+interface AnimalContainer<T> {
+  controller: Controller<T>;
+}
+
+declare let ca: AnimalContainer<Animal>;
+declare let cd: AnimalContainer<Dog>;
+
+ca = cd;
+cd = ca;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the contravariant assignment direction to report TS2322, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0].contains(
+            "Type 'AnimalContainer<Animal>' is not assignable to type 'AnimalContainer<Dog>'."
+        ),
+        "Expected TS2322 for `cd = ca`, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2636
+                && message.contains(
+                    "Type 'Controller<sub-T>' is not assignable to type 'Controller<super-T>'",
+                )
+        }),
+        "Expected the invalid variance annotation to still report TS2636, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_verbatim_module_syntax_const_enum_in_esnext_does_not_report_cjs_errors() {
     let diagnostics = compile_and_get_diagnostics_with_options(
         r#"
