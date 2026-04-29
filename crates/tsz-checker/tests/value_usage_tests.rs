@@ -450,6 +450,24 @@ const make = () => {
 }
 
 #[test]
+fn test_invalid_shorthand_property_default_anchors_ts1312_on_equals() {
+    let source = "let a = { s = 5 };\n";
+    let diags = crate::test_utils::check_source_diagnostics(source);
+    let ts1312: Vec<_> = diags.iter().filter(|d| d.code == 1312).collect();
+
+    assert_eq!(
+        ts1312.len(),
+        1,
+        "Expected one TS1312 for invalid shorthand default, got diagnostics: {diags:?}"
+    );
+    assert_eq!(
+        ts1312[0].start,
+        source.rfind('=').expect("source contains equals") as u32,
+        "TS1312 should anchor on the recovered equals token, got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
 fn test_js_shorthand_assignment_argument_emits_ts18004_without_duplicate_ts2304() {
     let source = r"
 function Test({ b = '' } = {}) {}

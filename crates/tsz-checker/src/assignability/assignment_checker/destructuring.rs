@@ -5,6 +5,7 @@ use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -815,6 +816,49 @@ impl<'a> CheckerState<'a> {
         default_expr: NodeIndex,
     ) {
         let has_default = default_expr.is_some();
+        let target_type = self.get_type_of_assignment_target(target_idx);
+        if target_type == TypeId::ANY || target_type == TypeId::ERROR {
+            return;
+        }
+        if has_default {
+            let default_type = self
+                .literal_type_from_initializer(default_expr)
+                .or_else(|| self.numeric_literal_type_from_text(default_expr))
+                .unwrap_or_else(|| self.get_type_of_node(default_expr));
+            if default_type != TypeId::ANY
+                && default_type != TypeId::ERROR
+                && !self.is_assignable_to(default_type, target_type)
+            {
+                if self.try_report_object_default_property_mismatch(
+                    default_expr,
+                    target_idx,
+                    target_type,
+                ) {
+                    return;
+                }
+                let source_for_display = {
+                    let widened = self.widen_literal_type(default_type);
+                    if widened == TypeId::NUMBER {
+                        widened
+                    } else {
+                        default_type
+                    }
+                };
+                let source_str = self.format_type_diagnostic(source_for_display);
+                let target_str = self.format_type_diagnostic(target_type);
+                let message = crate::diagnostics::format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                );
+                self.error_at_node(
+                    target_idx,
+                    &message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+                return;
+            }
+        }
+
         // Resolve the source property type. For numeric property names on
         // tuple/array types, use element type access directly to avoid
         // TypeId mismatches from string-based property resolution.
@@ -849,16 +893,19 @@ impl<'a> CheckerState<'a> {
                 prop_type,
                 true,
             );
-            let default_type = self.get_type_of_node(default_expr);
+            let default_type = self
+                .literal_type_from_initializer(default_expr)
+                .or_else(|| self.numeric_literal_type_from_text(default_expr))
+                .unwrap_or_else(|| self.get_type_of_node(default_expr));
             let factory = self.ctx.types.factory();
-            prop_type = factory.union2(non_undefined, default_type);
+            prop_type = if non_undefined == TypeId::NEVER {
+                default_type
+            } else {
+                factory.union2(non_undefined, default_type)
+            };
             if prop_type == TypeId::ANY || prop_type == TypeId::ERROR {
                 return;
             }
-        }
-        let target_type = self.get_type_of_assignment_target(target_idx);
-        if target_type == TypeId::ANY || target_type == TypeId::ERROR {
-            return;
         }
         // Ensure both types are fully resolved before relation checking.
         self.ensure_relation_input_ready(prop_type);
@@ -871,7 +918,15 @@ impl<'a> CheckerState<'a> {
         // not the source expression. Using the standard error pipeline
         // with the target node would incorrectly resolve the target's own
         // type as the source display string.
-        let source_str = self.format_type_diagnostic(prop_type);
+        let source_for_display = {
+            let widened = self.widen_literal_type(prop_type);
+            if widened == TypeId::NUMBER {
+                widened
+            } else {
+                prop_type
+            }
+        };
+        let source_str = self.format_type_diagnostic(source_for_display);
         let target_str = self.format_type_diagnostic(target_type);
         let message = crate::diagnostics::format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -882,6 +937,172 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
+    }
+
+    fn try_report_object_default_property_mismatch(
+        &mut self,
+        default_expr: NodeIndex,
+        target_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        let Some(default_node) = self.ctx.arena.get(default_expr) else {
+            return false;
+        };
+        if default_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(object_lit) = self.ctx.arena.get_literal_expr(default_node) else {
+            return false;
+        };
+        for &elem_idx in &object_lit.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
+                continue;
+            };
+            let Some(name) = self.property_name_text(prop.name) else {
+                continue;
+            };
+            let source_type = self
+                .literal_type_from_initializer(prop.initializer)
+                .or_else(|| self.numeric_literal_type_from_text(prop.initializer))
+                .unwrap_or_else(|| self.get_type_of_node(prop.initializer));
+            let Some(target_prop_type) =
+                self.resolve_property_type_for_destructuring(target_type, &name)
+            else {
+                continue;
+            };
+            if self.is_assignable_to(source_type, target_prop_type) {
+                continue;
+            }
+            let source_for_display = {
+                let widened = self.widen_literal_type(source_type);
+                if widened == TypeId::NUMBER {
+                    widened
+                } else {
+                    source_type
+                }
+            };
+            let source_str = self.format_type_diagnostic(source_for_display);
+            let target_str = self.format_type_diagnostic(target_prop_type);
+            let message = crate::diagnostics::format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            let anchor = self
+                .target_type_literal_property_anchor(target_idx, &name)
+                .unwrap_or(target_idx);
+            if anchor == target_idx {
+                if let Some(pos) = self.target_inline_type_property_position(target_idx, &name) {
+                    self.error_at_position(
+                        pos,
+                        name.len().max(1) as u32,
+                        &message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                } else {
+                    self.error_at_node(
+                        anchor,
+                        &message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+            } else {
+                self.error_at_node(
+                    anchor,
+                    &message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                );
+            }
+            return true;
+        }
+        false
+    }
+
+    fn target_inline_type_property_position(
+        &self,
+        target_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<u32> {
+        let node = self.ctx.arena.get(target_idx)?;
+        let source = self.ctx.arena.source_files.first()?.text.as_ref();
+        let start = node.end as usize;
+        let line_end = source[start..]
+            .find(['\n', '\r'])
+            .map(|offset| start + offset)
+            .unwrap_or(source.len());
+        source[start..line_end]
+            .find(property_name)
+            .map(|offset| (start + offset) as u32)
+    }
+
+    fn property_name_text(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(ident.escaped_text.to_string());
+        }
+        self.ctx
+            .arena
+            .get_literal(name_node)
+            .map(|lit| lit.text.clone())
+    }
+
+    fn numeric_literal_type_from_text(&self, idx: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != SyntaxKind::NumericLiteral as u16 {
+            return None;
+        }
+        let lit = self.ctx.arena.get_literal(node)?;
+        tsz_common::numeric::parse_numeric_literal_value(&lit.text)
+            .map(|value| self.ctx.types.literal_number(value))
+    }
+
+    fn target_type_literal_property_anchor(
+        &mut self,
+        target_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<NodeIndex> {
+        let target_idx =
+            self.resolve_identifier_symbol_without_tracking(target_idx)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .and_then(|symbol| {
+                    std::iter::once(symbol.value_declaration)
+                        .chain(symbol.declarations.iter().copied())
+                        .find(|&decl| {
+                            self.ctx.arena.get(decl).is_some_and(|node| {
+                                node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                            })
+                        })
+                        .or(Some(symbol.value_declaration))
+                })
+                .unwrap_or(target_idx);
+        let target_node = self.ctx.arena.get(target_idx)?;
+        let parent_node = if target_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            target_node
+        } else if target_node.kind == SyntaxKind::Identifier as u16 {
+            let parent = self.ctx.arena.node_info(target_idx)?.parent;
+            self.ctx.arena.get(parent)?
+        } else {
+            return None;
+        };
+        let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+        let type_node = self.ctx.arena.get(var_decl.type_annotation)?;
+        let type_lit = self.ctx.arena.get_type_literal(type_node)?;
+        for &member_idx in &type_lit.members.nodes {
+            let member_node = self.ctx.arena.get(member_idx)?;
+            if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                continue;
+            }
+            let prop = self.ctx.arena.get_property_decl(member_node)?;
+            if self.property_name_text(prop.name).as_deref() == Some(property_name) {
+                return Some(prop.name);
+            }
+        }
+        None
     }
 
     /// TS2339: Check that a property exists on a type during destructuring.

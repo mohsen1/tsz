@@ -1105,11 +1105,17 @@ impl<'a> CheckerState<'a> {
                             if shorthand.equals_token && !self.ctx.in_destructuring_target {
                                 // TS1312: shorthand `{ s = 5 }` in non-destructuring context.
                                 // tsc suggests using `:` instead of `=`.
-                                self.error_at_node(
-                                    shorthand.name,
-                                    "Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.",
-                                    1312,
-                                );
+                                let message = "Did you mean to use a ':'? An '=' can only follow a property name when the containing object literal is part of a destructuring pattern.";
+                                if shorthand.equals_token_pos > 0 {
+                                    self.error_at_position(
+                                        shorthand.equals_token_pos,
+                                        1,
+                                        message,
+                                        1312,
+                                    );
+                                } else {
+                                    self.error_at_node(shorthand.name, message, 1312);
+                                }
                             } else {
                                 // TS18004: Missing value binding for shorthand property name
                                 let message = format_message(
@@ -1133,15 +1139,8 @@ impl<'a> CheckerState<'a> {
                         }
                         TypeId::ANY
                     } else if self.ctx.in_destructuring_target {
-                        let target_type = self.get_type_of_assignment_target(shorthand_name_idx);
-                        if shorthand.equals_token {
-                            self.check_destructuring_default_initializer(
-                                shorthand.object_assignment_initializer,
-                                target_type,
-                                elem_idx,
-                            );
-                        }
-                        target_type
+                        
+                        self.get_type_of_assignment_target(shorthand_name_idx)
                     } else {
                         // Use shorthand_name_idx (the identifier) so that get_type_of_identifier
                         // is invoked, which calls check_flow_usage and can emit TS2454
