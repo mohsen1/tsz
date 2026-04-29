@@ -1047,6 +1047,9 @@ const errorCases = rows.filter((row) => row.status).length;
 const payload = {
   generated_at: new Date().toISOString(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+  validation: {
+    hyperfine_exit_codes_required: true,
+  },
   quick_mode: process.env.QUICK_MODE_VALUE === "true",
   filter: process.env.FILTER_VALUE || null,
   binaries: {
