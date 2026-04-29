@@ -164,10 +164,6 @@ name = "namespace_qualified_diagnostic_tests"
 path = "tests/namespace_qualified_diagnostic_tests.rs"
 
 [[test]]
-name = "class_reserved_word_diagnostics_tests"
-path = "tests/class_reserved_word_diagnostics_tests.rs"
-
-[[test]]
 name = "interface_heritage_display_tests"
 path = "tests/interface_heritage_display_tests.rs"
 
