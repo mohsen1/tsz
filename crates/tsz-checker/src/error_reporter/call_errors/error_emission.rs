@@ -366,9 +366,29 @@ impl<'a> CheckerState<'a> {
                 .get(anchor_idx)
                 .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
         });
+        // The "non-identical failures on a shared object-literal argument" guard
+        // (anchor at callee) is for UNION-OF-CALLABLES like `v({s,n})` against
+        // `(x:{s:string}) | (x:{n:number})`. Plain OVERLOADED FUNCTIONS like
+        // `function fn(a:{x}); function fn(a:{y}); fn({z,a})` should still
+        // anchor at the argument per tsc — see
+        // `compiler/excessPropertiesInOverloads.ts`. Detect the union case by
+        // checking whether the call target type is a union; otherwise treat
+        // the failures as plain-overload and anchor at the argument.
+        let callee_is_union = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|call_node| self.ctx.arena.get_call_expr(call_node))
+            .map(|call_expr| call_expr.expression)
+            .and_then(|expr_idx| self.ctx.node_types.get(&expr_idx.0).copied())
+            .is_some_and(|type_id| {
+                crate::query_boundaries::common::is_union_type(self.ctx.types, type_id)
+            });
         let anchor_argument_from_all_failures = all_failures_are_argument_mismatches
             && shared_argument_anchor.is_some()
-            && (!shared_argument_is_object_literal || identical_argument_failures);
+            && (!shared_argument_is_object_literal
+                || identical_argument_failures
+                || !callee_is_union);
         let raw_argument_anchor =
             shared_argument_anchor.or_else(|| self.first_call_argument_anchor(idx));
         let argument_anchor_is_callback = raw_argument_anchor

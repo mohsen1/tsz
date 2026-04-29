@@ -415,6 +415,9 @@ mod never_returning_narrowing_tests;
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
 #[cfg(test)]
+#[path = "tests/overload_anchor_at_argument_tests.rs"]
+mod overload_anchor_at_argument_tests;
+#[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
