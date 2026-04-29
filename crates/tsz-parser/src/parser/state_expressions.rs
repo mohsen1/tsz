@@ -1206,7 +1206,7 @@ impl ParserState {
                     self.current_token = saved_token;
 
                     // If next token could be a type parameter name, consume this as a modifier
-                    if tsz_scanner::token_is_identifier_or_keyword(next) {
+                    if Self::token_can_start_type_parameter_name(next) {
                         let kind = self.token();
                         let pos = self.token_pos();
                         let end = self.token_end();
@@ -1225,6 +1225,13 @@ impl ParserState {
         } else {
             Some(self.make_node_list(modifiers))
         }
+    }
+
+    #[inline]
+    const fn token_can_start_type_parameter_name(token: SyntaxKind) -> bool {
+        token as u16 >= SyntaxKind::Identifier as u16
+            || (token as u16 >= SyntaxKind::FIRST_RESERVED_WORD as u16
+                && token as u16 <= SyntaxKind::LAST_RESERVED_WORD as u16)
     }
 
     // Parse binary expression with precedence climbing

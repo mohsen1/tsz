@@ -420,6 +420,10 @@ name = "contextual_literal_keyof_lib_tests"
 path = "tests/contextual_literal_keyof_lib_tests.rs"
 
 [[test]]
+name = "convert_keywords_yes_tests"
+path = "tests/convert_keywords_yes_tests.rs"
+
+[[test]]
 name = "infer_extends_constraint_substitution_tests"
 path = "tests/infer_extends_constraint_substitution_tests.rs"
 

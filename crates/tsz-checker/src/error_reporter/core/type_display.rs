@@ -4,9 +4,7 @@ use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -292,7 +290,6 @@ impl<'a> CheckerState<'a> {
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
-
         let args: Vec<_> = app
             .args
             .iter()
@@ -310,7 +307,6 @@ impl<'a> CheckerState<'a> {
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
-
         let args: Vec<_> = app
             .args
             .iter()
