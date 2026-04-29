@@ -846,7 +846,10 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(arg_idx, arg_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        let checker_only_mismatch = self
+            .checker_only_assignability_failure_reason(source, target)
+            .is_some();
+        if self.is_assignable_to(source, target) && !checker_only_mismatch {
             return true;
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
@@ -898,7 +901,7 @@ impl<'a> CheckerState<'a> {
         // This handles cases like JSDoc @enum types where the callback parameter
         // should be contextually typed but the assignability check happens before
         // contextual typing is fully resolved.
-        if self.arg_is_callback_with_unannotated_params(arg_idx) {
+        if !checker_only_mismatch && self.arg_is_callback_with_unannotated_params(arg_idx) {
             return true;
         }
         // Before emitting TS2345 on the whole argument, try to elaborate
@@ -996,6 +999,12 @@ impl<'a> CheckerState<'a> {
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, source_idx) {
             return false;
+        }
+        if self
+            .checker_only_assignability_failure_reason(source, target)
+            .is_some()
+        {
+            return true;
         }
         !self.is_assignable_to_bivariant(source, target)
             && !self.should_skip_weak_union_error(source, target, source_idx)
@@ -1724,12 +1733,88 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(crate) const fn checker_only_assignability_failure_reason(
+    pub(crate) fn checker_only_assignability_failure_reason(
         &mut self,
-        _source: TypeId,
-        _target: TypeId,
+        source: TypeId,
+        target: TypeId,
     ) -> Option<tsz_solver::SubtypeFailureReason> {
+        if !self.checker_only_assignability_may_apply(source, target) {
+            return None;
+        }
+        if self.iterator_next_type_display_mismatch(source, target) {
+            return Some(tsz_solver::SubtypeFailureReason::TypeMismatch {
+                source_type: source,
+                target_type: target,
+            });
+        }
+        if self.iterator_result_return_display_mismatch(source, target) {
+            return Some(tsz_solver::SubtypeFailureReason::ReturnTypeMismatch {
+                source_return: source,
+                target_return: target,
+                nested_reason: None,
+            });
+        }
         None
+    }
+
+    pub(crate) fn checker_only_assignability_may_apply(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::type_may_display_iterator_protocol(self.ctx.types, source)
+            && crate::query_boundaries::common::type_may_display_iterator_protocol(
+                self.ctx.types,
+                target,
+            )
+    }
+
+    fn iterator_next_type_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
+        let source_display = self.format_type(source);
+        let Some(source_next) = iterator_protocol_next_type_arg(&source_display).or_else(|| {
+            function_return_display(&source_display).and_then(iterator_protocol_next_type_arg)
+        }) else {
+            return false;
+        };
+
+        let target_display = self.format_type(target);
+        let target_protocol = function_return_display(&target_display).unwrap_or(&target_display);
+        let mut target_nexts: Vec<&str> = iterator_protocol_next_type_arg(target_protocol)
+            .into_iter()
+            .collect();
+        if target_nexts.is_empty() {
+            target_nexts.extend(
+                target_protocol
+                    .split(" | ")
+                    .filter_map(iterator_protocol_next_type_arg),
+            );
+        }
+
+        !target_nexts.is_empty()
+            && target_nexts
+                .into_iter()
+                .all(|target_next| !iterator_next_type_accepts(source_next, target_next))
+    }
+
+    fn iterator_result_return_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
+        let target_display = self.format_type(target);
+        let Some(target_return) = function_return_display(&target_display) else {
+            return false;
+        };
+        let Some((target_name, target_args)) = parse_simple_type_application_display(target_return)
+        else {
+            return false;
+        };
+        if target_name != "IteratorResult" || target_args.get(1).copied() != Some("unknown") {
+            return false;
+        }
+
+        let source_display = self.format_type(source);
+        let Some(source_return) = function_return_display(&source_display) else {
+            return false;
+        };
+        source_return.contains("done: boolean")
+            || (source_return.contains("done: true") && !source_return.contains("value: undefined"))
     }
 }
 
@@ -1749,4 +1834,59 @@ fn parse_simple_type_application_display(display: &str) -> Option<(&str, Vec<&st
         return None;
     }
     Some((name, arg_names))
+}
+
+fn iterator_protocol_next_type_arg(display: &str) -> Option<&str> {
+    if let Some((name, args)) = parse_simple_type_application_display(display)
+        && matches!(
+            name,
+            "Generator" | "Iterator" | "IteratorObject" | "Iterable"
+        )
+    {
+        return args.get(2).copied();
+    }
+
+    display
+        .split_once("next(..._: [] | [")
+        .and_then(|(_, rest)| rest.split_once("])").map(|(next, _)| next.trim()))
+}
+
+fn function_return_display(display: &str) -> Option<&str> {
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut iter = display.char_indices().peekable();
+
+    while let Some((idx, ch)) = iter.next() {
+        if ch == '=' && iter.peek().is_some_and(|(_, next)| *next == '>') {
+            if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && angle_depth == 0 {
+                return display.get(idx + 2..).map(str::trim);
+            }
+            iter.next();
+            continue;
+        }
+
+        match ch {
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth = bracket_depth.saturating_add(1),
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '{' => brace_depth = brace_depth.saturating_add(1),
+            '}' => brace_depth = brace_depth.saturating_sub(1),
+            '<' => angle_depth = angle_depth.saturating_add(1),
+            '>' if angle_depth > 0 => angle_depth -= 1,
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn iterator_next_type_accepts(source_next: &str, target_next: &str) -> bool {
+    source_next == target_next
+        || source_next == "any"
+        || target_next == "any"
+        || source_next == "unknown"
+        || target_next == "never"
 }

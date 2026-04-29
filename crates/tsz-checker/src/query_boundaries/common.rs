@@ -149,6 +149,10 @@ pub(crate) fn has_property_by_str(db: &dyn TypeDatabase, type_id: TypeId, name: 
     tsz_solver::type_queries::type_has_property_by_str(db, type_id, name)
 }
 
+pub(crate) fn type_may_display_iterator_protocol(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::type_may_display_iterator_protocol(db, type_id)
+}
+
 pub(crate) fn has_nonpublic_property(db: &dyn TypeDatabase, type_id: TypeId, name: &str) -> bool {
     tsz_solver::type_queries::has_nonpublic_property(db, type_id, name)
 }

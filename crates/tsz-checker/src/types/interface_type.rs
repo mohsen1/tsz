@@ -948,7 +948,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .or_else(|| base_shape.number_index),
                     symbol: derived_shape.symbol,
-                    is_abstract: false,
+                    is_abstract: derived_shape.is_abstract || base_shape.is_abstract,
                 })
             }
             (
@@ -966,7 +966,7 @@ impl<'a> CheckerState<'a> {
                     string_index: derived_shape.string_index,
                     number_index: derived_shape.number_index,
                     symbol: derived_shape.symbol,
-                    is_abstract: false,
+                    is_abstract: derived_shape.is_abstract,
                 })
             }
             (
@@ -988,7 +988,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .or_else(|| base_shape.number_index),
                     symbol: derived_shape.symbol,
-                    is_abstract: false,
+                    is_abstract: derived_shape.is_abstract,
                 })
             }
             (
@@ -1006,7 +1006,7 @@ impl<'a> CheckerState<'a> {
                     string_index: base_shape.string_index,
                     number_index: base_shape.number_index,
                     symbol: derived_shape.symbol,
-                    is_abstract: false,
+                    is_abstract: base_shape.is_abstract,
                 })
             }
             (
@@ -1028,7 +1028,7 @@ impl<'a> CheckerState<'a> {
                         .number_index
                         .or_else(|| base_shape.number_index),
                     symbol: derived_shape.symbol,
-                    is_abstract: false,
+                    is_abstract: base_shape.is_abstract,
                 })
             }
             (

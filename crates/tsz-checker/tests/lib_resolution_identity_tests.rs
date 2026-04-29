@@ -4245,6 +4245,7 @@ fn load_lib_files_with_es2015_sublibs() -> Vec<Arc<LibFile>> {
         "lib.es2015.reflect.d.ts",
         "lib.es2015.symbol.d.ts",
         "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2025.iterator.d.ts",
     ];
 
     let mut lib_files = Vec::new();
@@ -4360,5 +4361,92 @@ var p = new Proxy(obj, {
     assert!(
         ts2351.is_empty(),
         "Expected no TS2351 for Proxy with handler methods, got: {ts2351:#?}"
+    );
+}
+
+#[test]
+fn test_builtin_iterator_constructor_uses_scoped_abstract_typeof_alias() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+new Iterator<number>();
+class C extends Iterator<number> {}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2511),
+        "Expected TS2511 for abstract builtin Iterator construction. Got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2515),
+        "Expected TS2515 for missing abstract Iterator.next implementation. Got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2351),
+        "Expected no TS2351 for builtin Iterator constructor. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_builtin_iterator_protocol_uses_scoped_defaults_in_errors() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+class BadIterator1 extends Iterator<number> {
+  next() {
+    if (Math.random() < .5) {
+      return { done: false, value: 0 } as const;
+    } else {
+      return { done: true, value: "a string" } as const;
+    }
+  }
+}
+class BadIterator2 extends Iterator<number> {
+  next() {
+    return { done: false, value: 0 };
+  }
+}
+class BadIterator3 extends Iterator<string> {
+  next() {
+    return { done: false, value: 0 };
+  }
+}
+declare const g1: Generator<string, number, boolean>;
+const iter1 = Iterator.from(g1);
+declare const iter2: IteratorObject<string>;
+const iter3 = iter2.flatMap(() => g1);
+"#,
+    );
+
+    let ts2416_count = diagnostics.iter().filter(|(code, _)| *code == 2416).count();
+    assert_eq!(
+        ts2416_count, 2,
+        "Expected two TS2416 Iterator.next diagnostics. Got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2345),
+        "Expected TS2345 for Iterator.from rejecting Generator TNext. Got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2322),
+        "Expected TS2322 for flatMap callback rejecting Generator TNext. Got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(_, message)| { message.contains("Iterator<number, undefined, unknown>") }),
+        "Expected Iterator heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(_, message)| { message.contains("Iterator<string, undefined, unknown>") }),
+        "Expected Iterator<string> heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
     );
 }

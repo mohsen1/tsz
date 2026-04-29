@@ -86,7 +86,8 @@ impl<'a> CheckerState<'a> {
 
         // Determine the base class display name from the instance type.
         let type_base_name = self
-            .intersection_instance_display_name(h_expr_idx, type_arguments)
+            .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
+            .or_else(|| self.intersection_instance_display_name(h_expr_idx, type_arguments))
             .or_else(|| {
                 heritage_sym_id.and_then(|sym_id| {
                     self.format_symbol_reference_with_type_arguments(sym_id, type_arguments)
@@ -339,6 +340,12 @@ impl<'a> CheckerState<'a> {
         if name.is_empty() || name == "__type" {
             return None;
         }
+        if name == "Iterator"
+            && let Some(formatted) =
+                self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
+        {
+            return Some(formatted);
+        }
 
         let type_params = self
             .class_type_params_for_symbol(sym_id)
@@ -393,6 +400,48 @@ impl<'a> CheckerState<'a> {
                 .collect::<Vec<_>>()
                 .join(", ")
         ))
+    }
+
+    fn format_builtin_iterator_reference_with_type_arguments(
+        &mut self,
+        type_arguments: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> Option<String> {
+        let mut args = Vec::new();
+        let type_arguments = type_arguments?;
+        if type_arguments.nodes.is_empty() {
+            return None;
+        }
+        for &arg_idx in &type_arguments.nodes {
+            args.push(self.get_type_from_type_node(arg_idx));
+        }
+        if args.len() < 2 {
+            args.push(TypeId::UNDEFINED);
+        }
+        if args.len() < 3 {
+            args.push(TypeId::UNKNOWN);
+        }
+        if args.len() > 3 {
+            args.truncate(3);
+        }
+
+        Some(format!(
+            "Iterator<{}>",
+            args.iter()
+                .map(|&arg| self.format_type(arg))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
+    pub(crate) fn format_heritage_class_symbol_reference(
+        &mut self,
+        sym_id: Option<tsz_binder::SymbolId>,
+        type_arguments: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> Option<String> {
+        let sym_id = sym_id?;
+        let has_class = self.symbol_has_class_declaration_global(sym_id);
+        let formatted = self.format_symbol_reference_with_type_arguments(sym_id, type_arguments);
+        has_class.then_some(formatted).flatten()
     }
 
     /// Build the display name for a base class resolved only via its instance
@@ -511,6 +560,44 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn symbol_has_class_declaration_global(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.get_symbol_globally(sym_id) else {
+            return false;
+        };
+        let symbol_name = &symbol.escaped_name;
+
+        for &decl_idx in &symbol.declarations {
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                && arenas.iter().any(|arena| {
+                    Self::arena_decl_is_named_class(arena.as_ref(), decl_idx, symbol_name)
+                })
+            {
+                return true;
+            }
+
+            if Self::arena_decl_is_named_class(self.ctx.arena, decl_idx, symbol_name) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn arena_decl_is_named_class(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+        symbol_name: &str,
+    ) -> bool {
+        let Some(class) = arena.get_class_at(decl_idx) else {
+            return false;
+        };
+        class.name.is_none()
+            || arena
+                .get(class.name)
+                .and_then(|node| arena.get_identifier(node))
+                .is_some_and(|ident| ident.escaped_text == symbol_name)
     }
 
     fn extract_class_type_params_from_current_arena(
