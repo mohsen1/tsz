@@ -1540,6 +1540,78 @@ function A() {
 }
 
 #[test]
+fn test_plain_js_function_constructor_implicit_any_properties_keep_any_write_surface() {
+    let source = r#"
+function A() {
+    this.unknown = null;
+    this.unknowable = undefined;
+    this.empty = [];
+}
+var a = new A();
+a.unknown = 1;
+a.unknown = true;
+a.unknown = {};
+a.unknown = "hi";
+a.unknowable = 1;
+a.unknowable = true;
+a.unknowable = {};
+a.unknowable = "hi";
+a.empty.push(1);
+a.empty.push(true);
+a.empty.push({});
+a.empty.push("hi");
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected JS implicit-any constructor properties to accept later writes, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_checked_js_undefined_var_initializer_keeps_any_assignment_target() {
+    let source = r#"
+var u = undefined;
+u = undefined;
+u = 1;
+u = true;
+u = {};
+u = "ok";
+"#;
+    let diagnostics = check_js_with_options(
+        source,
+        CheckerOptions {
+            check_js: true,
+            no_implicit_any: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected checked-JS undefined-initialized var writes to use any target, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_plain_js_function_constructor_provisional_writes_merge_like_salsa() {
     let source = r#"
 function Installer () {
