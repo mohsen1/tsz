@@ -210,6 +210,9 @@ mod ts2304_tests;
 #[path = "../tests/ts2320_tests.rs"]
 mod ts2320_tests;
 #[cfg(test)]
+#[path = "../tests/ts2322_destructuring_obj_literal_tests.rs"]
+mod ts2322_destructuring_obj_literal_tests;
+#[cfg(test)]
 #[path = "../tests/ts2322_mode_routing_matrix.rs"]
 mod ts2322_mode_routing_matrix;
 #[cfg(test)]
