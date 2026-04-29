@@ -491,5 +491,9 @@ path = "tests/ts2352_paren_alias_display_tests.rs"
 name = "generic_inference_ordering_tests"
 path = "tests/generic_inference_ordering_tests.rs"
 
+[[test]]
+name = "jsx_overload_anchor_literal_attr_tests"
+path = "tests/jsx_overload_anchor_literal_attr_tests.rs"
+
 [lints]
 workspace = true
