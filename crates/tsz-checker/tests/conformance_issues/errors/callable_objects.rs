@@ -811,6 +811,12 @@ v({ s: "", n: 0 }).toLowerCase();
         ts2339_count, 1,
         "Expected the failed overload result to behave like never and surface TS2339 on `.toLowerCase()`.\nActual: {diagnostics:#?}"
     );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2339 && message.contains("type 'never'") }),
+        "Expected TS2339 to report receiver type 'never', not an arbitrary failed overload return.\nActual: {diagnostics:#?}"
+    );
 }
 
 /// TS2304: implements clause with unresolved name should emit TS2304.
