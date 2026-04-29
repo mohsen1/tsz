@@ -24,10 +24,23 @@ impl<'a> CheckerState<'a> {
         for (export_name, name_idx) in export_names {
             let conflict_decls =
                 self.module_augmentation_conflict_declarations_for_current_file(&export_name);
+            // Skip when the augmentation declaration is one that legitimately
+            // merges with the exported value:
+            //   - FUNCTION: function/namespace merge.
+            //   - INTERFACE: interface augmenting a class/interface.
+            //   - NAMESPACE_MODULE / VALUE_MODULE: namespace augmenting a class
+            //     for static-side members or merging with a value module.
+            // Classes exported through `module.exports = { Class }` are valid
+            // merge targets for these forms, so the duplicate-identifier check
+            // must not fire.
+            const MERGEABLE_AUGMENTATION_FLAGS: u32 = symbol_flags::FUNCTION
+                | symbol_flags::INTERFACE
+                | symbol_flags::NAMESPACE_MODULE
+                | symbol_flags::VALUE_MODULE;
             if conflict_decls.is_empty()
                 || conflict_decls
                     .iter()
-                    .any(|(_, flags, _, _, _)| (*flags & symbol_flags::FUNCTION) != 0)
+                    .any(|(_, flags, _, _, _)| (*flags & MERGEABLE_AUGMENTATION_FLAGS) != 0)
             {
                 continue;
             }
