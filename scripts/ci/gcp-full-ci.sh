@@ -749,6 +749,28 @@ show_log_tails() {
   done
 }
 
+run_with_heartbeat() {
+  local label="$1"
+  shift
+
+  local pid rc
+  "$@" &
+  pid="$!"
+
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 120
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "still running: ${label} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    fi
+  done
+
+  set +e
+  wait "$pid"
+  rc="$?"
+  set -e
+  return "$rc"
+}
+
 conformance_shard_plan() {
   local shard_index="$1" shard_count="$2"
   python3 - "$shard_index" "$shard_count" <<'PY'
@@ -831,7 +853,9 @@ run_conformance() {
   fi
 
   set +e
-  ./scripts/conformance/conformance.sh run --workers "$CONFORMANCE_WORKERS" "${conformance_args[@]}" >"$log_file" 2>&1
+  run_with_heartbeat "conformance" \
+    bash -c 'log_file="$1"; shift; "$@" >"$log_file" 2>&1' bash "$log_file" \
+    ./scripts/conformance/conformance.sh run --workers "$CONFORMANCE_WORKERS" "${conformance_args[@]}"
   local rc="$?"
   set -e
 
