@@ -15,6 +15,53 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Walk a property/element-access chain to its identifier root and return true
+    /// if that root resolves to a binding that semantically *imports* another
+    /// module's namespace — either an ESM / `import =` ALIAS symbol with a
+    /// recorded `import_module`, or a `const X = require("…")` JS binding.
+    ///
+    /// JSDoc-style "assigned value type" recovery (`function foo() {} foo.bar = 1`)
+    /// must not fire on these roots: writes like `mod.bar = 1` against an imported
+    /// namespace are TS2339, not local expando declarations.
+    pub(crate) fn property_access_root_is_imported_namespace(
+        &self,
+        object_expr_idx: NodeIndex,
+    ) -> bool {
+        let mut root_idx = object_expr_idx;
+        while let Some(root_node) = self.ctx.arena.get(root_idx) {
+            if root_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && root_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                break;
+            }
+            let Some(root_access) = self.ctx.arena.get_access_expr(root_node) else {
+                break;
+            };
+            root_idx = root_access.expression;
+        }
+
+        let Some(root_node) = self.ctx.arena.get(root_idx) else {
+            return false;
+        };
+        if root_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        if let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(root_idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, root_idx))
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.has_any_flags(symbol_flags::ALIAS)
+            && symbol.import_module.is_some()
+        {
+            return true;
+        }
+
+        self.is_require_call_bound_identifier(root_idx)
+    }
+
     fn property_access_chain_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
         if let Some(text) = arena.identifier_text_owned(idx) {
             return Some(text);
