@@ -1333,12 +1333,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     ) {
                         let _ = ctx.unify_vars(s_var, t_var);
                     } else {
+                        let return_priority =
+                            priority.max(crate::types::InferencePriority::ReturnType);
                         self.constrain_types(
                             ctx,
                             &combined_var_map,
                             instantiated_return,
                             t_fn.return_type,
-                            priority,
+                            return_priority,
                         );
                     }
 

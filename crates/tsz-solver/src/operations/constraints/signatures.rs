@@ -212,7 +212,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if let (Some(s_this), Some(t_this)) = (source_this, target_this) {
             self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
-        self.constrain_types(ctx, var_map, source_return, target_return, priority);
+        // Return types must never be inferred at NakedTypeVariable priority — cap
+        // at ReturnType so direct-arg inferences always win. Mirrors the same
+        // invariant enforced in the Function→Function path in walker.rs.
+        let return_priority = priority.max(crate::types::InferencePriority::ReturnType);
+        self.constrain_types(ctx, var_map, source_return, target_return, return_priority);
         // Constrain type predicates if both have them.
         // Predicates are marked as a type-annotation source so literal predicate
         // types (e.g. `x is 'B'`) are not marked fresh and won't be widened.
