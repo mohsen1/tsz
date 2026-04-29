@@ -130,13 +130,11 @@ impl<'a> CheckerState<'a> {
                         .filter(|_| !type_params.is_empty())
                         .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, name));
                     if required_count > 0 {
-                        // Check if this is a class/interface symbol currently being resolved
-                        // AND we're inside a type parameter declaration (constraint context).
-                        // For class/interface constraints like `class A<T extends A> {}`,
-                        // we emit TS2314 even for self-references because the constraint
-                        // reference to `A` is missing required type arguments.
-                        // For type aliases (e.g. `type T1<X> = T1`) and other cases, we skip
-                        // TS2314 when in resolution set as TSC handles these through
+                        // Check if this is a class/interface symbol currently being resolved.
+                        // For class/interface self references like `class A<T> { x: A }`
+                        // and constraints like `class A<T extends A> {}`, tsc still emits
+                        // TS2314 and treats the erroneous annotation as any-like. Type aliases
+                        // keep the old resolution-set skip because tsc handles those through
                         // circularity detection.
                         let is_class_or_interface = self
                             .ctx
@@ -144,10 +142,8 @@ impl<'a> CheckerState<'a> {
                             .get_symbol(sym_id)
                             .map(|s| s.has_any_flags(symbol_flags::CLASS | symbol_flags::INTERFACE))
                             .unwrap_or(false);
-                        let in_constraint_context =
-                            self.is_inside_type_parameter_declaration(type_name_idx);
                         let should_emit_ts2314 = !self.ctx.symbol_resolution_set.contains(&sym_id)
-                            || (is_class_or_interface && in_constraint_context);
+                            || is_class_or_interface;
                         if should_emit_ts2314 {
                             // tsc uses the original declaration name, not the local alias.
                             // e.g., `export type { A as B }` → `let d: B` reports 'A<T>', not 'B<T>'.
@@ -182,10 +178,9 @@ impl<'a> CheckerState<'a> {
                                     idx,
                                 );
                             }
-                            // tsc returns errorType when a generic type is used without
-                            // required type arguments. This prevents cascading errors
-                            // like TS2454 on variables with erroneous type annotations.
-                            return TypeId::ERROR;
+                            // tsc's errorType is any-like here: downstream property access
+                            // and return inference should not cascade from the bad annotation.
+                            return TypeId::ANY;
                         }
                     }
                     // Apply default type arguments if no explicit args were provided

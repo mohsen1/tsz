@@ -3,7 +3,7 @@
 //! When a generic class or interface is referenced without required type
 //! arguments inside a type literal (e.g. `var x: { a: C } = ...`), tsc:
 //!   1. Emits TS2314 ("Generic type 'C<T>' requires 1 type argument(s).")
-//!   2. Treats the reference as `errorType` so cascading TS2322 from a
+//!   2. Treats the reference as any-like errorType so cascading TS2322 from a
 //!      structural mismatch against the naked-type-parameter form is
 //!      suppressed.
 //!
@@ -35,7 +35,7 @@ var x: { a: C } = { a: new C<number>() };
     );
     assert!(
         !codes.contains(&2322),
-        "Should not emit TS2322 when the target type is `errorType` from missing type args, got: {codes:?}"
+        "Should not emit TS2322 when the target type is any-like errorType from missing type args, got: {codes:?}"
     );
 }
 
@@ -56,7 +56,49 @@ var x: { a: I } = { a: { bar() { return 1; } } };
     );
     assert!(
         !codes.contains(&2322),
-        "Should not emit TS2322 when the target type is `errorType` from missing type args, got: {codes:?}"
+        "Should not emit TS2322 when the target type is any-like errorType from missing type args, got: {codes:?}"
+    );
+}
+
+/// Bare generic self references inside class/interface construction must still
+/// become any-like after TS2314. Otherwise return inference can collapse an
+/// erroneous return expression plus fallthrough into `undefined`, producing a
+/// cascading TS2532 on callers of the inferred method.
+#[test]
+fn test_recursive_class_bare_generic_annotation_is_any_like_after_ts2314() {
+    let source = r#"
+class MemberName<A, B, C> {
+    static create<A, B, C>(): MemberName {
+    }
+}
+
+class PullTypeSymbol<A, B, C> {
+    private _elementType: PullTypeSymbol = null as any;
+
+    toString() {
+        this.getScopedNameEx().toString();
+    }
+
+    getScopedNameEx() {
+        if (this._elementType) {
+            return MemberName.create();
+        }
+    }
+}
+"#;
+    let codes = check_source_codes(source);
+
+    assert!(
+        codes.contains(&2314),
+        "Expected TS2314 for missing type arguments, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2532),
+        "Should not emit TS2532 from a method whose erroneous return annotation is any-like, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2339),
+        "Should not emit TS2339 through a property whose erroneous bare generic annotation is any-like, got: {codes:?}"
     );
 }
 
