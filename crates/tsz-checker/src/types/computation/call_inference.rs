@@ -195,6 +195,73 @@ impl<'a> CheckerState<'a> {
         widened
     }
 
+    pub(crate) fn direct_round1_literal_conflict_type_params(
+        &mut self,
+        shape: &FunctionShape,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        sensitive_args: &[bool],
+    ) -> crate::query_boundaries::common::TypeSubstitution {
+        let mut seen_bases: Vec<(Atom, TypeId, TypeId)> = Vec::new();
+        let mut conflicts = crate::query_boundaries::common::TypeSubstitution::new();
+
+        for (i, &arg_type) in arg_types.iter().enumerate() {
+            if sensitive_args.get(i).copied().unwrap_or(false) {
+                continue;
+            }
+
+            let Some(param_type) = shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                let last = shape.params.last()?;
+                last.rest.then_some(last.type_id)
+            }) else {
+                continue;
+            };
+            let Some(tp_info) = common::type_param_info(self.ctx.types, param_type) else {
+                continue;
+            };
+            if !shape.type_params.iter().any(|tp| tp.name == tp_info.name) {
+                continue;
+            }
+
+            let literal_arg_type = args
+                .get(i)
+                .and_then(|&arg_idx| self.literal_type_from_initializer(arg_idx))
+                .unwrap_or(arg_type);
+            let base = self.widen_literal_type(literal_arg_type);
+            if base == literal_arg_type {
+                continue;
+            }
+
+            if let Some((_, previous_base, first_arg_type)) =
+                seen_bases.iter().find(|(name, _, _)| *name == tp_info.name)
+            {
+                if *previous_base != base {
+                    conflicts.insert(tp_info.name, *first_arg_type);
+                }
+            } else {
+                seen_bases.push((tp_info.name, base, literal_arg_type));
+            }
+        }
+
+        conflicts
+    }
+
+    pub(crate) fn restore_conflicting_direct_literal_substitutions(
+        &self,
+        widened: &mut crate::query_boundaries::common::TypeSubstitution,
+        conflicts: &crate::query_boundaries::common::TypeSubstitution,
+    ) {
+        for (&name, &original_type) in conflicts.map() {
+            if original_type == TypeId::UNKNOWN
+                || original_type == TypeId::ERROR
+                || common::contains_infer_types(self.ctx.types, original_type)
+            {
+                continue;
+            }
+            widened.insert(name, original_type);
+        }
+    }
+
     pub(crate) fn rest_argument_element_type_with_env(&mut self, type_id: TypeId) -> TypeId {
         let evaluated = self.evaluate_type_with_env(type_id);
         common::rest_argument_element_type(self.ctx.types, evaluated)
