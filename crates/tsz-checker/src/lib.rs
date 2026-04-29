@@ -433,6 +433,9 @@ mod strict_null_manual;
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;
 #[cfg(test)]
+#[path = "tests/union_multi_overload_unified_sig_tests.rs"]
+mod union_multi_overload_unified_sig_tests;
+#[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
 

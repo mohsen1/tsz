@@ -946,6 +946,64 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             type_id: union_type,
                         };
                     }
+                } else {
+                    // tsc's `getUnionSignatures` filters the multi-overload member's
+                    // signatures to those matching the single-overload member's sig,
+                    // and exposes only the matched signature(s) as the union's
+                    // callable shape. Args that fail the matched param shape must be
+                    // rejected — even if the multi-overload member has a *different*
+                    // overload that would individually accept them. Without this
+                    // check, per-member resolution below sees the unfiltered M2 and
+                    // accepts via the non-matching overload (e.g. M2's `(a: string)`
+                    // accepts `"hello"` even though the union sig is `(a: number)`).
+                    //
+                    // Validate each non-multi-overload member's required-param types
+                    // against the args. They are pairwise type-identical (per the
+                    // compatibility check above), so any one of them carries the
+                    // unified param shape. Skip generic sigs (already filtered above).
+                    let single_idx = sig_lists
+                        .iter()
+                        .enumerate()
+                        .find(|(idx, (_, sigs))| {
+                            *idx != multi_idx
+                                && sigs.first().is_some_and(|s| s.type_params.is_empty())
+                        })
+                        .map(|(idx, _)| idx);
+                    if let Some(single_idx) = single_idx
+                        && let Some(unified_sig) = sig_lists[single_idx].1.first()
+                    {
+                        for (i, &arg_type) in arg_types.iter().enumerate() {
+                            if i >= unified_sig.params.len() {
+                                break;
+                            }
+                            let param = &unified_sig.params[i];
+                            if param.rest {
+                                break; // rest param semantics handled by per-member
+                            }
+                            // Skip if expected param contains type parameters —
+                            // generic constraints need full per-member resolution.
+                            if crate::type_queries::contains_type_parameters_db(
+                                self.interner,
+                                param.type_id,
+                            ) {
+                                break;
+                            }
+                            if crate::type_queries::contains_type_parameters_db(
+                                self.interner,
+                                arg_type,
+                            ) {
+                                continue;
+                            }
+                            if !self.checker.is_assignable_to(arg_type, param.type_id) {
+                                return CallResult::ArgumentTypeMismatch {
+                                    index: i,
+                                    expected: param.type_id,
+                                    actual: arg_type,
+                                    fallback_return: TypeId::ERROR,
+                                };
+                            }
+                        }
+                    }
                 }
             }
         }
