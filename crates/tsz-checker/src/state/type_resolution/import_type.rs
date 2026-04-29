@@ -187,8 +187,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn import_type_namespace_name(&self, module_specifier: &str) -> String {
+        // tsc's TS2694 message displays the namespace path without the
+        // synthetic `.export=` suffix that the binder uses internally to
+        // track `export =` bindings. Match tsc by emitting just the module
+        // path (and qualifying segments, when present).
         let display_name = self.import_type_display_name(module_specifier);
-        format!("\"{display_name}\".export=")
+        format!("\"{display_name}\"")
     }
 
     fn import_type_namespace_name_with_segments(
@@ -198,9 +202,9 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         let display_name = self.import_type_display_name(module_specifier);
         if segments.is_empty() {
-            format!("\"{display_name}\".export=")
+            format!("\"{display_name}\"")
         } else {
-            format!("\"{display_name}\".{}.export=", segments.join("."))
+            format!("\"{display_name}\".{}", segments.join("."))
         }
     }
 
