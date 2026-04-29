@@ -7,7 +7,7 @@ use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     /// Compute the rest type for an object destructuring rest element.
@@ -35,17 +35,33 @@ impl<'a> CheckerState<'a> {
         // `Omit` lib alias is available and at least one sibling is excluded,
         // construct `Omit<T, K>` so downstream spread analysis (e.g. TS2783
         // overwrite detection) sees the correct set of known properties.
-        // When the lib alias isn't available (tests with no `lib.es5`) or there
-        // is no sibling to exclude, fall back to returning T unchanged so that
-        // the function's inferred return type still preserves T's identity.
+        //
+        // K also includes the constraint's non-spreadable prototype members
+        // (public methods, getters, setters), matching tsc's
+        // `getSpreadType` / `isSpreadablePropertyOfClass` behavior. For
+        // `<T extends A>` with `A` containing public methods, `const { ...r }`
+        // produces `Omit<T, "method" | "getter" | "setter">` even when no
+        // sibling is explicitly destructured.
+        //
+        // When the lib alias isn't available (tests with no `lib.es5`) or
+        // there are no keys to omit, fall back to returning T unchanged so
+        // that the function's inferred return type still preserves T's
+        // identity.
         let is_type_param = query::type_parameter_constraint(self.ctx.types, parent_type).is_some();
         if is_type_param {
-            if !excluded.is_empty()
+            let unspreadable = self.collect_unspreadable_prototype_names_from(parent_type);
+            let mut keys: Vec<String> = excluded.clone();
+            for name in unspreadable {
+                if !keys.iter().any(|k| k == &name) {
+                    keys.push(name);
+                }
+            }
+            if !keys.is_empty()
                 && let Some(omit_type) = self.resolve_lib_type_by_name("Omit")
             {
                 let factory = self.ctx.types.factory();
                 let literal_ids: Vec<TypeId> =
-                    excluded.iter().map(|n| factory.literal_string(n)).collect();
+                    keys.iter().map(|n| factory.literal_string(n)).collect();
                 let key_arg = if literal_ids.len() == 1 {
                     literal_ids[0]
                 } else {
@@ -135,6 +151,47 @@ impl<'a> CheckerState<'a> {
             }
         }
         names
+    }
+
+    /// Collect the names of public prototype members (methods, getters,
+    /// setters) reachable through `type_id`'s shape — or, when `type_id` is
+    /// a type parameter without a direct shape, through its constraint.
+    ///
+    /// These are the keys tsc adds to `K` in `Omit<T, K>` for object-rest
+    /// destructuring (see tsc's `isSpreadablePropertyOfClass`). Private and
+    /// protected members are NOT included: they are filtered out by
+    /// `keyof T` and so are already absent from the rest type.
+    ///
+    /// Order matches tsc's printed `K`: methods first, then accessors
+    /// (getters/setters) in source declaration order. This keeps the
+    /// `Omit<T, "method" | "getter" | "setter">` rendering identical between
+    /// tsz and tsc.
+    fn collect_unspreadable_prototype_names_from(&self, type_id: TypeId) -> Vec<String> {
+        let shape = query::object_shape(self.ctx.types, type_id).or_else(|| {
+            let constraint = query::type_parameter_constraint(self.ctx.types, type_id)?;
+            query::object_shape(self.ctx.types, constraint)
+        });
+        let Some(shape) = shape else {
+            return Vec::new();
+        };
+        let mut methods: Vec<(u32, String)> = Vec::new();
+        let mut accessors: Vec<(u32, String)> = Vec::new();
+        for prop in shape.properties.iter() {
+            if !(prop.is_class_prototype && prop.visibility == Visibility::Public) {
+                continue;
+            }
+            let name = self.ctx.types.resolve_atom(prop.name).to_string();
+            if prop.is_method {
+                methods.push((prop.declaration_order, name));
+            } else {
+                accessors.push((prop.declaration_order, name));
+            }
+        }
+        methods.sort_by_key(|(o, _)| *o);
+        accessors.sort_by_key(|(o, _)| *o);
+        let mut out: Vec<String> = methods.into_iter().map(|(_, n)| n).collect();
+        out.extend(accessors.into_iter().map(|(_, n)| n));
+        out
     }
 
     /// Create a new object type from `type_id` with the given property names excluded.
