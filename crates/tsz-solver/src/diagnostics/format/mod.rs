@@ -485,6 +485,17 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
+    /// Configure exactOptionalPropertyTypes mode.
+    /// When enabled, optional properties (`foo?: T`) do NOT implicitly include
+    /// `undefined` in their declared type, so diagnostic messages must display
+    /// them as `foo?: T` rather than `foo?: T | undefined`.
+    pub const fn with_exact_optional_property_types(mut self, exact: bool) -> Self {
+        if exact {
+            self.preserve_optional_property_surface_syntax = true;
+        }
+        self
+    }
+
     /// Enable display properties for fresh object literal types.
     /// When enabled, the formatter uses pre-widened literal types from the
     /// freshness model side table for error messages.

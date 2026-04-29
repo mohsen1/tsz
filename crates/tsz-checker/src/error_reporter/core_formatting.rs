@@ -207,7 +207,10 @@ impl<'a> CheckerState<'a> {
                     // already implies `| undefined`; tsc only writes the union
                     // form when the source explicitly types the param that way.
                     .with_preserve_optional_parameter_surface_syntax(true)
-                    .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks);
+                    .with_strict_null_checks(state.ctx.compiler_options.strict_null_checks)
+                    .with_exact_optional_property_types(
+                        state.ctx.compiler_options.exact_optional_property_types,
+                    );
             formatter.format(type_id).into_owned()
         };
         let is_generic_callable = |state: &Self, type_id: TypeId| {
