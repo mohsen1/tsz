@@ -708,6 +708,16 @@ impl<'a> BinaryOpEvaluator<'a> {
             return BinaryOpResult::Success(TypeId::NUMBER);
         }
 
+        // Unsigned right shift is number-only. JavaScript does not define
+        // `>>>` for bigint operands, so `bigint >>> bigint` is a type error
+        // even though other bitwise operators accept bigint pairs.
+        if op == ">>>" {
+            if self.is_number_like(left) && self.is_number_like(right) {
+                return BinaryOpResult::Success(TypeId::NUMBER);
+            }
+            return BinaryOpResult::TypeError { left, right, op };
+        }
+
         // number-like * number-like = number
         if self.is_number_like(left) && self.is_number_like(right) {
             return BinaryOpResult::Success(TypeId::NUMBER);

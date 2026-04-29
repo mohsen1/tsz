@@ -3,8 +3,10 @@
 use super::fingerprint_policy::DiagnosticRenderRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
+use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -243,6 +245,156 @@ impl<'a> CheckerState<'a> {
             )
     }
 
+    pub(crate) fn operator_operand_may_include_bigint(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::ANY || type_id == TypeId::ERROR || type_id == TypeId::UNKNOWN {
+            return false;
+        }
+
+        let widened = crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_id);
+        if widened == TypeId::BIGINT {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            return members
+                .iter()
+                .any(|&member| self.operator_operand_may_include_bigint(member));
+        }
+
+        if let Some(constraint) =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+            && constraint != type_id
+            && constraint != TypeId::UNKNOWN
+        {
+            return self.operator_operand_may_include_bigint(constraint);
+        }
+
+        false
+    }
+
+    pub(crate) fn operator_error_result_type(
+        &self,
+        left_type: TypeId,
+        right_type: TypeId,
+        fallback_without_bigint: TypeId,
+    ) -> TypeId {
+        if self.operator_operand_may_include_bigint(left_type)
+            || self.operator_operand_may_include_bigint(right_type)
+        {
+            TypeId::ANY
+        } else {
+            fallback_without_bigint
+        }
+    }
+
+    pub(crate) fn operator_surface_type_for_expression(
+        &mut self,
+        idx: NodeIndex,
+        fallback: TypeId,
+    ) -> TypeId {
+        if self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+            && let Some(sym_id) = self.resolve_identifier_symbol(idx)
+        {
+            let declared = self.get_type_of_symbol(sym_id);
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && let Some(decl_idx) = symbol.primary_declaration()
+                && let Some(parameter_idx) = self.ctx.arena.get(decl_idx).and_then(|decl_node| {
+                    if decl_node.kind == syntax_kind_ext::PARAMETER {
+                        Some(decl_idx)
+                    } else {
+                        self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+                    }
+                })
+                && let Some(decl_node) = self.ctx.arena.get(parameter_idx)
+                && let Some(parameter) = self.ctx.arena.get_parameter(decl_node)
+                && parameter.type_annotation.is_some()
+                && let Some(annotation_node) = self.ctx.arena.get(parameter.type_annotation)
+                && let Some(type_ref) = self.ctx.arena.get_type_ref(annotation_node)
+                && let TypeSymbolResolution::Type(annotation_sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                && self
+                    .ctx
+                    .binder
+                    .get_symbol(annotation_sym_id)
+                    .is_some_and(|symbol| {
+                        symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
+                    })
+            {
+                let annotation_type = self.get_type_of_symbol(annotation_sym_id);
+                if crate::query_boundaries::common::type_param_info(self.ctx.types, annotation_type)
+                    .is_some()
+                    && self.operator_operand_may_include_bigint(annotation_type)
+                {
+                    return annotation_type;
+                }
+            }
+            if declared != TypeId::ERROR
+                && declared != TypeId::UNKNOWN
+                && self.operator_operand_may_include_bigint(declared)
+            {
+                return declared;
+            }
+        }
+        fallback
+    }
+
+    pub(crate) fn operator_type_parameter_annotation_text_for_expression(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<String> {
+        if !self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+        {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol_without_tracking(idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for decl_idx in symbol.all_declarations() {
+            let mut current = decl_idx;
+            for _ in 0..=2 {
+                let Some(node) = self.ctx.arena.get(current) else {
+                    break;
+                };
+                if node.kind == syntax_kind_ext::PARAMETER
+                    && let Some(parameter) = self.ctx.arena.get_parameter(node)
+                    && parameter.type_annotation.is_some()
+                    && let Some(annotation_node) = self.ctx.arena.get(parameter.type_annotation)
+                    && let Some(source) = self.ctx.arena.source_files.first()
+                    && let Some(text) = source
+                        .text
+                        .get(annotation_node.pos as usize..annotation_node.end as usize)
+                {
+                    let text = text.trim();
+                    if text.len() <= 3
+                        && text
+                            .chars()
+                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                    {
+                        return Some(text.to_string());
+                    }
+                }
+                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+                else {
+                    break;
+                };
+                if parent.is_none() {
+                    break;
+                }
+                current = parent;
+            }
+        }
+        None
+    }
+
     /// Emit errors for binary operator type mismatches.
     /// TS2362 for left-hand side, TS2363 for right-hand side, or TS2365 for general operator errors.
     pub(crate) fn emit_binary_operator_error(
@@ -432,6 +584,12 @@ impl<'a> CheckerState<'a> {
                 l_num && r_num && (l_is_bigint != r_is_bigint)
             };
 
+        let left_surface = self.operator_surface_type_for_expression(left_idx, left_type);
+        let right_surface = self.operator_surface_type_for_expression(right_idx, right_type);
+        let is_unsigned_shift_bigint_mix = op == ">>>"
+            && (self.operator_operand_may_include_bigint(left_surface)
+                || self.operator_operand_may_include_bigint(right_surface));
+
         let (left_diag, right_diag) = if is_number_bigint_mix {
             // Preserve literal types for number+bigint mix (e.g., '1' and '2n')
             let l = self
@@ -444,6 +602,12 @@ impl<'a> CheckerState<'a> {
                 self.widen_enum_member_type(l),
                 self.widen_enum_member_type(r),
             )
+        } else if is_unsigned_shift_bigint_mix {
+            let right = self
+                .literal_type_from_initializer(right_idx)
+                .filter(|&literal| self.operator_operand_may_include_bigint(literal))
+                .unwrap_or(right_type);
+            (left_surface, right)
         } else {
             // Widen literal types to base types for all other operator errors.
             // Important: try enum member widening BEFORE get_base_type_for_comparison,
@@ -451,13 +615,28 @@ impl<'a> CheckerState<'a> {
             // (e.g., Enum → number), losing the enum identity. tsc displays enum
             // names (e.g., 'E') in operator error messages, not the base type.
             (
-                self.widen_type_for_operator_display(left_type),
-                self.widen_type_for_operator_display(right_type),
+                self.widen_type_for_operator_display(left_surface),
+                self.widen_type_for_operator_display(right_surface),
             )
         };
-        let mut formatter = self.ctx.create_type_formatter();
-        let left_str = formatter.format(left_diag);
-        let right_str = formatter.format(right_diag);
+        let left_str = if let Some(text) =
+            self.operator_type_parameter_annotation_text_for_expression(left_idx)
+        {
+            text.into()
+        } else if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
+            self.format_type(left_diag)
+        } else {
+            self.format_type_for_operator_display(left_diag)
+        };
+        let right_str = if let Some(text) =
+            self.operator_type_parameter_annotation_text_for_expression(right_idx)
+        {
+            text.into()
+        } else if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
+            self.format_type(right_diag)
+        } else {
+            self.format_type_for_operator_display(right_diag)
+        };
 
         // Check if this is an arithmetic or bitwise operator
         // These operators require integer operands and emit TS2362/TS2363
@@ -564,6 +743,7 @@ impl<'a> CheckerState<'a> {
             // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
             // tsc suppresses TS2362/TS2363 when TS18050 was already emitted for the operand.
             let mut emitted_specific_error = emitted_nullish_error;
+            let mut emitted_operand_error = false;
             if !(left_is_valid_arithmetic
                 || (left_has_nullish
                     && left_non_null_is_valid_arithmetic
@@ -578,6 +758,7 @@ impl<'a> CheckerState<'a> {
                     ),
                 );
                 emitted_specific_error = true;
+                emitted_operand_error = true;
             }
             if !(right_is_valid_arithmetic
                 || (right_has_nullish
@@ -593,10 +774,18 @@ impl<'a> CheckerState<'a> {
                     ),
                 );
                 emitted_specific_error = true;
+                emitted_operand_error = true;
             }
             // If both operands are valid arithmetic types but the operation still failed
-            // (e.g., mixing number and bigint), emit TS2365
-            if !emitted_specific_error {
+            // (e.g., mixing number and bigint), emit TS2365. tsc also emits TS2365
+            // when a bigint-capable operation has one invalid side (`"x" & 1n`,
+            // `1n ** false`): the per-side TS2362/TS2363 explains operand validity,
+            // while TS2365 explains the incompatible operator pair.
+            let should_emit_pair_error = !emitted_specific_error
+                || (emitted_operand_error
+                    && (self.operator_operand_may_include_bigint(left_type)
+                        || self.operator_operand_may_include_bigint(right_type)));
+            if should_emit_pair_error {
                 self.emit_render_request(
                     node_idx,
                     DiagnosticRenderRequest::simple_msg(
@@ -628,23 +817,60 @@ impl<'a> CheckerState<'a> {
     /// type (`'number'`). We must try enum member widening BEFORE
     /// `get_base_type_for_comparison`, because the latter unwraps
     /// enum types to their member union (losing the enum identity).
-    fn widen_type_for_operator_display(&mut self, type_id: TypeId) -> TypeId {
+    pub(crate) fn widen_type_for_operator_display(&mut self, type_id: TypeId) -> TypeId {
+        let display_type = if crate::query_boundaries::common::type_param_info(
+            self.ctx.types,
+            type_id,
+        )
+        .is_some()
+        {
+            type_id
+        } else {
+            let evaluated = self.evaluate_type_for_binary_ops(type_id);
+            if evaluated != TypeId::ERROR
+                && evaluated != TypeId::UNKNOWN
+                && self.operator_operand_may_include_bigint(evaluated)
+                && crate::query_boundaries::common::union_members(self.ctx.types, evaluated)
+                    .is_some()
+            {
+                evaluated
+            } else {
+                type_id
+            }
+        };
+
         // 1. Try widening enum members to their parent enum.
         //    Both parent enums (E) and members (E.A) are enum types —
         //    widen_enum_member_type correctly handles both: members widen to
         //    parent, parent enums return unchanged.
-        let widened = self.widen_enum_member_type(type_id);
-        if widened != type_id {
+        let widened = self.widen_enum_member_type(display_type);
+        if widened != display_type {
             return widened;
         }
 
         // 2. If it's a parent Enum type (widen_enum_member_type returned it
         //    unchanged because it has no parent), keep for display.
-        if crate::query_boundaries::common::is_enum_type(self.ctx.types, type_id) {
-            return type_id;
+        if crate::query_boundaries::common::is_enum_type(self.ctx.types, display_type) {
+            return display_type;
         }
 
         // 3. Fall back to standard literal-to-base-type widening
-        crate::query_boundaries::common::get_base_type_for_comparison(self.ctx.types, type_id)
+        crate::query_boundaries::common::get_base_type_for_comparison(self.ctx.types, display_type)
+    }
+
+    pub(crate) fn format_type_for_operator_display(&mut self, type_id: TypeId) -> String {
+        let display_type = self.widen_type_for_operator_display(type_id);
+        if crate::query_boundaries::common::type_param_info(self.ctx.types, display_type).is_none()
+            && self.operator_operand_may_include_bigint(display_type)
+            && let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, display_type)
+        {
+            return members
+                .iter()
+                .map(|&member| self.format_type_for_operator_display(member))
+                .collect::<Vec<_>>()
+                .join(" | ");
+        }
+        self.format_type(display_type)
     }
 }

@@ -512,25 +512,25 @@ impl<'a> CheckerState<'a> {
                 if k == SyntaxKind::PlusToken as u16
                     && operand_type != TypeId::ANY
                     && operand_type != TypeId::ERROR
+                    && self.operator_operand_may_include_bigint(operand_type)
+                    && let Some(operand_node) = self.ctx.arena.get(unary.operand)
                 {
-                    let evaluator =
-                        crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
-                    if evaluator.is_bigint_like(operand_type)
-                        && let Some(operand_node) = self.ctx.arena.get(unary.operand)
-                    {
-                        let type_str = self.format_type(operand_type);
-                        let message = format_message(
-                            diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                            &["+", &type_str],
-                        );
-                        self.ctx.error(
-                            operand_node.pos,
-                            operand_node.end.saturating_sub(operand_node.pos),
-                            message,
-                            diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                        );
-                        return TypeId::NUMBER;
-                    }
+                    let display_type =
+                        self.operator_surface_type_for_expression(unary.operand, operand_type);
+                    let type_str = self
+                        .operator_type_parameter_annotation_text_for_expression(unary.operand)
+                        .unwrap_or_else(|| self.format_type_for_operator_display(display_type));
+                    let message = format_message(
+                        diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                        &["+", &type_str],
+                    );
+                    self.ctx.error(
+                        operand_node.pos,
+                        operand_node.end.saturating_sub(operand_node.pos),
+                        message,
+                        diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                    );
+                    return TypeId::NUMBER;
                 }
 
                 if let Some(literal_type) = self.literal_type_from_initializer(idx) {
