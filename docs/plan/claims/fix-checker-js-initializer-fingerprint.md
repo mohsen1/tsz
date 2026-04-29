@@ -3,7 +3,7 @@
 - **Date**: 2026-04-29
 - **Timestamp**: 2026-04-29 21:53:00 UTC
 - **Branch**: `fix/checker-js-initializer-fingerprint`
-- **PR**: TBD
+- **PR**: #1830
 - **Status**: claim
 - **Workstream**: 1 - Diagnostic Conformance And Fingerprints
 
