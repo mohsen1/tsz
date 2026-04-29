@@ -739,10 +739,11 @@ impl<'a> CheckerState<'a> {
                 let suppress_due_to_callback_body_errors =
                     self.should_suppress_no_overload_due_to_callback_body_errors(args);
 
-                if !suppress_due_to_structural_errors
+                let should_emit_no_overload_error = !suppress_due_to_structural_errors
                     && !suppress_due_to_callback_body_errors
-                    && !self.should_suppress_weak_key_no_overload(callee_expr, args)
-                {
+                    && !self.should_suppress_weak_key_no_overload(callee_expr, args);
+
+                if should_emit_no_overload_error {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
                 let overloaded_callee_has_type_params =
@@ -785,6 +786,7 @@ impl<'a> CheckerState<'a> {
                                 == Some("assign")
                     });
                 if overload_failures_disagree
+                    && should_emit_no_overload_error
                     && !overloaded_callee_has_type_params
                     && !call_is_typed_variable_initializer
                     && !callee_is_object_assign
