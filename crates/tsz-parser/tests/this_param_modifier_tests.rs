@@ -106,3 +106,22 @@ fn async_modifier_on_regular_parameter_still_emits_ts1090() {
         "TS1090 should still fire when the parameter is not `this`"
     );
 }
+
+/// Function type parameter lists do not emit TS1433 for `this` parameters, so
+/// they must keep TS1090 instead of suppressing the invalid modifier diagnostic.
+#[test]
+fn static_this_in_function_type_still_emits_ts1090() {
+    let mut parser = ParserState::new("test.ts".to_string(), "static this: C)".to_string());
+    parser.next_token();
+    parser.parse_type_parameter_list();
+    assert!(
+        has_error_code(&parser, 1090),
+        "TS1090 should fire in function type parameter lists because TS1433 is not emitted there. diagnostics={:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !has_error_code(&parser, 1433),
+        "Function type parameter parsing should not synthesize TS1433. diagnostics={:?}",
+        parser.get_diagnostics()
+    );
+}

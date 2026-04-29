@@ -256,8 +256,7 @@ impl ParserState {
 
             // Parse optional modifiers (public/private/protected/readonly)
             // These are syntactically valid but semantically invalid in function types
-            let suppress_invalid_for_this = self.lookahead_param_name_is_this();
-            let modifiers = self.parse_parameter_modifiers(suppress_invalid_for_this);
+            let modifiers = self.parse_parameter_modifiers(false);
 
             // Parse optional ...rest
             let dot_dot_dot = self.parse_optional(SyntaxKind::DotDotDotToken);
