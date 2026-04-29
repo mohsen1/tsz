@@ -21,6 +21,19 @@ impl<'a> Printer<'a> {
         let then_is_multiline_in_source = !then_is_block;
 
         self.write("if (");
+        // tsc inserts a space between `if (` and a leading inline block
+        // comment on the condition, then suppresses the post-comment
+        // space so the next token sits flush against `*/`. e.g.
+        //   `if ( /** @type {T} */(a))` (tsc)  vs
+        //   `if (/** @type {T} */ (a))` (tsz before this fix).
+        // Mirrors the spread-element pattern in special_expressions.rs.
+        if let Some(expr_node) = self.arena.get(if_stmt.expression)
+            && self.has_pending_comment_before(expr_node.pos)
+        {
+            self.write(" ");
+            self.emit_comments_before_pos(expr_node.pos);
+            self.pending_block_comment_space = false;
+        }
         self.emit(if_stmt.expression);
         // Map closing `)` — scan backward from then-statement start
         if let Some(then_node) = self.arena.get(if_stmt.then_statement) {
