@@ -1965,3 +1965,6 @@ impl<'a> CheckerState<'a> {
         self.local_named_export_alias_for_import(arena, import_name)
     }
 }
+
+#[cfg(test)]
+mod tests;
