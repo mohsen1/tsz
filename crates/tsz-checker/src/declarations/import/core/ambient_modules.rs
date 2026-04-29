@@ -1,5 +1,3 @@
-//! Ambient module matching helpers for import validation.
-
 use crate::state::CheckerState;
 
 impl<'a> CheckerState<'a> {
@@ -37,7 +35,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn module_name_matches_pattern_for_imports(pattern: &str, module_name: &str) -> bool {
+    pub(super) fn module_name_matches_pattern_for_imports(
+        pattern: &str,
+        module_name: &str,
+    ) -> bool {
         let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
         let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
         if !pattern.contains('*') {

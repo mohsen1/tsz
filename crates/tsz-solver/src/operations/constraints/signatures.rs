@@ -193,6 +193,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Applies the four-step inference constraint: params → optional `this` → return →
     /// type predicates. The three public wrappers differ only in their source/target
     /// struct types; those structs expose the same inference-relevant fields.
+    ///
+    /// `is_constructor` indicates whether the source/target are construct
+    /// signatures rather than call signatures. The return-type priority cap is
+    /// applied only for call signatures, where the cap matches a callback's
+    /// inference shape (mirroring the Function→Function path in walker.rs).
+    /// For construct signatures, capping is skipped: the source's signature
+    /// often gets erased to `unknown` here (e.g. a generic `<T>(x: T): T` from
+    /// `interface I { new <T>(x: T): T }` is constrained at this layer after
+    /// erasure), and downgrading the `unknown` candidate's priority below an
+    /// outer direct-arg pin causes a spurious mismatch on the constructor
+    /// argument's apparent type, while the unscaled (uncapped) priority lets
+    /// the outer inference variable widen to `unknown` and the constructor
+    /// remains assignable. tsc applies its return bias at a higher layer
+    /// (signature inference), and we mirror that selective behaviour here.
     #[allow(clippy::too_many_arguments)]
     fn constrain_signature_bodies(
         &mut self,
@@ -207,16 +221,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_pred: Option<&TypePredicate>,
         target_pred: Option<&TypePredicate>,
         priority: crate::types::InferencePriority,
+        is_constructor: bool,
     ) {
         self.constrain_params_with_rest(ctx, var_map, source_params, target_params, priority);
         if let (Some(s_this), Some(t_this)) = (source_this, target_this) {
             self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
-        self.constrain_types(ctx, var_map, source_return, target_return, priority);
+        // Return types must never be inferred at NakedTypeVariable priority — cap
+        // at ReturnType so direct-arg inferences always win. Mirrors the same
+        // invariant enforced in the Function→Function path in walker.rs.
+        // Skip the cap for construct signatures (see doc comment above).
+        let return_priority = if is_constructor {
+            priority
+        } else {
+            priority.max(crate::types::InferencePriority::ReturnType)
+        };
+        self.constrain_types(ctx, var_map, source_return, target_return, return_priority);
         // Constrain type predicates if both have them.
         // Predicates are marked as a type-annotation source so literal predicate
         // types (e.g. `x is 'B'`) are not marked fresh and won't be widened.
-        self.constrain_type_predicates(ctx, var_map, source_pred, target_pred, priority);
+        self.constrain_type_predicates(ctx, var_map, source_pred, target_pred, return_priority);
     }
 
     pub(super) fn constrain_function_to_call_signature(
@@ -244,6 +268,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             source.type_predicate.as_ref(),
             target.type_predicate.as_ref(),
             priority,
+            source.is_constructor,
         );
     }
 
@@ -267,6 +292,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             source.type_predicate.as_ref(),
             target.type_predicate.as_ref(),
             priority,
+            target.is_constructor,
         );
     }
 
@@ -277,6 +303,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source: &CallSignature,
         target: &CallSignature,
         priority: crate::types::InferencePriority,
+        is_constructor: bool,
     ) {
         self.constrain_signature_bodies(
             ctx,
@@ -290,6 +317,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             source.type_predicate.as_ref(),
             target.type_predicate.as_ref(),
             priority,
+            is_constructor,
         );
     }
 
@@ -437,15 +465,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source_sig: &CallSignature,
         target_sig: &CallSignature,
         priority: crate::types::InferencePriority,
+        is_constructor: bool,
     ) {
         if source_sig.type_params.is_empty() {
             self.constrain_call_signature_to_call_signature(
-                ctx, var_map, source_sig, target_sig, priority,
+                ctx,
+                var_map,
+                source_sig,
+                target_sig,
+                priority,
+                is_constructor,
             );
         } else {
             let erased = self.erase_signature_type_params(source_sig);
             self.constrain_call_signature_to_call_signature(
-                ctx, var_map, &erased, target_sig, priority,
+                ctx,
+                var_map,
+                &erased,
+                target_sig,
+                priority,
+                is_constructor,
             );
         }
     }
@@ -470,7 +509,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Source may carry type params (e.g. generic class construct sig)
                 // while target does not; the helper erases them first when needed.
                 self.constrain_signature_erasing_source_type_params(
-                    ctx, var_map, source_sig, target_sig, priority,
+                    ctx,
+                    var_map,
+                    source_sig,
+                    target_sig,
+                    priority,
+                    is_constructor,
                 );
             }
             return;
@@ -557,6 +601,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &source_signatures[idx],
                         target_sig,
                         priority,
+                        is_constructor,
                     );
                 }
             }
@@ -580,6 +625,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         effective_sig,
                         target_sig,
                         priority,
+                        is_constructor,
                     );
                 }
             }
@@ -601,6 +647,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &source_signatures[index],
                         target_sig,
                         priority,
+                        is_constructor,
                     );
                 }
             }

@@ -142,6 +142,143 @@ impl CheckerCreationReason {
     }
 }
 
+/// How `delegate_cross_arena_symbol_resolution` found the target arena for
+/// a cache miss that must construct a child checker.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum CrossArenaSymbolMissSource {
+    /// `binder.symbol_arenas` pointed at a non-current arena.
+    SymbolArena = 0,
+    /// `binder.declaration_arenas` found a non-current declaration arena.
+    DeclarationArena = 1,
+    /// `cross_file_symbol_targets` resolved the target file index.
+    SymbolFileTarget = 2,
+    /// Fallback bucket for unexpected delegation shapes.
+    Unknown = 3,
+}
+
+pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT: usize = 4;
+
+pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT] = [
+    "symbol_arenas",
+    "declaration_arenas",
+    "symbol_file_targets",
+    "unknown",
+];
+
+impl CrossArenaSymbolMissSource {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum CrossArenaSymbolMissKind {
+    TypeAlias = 0,
+    Interface = 1,
+    Class = 2,
+    Function = 3,
+    Variable = 4,
+    Property = 5,
+    Method = 6,
+    Accessor = 7,
+    Enum = 8,
+    Module = 9,
+    Alias = 10,
+    TypeParameter = 11,
+    TypeLiteral = 12,
+    Signature = 13,
+    Constructor = 14,
+    ObjectLiteral = 15,
+    Unresolved = 16,
+    Other = 17,
+}
+
+pub const CROSS_ARENA_SYMBOL_MISS_KIND_COUNT: usize = 18;
+
+pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_KIND_COUNT] = [
+    "type_alias",
+    "interface",
+    "class",
+    "function",
+    "variable",
+    "property",
+    "method",
+    "accessor",
+    "enum",
+    "module",
+    "alias",
+    "type_parameter",
+    "type_literal",
+    "signature",
+    "constructor",
+    "object_literal",
+    "unresolved",
+    "other",
+];
+
+impl CrossArenaSymbolMissKind {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Outcome of the no-child named-alias shortcut attempted before constructing
+/// a `DelegateCrossArenaSymbol` child checker.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum CrossArenaAliasShortcutOutcome {
+    Success = 0,
+    NotAlias = 1,
+    MissingSymbol = 2,
+    MissingModule = 3,
+    MissingImportName = 4,
+    NamespaceImport = 5,
+    DefaultImport = 6,
+    MissingAliasFile = 7,
+    MissingTarget = 8,
+    SelfTarget = 9,
+    MissingTargetSymbol = 10,
+    TargetAlias = 11,
+    AliasPartner = 12,
+    InterfaceValueMerge = 13,
+    UnknownResult = 14,
+    ErrorResult = 15,
+}
+
+pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT: usize = 16;
+
+pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES: [&str;
+    CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT] = [
+    "success",
+    "not_alias",
+    "missing_symbol",
+    "missing_module",
+    "missing_import_name",
+    "namespace_import",
+    "default_import",
+    "missing_alias_file",
+    "missing_target",
+    "self_target",
+    "missing_target_symbol",
+    "target_alias",
+    "alias_partner",
+    "interface_value_merge",
+    "unknown_result",
+    "error_result",
+];
+
+impl CrossArenaAliasShortcutOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// One process-wide instance. Incremented from any thread, read once at
 /// dump time.
 pub struct PerfCounters {
@@ -153,6 +290,18 @@ pub struct PerfCounters {
     pub delegate_cross_arena_cache_hits_cross_file: AtomicU64,
     pub delegate_cross_arena_misses: AtomicU64,
     pub delegate_max_recursion_depth: AtomicU64,
+    /// `DelegateCrossArenaSymbol` misses classified by how the target arena
+    /// was found. This is a subset of `delegate_cross_arena_misses`.
+    pub delegate_cross_arena_symbol_miss_by_source:
+        [AtomicU64; CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT],
+    /// `DelegateCrossArenaSymbol` misses classified by target symbol kind.
+    pub delegate_cross_arena_symbol_miss_by_kind: [AtomicU64; CROSS_ARENA_SYMBOL_MISS_KIND_COUNT],
+    pub delegate_cross_arena_symbol_miss_target_declaration_file: AtomicU64,
+    pub delegate_cross_arena_symbol_miss_target_source_file: AtomicU64,
+    /// Outcome buckets for the no-child alias shortcut attempted before a
+    /// `DelegateCrossArenaSymbol` miss constructs a child checker.
+    pub delegate_cross_arena_alias_shortcut_outcome:
+        [AtomicU64; CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
 
     // ─── checker construction ────────────────────────────────────────────
     pub checker_state_constructed: AtomicU64,
@@ -224,6 +373,14 @@ impl PerfCounters {
             delegate_cross_arena_cache_hits_cross_file: AtomicU64::new(0),
             delegate_cross_arena_misses: AtomicU64::new(0),
             delegate_max_recursion_depth: AtomicU64::new(0),
+            delegate_cross_arena_symbol_miss_by_source: [const { AtomicU64::new(0) };
+                CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT],
+            delegate_cross_arena_symbol_miss_by_kind: [const { AtomicU64::new(0) };
+                CROSS_ARENA_SYMBOL_MISS_KIND_COUNT],
+            delegate_cross_arena_symbol_miss_target_declaration_file: AtomicU64::new(0),
+            delegate_cross_arena_symbol_miss_target_source_file: AtomicU64::new(0),
+            delegate_cross_arena_alias_shortcut_outcome: [const { AtomicU64::new(0) };
+                CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
             checker_state_constructed: AtomicU64::new(0),
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
@@ -364,6 +521,32 @@ pub fn record_overlay_copy(reason: CheckerCreationReason, entries: u64) {
     );
 }
 
+#[inline]
+pub fn record_cross_arena_symbol_miss(
+    source: CrossArenaSymbolMissSource,
+    kind: CrossArenaSymbolMissKind,
+    target_is_declaration_file: bool,
+) {
+    let c = counters();
+    inc(&c.delegate_cross_arena_symbol_miss_by_source[source.as_index()]);
+    inc(&c.delegate_cross_arena_symbol_miss_by_kind[kind.as_index()]);
+    if target_is_declaration_file {
+        inc(&c.delegate_cross_arena_symbol_miss_target_declaration_file);
+    } else {
+        inc(&c.delegate_cross_arena_symbol_miss_target_source_file);
+    }
+}
+
+#[inline]
+pub fn record_cross_arena_alias_shortcut_outcome(outcome: CrossArenaAliasShortcutOutcome) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.delegate_cross_arena_alias_shortcut_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -439,7 +622,71 @@ impl PerfCounters {
             load(&c.compute_type_of_symbol_cache_hits),
             load(&c.resolver_lookup_calls),
             load(&c.resolver_read_package_json_calls),
-        ) + &Self::dump_by_reason()
+        ) + &Self::dump_cross_arena_symbol_miss_classification()
+            + &Self::dump_cross_arena_alias_shortcut_outcomes()
+            + &Self::dump_by_reason()
+    }
+
+    fn dump_cross_arena_symbol_miss_classification() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let source_total: u64 = c
+            .delegate_cross_arena_symbol_miss_by_source
+            .iter()
+            .map(load)
+            .sum();
+        let kind_total: u64 = c
+            .delegate_cross_arena_symbol_miss_by_kind
+            .iter()
+            .map(load)
+            .sum();
+        if source_total == 0 && kind_total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDelegateCrossArenaSymbol miss classification:\n");
+        out.push_str("  by source:\n");
+        for (idx, name) in CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES.iter().enumerate() {
+            let count = load(&c.delegate_cross_arena_symbol_miss_by_source[idx]);
+            out.push_str(&format!("  {name:<28} {count:>12}\n"));
+        }
+        out.push_str("  by kind:\n");
+        for (idx, name) in CROSS_ARENA_SYMBOL_MISS_KIND_NAMES.iter().enumerate() {
+            let count = load(&c.delegate_cross_arena_symbol_miss_by_kind[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
+        out.push_str(&format!(
+            "  {:<28} {:>12}\n  {:<28} {:>12}\n",
+            "target .d.ts/.d.cts/.d.mts",
+            load(&c.delegate_cross_arena_symbol_miss_target_declaration_file),
+            "target source files",
+            load(&c.delegate_cross_arena_symbol_miss_target_source_file),
+        ));
+        out
+    }
+
+    fn dump_cross_arena_alias_shortcut_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .delegate_cross_arena_alias_shortcut_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDelegateCrossArenaSymbol alias shortcut outcomes:\n");
+        for (idx, name) in CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES.iter().enumerate() {
+            let count = load(&c.delegate_cross_arena_alias_shortcut_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
+        out
     }
 
     /// Per-reason breakdown of `with_parent_cache` and overlay-copy calls.

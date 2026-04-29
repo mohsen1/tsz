@@ -360,7 +360,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
         }
 
-        self.writer.get_output().to_string()
+        Self::strip_synthetic_anonymous_object_members(self.writer.get_output())
     }
 
     /// Emits detached copyright comments (`/*! ... */`) at the top of the .d.ts file.

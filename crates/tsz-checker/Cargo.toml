@@ -140,6 +140,10 @@ name = "recursive_typeof_param_display_tests"
 path = "tests/recursive_typeof_param_display_tests.rs"
 
 [[test]]
+name = "cjs_object_export_module_augmentation_merge_tests"
+path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
+
+[[test]]
 name = "ts2303_tests"
 path = "tests/ts2303_tests.rs"
 
@@ -482,6 +486,10 @@ path = "tests/jsx_excess_attr_with_spread_source_display_tests.rs"
 [[test]]
 name = "ts2352_paren_alias_display_tests"
 path = "tests/ts2352_paren_alias_display_tests.rs"
+
+[[test]]
+name = "generic_inference_ordering_tests"
+path = "tests/generic_inference_ordering_tests.rs"
 
 [lints]
 workspace = true

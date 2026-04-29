@@ -2166,6 +2166,54 @@ export var basePrototype = {
 }
 
 #[test]
+fn test_call_initializer_uses_source_function_return_shape_for_accessor_object() {
+    let output = emit_dts_with_binding(
+        r#"
+function makePoint(x: number) {
+    return {
+        b: 10,
+        get x() { return x; },
+        set x(a: number) { this.b = a; }
+    };
+}
+var /*4*/ point = makePoint(2);
+point./*3*/x = 30;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var /*4*/ point: {\n    b: number;\n    x: any;\n};")
+            || output.contains("declare var /*4*/ point: {\n    b: number;\n    x: number;\n};"),
+        "Expected call initializer to reuse source function return shape without synthetic anonymous members: {output}"
+    );
+    assert!(
+        !output.contains("\n    : {"),
+        "Did not expect a synthetic anonymous object member in call initializer output: {output}"
+    );
+}
+
+#[test]
+fn test_overloaded_call_initializer_does_not_use_first_signature_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+function parse(input: string): string;
+function parse(input: number): number;
+function parse(input: string | number): string | number { return input; }
+const result = parse(42);
+"#,
+    );
+
+    assert!(
+        !output.contains("declare const result: string;"),
+        "Did not expect overloaded call initializer to use the first overload return type: {output}"
+    );
+    assert!(
+        output.contains("declare const result = 42;"),
+        "Expected overloaded call initializer to fall back without first-overload poisoning: {output}"
+    );
+}
+
+#[test]
 fn test_object_literal_computed_accessor_pair_emits_writable_symbol_property() {
     let output = emit_dts_with_binding(
         r#"
