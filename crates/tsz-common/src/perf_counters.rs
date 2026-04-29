@@ -227,6 +227,58 @@ impl CrossArenaSymbolMissKind {
     }
 }
 
+/// Outcome of the no-child named-alias shortcut attempted before constructing
+/// a `DelegateCrossArenaSymbol` child checker.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum CrossArenaAliasShortcutOutcome {
+    Success = 0,
+    NotAlias = 1,
+    MissingSymbol = 2,
+    MissingModule = 3,
+    MissingImportName = 4,
+    NamespaceImport = 5,
+    DefaultImport = 6,
+    MissingAliasFile = 7,
+    MissingTarget = 8,
+    SelfTarget = 9,
+    MissingTargetSymbol = 10,
+    TargetAlias = 11,
+    AliasPartner = 12,
+    InterfaceValueMerge = 13,
+    UnknownResult = 14,
+    ErrorResult = 15,
+}
+
+pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT: usize = 16;
+
+pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES: [&str;
+    CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT] = [
+    "success",
+    "not_alias",
+    "missing_symbol",
+    "missing_module",
+    "missing_import_name",
+    "namespace_import",
+    "default_import",
+    "missing_alias_file",
+    "missing_target",
+    "self_target",
+    "missing_target_symbol",
+    "target_alias",
+    "alias_partner",
+    "interface_value_merge",
+    "unknown_result",
+    "error_result",
+];
+
+impl CrossArenaAliasShortcutOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// One process-wide instance. Incremented from any thread, read once at
 /// dump time.
 pub struct PerfCounters {
@@ -246,6 +298,10 @@ pub struct PerfCounters {
     pub delegate_cross_arena_symbol_miss_by_kind: [AtomicU64; CROSS_ARENA_SYMBOL_MISS_KIND_COUNT],
     pub delegate_cross_arena_symbol_miss_target_declaration_file: AtomicU64,
     pub delegate_cross_arena_symbol_miss_target_source_file: AtomicU64,
+    /// Outcome buckets for the no-child alias shortcut attempted before a
+    /// `DelegateCrossArenaSymbol` miss constructs a child checker.
+    pub delegate_cross_arena_alias_shortcut_outcome:
+        [AtomicU64; CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
 
     // ─── checker construction ────────────────────────────────────────────
     pub checker_state_constructed: AtomicU64,
@@ -323,6 +379,8 @@ impl PerfCounters {
                 CROSS_ARENA_SYMBOL_MISS_KIND_COUNT],
             delegate_cross_arena_symbol_miss_target_declaration_file: AtomicU64::new(0),
             delegate_cross_arena_symbol_miss_target_source_file: AtomicU64::new(0),
+            delegate_cross_arena_alias_shortcut_outcome: [const { AtomicU64::new(0) };
+                CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT],
             checker_state_constructed: AtomicU64::new(0),
             checker_state_with_parent_cache_constructed: AtomicU64::new(0),
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
@@ -479,6 +537,16 @@ pub fn record_cross_arena_symbol_miss(
     }
 }
 
+#[inline]
+pub fn record_cross_arena_alias_shortcut_outcome(outcome: CrossArenaAliasShortcutOutcome) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.delegate_cross_arena_alias_shortcut_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
 impl PerfCounters {
     /// Format the current counter snapshot as a multi-line report. Returns
     /// an empty string when the counters are disabled (so callers can
@@ -555,6 +623,7 @@ impl PerfCounters {
             load(&c.resolver_lookup_calls),
             load(&c.resolver_read_package_json_calls),
         ) + &Self::dump_cross_arena_symbol_miss_classification()
+            + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_by_reason()
     }
 
@@ -595,6 +664,28 @@ impl PerfCounters {
             "target source files",
             load(&c.delegate_cross_arena_symbol_miss_target_source_file),
         ));
+        out
+    }
+
+    fn dump_cross_arena_alias_shortcut_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .delegate_cross_arena_alias_shortcut_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDelegateCrossArenaSymbol alias shortcut outcomes:\n");
+        for (idx, name) in CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES.iter().enumerate() {
+            let count = load(&c.delegate_cross_arena_alias_shortcut_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<28} {count:>12}\n"));
+            }
+        }
         out
     }
 
