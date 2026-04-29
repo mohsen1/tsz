@@ -122,6 +122,50 @@ fn test_normalize_resolved_path_preserves_symlink_ancestor_identity() {
 }
 
 #[test]
+fn test_normalize_resolved_path_collapses_segments_for_symlinked_package_identity() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let dir = std::env::temp_dir().join("tsz_driver_resolution_symlink_segment_normalization");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("core/node_modules/package-a/types")).unwrap();
+    fs::write(
+        dir.join("core/node_modules/package-a/index.d.ts"),
+        "export interface Box {}",
+    )
+    .unwrap();
+    symlink(
+        dir.join("core/node_modules/package-a"),
+        dir.join("package-a"),
+    )
+    .unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        preserve_symlinks: false,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let raw_path = dir.join("package-a/./types/../index.d.ts");
+    let normalized_path = dir.join("package-a/index.d.ts");
+    assert_eq!(
+        normalize_resolved_path(&raw_path, &options),
+        normalized_path,
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_exports_js_target_substitutes_dts() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_driver_resolution_exports_js_target");

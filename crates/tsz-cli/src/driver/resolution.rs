@@ -1506,14 +1506,15 @@ pub(crate) fn normalize_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn normalize_resolved_path(path: &Path, options: &ResolvedCompilerOptions) -> PathBuf {
+    let normalized = normalize_path(path);
     if options.preserve_symlinks {
-        normalize_path(path)
+        normalized
     } else {
         let canonical = canonicalize_or_owned(path);
         let preserve_package_link_identity = path_has_symlinked_package_ancestor(path)
             || (!has_node_modules_component(path) && has_node_modules_component(&canonical));
         if preserve_package_link_identity {
-            path.to_path_buf()
+            normalized
         } else {
             canonical
         }
