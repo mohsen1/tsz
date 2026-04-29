@@ -1139,7 +1139,6 @@ impl<'a> CheckerState<'a> {
                         }
                         TypeId::ANY
                     } else if self.ctx.in_destructuring_target {
-                        
                         self.get_type_of_assignment_target(shorthand_name_idx)
                     } else {
                         // Use shorthand_name_idx (the identifier) so that get_type_of_identifier

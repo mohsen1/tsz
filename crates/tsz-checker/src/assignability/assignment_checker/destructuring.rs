@@ -1035,9 +1035,30 @@ impl<'a> CheckerState<'a> {
             .find(['\n', '\r'])
             .map(|offset| start + offset)
             .unwrap_or(source.len());
-        source[start..line_end]
-            .find(property_name)
+        Self::inline_type_property_offset(&source[start..line_end], property_name)
             .map(|offset| (start + offset) as u32)
+    }
+
+    fn inline_type_property_offset(line: &str, property_name: &str) -> Option<usize> {
+        let mut search_start = 0usize;
+        while let Some(offset) = line[search_start..].find(property_name) {
+            let match_start = search_start + offset;
+            let match_end = match_start + property_name.len();
+            let before_ok = match_start == 0
+                || !Self::is_inline_type_identifier_char(line.as_bytes()[match_start - 1]);
+            let after_ok = match_end >= line.len()
+                || !Self::is_inline_type_identifier_char(line.as_bytes()[match_end]);
+            if before_ok && after_ok {
+                return Some(match_start);
+            }
+            search_start = match_end;
+        }
+
+        None
+    }
+
+    fn is_inline_type_identifier_char(ch: u8) -> bool {
+        ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$'
     }
 
     fn property_name_text(&self, name_idx: NodeIndex) -> Option<String> {
@@ -1326,5 +1347,32 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(source_type)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CheckerState;
+
+    #[test]
+    fn inline_type_property_offset_uses_whole_identifier_match() {
+        let line = "{ foobar: number; foo: string }";
+
+        assert_eq!(
+            CheckerState::inline_type_property_offset(line, "foo"),
+            line.find("foo: string")
+        );
+    }
+
+    #[test]
+    fn inline_type_property_offset_rejects_identifier_continuations() {
+        assert_eq!(
+            CheckerState::inline_type_property_offset("{ $foo: string }", "foo"),
+            None
+        );
+        assert_eq!(
+            CheckerState::inline_type_property_offset("{ foo_bar: string }", "foo"),
+            None
+        );
     }
 }
