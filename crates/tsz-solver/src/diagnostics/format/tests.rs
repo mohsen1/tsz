@@ -1798,9 +1798,59 @@ fn format_no_infer_type() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
 
-    // NoInfer<T> is transparent in error messages - tsc displays just T
+    // NoInfer<T> at the outermost layer is transparent — tsc strips a single
+    // outer wrapper for display.
     let no_infer = db.no_infer(TypeId::STRING);
     assert_eq!(fmt.format(no_infer), "string");
+}
+
+#[test]
+fn format_no_infer_inside_union_is_preserved() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // `NoInfer<string> | number` — NoInfer is a union member, not the
+    // outermost type, so tsc keeps `NoInfer<>` in the displayed form.
+    let no_infer = db.no_infer(TypeId::STRING);
+    let union = db.union2(no_infer, TypeId::NUMBER);
+    let result = fmt.format(union);
+    assert!(
+        result.contains("NoInfer<string>"),
+        "expected `NoInfer<string>` in `{result}`"
+    );
+    assert!(result.contains("number"));
+    assert!(result.contains(" | "));
+}
+
+#[test]
+fn format_no_infer_outermost_with_union_inner_strips() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // `NoInfer<string | number>` — outer NoInfer wraps the union, so tsc
+    // strips it and displays the inner union directly.
+    let inner = db.union2(TypeId::STRING, TypeId::NUMBER);
+    let no_infer = db.no_infer(inner);
+    let result = fmt.format(no_infer);
+    assert!(
+        !result.contains("NoInfer"),
+        "expected outer `NoInfer<>` to be stripped in `{result}`"
+    );
+    assert!(result.contains("string"));
+    assert!(result.contains("number"));
+    assert!(result.contains(" | "));
+}
+
+#[test]
+fn format_nested_no_infer_keeps_inner() {
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    // `NoInfer<NoInfer<string>>` — only the outermost `NoInfer<>` is
+    // stripped; the nested one is preserved.
+    let inner_no_infer = db.no_infer(TypeId::STRING);
+    let outer_no_infer = db.no_infer(inner_no_infer);
+    assert_eq!(fmt.format(outer_no_infer), "NoInfer<string>");
 }
 
 // =================================================================
