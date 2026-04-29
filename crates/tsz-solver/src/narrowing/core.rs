@@ -2069,6 +2069,26 @@ impl<'a> NarrowingContext<'a> {
                                 {
                                     return *target_type;
                                 }
+                                // Empty-object source (`{}`, no properties / no index
+                                // signatures) is the universal non-nullish supertype.
+                                // Narrowing it via a type predicate to a more
+                                // structured target should yield the target — not the
+                                // source — so subsequent index access / property
+                                // narrowing can see the target's shape. Mirrors tsc's
+                                // narrowType where `target <: source` returns target.
+                                // Without this, `obj: {}` after `is Record<string,
+                                // unknown>` keeps the `{}` shape and falsely trips
+                                // TS7053 on `obj['k']`. (See
+                                // controlFlowFavorAssertedTypeThroughTypePredicate.)
+                                if crate::visitors::visitor_predicates::is_empty_object_type(
+                                    self.db.as_type_database(),
+                                    self.resolve_type(source_type),
+                                ) && !crate::visitors::visitor_predicates::is_empty_object_type(
+                                    self.db.as_type_database(),
+                                    self.resolve_type(*target_type),
+                                ) {
+                                    return *target_type;
+                                }
                                 // Then use narrow_to_type. If it returns the source
                                 // unchanged (assignable but possibly losing structural
                                 // info) or NEVER (no overlap), fall back to an
