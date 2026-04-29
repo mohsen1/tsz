@@ -3,7 +3,7 @@
 - **Date**: 2026-04-29
 - **Timestamp**: 2026-04-29 21:28:26 UTC
 - **Branch**: `fix/checker-co-contra-inference-fingerprint`
-- **PR**: TBD
+- **PR**: #1827
 - **Status**: claim
 - **Workstream**: 1 - Diagnostic Conformance And Fingerprints
 
