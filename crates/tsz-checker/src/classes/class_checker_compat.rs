@@ -105,11 +105,13 @@ impl<'a> CheckerState<'a> {
 
     fn normalize_heritage_type_argument_text(text: &str, strip_trailing_gt: bool) -> String {
         let mut normalized = text.trim().to_string();
-        if strip_trailing_gt {
-            while normalized.ends_with('>') {
-                normalized.pop();
-                normalized = normalized.trim_end().to_string();
-            }
+        if strip_trailing_gt
+            && normalized.ends_with('>')
+            && normalized.chars().filter(|&ch| ch == '>').count()
+                > normalized.chars().filter(|&ch| ch == '<').count()
+        {
+            normalized.pop();
+            normalized = normalized.trim_end().to_string();
         }
         if normalized.contains('{') && normalized.contains(':') && normalized.contains('}') {
             normalized = normalized.replace(";}", "; }");

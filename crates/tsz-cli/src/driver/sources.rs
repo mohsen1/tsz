@@ -733,9 +733,6 @@ pub(super) fn read_source_files(
                         no_implicit_any: options.checker.no_implicit_any,
                         implied_classic_resolution: options.checker.implied_classic_resolution,
                     };
-                    tsz_common::perf_counters::inc(
-                        &tsz_common::perf_counters::counters().resolver_lookup_calls,
-                    );
                     let outcome = module_resolver
                         .lookup(
                             &request,
@@ -829,13 +826,12 @@ pub(super) fn read_source_files(
                     // walk-up as a secondary fallback after typeRoots, regardless of the
                     // configured module resolution mode (including Classic).
                     let resolved = resolved.or_else(|| {
-                        crate::driver::resolution::resolve_type_reference_from_node_modules_with_cache(
+                        crate::driver::resolution::resolve_type_reference_from_node_modules(
                             &type_name,
                             &path,
                             base_dir,
                             effective_resolution_mode.map(|s| s.as_str()),
                             options,
-                            &mut resolution_cache,
                         )
                     });
                     if let Some(resolved) = resolved {
@@ -858,13 +854,12 @@ pub(super) fn read_source_files(
                     if invalid_mode {
                         for mode in &["import", "require"] {
                             if let Some(alt) =
-                                crate::driver::resolution::resolve_type_reference_from_node_modules_with_cache(
+                                crate::driver::resolution::resolve_type_reference_from_node_modules(
                                     &type_name,
                                     &path,
                                     base_dir,
                                     Some(mode),
                                     options,
-                                    &mut resolution_cache,
                                 )
                             {
                                 let canonical = normalize(&alt, options);
