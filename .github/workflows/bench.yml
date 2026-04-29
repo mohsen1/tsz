@@ -1,22 +1,18 @@
 name: Bench
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [main]
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'scripts/bench/**'
-      - 'scripts/ci/gcp-cache.sh'
-      - '.github/workflows/bench.yml'
+    types: [completed]
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
-# Full benchmark runs are intentionally serialized across pushes, schedules,
-# and manual dispatches. A newer commit must not cancel the running benchmark,
-# and a second workflow run must not compete for the same benchmark runners.
+# Full benchmark runs are intentionally serialized across CI completions,
+# schedules, and manual dispatches. A newer commit must not cancel the running
+# benchmark, and a second workflow run must not compete for the same benchmark
+# runners.
 concurrency:
   group: bench
   cancel-in-progress: false
@@ -31,7 +27,8 @@ env:
   BENCH_COLD: "1"
   BENCH_PGO: "1"
   TSC_NPM_SPEC: "6.0.2"
-  GITHUB_SHA: ${{ github.sha }}
+  GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+  BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
   npm_config_cache: ${{ github.workspace }}/.ci-cache/npm
   PNPM_STORE_DIR: ${{ github.workspace }}/.ci-cache/pnpm-store
@@ -39,11 +36,13 @@ env:
 jobs:
   bench-prepare:
     name: bench-prepare
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
 
       - name: Restore GCS caches
@@ -55,16 +54,23 @@ jobs:
         id: dist-fast-ci-download
         env:
           GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           deadline=$((SECONDS + 3600))
-          ci_run=""
+          ci_run="$CI_WORKFLOW_RUN_ID"
           while (( SECONDS < deadline )); do
-            ci_json=$(gh api \
-              "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?branch=main&per_page=20" \
-              2>/dev/null || echo '{"workflow_runs":[]}')
-            ci_run=$(jq -r '[.workflow_runs[] | select(.head_sha == "${{ github.sha }}")][0].id // empty' <<<"$ci_json")
-            ci_status=$(jq -r '[.workflow_runs[] | select(.head_sha == "${{ github.sha }}")][0].status // empty' <<<"$ci_json")
-            ci_conclusion=$(jq -r '[.workflow_runs[] | select(.head_sha == "${{ github.sha }}")][0].conclusion // empty' <<<"$ci_json")
+            if [[ -n "$ci_run" ]]; then
+              ci_json=$(gh api "repos/${{ github.repository }}/actions/runs/$ci_run" 2>/dev/null || echo '{}')
+              ci_status=$(jq -r '.status // empty' <<<"$ci_json")
+              ci_conclusion=$(jq -r '.conclusion // empty' <<<"$ci_json")
+            else
+              ci_json=$(gh api \
+                "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?branch=main&per_page=20" \
+                2>/dev/null || echo '{"workflow_runs":[]}')
+              ci_run=$(jq -r "[.workflow_runs[] | select(.head_sha == \"${BENCH_TARGET_SHA}\")][0].id // empty" <<<"$ci_json")
+              ci_status=$(jq -r "[.workflow_runs[] | select(.head_sha == \"${BENCH_TARGET_SHA}\")][0].status // empty" <<<"$ci_json")
+              ci_conclusion=$(jq -r "[.workflow_runs[] | select(.head_sha == \"${BENCH_TARGET_SHA}\")][0].conclusion // empty" <<<"$ci_json")
+            fi
 
             if [[ -n "$ci_run" && "$ci_status" == "completed" && "$ci_conclusion" == "success" ]]; then
               echo "Found successful CI run $ci_run for this SHA, downloading dist-fast-binaries artifact..."
@@ -81,12 +87,12 @@ jobs:
             if [[ -n "$ci_run" ]]; then
               echo "CI run $ci_run is ${ci_status:-pending}; waiting for dist-fast-binaries..."
             else
-              echo "No CI run found yet for ${{ github.sha }}; waiting..."
+              echo "No CI run found yet for ${BENCH_TARGET_SHA}; waiting..."
             fi
             sleep 30
           done
 
-          echo "Timed out waiting for successful CI dist-fast-binaries artifact for ${{ github.sha }}."
+          echo "Timed out waiting for successful CI dist-fast-binaries artifact for ${BENCH_TARGET_SHA}."
           exit 1
 
       - name: Unpack dist-fast binaries
@@ -165,6 +171,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
 
       - name: Restore GCS caches
@@ -258,6 +265,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
 
       - name: Download benchmark shard artifacts
