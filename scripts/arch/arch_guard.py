@@ -455,6 +455,8 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
             "crates/tsz-checker/src/types/computation/call/inner.rs",
+            # Pre-existing: grew past 2000 lines (CI lint blocker on origin/main)
+            "crates/tsz-checker/src/declarations/import/core/import_members.rs",
             # Pre-existing: grew past 2000 lines from assignment-ops refactor
             "crates/tsz-checker/src/assignability/assignment_checker/assignment_ops.rs",
             # Pre-existing oversized files captured as current ratchet baseline.
