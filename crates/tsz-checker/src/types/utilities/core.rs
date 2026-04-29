@@ -89,6 +89,25 @@ impl<'a> CheckerState<'a> {
             }
             return None;
         }
+        // For non-rest callback parameters, only look into the rest tuple when the
+        // parameter index falls within the rest range of the contextual signature.
+        // If the index is within the regular (non-rest) params range, return None so
+        // the regular parameter extraction path handles it correctly.
+        // Example: callback `(a, b, ...x)` vs contextual `(x: number, ...args: T)`:
+        //   - `a` at index 0 should get `number` from the regular param `x: number`,
+        //     not `any` from the rest constraint — return None here.
+        let rest_start = shape.params.len().saturating_sub(1);
+        if index < rest_start {
+            return None;
+        }
+        // Within the rest range, map to the tuple element at (index - rest_start)
+        // so that positional mapping is correct when there are regular params before
+        // the rest param.
+        // Example: callback `(b, c)` vs `(a: A, ...args: [B, C])`:
+        //   - `b` at callback index 1, rest_start=1 → tuple index 0 → B ✓
+        //   - `c` at callback index 2, rest_start=1 → tuple index 1 → C ✓
+        let tuple_index = index - rest_start;
+
         let rest_param_type = self.contextual_rest_parameter_source_type(rest_param.type_id);
 
         if let Some(tuple_elements) =
@@ -105,7 +124,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
-            if let Some(element) = tuple_elements.get(index) {
+            if let Some(element) = tuple_elements.get(tuple_index) {
                 return Some(element.type_id);
             }
             if let Some(last) = tuple_elements.last()
@@ -125,7 +144,7 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
-                if let Some(element) = tuple_elements.get(index) {
+                if let Some(element) = tuple_elements.get(tuple_index) {
                     element_types.push(element.type_id);
                     continue;
                 }
@@ -621,7 +640,30 @@ impl<'a> CheckerState<'a> {
                         .map(|param| param.type_id)
                         .or_else(|| {
                             let last = shape.params.last()?;
-                            last.rest.then_some(last.type_id)
+                            if !last.rest {
+                                return None;
+                            }
+                            let rest_start = shape.params.len().saturating_sub(1);
+                            // For fixed-length (non-variadic) tuple rest params, compute
+                            // the remaining slice after the callback's regular params have
+                            // consumed earlier elements.  When all elements are consumed the
+                            // slice is empty, so we return `[]` — not the full tuple — which
+                            // correctly models the callback's rest arity.
+                            // Example: `(a, b, c, ...x)` vs `(...args: [A, B, C])` at index=3:
+                            //   rest_start=0, consumed=3, remaining=[] → `...x: []` (no error).
+                            if let Some(elements) = crate::query_boundaries::common::tuple_elements(
+                                self.ctx.types,
+                                last.type_id,
+                            ) {
+                                let has_variadic = elements.iter().any(|e| e.rest);
+                                if !has_variadic {
+                                    let consumed = index.saturating_sub(rest_start);
+                                    let remaining =
+                                        elements[consumed.min(elements.len())..].to_vec();
+                                    return Some(self.ctx.types.factory().tuple(remaining));
+                                }
+                            }
+                            Some(last.type_id)
                         })
                 })
             })

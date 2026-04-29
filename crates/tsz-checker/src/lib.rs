@@ -171,6 +171,9 @@ mod relation_boundary_tests;
 #[path = "../tests/rest_parameter_tests.rs"]
 mod rest_parameter_tests;
 #[cfg(test)]
+#[path = "../tests/rest_tuple_contextual_typing_tests.rs"]
+mod rest_tuple_contextual_typing_tests;
+#[cfg(test)]
 #[path = "../tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
 #[cfg(test)]
