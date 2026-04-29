@@ -1404,13 +1404,11 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
 
 /// Non-generic construct signature source is NOT assignable to a generic
 /// construct signature target. `new() => MyClass` is not <: `new<T>() => T`
-/// because T is universally quantified — the generic constructor returns *any*
-/// With `erase_generics=true`, target type params are erased to their constraints
-/// (tsc's `getErasedSignature` behavior), so `new() => MyClass` IS assignable to
-/// `new<T extends { value: number }>() => T` when `MyClass` matches the constraint.
-/// See 7131d1b165 which restored erase-to-constraints for `erase_generics=true`.
+/// because T is universally quantified: the generic constructor must return
+/// whatever subtype of the constraint the caller chooses, not one concrete
+/// object shape.
 #[test]
-fn test_nongeneric_construct_sig_assignable_to_generic_target() {
+fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
     let interner = TypeInterner::new();
 
     // Create a concrete return type to represent `MyClass` (implements MyInterface)
@@ -1466,12 +1464,152 @@ fn test_nongeneric_construct_sig_assignable_to_generic_target() {
         ..Default::default()
     });
 
-    // With erase_generics=true, T is erased to { value: number }.
-    // source `new() => MyClass` is assignable to erased `new() => { value: number }`.
     let mut checker = SubtypeChecker::new(&interner);
     checker.strict_function_types = false;
     checker.erase_generics = true;
-    assert!(checker.check_subtype(source, target).is_true());
+    assert!(checker.check_subtype(source, target).is_false());
+}
+
+#[test]
+fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_target() {
+    let interner = TypeInterner::new();
+
+    let base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("base"),
+        TypeId::NUMBER,
+    )]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("base"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("derived"), TypeId::NUMBER),
+    ]);
+    let derived2 = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("base"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("derived2"), TypeId::NUMBER),
+    ]);
+
+    let source_param = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: base,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: derived,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let source_return = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("r")),
+            type_id: base,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: derived2,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let source = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: source_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: source_return,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(base),
+        default: None,
+        is_const: false,
+    };
+    let u_param = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(derived),
+        default: None,
+        is_const: false,
+    };
+    let v_param = TypeParamInfo {
+        name: interner.intern_string("V"),
+        constraint: Some(derived2),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param);
+    let u_type = interner.type_param(u_param);
+    let v_type = interner.type_param(v_param);
+    let target_param = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("arg")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target_return = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("r")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: v_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![t_param, u_param, v_param],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: target_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: target_return,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    let mut checker = SubtypeChecker::new(&interner);
+    checker.strict_function_types = false;
+    checker.erase_generics = true;
+    assert!(checker.check_subtype(source, target).is_false());
 }
 
 /// Regression test for genericFunctionCallSignatureReturnTypeMismatch.ts (TS2322)

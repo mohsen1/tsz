@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/erase-generics-target-opaque-1777465630`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1788
+- **Status**: ready
 - **Workstream**: Conformance (TS2322 family)
 
 ## Intent
@@ -30,13 +30,14 @@ subtype core.
 
 - `crates/tsz-solver/src/relations/subtype/rules/functions/checking.rs`
 - `crates/tsz-solver/tests/callable_tests.rs` (one stale test that
-  asserted incorrect behavior; updated to match tsc)
-- `crates/tsz-solver/tests/<new>.rs` regression test for
-  `b7 = a7` pattern
+  asserted incorrect behavior; updated to match tsc, plus a regression
+  test for the `b7 = a7` pattern)
 
 ## Verification
 
-- `cargo nextest run -p tsz-solver --lib`
-- `cargo nextest run -p tsz-checker --lib`
-- `./scripts/conformance/conformance.sh run --filter assignmentCompatWithConstructSignatures4 --verbose`
-- `./scripts/conformance/conformance.sh run --max 200`
+- `cargo fmt --check`
+- `cargo check --package tsz-solver`
+- `cargo check --package tsz-checker`
+- `cargo nextest run --package tsz-solver test_nongeneric_construct_sig_not_assignable_to_generic_target test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_target`
+- `cargo test --package tsz-checker --test signature_assignability_regression_tests -- --nocapture`
+- `./scripts/conformance/conformance.sh run --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --filter assignmentCompatWithConstructSignatures4 --verbose` (1/1 passed)
