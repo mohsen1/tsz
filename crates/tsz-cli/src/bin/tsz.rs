@@ -289,7 +289,11 @@ fn run_batch_mode() -> Result<()> {
     let stdin = std::io::stdin();
     let reader = stdin.lock();
     let mut stdout = std::io::stdout().lock();
-    let cwd = std::env::current_dir().context("failed to resolve batch worker cwd")?;
+    // Worker process cwd is captured here in case future batch protocol
+    // additions need it as a fallback. Per-test compilations use the
+    // explicit `project_path` from stdin so diagnostics render relative
+    // to the test's project root, not the long-lived worker's cwd.
+    let _worker_cwd = std::env::current_dir().context("failed to resolve batch worker cwd")?;
 
     for line in reader.lines() {
         let line = line.context("failed to read from stdin")?;
@@ -325,7 +329,17 @@ fn run_batch_mode() -> Result<()> {
             "false",
         ]);
 
-        match driver::compile(&batch_args, &cwd) {
+        // Compile from the per-test project_path, not the worker's process
+        // cwd. Subprocess mode sets the child's `current_dir` to project_dir
+        // (`runner.rs` uses `.current_dir(&prepared.project_dir)`), so any
+        // diagnostic anchored relative to cwd ends up project-relative. Batch
+        // mode reuses one long-running worker whose process cwd never moves,
+        // so we have to plumb the per-test project explicitly. Without this,
+        // tests that opt into a non-root `// @currentDirectory:` (e.g.
+        // `typeRootsFromNodeModulesInParentDirectory.ts`'s `/src`) emit
+        // paths anchored at the temp root (`src/a.ts`) instead of the
+        // project root (`a.ts`), tripping fingerprint-only failures.
+        match driver::compile(&batch_args, project_path) {
             Ok(result) => {
                 if !result.diagnostics.is_empty() {
                     let mut reporter = Reporter::new(false);
