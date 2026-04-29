@@ -801,6 +801,11 @@ impl<'a> TypePrinter<'a> {
 
         let should_skip_property = |prop: &tsz_solver::types::PropertyInfo| {
             self.property_is_hidden_in_declaration_shape(prop)
+                || matches!(self.resolve_atom(prop.name).as_str(), "" | ":")
+                || self
+                    .declaration_property_name_text(prop)
+                    .trim_start()
+                    .starts_with(':')
         };
 
         // When indent context is set, format as multi-line (matching tsc's .d.ts output)
