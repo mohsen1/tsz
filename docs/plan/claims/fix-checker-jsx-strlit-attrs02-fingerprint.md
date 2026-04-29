@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-jsx-strlit-attrs02-fingerprint`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1697
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance and Fingerprints)
 
 ## Intent
@@ -43,9 +43,19 @@ and is out of scope for this PR.
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker -- jsx_excess_attr_with_spread`
-- `./scripts/conformance/conformance.sh run --filter "contextuallyTypedStringLiteralsInJsxAttributes02" --verbose`
-  — confirms two of three fingerprint mismatches resolved (c1 + d1); the
-  remaining b4 anchor mismatch is the separate scope above.
-- Targeted JSX conformance smoke:
-  `./scripts/conformance/conformance.sh run --filter "contextuallyTyped.*Jsx"`
+- Pre-commit hook (`scripts/githooks/pre-commit`) all green:
+  - `cargo fmt` — already formatted
+  - `cargo clippy` (affected crates + CI parity) — zero warnings
+  - wasm32 rustc warnings gate — passed
+  - Architecture guardrails — passed
+  - `cargo nextest run` over 9 affected crates — **21535 / 21535 pass** (77 skipped, 41.3s)
+- New unit test file `crates/tsz-checker/tests/jsx_excess_attr_with_spread_source_display_tests.rs`:
+  3/3 pass.
+- `./scripts/conformance/conformance.sh run --filter "contextuallyTypedStringLiteralsInJsxAttributes02" --verbose`:
+  c1 (`file.tsx:37:57`) and d1 (`file.tsx:40:44`) TS2322 fingerprint
+  mismatches resolved (synthesized source now includes spread props). The
+  remaining b4 (`file.tsx:34`) TS2769 anchor mismatch is the separate scope
+  noted in **Intent** above — test stays fingerprint-only on b4.
+- No regressions in adjacent JSX areas verified via stash + re-run on
+  `tsxStateless` and `tsxAttributeResolution` filters (pre-existing
+  fingerprint failures reproduce identically without this PR's diff).
