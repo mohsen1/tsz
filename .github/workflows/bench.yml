@@ -8,21 +8,18 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/bench/**'
+      - 'scripts/ci/gcp-cache.sh'
       - '.github/workflows/bench.yml'
   schedule:
-    - cron: '0 3 * * *'  # Daily at 3am UTC — always runs full cold PGO benchmark
+    - cron: '0 3 * * *'
   workflow_dispatch:
-    inputs:
-      full:
-        description: 'Run full cold PGO benchmark (otherwise runs quick smoke test)'
-        type: boolean
-        default: false
 
-# Push smoke-test runs share a group and cancel each other (only latest matters).
-# Nightly/manual full runs get a unique group so they are never cancelled mid-flight.
+# Full benchmark runs are intentionally serialized across pushes, schedules,
+# and manual dispatches. A newer commit must not cancel the running benchmark,
+# and a second workflow run must not compete for the same benchmark runners.
 concurrency:
-  group: bench-${{ github.event_name }}
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: bench
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -30,27 +27,39 @@ permissions:
 
 env:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
+  BENCH_FULL: "1"
+  BENCH_COLD: "1"
+  BENCH_PGO: "1"
+  TSC_NPM_SPEC: "6.0.2"
+  GITHUB_SHA: ${{ github.sha }}
+  CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
+  npm_config_cache: ${{ github.workspace }}/.ci-cache/npm
+  PNPM_STORE_DIR: ${{ github.workspace }}/.ci-cache/pnpm-store
 
 jobs:
-  bench:
-    name: bench
+  bench-prepare:
+    name: bench-prepare
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 120
-    env:
-      # Full mode: nightly schedule + manual dispatch with full=true.
-      # Push runs use quick smoke mode (no PGO, fewer iterations, subset of repos).
-      BENCH_FULL: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)) && '1' || '0' }}
-      BENCH_COLD: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)) && '1' || '0' }}
-      BENCH_PGO: ${{ (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.full)) && '1' || '0' }}
-      TSC_NPM_SPEC: "6.0.2"
-      GITHUB_SHA: ${{ github.sha }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Restore caches
+      - name: Restore GCS caches
+        env:
+          _TSZ_CI_SUITE: bench
         run: scripts/ci/gcp-cache.sh restore
+
+      - name: Restore bench npm/tool cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .target-bench/tools
+            .ci-cache/pnpm-store
+          key: bench-tools-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/package-lock.json', 'scripts/package.json') }}
+          restore-keys: |
+            bench-tools-${{ runner.os }}-
 
       - name: Install pnpm
         run: |
@@ -60,18 +69,92 @@ jobs:
             npm install -g pnpm --silent
             echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
           fi
+          pnpm config set store-dir "$PNPM_STORE_DIR"
 
-      - name: Run benchmarks
+      - name: Prepare benchmark binary and tools
+        shell: bash
+        run: ./scripts/bench/bench-vs-tsgo.sh --prepare-only
+
+      - name: Save GCS caches
+        env:
+          _TSZ_CI_SUITE: bench
+        run: scripts/ci/gcp-cache.sh save
+
+      - name: Pack benchmark prep artifact
+        run: tar -cf bench-prep.tar .target-bench/dist .target-bench/tools
+
+      - name: Upload benchmark prep artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-prep
+          path: bench-prep.tar
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 1
+
+  bench:
+    name: bench-${{ matrix.label }}
+    needs: bench-prepare
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: core
+            timeout: 120
+            filter: 'conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable\.ts|manyConstExports\.ts|binderBinaryExpressionStress\.ts|binderBinaryExpressionStressJs\.ts|enumLiteralsSubtypeReduction\.ts|binaryArithmeticControlFlowGraphNotTooLarge\.ts|privacyFunctionParameterDeclFile\.ts|privacyGloFunc\.ts|privacyTypeParameterOfFunctionDeclFile\.ts|typedArrays\.ts|controlFlowArrays\.ts|[0-9]+ classes|[0-9]+ generic functions|DeepPartial optional-chain|Shallow optional-chain|[0-9]+ union members|Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches|BCT candidates|Constraint conflicts N|Mapped complex template keys'
+          - label: projects
+            timeout: 120
+            filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project'
+          - label: large-ts-repo
+            timeout: 90
+            filter: '^large-ts-repo$'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Restore GCS caches
+        env:
+          _TSZ_CI_SUITE: bench
+        run: scripts/ci/gcp-cache.sh restore
+
+      - name: Restore external fixture cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .target-bench/external
+            .ci-cache/pnpm-store
+          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh') }}
+          restore-keys: |
+            bench-fixtures-${{ matrix.label }}-${{ runner.os }}-
+            bench-fixtures-${{ runner.os }}-
+
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep
+          path: .
+
+      - name: Unpack benchmark prep artifact
+        run: tar -xf bench-prep.tar
+
+      - name: Install pnpm
+        run: |
+          if ! command -v pnpm &>/dev/null; then
+            mkdir -p "$HOME/.npm-global"
+            npm config set prefix "$HOME/.npm-global"
+            npm install -g pnpm --silent
+            echo "$HOME/.npm-global/bin" >> "$GITHUB_PATH"
+          fi
+          pnpm config set store-dir "$PNPM_STORE_DIR"
+
+      - name: Run benchmark shard
         shell: bash
         run: |
-          # -u + -o pipefail kept; -e dropped so a fixture group surfacing
-          # a non-zero return from inside bench-vs-tsgo.sh (despite its own
-          # run_isolated swallow) doesn't abort the step before the EXIT
-          # trap can flush partial JSON.
           set -uo pipefail
 
-          # Background resource monitor — logs load/memory/disk every 30s to aid
-          # post-mortem analysis if the runner is killed by OOM or resource pressure.
           (
             while true; do
               echo "::group::resource snapshot $(date -Is)"
@@ -86,38 +169,87 @@ jobs:
           _monitor_pid=$!
           trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
 
-          args=(
-            --json
-            --json-file "$GITHUB_WORKSPACE/bench-results.json"
-          )
-          if [[ "${BENCH_FULL:-0}" != "1" ]]; then
-            args+=(--quick --filter 'utility-types|ts-toolbelt|ts-essentials')
-          fi
-          ./scripts/bench/bench-vs-tsgo.sh "${args[@]}" \
-            2>&1 | tee "$GITHUB_WORKSPACE/bench-run.log"
+          ./scripts/bench/bench-vs-tsgo.sh \
+            --filter '${{ matrix.filter }}' \
+            --json \
+            --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
+            2>&1 | tee "$GITHUB_WORKSPACE/bench-run-${{ matrix.label }}.log"
 
-      - name: Publish results
+      - name: Save GCS caches
+        if: success()
+        env:
+          _TSZ_CI_SUITE: bench
+        run: scripts/ci/gcp-cache.sh save
+
+      - name: Upload benchmark shard artifacts
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ matrix.label }}
+          path: |
+            bench-results-${{ matrix.label }}.json
+            bench-run-${{ matrix.label }}.log
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 1
+
+  publish:
+    name: bench-publish
+    needs: bench
+    if: always() && !cancelled()
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download benchmark shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bench-results-*
+          path: bench-artifacts
+          merge-multiple: true
+
+      - name: Merge benchmark results
+        shell: bash
         run: |
-          if [[ ! -f "$GITHUB_WORKSPACE/bench-results.json" ]]; then
-            echo "No results to publish (benchmark may have failed or timed out)."
-            tail -100 "$GITHUB_WORKSPACE/bench-run.log" || true
+          set -euo pipefail
+          mapfile -t json_files < <(find bench-artifacts -name 'bench-results-*.json' -type f | sort)
+          if [[ "${#json_files[@]}" -eq 0 ]]; then
+            echo "No benchmark result JSON files found."
+            find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
+          if [[ "${#json_files[@]}" -ne 3 ]]; then
+            echo "Expected 3 benchmark shard JSON files, found ${#json_files[@]}."
+            printf 'Found JSON files:\n'
+            printf '  %s\n' "${json_files[@]}"
+            find bench-artifacts -maxdepth 2 -type f -print || true
+            exit 1
+          fi
+          node scripts/bench/merge-results.mjs "$GITHUB_WORKSPACE/bench-results.json" "${json_files[@]}"
+
+      - name: Upload merged benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-merged
+          path: bench-results.json
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 1
+
+      - name: Publish results
+        run: |
           TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
-          if [[ "${BENCH_FULL:-0}" == "1" ]]; then
-            gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
-              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
-            echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
-          else
-            echo "Skipping latest.json update (quick smoke-test run)"
-          fi
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
 
       - name: Trigger website redeploy
-        if: env.BENCH_FULL == '1'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run gh-pages.yml --ref main

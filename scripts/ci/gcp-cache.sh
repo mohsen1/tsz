@@ -327,7 +327,7 @@ suite_needs_rust_compile() {
   local suite
   suite="${_TSZ_CI_SUITE:-${TSZ_CI_SUITE:-all}}"
   case "$suite" in
-    all|full|build|lint|unit|wasm|wasm-web|wasm-all|dist-binaries|unit-archive) return 0 ;;
+    all|full|bench|build|lint|unit|wasm|wasm-web|wasm-all|dist-binaries|unit-archive) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -373,6 +373,12 @@ suite_caches() {
       # compile time; downstream conformance/emit/fourslash jobs restore the
       # corpus or harness when they actually need it.
       echo "cargo-home"
+      ;;
+    bench)
+      # Bench builds the optimized tsz binary in .target-bench, reads the
+      # TypeScript source corpus for file-level cases/PGO training, and uses
+      # npm's cache for pinned tsgo/tsc installs.
+      echo "cargo-home typescript-source npm"
       ;;
     wasm|wasm-web|wasm-all)
       # wasm-pack installs the matching wasm-bindgen CLI into

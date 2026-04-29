@@ -13,6 +13,7 @@
 #   ./scripts/bench/bench-vs-tsgo.sh --filter 'BCT|CFA' # Run only tests matching regex
 #   ./scripts/bench/bench-vs-tsgo.sh --filter 'utility-types' # Run only utility-types benchmarks
 #   ./scripts/bench/bench-vs-tsgo.sh --rebuild          # Force rebuild of optimized binary
+#   ./scripts/bench/bench-vs-tsgo.sh --prepare-only     # Build/install benchmark prerequisites, then exit
 #
 # The benchmark uses an isolated target directory (.target-bench/) to prevent
 # interference from other cargo builds. The binary is built with the 'dist' profile
@@ -108,6 +109,7 @@ JSON_OUTPUT=false
 JSON_FILE=""
 FILTER=""
 FORCE_REBUILD=false
+PREPARE_ONLY=false
 NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -116,6 +118,7 @@ while [[ $# -gt 0 ]]; do
         --json-file) JSON_OUTPUT=true; JSON_FILE="$2"; shift 2 ;;
         --filter) FILTER="$2"; shift 2 ;;
         --rebuild) FORCE_REBUILD=true; shift ;;
+        --prepare-only) PREPARE_ONLY=true; shift ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -125,6 +128,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --json-file Write JSON results to a specific path"
             echo "  --filter    Run only tests matching regex (e.g., --filter 'BCT|CFA')"
             echo "  --rebuild   Force rebuild of tsz binary (ensures fresh optimized build)"
+            echo "  --prepare-only Build/install benchmark prerequisites and exit"
             echo "  --help      Show this help"
             echo ""
             echo "The benchmark uses an isolated target directory (.target-bench/) to prevent"
@@ -2844,6 +2848,10 @@ HEADER
 
 main() {
     check_prerequisites
+    if [ "$PREPARE_ONLY" = true ]; then
+        echo -e "${GREEN}Benchmark prerequisites ready.${NC}"
+        return
+    fi
 
     # Create temp directory for synthetic files
     TEMP_DIR=$(mktemp -d)
