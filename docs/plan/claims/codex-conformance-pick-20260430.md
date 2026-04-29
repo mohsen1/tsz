@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `codex/conformance-pick-20260430`
-- **PR**: TBD
+- **PR**: #1832
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance and fingerprints)
 
