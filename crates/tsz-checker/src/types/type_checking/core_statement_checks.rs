@@ -195,7 +195,15 @@ impl<'a> CheckerState<'a> {
 
         // In constructors, bare `return;` (without expression) is always allowed — TSC
         // doesn't check assignability for void returns in constructors.
-        let skip_assignability = is_in_constructor && return_data.expression.is_none();
+        //
+        // In JS files, tsc additionally suppresses the constructor return-type
+        // assignability check entirely. JavaScript constructors can return any
+        // object — returning an object from a constructor replaces `this` at
+        // runtime, so `return a` (where `a` is some unrelated type) is
+        // idiomatic and not an error in `--checkJs` mode. Mirrors tsc's
+        // `isJavaScriptFile`-gated bypass in `checkReturnStatement`.
+        let skip_assignability =
+            is_in_constructor && (return_data.expression.is_none() || self.is_js_file());
 
         // Track whether assignability check passed — when it fails, the solver's
         // failure reason already emits the appropriate diagnostic (including TS2353
