@@ -471,5 +471,9 @@ path = "tests/jsdoc_class_property_target_display.rs"
 name = "elaboration_wrapper_init_tests"
 path = "tests/elaboration_wrapper_init_tests.rs"
 
+[[test]]
+name = "jsx_excess_attr_with_spread_source_display_tests"
+path = "tests/jsx_excess_attr_with_spread_source_display_tests.rs"
+
 [lints]
 workspace = true
