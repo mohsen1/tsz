@@ -252,7 +252,7 @@ jobs:
   publish:
     name: bench-publish
     needs: bench
-    if: always() && !cancelled()
+    if: needs.bench.result == 'success'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     steps:
