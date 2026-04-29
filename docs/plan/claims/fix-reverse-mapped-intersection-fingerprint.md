@@ -18,8 +18,11 @@ owning layer with a focused Rust regression test.
 ## Files Touched
 
 - `docs/plan/claims/fix-reverse-mapped-intersection-fingerprint.md` (claim)
-- Implementation files TBD after diagnosis.
+- `crates/tsz-checker/src/error_reporter/core/type_display.rs`
+- `crates/tsz-checker/tests/reverse_mapped_inference_tests.rs`
 
 ## Verification
 
-- Pending.
+- `cargo check --package tsz-checker` (passes)
+- `cargo nextest run -p tsz-checker reverse_mapped_const_generic_ts2353_omits_outer_readonly_in_target_display` (passes)
+- `./scripts/conformance/conformance.sh run --test-dir /tmp/tsz-single-tests --filter "reverseMappedTypeIntersectionConstraint" --verbose` (still fingerprint-only; reduced the line 172 outer-readonly mismatch, remaining drift includes nested display and TS2322-vs-TS2353 prioritization)
