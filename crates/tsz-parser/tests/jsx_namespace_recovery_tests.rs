@@ -281,3 +281,32 @@ fn jsx_embedded_expression_starting_with_closing_tag_reports_only_expression_exp
         "expected only TS1109 for malformed JSX embedded expression, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn jsx_namespaced_opening_tag_with_mismatched_closing_uses_local_name_only() {
+    // Regression: parse_jsx_element_name derived the namespaced-name node end
+    // from `token_end()` AFTER consuming the local name, which actually
+    // returned the end of the next token (`>`). That stretched the captured
+    // opening-tag text and produced messages like
+    //   "Expected corresponding JSX closing tag for 'a:b>'."
+    // tsc reports `'a:b'`. Lock that in.
+    let source = "<a:b></b>;\n";
+    let diagnostics = parse_diagnostics(source);
+
+    let mismatches: Vec<&(u32, u32, String)> = diagnostics
+        .iter()
+        .filter(|(code, _, _)| {
+            *code == diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR
+        })
+        .collect();
+
+    assert_eq!(
+        mismatches.len(),
+        1,
+        "expected exactly one TS17002 for `<a:b></b>;`, got {diagnostics:?}"
+    );
+    assert_eq!(
+        mismatches[0].2, "Expected corresponding JSX closing tag for 'a:b'.",
+        "TS17002 must reference 'a:b' (no trailing token), got {diagnostics:?}"
+    );
+}

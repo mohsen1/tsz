@@ -379,7 +379,7 @@ pub fn prepare_test_dir(
                     // block-scoped globals like `declare const require`.
                     if !types_packages_in_options.is_empty()
                         && atypes_package_in(lower.as_str())
-                            .is_some_and(|pkg| types_packages_in_options.iter().any(|t| *t == pkg))
+                            .is_some_and(|pkg| types_packages_in_options.contains(&pkg))
                     {
                         return None;
                     }
@@ -1160,8 +1160,8 @@ fn atypes_package_in(lower_path: &str) -> Option<String> {
     const NEEDLE_PREFIX: &str = "node_modules/@types/";
     let rest = if let Some(idx) = lower_path.find(NEEDLE_SLASH) {
         &lower_path[idx + NEEDLE_SLASH.len()..]
-    } else if lower_path.starts_with(NEEDLE_PREFIX) {
-        &lower_path[NEEDLE_PREFIX.len()..]
+    } else if let Some(stripped) = lower_path.strip_prefix(NEEDLE_PREFIX) {
+        stripped
     } else {
         return None;
     };
