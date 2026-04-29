@@ -5,6 +5,7 @@
 use crate::state::CheckerState;
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_common::perf_counters::{CrossArenaSymbolMissKind, CrossArenaSymbolMissSource};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -166,6 +167,122 @@ impl<'a> CheckerState<'a> {
         self.get_symbol_globally(sym_id)
     }
 
+    fn cross_arena_symbol_miss_kind(&self, sym_id: SymbolId) -> CrossArenaSymbolMissKind {
+        let Some(flags) = self
+            .get_cross_file_symbol(sym_id)
+            .map(|symbol| symbol.flags)
+        else {
+            return CrossArenaSymbolMissKind::Unresolved;
+        };
+
+        if flags & symbol_flags::TYPE_ALIAS != 0 {
+            CrossArenaSymbolMissKind::TypeAlias
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            CrossArenaSymbolMissKind::Interface
+        } else if flags & symbol_flags::CLASS != 0 {
+            CrossArenaSymbolMissKind::Class
+        } else if flags & symbol_flags::FUNCTION != 0 {
+            CrossArenaSymbolMissKind::Function
+        } else if flags & symbol_flags::VARIABLE != 0 {
+            CrossArenaSymbolMissKind::Variable
+        } else if flags & symbol_flags::PROPERTY != 0 {
+            CrossArenaSymbolMissKind::Property
+        } else if flags & symbol_flags::METHOD != 0 {
+            CrossArenaSymbolMissKind::Method
+        } else if flags & symbol_flags::ACCESSOR != 0 {
+            CrossArenaSymbolMissKind::Accessor
+        } else if flags & symbol_flags::ENUM != 0 {
+            CrossArenaSymbolMissKind::Enum
+        } else if flags & symbol_flags::MODULE != 0 {
+            CrossArenaSymbolMissKind::Module
+        } else if flags & symbol_flags::ALIAS != 0 {
+            CrossArenaSymbolMissKind::Alias
+        } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
+            CrossArenaSymbolMissKind::TypeParameter
+        } else if flags & symbol_flags::TYPE_LITERAL != 0 {
+            CrossArenaSymbolMissKind::TypeLiteral
+        } else if flags & symbol_flags::SIGNATURE != 0 {
+            CrossArenaSymbolMissKind::Signature
+        } else if flags & symbol_flags::CONSTRUCTOR != 0 {
+            CrossArenaSymbolMissKind::Constructor
+        } else if flags & symbol_flags::OBJECT_LITERAL != 0 {
+            CrossArenaSymbolMissKind::ObjectLiteral
+        } else {
+            CrossArenaSymbolMissKind::Other
+        }
+    }
+
+    fn try_resolve_cross_arena_named_alias_without_child(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let (module_name, import_name) = {
+            let symbol = self.get_cross_file_symbol(sym_id)?;
+            if symbol.flags & symbol_flags::ALIAS == 0 {
+                return None;
+            }
+            let module_name = symbol.import_module.clone()?;
+            let import_name = symbol.import_name.clone()?;
+            if import_name == "*" || import_name == "default" {
+                return None;
+            }
+            (module_name, import_name)
+        };
+
+        let alias_file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let target_sym_id = self.resolve_cross_file_export_from_file(
+            &module_name,
+            &import_name,
+            Some(alias_file_idx),
+        )?;
+        if target_sym_id == sym_id {
+            return None;
+        }
+
+        let target_flags = self
+            .get_cross_file_symbol(target_sym_id)
+            .map(|symbol| symbol.flags)?;
+        if target_flags & symbol_flags::ALIAS != 0 {
+            return None;
+        }
+
+        let target_binder = self
+            .ctx
+            .resolve_symbol_file_index(target_sym_id)
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .unwrap_or(self.ctx.binder);
+        if self
+            .ctx
+            .alias_partner_for(target_binder, target_sym_id)
+            .is_some()
+        {
+            return None;
+        }
+
+        let target_is_interface_value_merge = target_flags & symbol_flags::INTERFACE != 0
+            && target_flags & (symbol_flags::VARIABLE | symbol_flags::FUNCTION) != 0;
+        if target_is_interface_value_merge {
+            return None;
+        }
+
+        let mut result = self.get_type_of_symbol(target_sym_id);
+        result = self.apply_module_augmentations(&module_name, &import_name, result);
+        if matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+
+        self.ctx.symbol_types.insert(sym_id, result);
+        if self.ctx.share_owner_symbol_type_results {
+            self.ctx.definition_store.cache_resolved_symbol_type(
+                sym_id.0,
+                alias_file_idx as u32,
+                result,
+            );
+        }
+
+        Some(result)
+    }
+
     /// Delegate symbol resolution to a checker using the correct arena.
     ///
     /// When a symbol's arena differs from the current arena (cross-file symbol),
@@ -301,6 +418,11 @@ impl<'a> CheckerState<'a> {
             .symbol_arenas
             .get(&sym_id)
             .map(std::convert::AsRef::as_ref);
+        let mut delegate_arena_source = if delegate_arena.is_some() {
+            CrossArenaSymbolMissSource::SymbolArena
+        } else {
+            CrossArenaSymbolMissSource::Unknown
+        };
 
         // For INTERFACE symbols that have local (user) interface declarations in the
         // current arena, do NOT delegate to the lib arena. The user's interface body
@@ -381,6 +503,7 @@ impl<'a> CheckerState<'a> {
                         && !std::ptr::eq(arena.as_ref(), self.ctx.arena)
                     {
                         delegate_arena = Some(arena.as_ref());
+                        delegate_arena_source = CrossArenaSymbolMissSource::DeclarationArena;
                         break;
                     }
                 }
@@ -457,9 +580,31 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Both caches missed → about to do real work (boxed child checker
-            // construction + recursion).
+            if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
+                return Some((result, Vec::new()));
+            }
+
+            // Both caches and the alias shortcut missed → about to do real work
+            // (boxed child checker construction + recursion).
             tsz_common::perf_counters::inc(&perf.delegate_cross_arena_misses);
+            let miss_source = if needs_cross_file_delegation {
+                CrossArenaSymbolMissSource::SymbolFileTarget
+            } else {
+                delegate_arena_source
+            };
+            let miss_target_arena = if needs_cross_file_delegation {
+                cross_file_idx.map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            } else {
+                delegate_arena
+            };
+            let miss_target_is_declaration_file = miss_target_arena
+                .and_then(|arena| arena.source_files.first())
+                .is_some_and(|source_file| source_file.is_declaration_file);
+            tsz_common::perf_counters::record_cross_arena_symbol_miss(
+                miss_source,
+                self.cross_arena_symbol_miss_kind(sym_id),
+                miss_target_is_declaration_file,
+            );
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
