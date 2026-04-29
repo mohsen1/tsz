@@ -495,5 +495,9 @@ path = "tests/generic_inference_ordering_tests.rs"
 name = "jsx_overload_anchor_literal_attr_tests"
 path = "tests/jsx_overload_anchor_literal_attr_tests.rs"
 
+[[test]]
+name = "jsdoc_param_return_ts2314_tests"
+path = "tests/jsdoc_param_return_ts2314_tests.rs"
+
 [lints]
 workspace = true
