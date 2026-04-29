@@ -10,6 +10,39 @@ fn get_codes_with_options(source: &str, options: CheckerOptions) -> Vec<u32> {
 }
 
 #[test]
+fn method_only_generic_variance_is_bivariant() {
+    let source = r#"
+interface Animal { animal: void }
+interface Dog extends Animal { dog: void }
+
+interface Comparer<T> {
+    compare(a: T, b: T): number;
+}
+
+declare let animalComparer: Comparer<Animal>;
+declare let dogComparer: Comparer<Dog>;
+
+animalComparer = dogComparer;
+dogComparer = animalComparer;
+"#;
+
+    let codes = get_codes_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_function_types: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !codes.contains(&2322),
+        "method-only generic comparer assignments should be bivariant, got {codes:?}"
+    );
+}
+
+#[test]
 fn nested_call_signature_assignability_does_not_stack_overflow() {
     let source = r#"
 class Base { foo: string; }

@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-strict-function-types-fingerprint`
-- **PR**: TBD
+- **PR**: #1724
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance / fingerprint-only TS2322 TS2328)
 
@@ -17,10 +17,12 @@ while keeping assignability routed through the shared checker/solver boundary.
 
 ## Files Touched
 
+- `crates/tsz-solver/src/relations/variance.rs`
+- `crates/tsz-checker/tests/signature_assignability_regression_tests.rs`
 - `docs/plan/claims/fix-checker-strict-function-types-fingerprint.md`
-- Implementation files TBD after verbose conformance inspection.
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "strictFunctionTypesErrors" --verbose`
-- Planned: targeted owning-crate unit tests via `cargo nextest run`
+- `cargo check -p tsz-solver` (passes)
+- `cargo nextest run -p tsz-checker --test signature_assignability_regression_tests method_only_generic_variance_is_bivariant` (passes)
+- `./scripts/conformance/conformance.sh run --filter "strictFunctionTypesErrors" --verbose` (still fingerprint-only; the incorrect `Comparer1<Animal>` / `Comparer1<Dog>` extra TS2322 is fixed, but nested `Func<Func<...>>` and extracted-method callback fingerprints remain)
