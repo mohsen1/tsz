@@ -118,6 +118,10 @@ mod incremental_parse_interner_tests;
 #[path = "../../tests/node_modifiers_tests.rs"]
 mod node_modifiers_tests;
 
+#[cfg(test)]
+#[path = "../../tests/this_param_modifier_tests.rs"]
+mod this_param_modifier_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
