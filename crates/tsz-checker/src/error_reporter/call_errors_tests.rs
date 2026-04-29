@@ -1152,6 +1152,102 @@ let g5 = pipe(() => true, b => 42);
 }
 
 #[test]
+fn contextual_generic_callback_preserves_inner_call_argument_mismatch() {
+    let diagnostics = check_source(
+        r#"
+type Values<T> = T[keyof T];
+type EventObject = { type: string };
+
+interface ActorLogic<TEvent extends EventObject> {
+  transition: (ev: TEvent) => unknown;
+}
+
+type UnknownActorLogic = ActorLogic<never>;
+
+interface ProvidedActor {
+  src: string;
+  logic: UnknownActorLogic;
+}
+
+interface ActionFunction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface AssignAction<TActor extends ProvidedActor> {
+  (): void;
+  _out_TActor?: TActor;
+}
+
+interface MachineConfig<TActor extends ProvidedActor> {
+  entry?: ActionFunction<TActor>;
+}
+
+declare function assign<TActor extends ProvidedActor>(
+  _: (spawn: (actor: TActor["src"]) => void) => {},
+): AssignAction<TActor>;
+
+type ToProvidedActor<TActors extends Record<string, UnknownActorLogic>> =
+  Values<{
+    [K in keyof TActors & string]: {
+      src: K;
+      logic: TActors[K];
+    };
+  }>;
+
+declare function setup<
+  TActors extends Record<string, UnknownActorLogic> = {},
+>(implementations?: {
+  actors?: { [K in keyof TActors]: TActors[K] };
+}): {
+  createMachine: <
+    const TConfig extends MachineConfig<ToProvidedActor<TActors>>,
+  >(
+    config: TConfig,
+  ) => void;
+};
+
+declare const counterLogic: ActorLogic<{ type: "INCREMENT" }>;
+
+setup({
+  actors: { counter: counterLogic },
+}).createMachine({
+  entry: assign((spawn) => {
+    spawn("counter");
+    spawn("alarm");
+    return {};
+  }),
+});
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            exact_optional_property_types: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected exactly one TS2345 for the inner spawn call, got: {diagnostics:#?}"
+    );
+    let message = &ts2345[0].message_text;
+    assert!(
+        message.contains(
+            "Argument of type '\"alarm\"' is not assignable to parameter of type '\"counter\"'."
+        ),
+        "expected inner literal mismatch, got: {message}"
+    );
+    assert!(
+        !message.contains("(spawn:"),
+        "outer callback mismatch must be suppressed when the inner call explains the failure, got: {message}"
+    );
+}
+
+#[test]
 fn ts2322_skips_arrow_body_elaboration_for_object_property_in_generic_call() {
     // Guard against the indirect-caller variant of the unresolved-holes regression:
     // when the arrow appears as a property value inside an object literal that is
