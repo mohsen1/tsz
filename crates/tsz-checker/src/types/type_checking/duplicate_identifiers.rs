@@ -1873,6 +1873,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_block_scoped_function_outer_conflicts();
+        self.check_global_augmentation_const_enum_rebind_diagnostics();
         self.check_cross_file_global_augmentation_member_conflicts();
         self.check_cross_file_module_augmentation_member_conflicts();
     }

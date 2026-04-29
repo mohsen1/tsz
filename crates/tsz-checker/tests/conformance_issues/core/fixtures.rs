@@ -369,6 +369,30 @@ enum e5a { One }
 }
 
 #[test]
+fn test_declare_global_const_enum_reports_rebound_member_diagnostics() {
+    let source = r#"
+export declare const enum E { A, B, C }
+declare global {
+  const enum F { A, B, C }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2300_count = diagnostics.iter().filter(|(code, _)| *code == 2300).count();
+
+    assert_eq!(
+        ts2300_count, 3,
+        "Expected duplicate-identifier diagnostics on all declare-global const enum members. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2432 && message.contains("only one declaration can omit an initializer")
+        }),
+        "Expected TS2432 on the first declare-global const enum member. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_constructor_parameters_rest_argument_contextually_types_object_literal_methods() {
     if !lib_files_available() {
         return;

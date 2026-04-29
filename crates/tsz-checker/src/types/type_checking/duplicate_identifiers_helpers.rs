@@ -11,8 +11,116 @@ use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn check_global_augmentation_const_enum_rebind_diagnostics(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !self.ctx.binder.is_external_module() {
+            return;
+        }
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let statements: Vec<NodeIndex> = source_file.statements.nodes.clone();
+
+        for stmt_idx in statements {
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            if !stmt_node.is_global_augmentation()
+                && self
+                    .ctx
+                    .arena
+                    .get_module(stmt_node)
+                    .and_then(|module| self.ctx.arena.get(module.name))
+                    .and_then(|name| self.ctx.arena.get_identifier(name))
+                    .is_none_or(|ident| ident.escaped_text != "global")
+            {
+                continue;
+            }
+
+            let Some(module) = self.ctx.arena.get_module(stmt_node) else {
+                continue;
+            };
+            let Some(body_node) = self.ctx.arena.get(module.body) else {
+                continue;
+            };
+            if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+                continue;
+            }
+            let Some(block) = self.ctx.arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(statements) = block.statements.as_ref() else {
+                continue;
+            };
+            let inner_statements: Vec<NodeIndex> = statements.nodes.clone();
+
+            for enum_decl_idx in inner_statements {
+                let Some(enum_node) = self.ctx.arena.get(enum_decl_idx) else {
+                    continue;
+                };
+                if enum_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                    continue;
+                }
+                let Some(enum_decl) = self.ctx.arena.get_enum(enum_node) else {
+                    continue;
+                };
+                if !self
+                    .ctx
+                    .arena
+                    .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+                {
+                    continue;
+                }
+
+                for &member_idx in &enum_decl.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
+                        continue;
+                    };
+                    let Some(member_name) = self.ctx.arena.get(member.name).and_then(|name_node| {
+                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            Some(ident.escaped_text.clone())
+                        } else {
+                            self.ctx
+                                .arena
+                                .get_literal(name_node)
+                                .map(|literal| literal.text.clone())
+                        }
+                    }) else {
+                        continue;
+                    };
+                    self.error_at_node_msg(
+                        member.name,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        &[&member_name],
+                    );
+                }
+
+                if let Some(&first_member_idx) = enum_decl.members.nodes.first()
+                    && let Some(first_member_node) = self.ctx.arena.get(first_member_idx)
+                    && let Some(first_member) = self.ctx.arena.get_enum_member(first_member_node)
+                    && first_member.initializer.is_none()
+                {
+                    self.error_at_node(
+                        first_member.name,
+                        diagnostic_messages::IN_AN_ENUM_WITH_MULTIPLE_DECLARATIONS_ONLY_ONE_DECLARATION_CAN_OMIT_AN_INITIALIZ,
+                        diagnostic_codes::IN_AN_ENUM_WITH_MULTIPLE_DECLARATIONS_ONLY_ONE_DECLARATION_CAN_OMIT_AN_INITIALIZ,
+                    );
+                }
+            }
+        }
+    }
+
     pub(super) fn extend_duplicate_symbol_ids_with_local_augmentation_decls(
         &self,
         symbol_ids: &mut FxHashSet<tsz_binder::SymbolId>,
