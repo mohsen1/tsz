@@ -2116,7 +2116,7 @@ pub fn merge_bind_results(results: Vec<BindResult>) -> MergedProgram {
     let refs: Vec<&BindResult> = results.iter().collect();
     let program = merge_bind_results_ref(&refs);
     drop(refs);
-    drop_owned_bind_results_after_merge(results);
+    drop(results);
     program
 }
 
@@ -3591,29 +3591,6 @@ fn extract_skeletons_for_merge_large(results: &[&BindResult]) -> Vec<FileSkeleto
 #[cfg(target_arch = "wasm32")]
 fn extract_skeletons_for_merge_large(results: &[&BindResult]) -> Vec<FileSkeleton> {
     results.iter().map(|r| extract_skeleton(r)).collect()
-}
-
-fn drop_owned_bind_results_after_merge(results: Vec<BindResult>) {
-    const ASYNC_DROP_FILE_THRESHOLD: usize = 128;
-
-    if results.len() < ASYNC_DROP_FILE_THRESHOLD {
-        drop(results);
-        return;
-    }
-
-    drop_owned_bind_results_after_merge_large(results);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn drop_owned_bind_results_after_merge_large(results: Vec<BindResult>) {
-    let _ = std::thread::Builder::new()
-        .name("tsz-bind-result-drop".to_string())
-        .spawn(move || drop(results));
-}
-
-#[cfg(target_arch = "wasm32")]
-fn drop_owned_bind_results_after_merge_large(results: Vec<BindResult>) {
-    drop(results);
 }
 
 /// Full pipeline: Parse → Bind (parallel) → Merge (sequential)
