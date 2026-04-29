@@ -2340,6 +2340,36 @@ impl<'a> CheckerState<'a> {
             // Deferral logic removed to fix missing TS2345 errors
         }
 
+        if let CallResult::Success(return_type) = result {
+            for (index, &actual) in arg_types.iter().enumerate() {
+                let expected = finalized_contextual_param_types
+                    .as_ref()
+                    .and_then(|types| types.get(index).copied().flatten())
+                    .or_else(|| {
+                        ContextualTypeContext::with_expected_and_options(
+                            self.ctx.types,
+                            callee_type_for_call,
+                            self.ctx.compiler_options.no_implicit_any,
+                        )
+                        .get_parameter_type_for_call(index, args.len())
+                    });
+                if let Some(expected) = expected
+                    && self
+                        .checker_only_assignability_failure_reason(actual, expected)
+                        .is_some()
+                {
+                    result = CallResult::ArgumentTypeMismatch {
+                        index,
+                        expected,
+                        actual,
+                        fallback_return: return_type,
+                    };
+                    allow_contextual_mismatch_deferral = false;
+                    break;
+                }
+            }
+        }
+
         let call_context = CallResultContext {
             callee_expr: call.expression,
             call_idx: idx,

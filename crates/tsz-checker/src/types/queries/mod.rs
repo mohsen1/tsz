@@ -17,4 +17,5 @@ pub(crate) mod core;
 pub(crate) mod lib;
 pub(crate) mod lib_prime;
 pub(crate) mod lib_resolution;
+pub(crate) mod lib_scoped_heritage;
 pub(crate) mod type_only;

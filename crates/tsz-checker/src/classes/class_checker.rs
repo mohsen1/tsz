@@ -1,5 +1,7 @@
 //! Class/interface declaration checking (inheritance, implements, abstract members).
 
+use std::borrow::Cow;
+
 use crate::classes_domain::class_summary::ClassChainSummary;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
@@ -48,6 +50,18 @@ fn needs_property_name_quotes(name: &str) -> bool {
             !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
         }
         _ => true,
+    }
+}
+
+fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
+    if let Some(type_arg) = name
+        .strip_prefix("Iterator<")
+        .and_then(|rest| rest.strip_suffix('>'))
+        && !type_arg.contains(',')
+    {
+        Cow::Owned(format!("Iterator<{type_arg}, undefined, unknown>"))
+    } else {
+        Cow::Borrowed(name)
     }
 }
 
@@ -491,10 +505,12 @@ impl<'a> CheckerState<'a> {
                                 let member_type_str = self.format_type(member_type);
                                 let base_type_str = self.format_type(base_type);
                                 let display_name = format_property_name_for_diagnostic(&info.name);
+                                let base_class_display_name =
+                                    base_class_name_for_diagnostic(base_class_name);
                                 self.error_at_node(
                                     info.name_idx,
                                     &format!(
-                                        "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
+                                        "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
                                     ),
                                     diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                                 );
@@ -1325,7 +1341,10 @@ impl<'a> CheckerState<'a> {
                     // Use intersection display name if available (preserves "I1 & I2"
                     // instead of showing merged "{ m1: ...; m2: ... }")
                     let type_base_name = self
-                        .intersection_instance_display_name(h_expr_idx, type_arguments)
+                        .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
+                        .or_else(|| {
+                            self.intersection_instance_display_name(h_expr_idx, type_arguments)
+                        })
                         .or_else(|| {
                             heritage_sym_id.and_then(|sym_id| {
                                 self.format_symbol_reference_with_type_arguments(
@@ -1397,7 +1416,10 @@ impl<'a> CheckerState<'a> {
                 {
                     let heritage_sym_id = self.resolve_heritage_symbol(h_expr_idx);
                     let type_base_name = self
-                        .intersection_instance_display_name(h_expr_idx, type_arguments)
+                        .format_heritage_class_symbol_reference(heritage_sym_id, type_arguments)
+                        .or_else(|| {
+                            self.intersection_instance_display_name(h_expr_idx, type_arguments)
+                        })
                         .or_else(|| {
                             heritage_sym_id.and_then(|sym_id| {
                                 self.format_symbol_reference_with_type_arguments(
@@ -1453,12 +1475,22 @@ impl<'a> CheckerState<'a> {
 
         let (base_type_params, base_type_param_updates) =
             self.push_type_parameters(&base_class.type_parameters);
+        let base_name_without_args = base_class_name
+            .split_once('<')
+            .map_or(base_class_name.as_str(), |(name, _)| name)
+            .to_string();
         if type_args.len() < base_type_params.len() {
-            for param in base_type_params.iter().skip(type_args.len()) {
-                let fallback = param
-                    .default
-                    .or(param.constraint)
-                    .unwrap_or(TypeId::UNKNOWN);
+            for (param_index, param) in base_type_params.iter().enumerate().skip(type_args.len()) {
+                let fallback = if base_name_without_args == "Iterator" && param_index == 1 {
+                    TypeId::UNDEFINED
+                } else if base_name_without_args == "Iterator" && param_index == 2 {
+                    TypeId::UNKNOWN
+                } else {
+                    param
+                        .default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN)
+                };
                 type_args.push(fallback);
             }
         }
@@ -1476,7 +1508,19 @@ impl<'a> CheckerState<'a> {
             if let Some(lt_pos) = base_class_name.find('<') {
                 base_class_name.truncate(lt_pos);
             }
-            let arg_strs: Vec<String> = type_args.iter().map(|&t| self.format_type(t)).collect();
+            let mut display_type_args = type_args.clone();
+            if base_name_without_args == "Iterator" {
+                if display_type_args.len() < 2 {
+                    display_type_args.push(TypeId::UNDEFINED);
+                }
+                if display_type_args.len() < 3 {
+                    display_type_args.push(TypeId::UNKNOWN);
+                }
+            }
+            let arg_strs: Vec<String> = display_type_args
+                .iter()
+                .map(|&t| self.format_type(t))
+                .collect();
             base_class_name.push('<');
             base_class_name.push_str(&arg_strs.join(", "));
             base_class_name.push('>');
@@ -1742,10 +1786,12 @@ impl<'a> CheckerState<'a> {
                         // TS2416: Private member type incompatibility
                         self.pop_type_parameters(base_scope.1);
                         let display_name = format_property_name_for_diagnostic(&member_name);
+                        let base_class_display_name =
+                            base_class_name_for_diagnostic(&base_class_name);
                         self.error_at_node(
                             member_name_idx,
                             &format!(
-                                "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
+                                "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
                             ),
                             diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                         );
@@ -1966,10 +2012,11 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // TS2416: Instance member incompatibility
                     let display_name = format_property_name_for_diagnostic(&member_name);
+                    let base_class_display_name = base_class_name_for_diagnostic(&base_class_name);
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
+                            "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
@@ -2247,10 +2294,11 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     let display_name = format_property_name_for_diagnostic(&info.name);
+                    let base_class_display_name = base_class_name_for_diagnostic(base_class_name);
                     self.error_at_node(
                         info.name_idx,
                         &format!(
-                            "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
+                            "Property '{display_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_display_name}'."
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );

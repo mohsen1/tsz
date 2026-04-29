@@ -30,8 +30,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
 
         let iterator_mismatch = |checker: &mut Self, is_async: bool| {
-            let source_info = crate::operations::get_iterator_info(query_db, source_type, is_async);
-            let target_info = crate::operations::get_iterator_info(query_db, target_type, is_async);
+            let source_eval = checker.evaluate_type(source_type);
+            let target_eval = checker.evaluate_type(target_type);
+            let source_info = crate::operations::get_iterator_info(query_db, source_eval, is_async)
+                .or_else(|| crate::operations::get_iterator_info(query_db, source_type, is_async));
+            let target_info = crate::operations::get_iterator_info(query_db, target_eval, is_async)
+                .or_else(|| crate::operations::get_iterator_info(query_db, target_type, is_async));
             source_info
                 .zip(target_info)
                 .is_some_and(|(source, target)| {
