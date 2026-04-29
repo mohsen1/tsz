@@ -475,5 +475,9 @@ path = "tests/elaboration_wrapper_init_tests.rs"
 name = "jsx_excess_attr_with_spread_source_display_tests"
 path = "tests/jsx_excess_attr_with_spread_source_display_tests.rs"
 
+[[test]]
+name = "ts2352_paren_alias_display_tests"
+path = "tests/ts2352_paren_alias_display_tests.rs"
+
 [lints]
 workspace = true

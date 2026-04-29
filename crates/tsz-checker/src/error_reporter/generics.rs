@@ -276,9 +276,22 @@ impl<'a> CheckerState<'a> {
             type_id
         };
         let evaluated = self.evaluate_type_with_env(type_id);
-        if let Some(alias_origin) = self.ctx.types.get_display_alias(evaluated)
-            && let Some(app) =
-                crate::query_boundaries::common::type_application(self.ctx.types, alias_origin)
+        // Locate an Application surface for the alias-name display. Prefer the
+        // input type when it is itself an Application (e.g.
+        // `null as A<{x:number}>` carries `Application(A, [{x:number}])`
+        // straight through here). Fall back to the evaluated type's
+        // `display_alias` for the cases where the input has already been
+        // reduced.
+        let alias_application =
+            crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+                .map(|app| (type_id, app))
+                .or_else(|| {
+                    self.ctx.types.get_display_alias(evaluated).and_then(|ao| {
+                        crate::query_boundaries::common::type_application(self.ctx.types, ao)
+                            .map(|app| (ao, app))
+                    })
+                });
+        if let Some((_alias_origin, app)) = alias_application
             && let Some(def_id) =
                 crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
             && let Some(def) = self.ctx.definition_store.get(def_id)
@@ -293,6 +306,33 @@ impl<'a> CheckerState<'a> {
             {
                 return display;
             }
+            // Fallback: when the constructor-call special-case doesn't apply,
+            // still preserve the alias surface by rendering the original
+            // application as `<alias_name><<arg1>, ...>` directly, rather
+            // than letting the formatter expand to the alias's evaluated body.
+            //
+            // This matches tsc, whose printer keeps `aliasSymbol` /
+            // `aliasTypeArguments` on the resulting type and prefers them in
+            // diagnostic display. Without this fallback, tsz expanded
+            // `null as A<{x:number}>` (where `A<T> = (T & U)`) to the bare
+            // intersection because `evaluate_application` strips the
+            // `Application` wrapper from the formatter's input.
+            //
+            // We can't simply call `format_type_for_assignability_message`
+            // on the application: the formatter chooses between alias-name
+            // display and evaluated-body display based on heuristics that
+            // happen to fall through to the body for this shape, so we
+            // construct the alias-name display explicitly.
+            let alias_name = self.ctx.types.resolve_atom(def.name);
+            if app.args.is_empty() {
+                return alias_name;
+            }
+            let arg_displays: Vec<String> = app
+                .args
+                .iter()
+                .map(|&arg| self.format_type_for_assignability_message(arg))
+                .collect();
+            return format!("{}<{}>", alias_name, arg_displays.join(", "));
         }
         self.format_type_for_assignability_message(evaluated)
     }
