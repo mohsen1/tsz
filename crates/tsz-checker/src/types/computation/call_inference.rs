@@ -210,12 +210,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let Some(param_type) = shape.params.get(i).map(|p| p.type_id).or_else(|| {
-                let last = shape.params.last()?;
-                last.rest.then_some(last.type_id)
-            }) else {
+            let Some(param) = shape.params.get(i) else {
                 continue;
             };
+            if param.rest || arg_type.is_any_unknown_or_error() {
+                continue;
+            }
+            let param_type = param.type_id;
             let Some(tp_info) = common::type_param_info(self.ctx.types, param_type) else {
                 continue;
             };
