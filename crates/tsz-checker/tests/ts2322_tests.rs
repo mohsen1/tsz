@@ -4275,6 +4275,29 @@ u2.email = e;
     );
 }
 
+#[test]
+fn exact_optional_property_object_message_preserves_optional_target_surface() {
+    let source = r#"
+const x: { foo?: number } = { foo: undefined };
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code
+                == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD
+                && message.contains("type '{ foo?: number; }'")
+                && !message.contains("foo?: number | undefined")
+        }),
+        "Expected TS2375 target display to omit synthetic undefined, got: {diagnostics:#?}"
+    );
+}
+
 /// Regression test for `widen_fresh_object_literal_properties_for_display`:
 /// the helper must only widen literal property types when the outer object
 /// is itself a *fresh* object literal. Annotated types like `{ a: "x" }`
