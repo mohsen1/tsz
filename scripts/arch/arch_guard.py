@@ -418,6 +418,7 @@ LINE_LIMIT_CHECKS = [
             # Recently grew past 2000 lines (CI lint blocker on origin/main)
             "crates/tsz-checker/src/context/core.rs",
             "crates/tsz-checker/src/flow/control_flow/condition_narrowing.rs",
+            "crates/tsz-checker/src/declarations/import/core/import_members.rs",
             # Pre-existing oversized files captured as the current ratchet baseline.
             "crates/tsz-checker/src/checkers/generic_checker.rs",
             "crates/tsz-checker/src/types/property_access_helpers.rs",
