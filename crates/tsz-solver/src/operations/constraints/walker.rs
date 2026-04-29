@@ -1157,7 +1157,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // (which is reserved for direct value arguments). Cap at ReturnType so
                     // that a direct-arg inference of U from `y: U` always wins over a
                     // callback's return type. Matches tsc's behaviour.
-                    let return_priority = priority.max(crate::types::InferencePriority::ReturnType);
+                    //
+                    // Skip the cap for construct signatures: when matching a generic
+                    // construct signature against an outer construct callback type
+                    // (e.g. `cb: new(a: T) => U`), the source's return type is often
+                    // erased to `unknown` before we get here, and lowering its
+                    // priority below an outer direct-arg pin causes a spurious
+                    // mismatch on the constructor's apparent type.
+                    let return_priority = if t_fn.is_constructor || s_fn.is_constructor {
+                        priority
+                    } else {
+                        priority.max(crate::types::InferencePriority::ReturnType)
+                    };
                     debug!(
                         source_return_id = s_fn.return_type.0,
                         source_return_key = ?self.interner.lookup(s_fn.return_type),
@@ -1327,7 +1338,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // This handles chains like: compose(unbox, unlist) where
                     // unlist's U is related to B through Array<U> = B, and C = U.
                     // Without unification, U gets no direct candidates.
-                    let return_priority = priority.max(crate::types::InferencePriority::ReturnType);
+                    //
+                    // Skip the cap for construct signatures (see non-generic branch
+                    // above for rationale).
+                    let return_priority = if t_fn.is_constructor || s_fn.is_constructor {
+                        priority
+                    } else {
+                        priority.max(crate::types::InferencePriority::ReturnType)
+                    };
                     if let (Some(&s_var), Some(&t_var)) = (
                         combined_var_map.get(&instantiated_return),
                         combined_var_map.get(&t_fn.return_type),
