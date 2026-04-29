@@ -378,11 +378,18 @@ impl TypeInterner {
             }
         }
 
-        // Unknown and Any widening: if any part is unknown or any, the whole type is string
-        // Note: string intrinsic does NOT widen (it's used for pattern matching)
+        // Bare `${unknown}` and `${any}` collapse to string. Do not widen
+        // prefixed/suffixed `any` patterns like `a${any}`: the fixed text
+        // remains part of the assignability contract.
+        if let [TemplateSpan::Type(type_id)] = spans.as_slice()
+            && (*type_id == TypeId::UNKNOWN || *type_id == TypeId::ANY)
+        {
+            return TypeId::STRING;
+        }
+
         for span in &spans {
             if let TemplateSpan::Type(type_id) = span
-                && (*type_id == TypeId::UNKNOWN || *type_id == TypeId::ANY)
+                && *type_id == TypeId::UNKNOWN
             {
                 return TypeId::STRING;
             }

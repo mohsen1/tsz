@@ -12,7 +12,8 @@ use crate::types::{
     IntrinsicKind, LiteralValue, TemplateLiteralId, TemplateSpan, TypeId, TypeListId,
 };
 use crate::visitor::{
-    intrinsic_kind, literal_value, string_intrinsic_components, template_literal_id, union_list_id,
+    intersection_list_id, intrinsic_kind, literal_value, string_intrinsic_components,
+    template_literal_id, union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -162,7 +163,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 };
                 if let Some(kind) = intrinsic_kind(self.interner, type_id) {
                     return match kind {
-                        IntrinsicKind::String => {
+                        IntrinsicKind::Any | IntrinsicKind::Unknown | IntrinsicKind::String => {
                             self.match_string_wildcard(remaining, spans, span_idx)
                         }
                         IntrinsicKind::Number => {
@@ -256,6 +257,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return false;
                 }
 
+                if intersection_list_id(self.interner, type_id).is_some() {
+                    return self
+                        .match_constrained_type_wildcard(remaining, spans, span_idx, type_id);
+                }
+
                 match self.apparent_primitive_kind_for_type(type_id) {
                     Some(IntrinsicKind::String) => {
                         self.match_string_wildcard(remaining, spans, span_idx)
@@ -270,6 +276,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             }
         }
+    }
+
+    /// Match a template hole whose placeholder is itself a constrained string
+    /// type, such as an intersection of template literal patterns. The hole
+    /// may consume any prefix that is assignable to that placeholder, then the
+    /// rest of the template must still match.
+    fn match_constrained_type_wildcard(
+        &mut self,
+        remaining: &str,
+        spans: &[TemplateSpan],
+        span_idx: usize,
+        type_id: TypeId,
+    ) -> bool {
+        for len in template_prefix_lengths(remaining).into_iter().rev() {
+            let literal = self.interner.literal_string(&remaining[..len]);
+            if self.check_subtype(literal, type_id).is_true()
+                && self.match_template_literal_recursive(&remaining[len..], spans, span_idx + 1)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Match a string wildcard using backtracking.
@@ -1136,6 +1164,12 @@ pub(crate) fn find_number_length(s: &str) -> usize {
     }
 
     i
+}
+
+fn template_prefix_lengths(s: &str) -> Vec<usize> {
+    let mut lengths: Vec<usize> = s.char_indices().map(|(idx, _)| idx).collect();
+    lengths.push(s.len());
+    lengths
 }
 
 /// Check if a string is a valid number representation.
