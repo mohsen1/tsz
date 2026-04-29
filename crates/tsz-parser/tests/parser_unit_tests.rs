@@ -3327,3 +3327,44 @@ fn export_star_as_namespace() {
     let stmt_node = arena.get(stmt_idx).expect("stmt");
     assert_eq!(stmt_node.kind, syntax_kind_ext::EXPORT_DECLARATION);
 }
+
+#[test]
+fn private_identifier_optional_chain_continuations_report_ts18030() {
+    let source = r"
+class A {
+    a?: A
+    #b?: A;
+    getA(): A {
+        return new A();
+    }
+    constructor() {
+        this?.#b;
+        this?.a.#b;
+        this?.getA().#b;
+    }
+}
+";
+    let (parser, _root) = parse_source(source);
+    let diagnostics: Vec<_> = parser
+        .get_diagnostics()
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::AN_OPTIONAL_CHAIN_CANNOT_CONTAIN_PRIVATE_IDENTIFIERS
+        })
+        .collect();
+
+    let expected_starts = [
+        source.find("this?.#b").expect("first optional access") + "this?.".len(),
+        source.find("this?.a.#b").expect("property continuation") + "this?.a.".len(),
+        source.find("this?.getA().#b").expect("call continuation") + "this?.getA().".len(),
+    ]
+    .map(|pos| pos as u32);
+    let actual_starts: Vec<u32> = diagnostics.iter().map(|d| d.start).collect();
+
+    assert_eq!(
+        actual_starts,
+        expected_starts,
+        "optional chains containing private identifiers should report TS18030 at every private name; all diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+}
