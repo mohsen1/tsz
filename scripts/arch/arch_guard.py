@@ -426,6 +426,7 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/computation/object_literal.rs",
             "crates/tsz-checker/src/classes/class_implements_checker.rs",
             "crates/tsz-checker/src/declarations/import/core.rs",
+            "crates/tsz-checker/src/declarations/import/core/import_members.rs",
             "crates/tsz-checker/src/state/variable_checking/core.rs",
             "crates/tsz-checker/src/state/variable_checking/variable_helpers.rs",
             "crates/tsz-checker/src/state/type_analysis/computed_commonjs.rs",
