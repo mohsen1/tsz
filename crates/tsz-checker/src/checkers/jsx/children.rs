@@ -588,6 +588,45 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<TypeId> {
+        // For named Lazy type aliases, tsc preserves alias names in TS2322 messages.
+        // "ReactChild" stays as "ReactChild" instead of expanding to its constituents.
+        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+        {
+            let eval = self.evaluate_type_with_env(type_id);
+            let eval = self.resolve_type_for_property_access(eval);
+            if matches!(eval, TypeId::NULL | TypeId::UNDEFINED) {
+                return None;
+            }
+            if self.is_jsx_empty_object_fragment_type(eval) {
+                return None;
+            }
+            if array_element_type(self.ctx.types, eval).is_some() {
+                // Direct array alias (e.g. ReactNodeArray) — fall through to normal processing
+            } else if let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, eval)
+            {
+                let has_array_or_empty = members.iter().any(|&m| {
+                    array_element_type(self.ctx.types, m).is_some()
+                        || self.is_jsx_empty_object_fragment_type(m)
+                });
+                if !has_array_or_empty {
+                    // Leaf alias (e.g. ReactChild): no arrays or empty-object fragments.
+                    // Return original Lazy TypeId so formatter displays the alias name.
+                    return Some(type_id);
+                }
+                // Non-leaf Lazy (e.g. ReactNode, ReactFragment): use the raw definition body
+                // to preserve nested Lazy aliases in the element type (e.g. ReactChild
+                // inside Array<ReactChild | any[] | boolean>).
+                if let Some(raw_body) = self.ctx.definition_store.get_body(def_id) {
+                    return self.jsx_element_type_from_raw(raw_body);
+                }
+                // Fallback: fall through to normal processing
+            } else {
+                // Non-union, non-array evaluated form — preserve alias.
+                return Some(type_id);
+            }
+        }
+
         let resolved = self.select_jsx_multiple_children_target_type(type_id);
         let resolved = self.resolve_type_for_property_access(resolved);
         let resolved = self.evaluate_type_with_env(resolved);
@@ -641,6 +680,63 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(resolved)
+    }
+
+    /// Process a raw (unevaluated) TypeId to extract JSX child element types without
+    /// expanding Lazy type aliases. Called for non-leaf Lazy alias bodies so that
+    /// nested aliases like `ReactChild` are preserved in TS2322 messages.
+    fn jsx_element_type_from_raw(&mut self, type_id: TypeId) -> Option<TypeId> {
+        // Lazy: re-enter main function (leaf check + raw-body path)
+        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).is_some() {
+            return self.jsx_multiple_children_element_type_without_empty_object(type_id);
+        }
+
+        // Generic Array application Application<Array, [T]>: extract raw T.
+        // type_allows_multiple_children evaluates internally to detect array-ness.
+        if let Some(app) =
+            crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+        {
+            if self.type_allows_multiple_children(type_id) && !app.args.is_empty() {
+                let raw_elem = app.args[0];
+                return Some(self.refine_jsx_callable_contextual_type(raw_elem));
+            }
+            return None;
+        }
+
+        // Direct Array(T)
+        if let Some(elem) = array_element_type(self.ctx.types, type_id) {
+            return Some(self.refine_jsx_callable_contextual_type(elem));
+        }
+
+        // Union: process each raw member using this function (avoids evaluating members)
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            let mut element_types = Vec::new();
+            for member in members {
+                if let Some(elem) = self.jsx_element_type_from_raw(member) {
+                    element_types.push(elem);
+                } else if !self.is_jsx_empty_object_fragment_type(member)
+                    && !matches!(member, TypeId::NULL | TypeId::UNDEFINED)
+                {
+                    element_types.push(member);
+                }
+            }
+            return match element_types.as_slice() {
+                [] => None,
+                [e] => Some(*e),
+                _ => Some(self.ctx.types.factory().union(element_types)),
+            };
+        }
+
+        if self.is_jsx_empty_object_fragment_type(type_id) {
+            return None;
+        }
+        if matches!(type_id, TypeId::NULL | TypeId::UNDEFINED) {
+            return None;
+        }
+
+        Some(type_id)
     }
 
     fn is_jsx_empty_object_fragment_type(&self, type_id: TypeId) -> bool {

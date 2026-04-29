@@ -4479,6 +4479,63 @@ let err =
 }
 
 #[test]
+fn jsx_react_multiple_render_prop_children_ts2322_message_preserves_react_child_alias() {
+    // tsc shows "boolean | any[] | ReactChild" — the ReactChild alias must NOT be expanded
+    // to its constituent "string | number | Element" in the TS2322 target-type message.
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+declare namespace React {{
+    type ReactText = string | number;
+    interface ReactElement<P> {{ props: P; }}
+    type ReactChild = ReactElement<any> | ReactText;
+    interface ReactNodeArray {{
+        [n: number]: ReactChild | ReactNodeArray | boolean;
+    }}
+    type ReactFragment = {{}} | ReactNodeArray;
+    type ReactNode = ReactChild | ReactFragment | boolean;
+    class Component<P, S> {{
+        props: P & {{ children?: ReactNode }};
+    }}
+}}
+
+interface User {{
+    name: string;
+}}
+interface Prop {{
+    children: (user: User) => JSX.Element;
+}}
+class FetchUser extends React.Component<Prop, any> {{}}
+let err =
+    <FetchUser>
+        {{ user => <div /> }}
+        {{ user => <div /> }}
+    </FetchUser>;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 for function children not assignable to ReactNode child type, got: {diags:?}"
+    );
+    for (_, msg) in &ts2322 {
+        assert!(
+            msg.contains("ReactChild"),
+            "TS2322 target type message should preserve the ReactChild alias, \
+             not expand it to constituent types. Got: {msg:?}"
+        );
+        assert!(
+            !msg.contains("ReactElement") && !msg.contains("ReactText"),
+            "TS2322 message should not expand ReactChild to ReactElement/ReactText. Got: {msg:?}"
+        );
+    }
+}
+
+#[test]
 fn jsx_array_children_text_child_emits_ts2745_not_ts2747() {
     let source = format!(
         r#"

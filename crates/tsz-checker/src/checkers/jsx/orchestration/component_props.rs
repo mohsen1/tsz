@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
         }
 
         match callable_members.len() {
-            0 => resolved,
+            0 => type_id,
             1 => callable_members[0],
             _ => self.ctx.types.factory().union(callable_members),
         }
