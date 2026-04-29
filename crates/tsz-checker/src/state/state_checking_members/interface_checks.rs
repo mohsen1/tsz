@@ -549,7 +549,7 @@ impl<'a> CheckerState<'a> {
             let sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
             let def_id = sym_id.and_then(|sid| self.ctx.get_existing_def_id(sid));
             let def_variances = def_id.and_then(|did| {
-                crate::query_boundaries::variance::compute_type_param_variances_with_resolver(
+                crate::query_boundaries::variance::compute_actual_type_param_variances_with_resolver(
                     db, resolver, did,
                 )
             });
