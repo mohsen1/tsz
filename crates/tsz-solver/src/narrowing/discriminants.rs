@@ -451,9 +451,9 @@ impl<'a> NarrowingContext<'a> {
                 .then_some(raw_prop_type)
                 .and_then(|prop_type| construct_return_type_for_type(self.db, prop_type))
                 .unwrap_or(raw_prop_type);
-            let should_keep = if prop_type == literal_value {
-                keep_matching
-            } else if crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type) {
+            let should_keep = if prop_type == literal_value
+                || crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type)
+            {
                 keep_matching
             } else if keep_matching {
                 // true branch: keep members where literal <: property_type
