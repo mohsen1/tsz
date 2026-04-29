@@ -388,6 +388,19 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
+            if !self.is_identifier_in_type_position(idx)
+                && self.alias_resolves_to_uninstantiated_namespace(sym_id)
+            {
+                self.report_wrong_meaning(
+                    name,
+                    idx,
+                    sym_id,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
+                return TypeId::ERROR;
+            }
+
             if self.alias_resolves_to_type_only(sym_id) {
                 // Duplicate import-equals aliases may merge type-only and value targets
                 // under one symbol. If a value import binding with the same local name
@@ -452,18 +465,6 @@ impl<'a> CheckerState<'a> {
                 self.error_type_only_value_at(name, idx);
             }
 
-            if !self.is_identifier_in_type_position(idx)
-                && self.alias_resolves_to_uninstantiated_namespace(sym_id)
-            {
-                self.report_wrong_meaning(
-                    name,
-                    idx,
-                    sym_id,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                );
-                return TypeId::ERROR;
-            }
             // Check symbol flags to detect type-only usage.
             // First try the main binder (fast path for local symbols).
             let (flags, value_decl, symbol_declarations, is_umd_export) = {
