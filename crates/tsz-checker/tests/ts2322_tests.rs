@@ -3047,12 +3047,12 @@ fn test_ts2322_assignment_destructuring_defaults_report_undefined_mismatches() {
         .map(|(_, message)| message.as_str())
         .collect();
 
-    // Assignment defaults are checked at the initializer sites, plus the final assignment
-    // observes the optional property type before the default is applied.
+    // tsc reports the shorthand assignment's optional property read plus each
+    // `undefined` default initializer.
     assert_eq!(
         ts2322_messages.len(),
         4,
-        "Expected TS2322 for each undefined default in assignment destructuring, got: {diagnostics:?}"
+        "Expected TS2322 for the shorthand property read and each undefined default, got: {diagnostics:?}"
     );
     assert!(
         ts2322_messages

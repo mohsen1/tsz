@@ -319,6 +319,9 @@ pub(super) fn collect_diagnostics(
 ) -> CollectDiagnosticsResult {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
+    #[cfg(not(target_arch = "wasm32"))]
+    tsz::parallel::ensure_rayon_global_pool();
+
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut request_cache_counters = RequestCacheCounters::default();
     let file_count = program.files.len();

@@ -1,7 +1,7 @@
 use tsz_checker::test_utils::check_source_code_messages as diagnostics;
 
 #[test]
-fn await_thenable_rejects_then_signature_with_unmet_this_type() {
+fn await_thenable_accepts_then_signature_with_specialized_this_type() {
     let source = r#"
 interface PromiseLike<T> {
     then<TResult1 = T, TResult2 = never>(
@@ -27,7 +27,7 @@ async function test() {
     let diags = diagnostics(source);
     assert!(
         !diags.iter().any(|(code, _)| *code == 1320),
-        "Current thenable compatibility accepts method `this` parameters here. Got: {diags:#?}"
+        "Did not expect TS1320 for await operand with specialized then this type. Got: {diags:#?}"
     );
 }
 

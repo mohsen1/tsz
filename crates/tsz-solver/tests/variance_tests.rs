@@ -452,6 +452,85 @@ fn test_variance_method_with_callback_param_is_covariant() {
     );
 }
 
+#[test]
+fn test_variance_indexed_access_skips_method_param_bivariance_hack() {
+    // type EventHandler<T> = { bivarianceHack(event: T): void }["bivarianceHack"]
+    //
+    // The indexed access extracts the method as a function type. During variance
+    // probing, keep the historical behavior of skipping the method parameter
+    // inside this pattern instead of treating it as a plain contravariant
+    // function parameter.
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+    let method_name = interner.intern_string("bivarianceHack");
+
+    let method = interner.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("event")),
+            type_id: t_param,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: true,
+    });
+    let object = interner.object(vec![PropertyInfo::readonly(method_name, method)]);
+    let indexed = interner.index_access(object, interner.literal_string("bivarianceHack"));
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, indexed, t_atom);
+
+    assert!(
+        variance.is_independent(),
+        "bivarianceHack indexed access should skip method parameter variance"
+    );
+}
+
+#[test]
+fn test_variance_indexed_access_skips_callable_method_signature_param() {
+    // Same suppression path as the function-shaped method case, but through a
+    // callable shape whose call signature is marked as a method.
+    let interner = create_interner();
+    let t_param = intern_type_param(&interner, "T");
+    let method_name = interner.intern_string("bivarianceHack");
+
+    let callable_method = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: Vec::new(),
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("event")),
+                type_id: t_param,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_method: true,
+        }],
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+    let object = interner.object(vec![PropertyInfo::readonly(method_name, callable_method)]);
+    let indexed = interner.index_access(object, interner.literal_string("bivarianceHack"));
+
+    let t_atom = interner.intern_string("T");
+    let variance = compute_variance(&interner, indexed, t_atom);
+
+    assert!(
+        variance.is_independent(),
+        "indexed callable method signatures should skip method parameter variance"
+    );
+}
+
 // =============================================================================
 // Independent Variance Tests
 // =============================================================================

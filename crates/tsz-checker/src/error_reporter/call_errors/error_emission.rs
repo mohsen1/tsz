@@ -371,29 +371,52 @@ impl<'a> CheckerState<'a> {
                 .get(anchor_idx)
                 .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
         });
-        // The "non-identical failures on a shared object-literal argument" guard
-        // (anchor at callee) is for UNION-OF-CALLABLES like `v({s,n})` against
-        // `(x:{s:string}) | (x:{n:number})`. Plain OVERLOADED FUNCTIONS like
-        // `function fn(a:{x}); function fn(a:{y}); fn({z,a})` should still
-        // anchor at the argument per tsc — see
-        // `compiler/excessPropertiesInOverloads.ts`. Detect the union case by
-        // checking whether the call target type is a union; otherwise treat
-        // the failures as plain-overload and anchor at the argument.
-        let callee_is_union = self
-            .ctx
-            .arena
-            .get(idx)
-            .and_then(|call_node| self.ctx.arena.get_call_expr(call_node))
-            .map(|call_expr| call_expr.expression)
-            .and_then(|expr_idx| self.ctx.node_types.get(&expr_idx.0).copied())
-            .is_some_and(|type_id| {
-                crate::query_boundaries::common::is_union_type(self.ctx.types, type_id)
-            });
+        // For object-literal overload failures, tsc's anchor depends on the
+        // actual excess-property culprit. If every overload rejects the same
+        // property (`fn({ z: 3, a: 3 })` against `{x}`/`{y}`), anchor at that
+        // property. If overloads reject different properties (`v({s,n})`
+        // against `{s}`/`{n}`), anchor at the callee because no single property
+        // explains the whole overload failure.
+        let shared_excess_property_name = if shared_argument_is_object_literal
+            && !argument_failures.is_empty()
+        {
+            let mut first_name = None;
+            let mut all_same = true;
+            for failure in &argument_failures {
+                let Some(tsz_solver::DiagnosticArg::Type(arg_type)) = failure.args.first() else {
+                    all_same = false;
+                    break;
+                };
+                let Some(tsz_solver::DiagnosticArg::Type(param_type)) = failure.args.get(1) else {
+                    all_same = false;
+                    break;
+                };
+                let analysis = self.analyze_assignability_failure(*arg_type, *param_type);
+                let Some(tsz_solver::SubtypeFailureReason::ExcessProperty {
+                    property_name, ..
+                }) = analysis.failure_reason
+                else {
+                    all_same = false;
+                    break;
+                };
+                match &first_name {
+                    Some(first_name) if first_name != &property_name => {
+                        all_same = false;
+                        break;
+                    }
+                    Some(_) => {}
+                    None => first_name = Some(property_name),
+                }
+            }
+            all_same && first_name.is_some()
+        } else {
+            false
+        };
         let anchor_argument_from_all_failures = all_failures_are_argument_mismatches
             && shared_argument_anchor.is_some()
             && (!shared_argument_is_object_literal
                 || identical_argument_failures
-                || !callee_is_union);
+                || shared_excess_property_name);
         let raw_argument_anchor =
             shared_argument_anchor.or_else(|| self.first_call_argument_anchor(idx));
         let argument_anchor_is_callback = raw_argument_anchor

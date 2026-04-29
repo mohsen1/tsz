@@ -1365,6 +1365,70 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn extract_simple_type_params_from_decl_in_arena(
+        &mut self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        flags: u32,
+        decl_idx: NodeIndex,
+        sym_escaped_name: &str,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        let node = arena.get(decl_idx)?;
+        let mixed_class_interface =
+            (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
+
+        let type_parameters = if flags & symbol_flags::TYPE_ALIAS != 0 {
+            let type_alias = arena.get_type_alias(node)?;
+            let Some(type_parameters) = type_alias.type_parameters.as_ref() else {
+                return Some(Vec::new());
+            };
+            type_parameters
+        } else if !mixed_class_interface && flags & symbol_flags::CLASS != 0 {
+            let class = arena.get_class(node)?;
+            class.type_parameters.as_ref()?
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            let iface = arena.get_interface(node)?;
+            if let Some(name_node) = arena.get(iface.name)
+                && let Some(name_ident) = arena.get_identifier(name_node)
+                && name_ident.escaped_text.as_str() != sym_escaped_name
+            {
+                return None;
+            }
+            let Some(type_parameters) = iface.type_parameters.as_ref() else {
+                return Some(Vec::new());
+            };
+            type_parameters
+        } else {
+            return None;
+        };
+
+        let mut params = Vec::with_capacity(type_parameters.nodes.len());
+        let mut seen_names = FxHashSet::default();
+        for &param_idx in &type_parameters.nodes {
+            let node = arena.get(param_idx)?;
+            let data = arena.get_type_parameter(node)?;
+            if data.constraint != NodeIndex::NONE || data.default != NodeIndex::NONE {
+                return None;
+            }
+
+            let name = arena
+                .get(data.name)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .map(|id_data| id_data.escaped_text.clone())?;
+            if !seen_names.insert(name.clone()) {
+                return None;
+            }
+
+            params.push(tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: None,
+                is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
+            });
+        }
+
+        Some(params)
+    }
+
     fn jsdoc_template_type_params_for_decl(
         checker: &mut CheckerState,
         decl_idx: NodeIndex,
@@ -1541,6 +1605,36 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     } else {
+                        if let Some(params) = self.extract_simple_type_params_from_decl_in_arena(
+                            arena.as_ref(),
+                            flags,
+                            decl_idx,
+                            &sym_escaped_name,
+                        ) {
+                            if !params.is_empty() {
+                                if let Some(ref mut merged) = merged_params {
+                                    for (i, p) in params.into_iter().enumerate() {
+                                        if i < merged.len()
+                                            && merged[i].default.is_none()
+                                            && p.default.is_some()
+                                        {
+                                            merged[i].default = p.default;
+                                        }
+                                        if i < merged.len()
+                                            && merged[i].constraint.is_none()
+                                            && p.constraint.is_some()
+                                        {
+                                            merged[i].constraint = p.constraint;
+                                        }
+                                    }
+                                } else {
+                                    merged_params = Some(params);
+                                }
+                            } else if fallback_params.is_none() {
+                                fallback_params = Some(params);
+                            }
+                            continue;
+                        }
                         if !Self::enter_cross_arena_delegation() {
                             continue;
                         }
