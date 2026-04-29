@@ -1056,6 +1056,13 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;
+                if self.known_declared_receiver_has_property(
+                    access.expression,
+                    display_object_type,
+                    property_name,
+                ) {
+                    return TypeId::ERROR;
+                }
                 if !property_name.starts_with('#') {
                     // Report at the property name node, not the full expression (matches tsc behavior)
                     self.error_property_not_exist_at(
