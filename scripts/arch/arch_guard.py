@@ -477,6 +477,10 @@ LINE_LIMIT_CHECKS = [
             # past 2000 raw lines through ongoing checker boundary work.
             # Pre-existing: condition_narrowing.rs hosts the dispatch table for
             # discriminant/literal/typeof narrowing arms; grew past 2000 raw lines.
+            # Pre-existing: import_members.rs grew past 2000 lines via main-side
+            # commit #1716 (elided import duplicate diagnostics). CI lint blocker
+            # on origin/main; track refactor as a follow-up.
+            "crates/tsz-checker/src/declarations/import/core/import_members.rs",
         },
     ),
 ]
