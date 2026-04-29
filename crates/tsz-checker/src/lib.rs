@@ -403,6 +403,9 @@ mod logical_assignment_narrowing_tests;
 #[path = "../tests/logical_operator_literal_preservation_tests.rs"]
 mod logical_operator_literal_preservation_tests;
 #[cfg(test)]
+#[path = "../tests/mapped_indexed_access_diagnostic_tests.rs"]
+mod mapped_indexed_access_diagnostic_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
