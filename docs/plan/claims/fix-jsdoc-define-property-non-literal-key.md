@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/jsdoc-define-property-non-literal-key`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1721
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -42,4 +42,6 @@ same shape.
   "checkOtherObjectAssignProperty" --verbose` — 1/1 passed (was 0/1).
 - Targeted regression checks on local-function expandos and ESM namespace
   imports — both unchanged.
-- Quick regression run pending before flipping `Status: ready`.
+- Full conformance run: net **+2** (12235 → 12237), 0 regressions. Improvements:
+  `checkOtherObjectAssignProperty.ts` (the target) plus a bonus
+  `importAliasModuleExports.ts` (same root cause).
