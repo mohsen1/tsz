@@ -22,14 +22,18 @@ RUNNER_LABELS="${RUNNER_LABELS:-tsz-cloud-run}"
 #   min=30 pre-warms runners so PRs pick up immediately
 #   targetQueueLength=1 triggers scale-up as soon as one job queues
 #   scaleUp=30/10s gets us +60 runners in 20s under burst load
-#   scaleDown stabilizes over 60s to avoid teardown churn between jobs
+#   scaleDown is intentionally slow: Cloud Run runner instances can be running
+#   jobs that have already left GitHub's queue, so aggressive downscale can kill
+#   active CI/bench jobs without useful logs.
 MIN_REPLICAS="${MIN_REPLICAS:-30}"
 MAX_REPLICAS="${MAX_REPLICAS:-200}"
 TARGET_QUEUE_LENGTH="${TARGET_QUEUE_LENGTH:-1}"
 POLLING_INTERVAL="${POLLING_INTERVAL:-10}"
 SCALE_UP_VALUE="${SCALE_UP_VALUE:-30}"
 SCALE_UP_PERIOD="${SCALE_UP_PERIOD:-10}"
-SCALE_DOWN_WINDOW="${SCALE_DOWN_WINDOW:-60}"
+SCALE_DOWN_WINDOW="${SCALE_DOWN_WINDOW:-1800}"
+SCALE_DOWN_VALUE="${SCALE_DOWN_VALUE:-1}"
+SCALE_DOWN_PERIOD="${SCALE_DOWN_PERIOD:-300}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -86,8 +90,8 @@ spec:
                 stabilizationWindowSeconds: ${SCALE_DOWN_WINDOW}
                 policies:
                   - type: Pods
-                    value: 100
-                    periodSeconds: 10
+                    value: ${SCALE_DOWN_VALUE}
+                    periodSeconds: ${SCALE_DOWN_PERIOD}
               scaleUp:
                 stabilizationWindowSeconds: 0
                 policies:
@@ -120,4 +124,4 @@ echo "Done. CREMA will now:"
 echo "  • Keep >= ${MIN_REPLICAS} runners warm at all times"
 echo "  • Scale up to ${MAX_REPLICAS} max"
 echo "  • Add up to ${SCALE_UP_VALUE} runners per ${SCALE_UP_PERIOD}s (no stabilization window)"
-echo "  • Scale down after ${SCALE_DOWN_WINDOW}s stabilization"
+echo "  • Remove up to ${SCALE_DOWN_VALUE} runner(s) per ${SCALE_DOWN_PERIOD}s after ${SCALE_DOWN_WINDOW}s stabilization"

@@ -982,6 +982,7 @@ impl ParserState {
         self.report_invalid_string_or_template_escape_errors();
         self.parse_expected(SyntaxKind::NoSubstitutionTemplateLiteral);
         if is_unterminated {
+            self.report_unterminated_template_recovery_delimiters(start_pos, end_pos);
             self.error_unterminated_template_literal_at(start_pos, end_pos);
         }
 
@@ -1157,6 +1158,10 @@ impl ParserState {
         self.report_invalid_string_or_template_escape_errors();
         self.next_token();
 
+        if is_unterminated {
+            self.report_unterminated_template_recovery_delimiters(literal_start, literal_end);
+        }
+
         let literal = self.arena.add_literal(
             literal_kind as u16,
             literal_start,
@@ -1197,6 +1202,25 @@ impl ParserState {
                 literal,
             },
         )
+    }
+
+    fn report_unterminated_template_recovery_delimiters(&mut self, start: u32, end: u32) {
+        let Some(source_tail) = self.get_source_text().get(start as usize..end as usize) else {
+            return;
+        };
+
+        let Some(backtick_before_comma) = source_tail.rfind("`,") else {
+            return;
+        };
+
+        use tsz_common::diagnostics::diagnostic_codes;
+        self.parse_error_at(
+            start + backtick_before_comma as u32,
+            1,
+            "',' expected.",
+            diagnostic_codes::EXPECTED,
+        );
+        self.parse_error_at(end, 0, "'}' expected.", diagnostic_codes::EXPECTED);
     }
 
     /// Parse template literal (either no-substitution or full template expression)
