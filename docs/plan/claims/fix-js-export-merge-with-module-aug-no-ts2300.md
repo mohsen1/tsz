@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/js-export-merge-with-module-aug-no-ts2300`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1745
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -38,4 +38,14 @@ exports.
   "jsExportMemberMergedWithModuleAugmentation"` — 3/3 pass (was 0/3).
 - Quick regression `--max 200`: +1 bonus improvement
   (`aliasOnMergedModuleInterface.ts` flips), 0 regressions.
-- Full conformance run pending before flipping `Status: ready`.
+- Full conformance run: net **+4** (12235 → 12239). 5 real improvements
+  flipped (the 3 sibling targets plus
+  `aliasOnMergedModuleInterface.ts`,
+  `esmNoSynthesizedDefault.ts`,
+  `narrowingUnionToNeverAssigment.ts`,
+  `tsxSpreadAttributesResolution14.tsx`). The reported "regression"
+  on `maxNodeModuleJsDepthDefaultsToZero.ts` is a stale-snapshot
+  false positive — confirmed by reverting `commonjs_object_exports.rs`
+  to `origin/main` and rerunning that test alone, where it fails
+  identically (same `typeof import("…")` path-display fingerprint
+  diff, unrelated to this change).
