@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::TypeDatabase;
 use crate::def::DefId;
 use crate::def::core::DefinitionStore;
-use crate::types::{IntrinsicKind, SymbolRef, TypeId, TypeParamInfo};
+use crate::types::{IntrinsicKind, SymbolRef, TypeId, TypeParamInfo, Variance};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
 
@@ -369,6 +369,8 @@ pub struct TypeEnvironment {
     def_types: FxHashMap<u32, TypeId>,
     /// Maps `DefIds` to their type parameters (for generic types with Lazy refs).
     def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
+    /// Maps `DefIds` to explicit `in`/`out` variance annotations.
+    declared_variances: FxHashMap<u32, Arc<[Variance]>>,
     /// Maps `DefIds` back to `SymbolIds` for `InheritanceGraph` lookups.
     def_to_symbol: FxHashMap<u32, SymbolId>,
     /// Maps `SymbolIds` to `DefIds` for Ref -> Lazy migration.
@@ -407,6 +409,7 @@ impl TypeEnvironment {
             array_base_type_params: Vec::new(),
             def_types: FxHashMap::default(),
             def_type_params: FxHashMap::default(),
+            declared_variances: FxHashMap::default(),
             def_to_symbol: FxHashMap::default(),
             symbol_to_def: FxHashMap::default(),
             numeric_enums: FxHashSet::default(),
@@ -583,6 +586,14 @@ impl TypeEnvironment {
         if let Some(ref store) = self.definition_store {
             store.set_body(def_id, type_id);
         }
+    }
+
+    pub fn insert_declared_variances(&mut self, def_id: DefId, variances: Arc<[Variance]>) {
+        if let Some(symbol) = self.def_to_symbol.get(&def_id.0).copied() {
+            self.declared_variances
+                .insert(symbol.0, Arc::clone(&variances));
+        }
+        self.declared_variances.insert(def_id.0, variances);
     }
 
     /// Get a `DefId`'s resolved type.
@@ -802,6 +813,23 @@ impl TypeResolver for TypeEnvironment {
             let real_def = self.symbol_to_def.get(&def_id.0)?;
             self.get_def_params_owned(*real_def)
         })
+    }
+
+    fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        self.declared_variances
+            .get(&def_id.0)
+            .cloned()
+            .or_else(|| {
+                let real_def = self.symbol_to_def.get(&def_id.0)?;
+                self.declared_variances.get(&real_def.0).cloned()
+            })
+            .or_else(|| {
+                let real_def = self
+                    .definition_store
+                    .as_ref()?
+                    .find_def_by_symbol(def_id.0)?;
+                self.declared_variances.get(&real_def.0).cloned()
+            })
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {

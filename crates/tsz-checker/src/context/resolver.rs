@@ -4,6 +4,9 @@
 //! `TypeData::Lazy(DefId)` references back to cached types during evaluation.
 
 use crate::context::CheckerContext;
+use crate::query_boundaries::variance::Variance;
+use std::sync::Arc;
+use tsz_parser::parser::base::{NodeIndex, NodeList};
 
 impl<'a> CheckerContext<'a> {
     /// Check if a lib interface has a heritage-merged version in the cache.
@@ -59,6 +62,73 @@ impl<'a> CheckerContext<'a> {
             .as_ref()?;
         (*cached_ty != current_ty).then_some(*cached_ty)
     }
+
+    fn declared_type_param_variances_for_list(
+        &self,
+        type_params: &NodeList,
+    ) -> Option<Arc<[Variance]>> {
+        use tsz_scanner::SyntaxKind;
+
+        let mut saw_annotation = false;
+        let mut variances = Vec::with_capacity(type_params.nodes.len());
+
+        for &param_idx in &type_params.nodes {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_type_parameter(param_node)?;
+            let mut declared_in = false;
+            let mut declared_out = false;
+
+            if let Some(modifiers) = &param.modifiers {
+                for &modifier_idx in &modifiers.nodes {
+                    let Some(modifier_node) = self.arena.get(modifier_idx) else {
+                        continue;
+                    };
+                    if modifier_node.kind == SyntaxKind::InKeyword as u16 {
+                        declared_in = true;
+                    } else if modifier_node.kind == SyntaxKind::OutKeyword as u16 {
+                        declared_out = true;
+                    }
+                }
+            }
+
+            let variance = match (declared_in, declared_out) {
+                (true, true) => Variance::COVARIANT | Variance::CONTRAVARIANT,
+                (true, false) => Variance::CONTRAVARIANT,
+                (false, true) => Variance::COVARIANT,
+                (false, false) => Variance::empty(),
+            };
+            saw_annotation |= declared_in || declared_out;
+            variances.push(variance);
+        }
+
+        saw_annotation.then(|| Arc::from(variances))
+    }
+
+    fn declared_type_param_variances_for_node(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<Arc<[Variance]>> {
+        let node = self.arena.get(decl_idx)?;
+        if let Some(interface) = self.arena.get_interface(node) {
+            return interface
+                .type_parameters
+                .as_ref()
+                .and_then(|params| self.declared_type_param_variances_for_list(params));
+        }
+        if let Some(class) = self.arena.get_class(node) {
+            return class
+                .type_parameters
+                .as_ref()
+                .and_then(|params| self.declared_type_param_variances_for_list(params));
+        }
+        if let Some(alias) = self.arena.get_type_alias(node) {
+            return alias
+                .type_parameters
+                .as_ref()
+                .and_then(|params| self.declared_type_param_variances_for_list(params));
+        }
+        None
+    }
 }
 
 /// Implement `TypeResolver` for `CheckerContext` to support Lazy type resolution.
@@ -83,6 +153,12 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     ) -> Option<tsz_solver::TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
         self.symbol_types.get(&sym_id).copied()
+    }
+
+    fn get_type_param_variance(&self, def_id: tsz_solver::DefId) -> Option<Arc<[Variance]>> {
+        let sym_id = self.def_to_symbol_id(def_id)?;
+        let symbol = self.binder.get_symbol(sym_id)?;
+        self.declared_type_param_variances_for_node(symbol.primary_declaration()?)
     }
 
     /// Resolve a `DefId` to its cached type.
