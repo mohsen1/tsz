@@ -99,14 +99,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: core
+          - label: compiler-files
             timeout: 120
-            filter: 'conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable\.ts|manyConstExports\.ts|binderBinaryExpressionStress\.ts|binderBinaryExpressionStressJs\.ts|enumLiteralsSubtypeReduction\.ts|binaryArithmeticControlFlowGraphNotTooLarge\.ts|privacyFunctionParameterDeclFile\.ts|privacyGloFunc\.ts|privacyTypeParameterOfFunctionDeclFile\.ts|typedArrays\.ts|controlFlowArrays\.ts|[0-9]+ classes|[0-9]+ generic functions|DeepPartial optional-chain|Shallow optional-chain|[0-9]+ union members|Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches|BCT candidates|Constraint conflicts N|Mapped complex template keys'
+            filter: 'conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable\.ts|manyConstExports\.ts|binderBinaryExpressionStress\.ts|binderBinaryExpressionStressJs\.ts|enumLiteralsSubtypeReduction\.ts|binaryArithmeticControlFlowGraphNotTooLarge\.ts|privacyFunctionParameterDeclFile\.ts|privacyGloFunc\.ts|privacyTypeParameterOfFunctionDeclFile\.ts|typedArrays\.ts|controlFlowArrays\.ts'
+          - label: synthetic
+            timeout: 120
+            filter: '[0-9]+ classes|[0-9]+ generic functions|DeepPartial optional-chain|Shallow optional-chain|[0-9]+ union members'
+          - label: solver-stress
+            timeout: 120
+            filter: 'Recursive generic depth|Conditional dist N|Mapped type keys|Template literal N|Deep subtype depth|Intersection N|Infer stress N|CFA branches'
+          - label: algorithmic
+            timeout: 120
+            filter: 'BCT candidates|Constraint conflicts N|Mapped complex template keys'
           - label: projects
             timeout: 120
             filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project'
           - label: large-ts-repo
-            timeout: 90
+            timeout: 120
             filter: '^large-ts-repo$'
     steps:
       - uses: actions/checkout@v4
@@ -199,7 +208,7 @@ jobs:
     needs: bench
     if: needs.bench.result == 'success'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -223,8 +232,8 @@ jobs:
             find bench-artifacts -maxdepth 2 -type f -print || true
             exit 1
           fi
-          if [[ "${#json_files[@]}" -ne 3 ]]; then
-            echo "Expected 3 benchmark shard JSON files, found ${#json_files[@]}."
+          if [[ "${#json_files[@]}" -ne 6 ]]; then
+            echo "Expected 6 benchmark shard JSON files, found ${#json_files[@]}."
             printf 'Found JSON files:\n'
             printf '  %s\n' "${json_files[@]}"
             find bench-artifacts -maxdepth 2 -type f -print || true
