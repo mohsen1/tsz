@@ -2,7 +2,7 @@
 
 <p class="subtitle">Performance comparison: tsz vs tsgo</p>
 
-Benchmarks are run using [hyperfine](https://github.com/sharkdp/hyperfine) with warmup passes and multiple runs. Each benchmark measures wall-clock time for a full type-check pass (no emit).
+Benchmarks are run using [hyperfine](https://github.com/sharkdp/hyperfine) with benchmark-specific run counts. Each benchmark measures wall-clock time for a full type-check pass (no emit), and successful rows require zero compiler exit codes.
 
 tsz is compiled with `--profile dist` (LTO enabled, single codegen unit). tsgo is the native Go compiler from the TypeScript team.
 

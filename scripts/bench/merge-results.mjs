@@ -25,11 +25,17 @@ const results = payloads.flatMap(({ payload }) => payload.results || []);
 const tszWins = results.filter((row) => row.winner === "tsz").length;
 const tsgoWins = results.filter((row) => row.winner === "tsgo").length;
 const errorCases = results.filter((row) => row.status).length;
+const hyperfineExitCodesRequired = payloads.every(
+  ({ payload }) => payload.validation?.hyperfine_exit_codes_required === true,
+);
 
 const merged = {
   generated_at: new Date().toISOString(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
+  validation: {
+    hyperfine_exit_codes_required: hyperfineExitCodesRequired,
+  },
   quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
   filter: null,
   binaries: payloads.find(({ payload }) => payload.binaries)?.payload.binaries || {},
