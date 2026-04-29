@@ -267,26 +267,95 @@ impl<'a> CheckerState<'a> {
         &self,
         inferred_type: TypeId,
     ) -> Option<(String, String)> {
+        let check_type = |state: &Self, type_id: TypeId| {
+            let check_symbol =
+                |state: &Self, sym_id: SymbolId| state.find_non_portable_symbol_reference(sym_id);
+
+            let check_def = |state: &Self, candidate: TypeId| {
+                let def_id = lazy_def_id(state.ctx.types, candidate)?;
+                let sym_id = state.ctx.def_to_symbol_id_with_fallback(def_id)?;
+                check_symbol(state, sym_id)
+            };
+
+            if let Some(info) = check_def(state, type_id) {
+                return Some(info);
+            }
+
+            if let Some(alias) = state.ctx.types.get_display_alias(type_id)
+                && alias != type_id
+            {
+                if let Some(info) = check_def(state, alias) {
+                    return Some(info);
+                }
+                if let Some((base, _)) =
+                    crate::query_boundaries::common::application_info(state.ctx.types, alias)
+                    && let Some(info) = check_def(state, base)
+                {
+                    return Some(info);
+                }
+            }
+
+            if let Some((base, _)) =
+                crate::query_boundaries::common::application_info(state.ctx.types, type_id)
+                && let Some(info) = check_def(state, base)
+            {
+                return Some(info);
+            }
+
+            if let Some(def_id) = lazy_def_id(state.ctx.types, type_id)
+                && let Some(sym_id) = state.ctx.def_to_symbol_id_with_fallback(def_id)
+                && let Some(info) = check_symbol(state, sym_id)
+            {
+                return Some(info);
+            }
+
+            if let Some(shape) = query::object_shape(state.ctx.types, type_id)
+                && let Some(sym_id) = shape.symbol
+                && let Some(info) = check_symbol(state, sym_id)
+            {
+                return Some(info);
+            }
+
+            if let Some(shape) = query::callable_shape(state.ctx.types, type_id)
+                && let Some(sym_id) = shape.symbol
+                && let Some(info) = check_symbol(state, sym_id)
+            {
+                return Some(info);
+            }
+
+            None
+        };
+
+        if let Some(info) = check_type(self, inferred_type) {
+            return Some(info);
+        }
+
+        if let Some(shape) = query::callable_shape(self.ctx.types, inferred_type) {
+            for sig in &shape.call_signatures {
+                for param in &sig.params {
+                    if let Some(info) = check_type(self, param.type_id) {
+                        return Some(info);
+                    }
+                }
+                if let Some(info) = check_type(self, sig.return_type) {
+                    return Some(info);
+                }
+            }
+            for sig in &shape.construct_signatures {
+                for param in &sig.params {
+                    if let Some(info) = check_type(self, param.type_id) {
+                        return Some(info);
+                    }
+                }
+                if let Some(info) = check_type(self, sig.return_type) {
+                    return Some(info);
+                }
+            }
+        }
+
         let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
         for &type_id in &referenced_types {
-            if let Some(def_id) = lazy_def_id(self.ctx.types, type_id)
-                && let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id)
-                && let Some(info) = self.find_non_portable_symbol_reference(sym_id)
-            {
-                return Some(info);
-            }
-
-            if let Some(shape) = query::object_shape(self.ctx.types, type_id)
-                && let Some(sym_id) = shape.symbol
-                && let Some(info) = self.find_non_portable_symbol_reference(sym_id)
-            {
-                return Some(info);
-            }
-
-            if let Some(shape) = query::callable_shape(self.ctx.types, type_id)
-                && let Some(sym_id) = shape.symbol
-                && let Some(info) = self.find_non_portable_symbol_reference(sym_id)
-            {
+            if let Some(info) = check_type(self, type_id) {
                 return Some(info);
             }
         }
@@ -725,7 +794,7 @@ impl<'a> CheckerState<'a> {
             if !parent_parts.is_empty() {
                 let from_path =
                     format!("{}/node_modules/{}", parent_parts.join("/"), import_module);
-                return Some((type_name, from_path));
+                return Some((from_path, type_name));
             }
         }
 
@@ -769,7 +838,7 @@ impl<'a> CheckerState<'a> {
                     parent_parts.join("/"),
                     nested_parts.join("/")
                 );
-                return Some((type_name, from_path));
+                return Some((from_path, type_name));
             }
         }
 

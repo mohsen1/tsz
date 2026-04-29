@@ -1143,6 +1143,87 @@ impl<'a> DeclarationEmitter<'a> {
         visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
         visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
     ) -> Option<(String, String)> {
+        #[allow(clippy::too_many_arguments)]
+        fn check_named_type(
+            emitter: &DeclarationEmitter<'_>,
+            interner: &tsz_solver::TypeInterner,
+            binder: &BinderState,
+            current_file_path: &str,
+            cache: &crate::type_cache_view::TypeCacheView,
+            candidate_type_id: tsz_solver::types::TypeId,
+            visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
+            visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+            visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+            visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+        ) -> Option<(String, String)> {
+            if let Some(def_id) = tsz_solver::lazy_def_id(interner, candidate_type_id)
+                && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
+            {
+                if let Some(result) = emitter.check_symbol_portability(
+                    sym_id,
+                    binder,
+                    current_file_path,
+                    visited_types,
+                    visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
+                ) {
+                    return Some(result);
+                }
+                if let Some(result) = emitter
+                    .collect_non_portable_references_in_symbol_declaration_with_state(
+                        sym_id,
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    )
+                    .into_iter()
+                    .next()
+                {
+                    return Some(result);
+                }
+            }
+
+            if let Some(shape_id) = tsz_solver::object_shape_id(interner, candidate_type_id) {
+                let shape = interner.object_shape(shape_id);
+                if let Some(sym_id) = shape.symbol
+                    && let Some(result) = emitter.check_symbol_portability(
+                        sym_id,
+                        binder,
+                        current_file_path,
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    )
+                {
+                    return Some(result);
+                }
+            }
+
+            if let Some(callable_id) =
+                tsz_solver::visitor::callable_shape_id(interner, candidate_type_id)
+            {
+                let shape = interner.callable_shape(callable_id);
+                if let Some(sym_id) = shape.symbol
+                    && let Some(result) = emitter.check_symbol_portability(
+                        sym_id,
+                        binder,
+                        current_file_path,
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    )
+                {
+                    return Some(result);
+                }
+            }
+
+            None
+        }
+
         let interner = self.type_interner?;
         let binder = self.binder?;
         let current_file_path = self.current_file_path.as_deref()?;
@@ -1150,6 +1231,143 @@ impl<'a> DeclarationEmitter<'a> {
 
         if !visited_types.insert(type_id) {
             return None;
+        }
+
+        if let Some(result) = check_named_type(
+            self,
+            interner,
+            binder,
+            current_file_path,
+            cache,
+            type_id,
+            visited_types,
+            visited_symbols,
+            visited_declaration_symbols,
+            visited_nodes,
+        ) {
+            return Some(result);
+        }
+
+        if let Some(alias_type_id) = interner.get_display_alias(type_id)
+            && alias_type_id != type_id
+        {
+            if let Some(result) = check_named_type(
+                self,
+                interner,
+                binder,
+                current_file_path,
+                cache,
+                alias_type_id,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            ) {
+                return Some(result);
+            }
+            if let Some(app_id) = tsz_solver::visitor::application_id(interner, alias_type_id) {
+                let app = interner.type_application(app_id);
+                if let Some(result) = check_named_type(
+                    self,
+                    interner,
+                    binder,
+                    current_file_path,
+                    cache,
+                    app.base,
+                    visited_types,
+                    visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
+                ) {
+                    return Some(result);
+                }
+            }
+        }
+
+        if let Some(app_id) = tsz_solver::visitor::application_id(interner, type_id) {
+            let app = interner.type_application(app_id);
+            if let Some(result) = check_named_type(
+                self,
+                interner,
+                binder,
+                current_file_path,
+                cache,
+                app.base,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            ) {
+                return Some(result);
+            }
+        }
+
+        if let Some(callable_id) = tsz_solver::visitor::callable_shape_id(interner, type_id) {
+            let shape = interner.callable_shape(callable_id);
+            for sig in &shape.call_signatures {
+                for param in &sig.params {
+                    if let Some(result) = check_named_type(
+                        self,
+                        interner,
+                        binder,
+                        current_file_path,
+                        cache,
+                        param.type_id,
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    ) {
+                        return Some(result);
+                    }
+                }
+                if let Some(result) = check_named_type(
+                    self,
+                    interner,
+                    binder,
+                    current_file_path,
+                    cache,
+                    sig.return_type,
+                    visited_types,
+                    visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
+                ) {
+                    return Some(result);
+                }
+            }
+            for sig in &shape.construct_signatures {
+                for param in &sig.params {
+                    if let Some(result) = check_named_type(
+                        self,
+                        interner,
+                        binder,
+                        current_file_path,
+                        cache,
+                        param.type_id,
+                        visited_types,
+                        visited_symbols,
+                        visited_declaration_symbols,
+                        visited_nodes,
+                    ) {
+                        return Some(result);
+                    }
+                }
+                if let Some(result) = check_named_type(
+                    self,
+                    interner,
+                    binder,
+                    current_file_path,
+                    cache,
+                    sig.return_type,
+                    visited_types,
+                    visited_symbols,
+                    visited_declaration_symbols,
+                    visited_nodes,
+                ) {
+                    return Some(result);
+                }
+            }
         }
 
         // Collect all types referenced by this type (deeply walks into
@@ -1193,53 +1411,19 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(result);
             }
 
-            // Check Lazy(DefId) types - these are named type references
-            if let Some(def_id) = tsz_solver::lazy_def_id(interner, ref_type_id)
-                && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
-            {
-                if let Some(result) = self.check_symbol_portability(
-                    sym_id,
-                    binder,
-                    current_file_path,
-                    visited_types,
-                    visited_symbols,
-                    visited_declaration_symbols,
-                    visited_nodes,
-                ) {
-                    return Some(result);
-                }
-                if let Some(result) = self
-                    .collect_non_portable_references_in_symbol_declaration_with_state(
-                        sym_id,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
-                    )
-                    .into_iter()
-                    .next()
-                {
-                    return Some(result);
-                }
-            }
-
-            // Check object shapes with symbols - these are structural types
-            // that may reference foreign symbols through their shape.symbol field
-            if let Some(shape_id) = tsz_solver::object_shape_id(interner, ref_type_id) {
-                let shape = interner.object_shape(shape_id);
-                if let Some(sym_id) = shape.symbol
-                    && let Some(result) = self.check_symbol_portability(
-                        sym_id,
-                        binder,
-                        current_file_path,
-                        visited_types,
-                        visited_symbols,
-                        visited_declaration_symbols,
-                        visited_nodes,
-                    )
-                {
-                    return Some(result);
-                }
+            if let Some(result) = check_named_type(
+                self,
+                interner,
+                binder,
+                current_file_path,
+                cache,
+                ref_type_id,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            ) {
+                return Some(result);
             }
         }
 
