@@ -4,6 +4,19 @@ use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
+fn strict_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+    .apply_strict_defaults();
+
+    tsz_checker::test_utils::check_source(source, "test.ts", options)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
+}
+
 #[test]
 fn test_user_defined_type_guard_narrowing_full() {
     let source = r#"
@@ -164,6 +177,44 @@ function beastFoo(beast: Object) {
     if relevant.iter().any(|(code, _)| *code == 2322) {
         panic!("Found TS2322 error (Narrowing failed): {relevant:?}");
     }
+}
+
+#[test]
+fn type_predicate_preserves_subclass_union_member_without_redundant_intersection() {
+    let source = r#"
+class C1 { p1!: string; }
+class C2 { p2!: number; }
+class D1 extends C1 { p3!: number; }
+
+declare function isC1(x: any): x is C1;
+declare function isC2(x: any): x is C2;
+declare let c2OrD1: C2 | D1;
+
+let n: number | false = isC2(c2OrD1) && c2OrD1.p2;
+let r2: C2 | D1 = isC1(c2OrD1) && c2OrD1;
+"#;
+
+    let diagnostics = strict_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one TS2322 from the falsy `&&` branch, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322[0].1.contains("false | D1"),
+        "expected predicate narrowing to display `false | D1`, got: {}",
+        ts2322[0].1
+    );
+    assert!(
+        !ts2322[0].1.contains('&'),
+        "subclass member should not be displayed as a redundant intersection: {}",
+        ts2322[0].1
+    );
 }
 
 /// Regression test: type predicate narrowing must work for primitive types.
