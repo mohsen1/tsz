@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-variance-annotation-validation-fingerprint`
-- **PR**: TBD
+- **PR**: #1747
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
