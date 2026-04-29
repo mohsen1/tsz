@@ -1153,6 +1153,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
                     }
                     // Covariant return: source_return <: target_return
+                    // Return types must never be inferred at NakedTypeVariable priority
+                    // (which is reserved for direct value arguments). Cap at ReturnType so
+                    // that a direct-arg inference of U from `y: U` always wins over a
+                    // callback's return type. Matches tsc's behaviour.
+                    let return_priority = priority.max(crate::types::InferencePriority::ReturnType);
                     debug!(
                         source_return_id = s_fn.return_type.0,
                         source_return_key = ?self.interner.lookup(s_fn.return_type),
@@ -1160,6 +1165,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         target_return_key = ?self.interner.lookup(t_fn.return_type),
                         var_map_keys = ?var_map.keys().collect::<Vec<_>>(),
                         priority = ?priority,
+                        return_priority = ?return_priority,
                         "Constraining return types"
                     );
                     self.constrain_types(
@@ -1167,7 +1173,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         var_map,
                         s_fn.return_type,
                         t_fn.return_type,
-                        priority,
+                        return_priority,
                     );
 
                     // Constrain type predicates if both functions have them

@@ -483,5 +483,9 @@ path = "tests/jsx_excess_attr_with_spread_source_display_tests.rs"
 name = "ts2352_paren_alias_display_tests"
 path = "tests/ts2352_paren_alias_display_tests.rs"
 
+[[test]]
+name = "generic_inference_ordering_tests"
+path = "tests/generic_inference_ordering_tests.rs"
+
 [lints]
 workspace = true
