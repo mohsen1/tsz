@@ -1,5 +1,6 @@
 //! Call argument elaboration logic (object literal, array literal, function return).
 
+use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::query_boundaries::common as query_common;
@@ -420,6 +421,107 @@ impl<'a> CheckerState<'a> {
             target_type,
             /* allow_unresolved_holes */ false,
         )
+    }
+
+    pub(crate) fn try_elaborate_callback_body_diagnostics(
+        &mut self,
+        arg_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> bool {
+        thread_local! {
+            static CALLBACK_BODY_ELABORATION_DEPTH: std::cell::Cell<u32> =
+                const { std::cell::Cell::new(0) };
+        }
+
+        struct DepthReset;
+        impl Drop for DepthReset {
+            fn drop(&mut self) {
+                CALLBACK_BODY_ELABORATION_DEPTH.with(|depth| {
+                    depth.set(depth.get().saturating_sub(1));
+                });
+            }
+        }
+
+        if CALLBACK_BODY_ELABORATION_DEPTH.with(|depth| {
+            if depth.get() > 0 {
+                true
+            } else {
+                depth.set(1);
+                false
+            }
+        }) {
+            return false;
+        }
+        let _depth_reset = DepthReset;
+
+        if !self.arg_is_callback_with_unannotated_params(arg_idx) {
+            return false;
+        }
+
+        let Some(callback_idx) = self.callback_function_index(arg_idx) else {
+            return false;
+        };
+        let Some(callback_node) = self.ctx.arena.get(callback_idx) else {
+            return false;
+        };
+        let Some(func) = self.ctx.arena.get_function(callback_node) else {
+            return false;
+        };
+        let Some(body_node) = self.ctx.arena.get(func.body) else {
+            return false;
+        };
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return false;
+        }
+
+        let body_spans = self.callback_body_spans(arg_idx);
+        if body_spans.is_empty() {
+            return false;
+        }
+
+        let snap = self.ctx.snapshot_full();
+        self.invalidate_expression_for_contextual_retry(arg_idx);
+        self.ctx.daa_error_nodes.remove(&arg_idx.0);
+        self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
+
+        let diag_snap = self.ctx.snapshot_diagnostics();
+        let request = TypingRequest::with_contextual_type(target_type);
+        let _ = self.get_type_of_node_with_request(arg_idx, &request);
+        let diagnostics: Vec<_> = self
+            .ctx
+            .speculative_diagnostics_since(&diag_snap)
+            .iter()
+            .filter(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                        | diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                        | diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        | diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL
+                ) && body_spans
+                    .iter()
+                    .any(|(start, end)| diag.start >= *start && diag.start < *end)
+            })
+            .cloned()
+            .collect();
+
+        self.ctx.rollback_full(&snap);
+
+        if diagnostics.is_empty() {
+            return false;
+        }
+
+        for diag in diagnostics {
+            if !self.ctx.diagnostics.iter().any(|existing| {
+                existing.code == diag.code
+                    && existing.start == diag.start
+                    && existing.length == diag.length
+                    && existing.message_text == diag.message_text
+            }) {
+                self.ctx.push_diagnostic(diag);
+            }
+        }
+        true
     }
 
     fn try_elaborate_assignment_source_error_with_options(
