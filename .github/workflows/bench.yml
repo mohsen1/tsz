@@ -19,6 +19,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: write
 
 env:
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
@@ -167,6 +168,8 @@ jobs:
           _monitor_pid=$!
           trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
 
+          export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
+          echo "Using prepared benchmark TSZ binary: $TSZ"
           ./scripts/bench/bench-vs-tsgo.sh \
             --filter '${{ matrix.filter }}' \
             --json \
