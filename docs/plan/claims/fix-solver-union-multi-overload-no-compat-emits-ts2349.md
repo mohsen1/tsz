@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/conformance-roadmap-1777416042`
-- **PR**: TBD
+- **PR**: #1725
 - **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
