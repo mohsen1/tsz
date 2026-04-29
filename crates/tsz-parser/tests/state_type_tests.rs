@@ -44,6 +44,22 @@ fn parse_flow_style_type_parameter_bound_reports_comma_expected() {
 }
 
 #[test]
+fn parse_modifier_like_type_parameter_names_without_empty_name_recovery() {
+    let source = "function f<private, protected, public, static>() {}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1139),
+        "modifier-like type parameter names should not recover as empty type parameters: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2300),
+        "modifier-like type parameter names should not synthesize duplicate empty names: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn parse_template_literal_type_with_placeholder() {
     let (parser, _root) = parse_source("type T = `a${string}b`;");
     assert_eq!(parser.get_diagnostics().len(), 0);
