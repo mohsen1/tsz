@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/cjs-direct-export-no-namespace-tag`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1751
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -43,4 +43,11 @@ is actually namespace-like.
   — passes.
 - `./scripts/conformance/conformance.sh run --filter
   "requireOfJsonFileInJsFile.ts"` — 1/1 (was 0/1).
-- Full conformance run pending before flipping `Status: ready`.
+- Full conformance run: net **+4** (12235 → 12239). 5 real
+  improvements: `requireOfJsonFileInJsFile.ts` (the target) plus
+  `aliasOnMergedModuleInterface.ts`, `esmNoSynthesizedDefault.ts`,
+  `narrowingUnionToNeverAssigment.ts`,
+  `tsxSpreadAttributesResolution14.tsx`. The reported "regression"
+  on `maxNodeModuleJsDepthDefaultsToZero.ts` is the same stale-
+  snapshot false positive observed for PR #1745 — confirmed to fail
+  identically on `origin/main` without this change.
