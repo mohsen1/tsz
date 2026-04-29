@@ -671,6 +671,9 @@ pub struct ShorthandPropertyData {
     pub modifiers: Option<NodeList>,
     pub name: NodeIndex,
     pub equals_token: bool,
+    /// Position of the `=` token in a cover-initialized shorthand (`{ x = expr }`).
+    /// 0 means no equals token was present.
+    pub equals_token_pos: u32,
     /// Position of a `!` (definite assignment assertion) that was parsed and skipped.
     /// 0 means no exclamation token was present.
     pub exclamation_token_pos: u32,

@@ -738,7 +738,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     // stays robust as anchors get tuned without bypassing the gateway.
     assert!(
         type_checking_src.contains("check_assignable_or_report(")
-            || type_checking_src.contains("check_assignable_or_report_at("),
+            || type_checking_src.contains("check_assignable_or_report_at(")
+            || type_checking_src.contains("check_assignable_or_report_at_with_display_types("),
         "binding/default-value assignability should route through check_assignable_or_report \
          or check_assignable_or_report_at (central TS2322 gateway helpers)"
     );

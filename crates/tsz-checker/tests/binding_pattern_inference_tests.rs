@@ -152,6 +152,42 @@ function f([x = 'hello']: [number]) {}
     );
 }
 
+#[test]
+fn test_destructuring_default_literal_mismatch_reports_initializer_type() {
+    let source = r#"
+function f({ s = 5 }: { s: string }) {}
+let y: string;
+({ y = 5 } = {});
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert!(
+        ts2322_messages
+            .iter()
+            .all(|message| message == &"Type 'number' is not assignable to type 'string'."),
+        "Destructuring default diagnostics should report the initializer literal's type. \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2322_messages.len(),
+        2,
+        "Expected one TS2322 for binding and one for assignment destructuring. \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 /// When a generic function's type parameter has no inference candidates (no constraint,
 /// no default, and the only argument is a callback with a binding-pattern parameter),
 /// T falls back to `unknown`. The callback's binding-pattern type (`{a: any}`) is NOT
