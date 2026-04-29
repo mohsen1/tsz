@@ -60,6 +60,29 @@ fn cleanup_ts2454_dedup(
     }
 }
 
+/// Diagnostic codes that represent grammar / scope errors which are
+/// independent of speculative type-computation context. They must survive
+/// `rollback_diagnostics`: a `super` reference outside a derived class is
+/// invalid regardless of which overload candidate is being probed.
+///
+/// Without this preservation list, `super` validity errors emitted during
+/// type computation of a static field initializer are silently discarded
+/// when the surrounding speculative context rolls back — even though the
+/// errors themselves are not contingent on that context. Matches tsc's
+/// `checkSuperExpression` placement at the regular check pass.
+///
+/// Currently covers the super-keyword family:
+/// - TS2335: 'super' can only be referenced in a derived class.
+/// - TS2336: 'super' cannot be referenced in constructor arguments.
+/// - TS2337: Super calls are not permitted outside constructors or in nested functions inside them.
+/// - TS2466: 'super' cannot be referenced in a computed property name.
+/// - TS2660: 'super' can only be referenced in members of derived classes or object literal expressions.
+const ALWAYS_EMIT_GRAMMAR_CODES: &[u32] = &[2335, 2336, 2337, 2466, 2660];
+
+fn is_always_emit_grammar_code(code: u32) -> bool {
+    ALWAYS_EMIT_GRAMMAR_CODES.contains(&code)
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot types
 // ---------------------------------------------------------------------------
@@ -181,15 +204,33 @@ impl CheckerContext<'_> {
 
     /// Roll back to a diagnostic-only snapshot, discarding all speculative
     /// diagnostics and restoring the dedup set.
+    ///
+    /// **Exception:** diagnostics whose code is in
+    /// [`ALWAYS_EMIT_GRAMMAR_CODES`] (super-keyword grammar/scope errors)
+    /// are preserved across rollback. Their validity is independent of the
+    /// speculative context, so dropping them silently produces missed
+    /// diagnostics (e.g. `super.x` in a non-derived inner class's method
+    /// body when the surrounding static field initializer is evaluated
+    /// speculatively).
     pub(crate) fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
         let truncate_at = self.clamped_diag_len(snap);
         cleanup_ts2454_dedup(
             &mut self.emitted_ts2454_errors,
             &self.diagnostics[truncate_at..],
         );
+        let preserved: Vec<Diagnostic> = self.diagnostics[truncate_at..]
+            .iter()
+            .filter(|d| is_always_emit_grammar_code(d.code))
+            .cloned()
+            .collect();
         self.diagnostics.truncate(truncate_at);
         self.emitted_diagnostics
             .clone_from(&snap.emitted_diagnostics);
+        for diag in preserved {
+            let key = self.diagnostic_dedup_key(&diag);
+            self.emitted_diagnostics.insert(key);
+            self.diagnostics.push(diag);
+        }
         self.truncate_deferred_ts2454(snap);
     }
 
@@ -243,7 +284,9 @@ impl CheckerContext<'_> {
         // filtered rollback and can cause spurious TS2454 emissions later.
         self.truncate_deferred_ts2454(snap);
         for diag in speculative {
-            if keep(&diag) {
+            // Grammar-class super errors survive speculation regardless of
+            // the caller's filter — see `ALWAYS_EMIT_GRAMMAR_CODES`.
+            if is_always_emit_grammar_code(diag.code) || keep(&diag) {
                 let key = self.diagnostic_dedup_key(&diag);
                 self.emitted_diagnostics.insert(key);
                 self.diagnostics.push(diag);
