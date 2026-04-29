@@ -1192,6 +1192,7 @@ run_fourslash_shard() {
     --shard="${shard_index}/${shard_count}" \
     --shard-strategy="${TSZ_CI_FOURSLASH_SHARD_STRATEGY:-weighted}" \
     --workers="$FOURSLASH_WORKERS" \
+    --timeout="${TSZ_CI_FOURSLASH_TIMEOUT_MS:-15000}" \
     --memory-limit=512 \
     --json-out="$detail_json" \
     >"$LOG_DIR/fourslash/shard-${shard_index}.log" 2>&1

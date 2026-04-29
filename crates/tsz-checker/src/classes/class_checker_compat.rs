@@ -568,28 +568,14 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Use the resolved symbol name (not the heritage expression text) for error
-            // messages.  TSC uses `typeToString(baseType)` which resolves to the short
-            // symbol name, e.g. "Mover" rather than "MoversAndShakers.Mover".
             let base_name_raw = base_symbol.escaped_name.clone();
-            // Include type arguments in the base name for error messages, e.g. "A<string>"
-            let base_name = if let Some(args) = type_arguments {
-                let arg_strs: Vec<String> = args
-                    .nodes
-                    .iter()
-                    .map(|&arg_idx| {
-                        let tid = self.get_type_from_type_node(arg_idx);
-                        self.format_type(tid)
-                    })
-                    .collect();
-                if arg_strs.is_empty() {
-                    base_name_raw
-                } else {
-                    format!("{}<{}>", base_name_raw, arg_strs.join(", "))
-                }
-            } else {
-                base_name_raw
-            };
+            let base_name = self.format_interface_heritage_base_name(
+                base_sym_id,
+                type_idx,
+                expr_idx,
+                &base_name_raw,
+                type_arguments,
+            );
 
             let mut base_iface_indices = Vec::new();
             for &decl_idx in &base_symbol.declarations {
