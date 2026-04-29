@@ -927,6 +927,13 @@ impl<'a> CheckerState<'a> {
                 .prefer_more_specific_contextual_property_type(best_property_type, property_type);
         }
 
+        if let Some(property_type) =
+            self.mapped_contextual_property_type(original_contextual_type, property_name)
+        {
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
+        }
+
         if let Some(property_type) = self
             .ctx
             .types
@@ -1045,6 +1052,14 @@ impl<'a> CheckerState<'a> {
             return Some(best_property_type.unwrap_or(TypeId::UNKNOWN));
         }
 
+        if contextual_type != original_contextual_type
+            && let Some(property_type) =
+                self.mapped_contextual_property_type(contextual_type, property_name)
+        {
+            best_property_type = self
+                .prefer_more_specific_contextual_property_type(best_property_type, property_type);
+        }
+
         if let Some(property_type) = self
             .ctx
             .types
@@ -1147,6 +1162,46 @@ impl<'a> CheckerState<'a> {
             property_name,
             "contextual_object_literal_property_type: no property type"
         );
+        None
+    }
+
+    fn mapped_contextual_property_type(
+        &mut self,
+        contextual_type: TypeId,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let mapped =
+            crate::query_boundaries::common::mapped_type_info(self.ctx.types, contextual_type)?;
+        let constraint = mapped.constraint;
+        let template = mapped.template;
+
+        let numeric_key = property_name
+            .parse::<f64>()
+            .ok()
+            .filter(|value| value.is_finite());
+        let key_type = if let Some(value) = numeric_key {
+            self.ctx.types.literal_number(value)
+        } else {
+            crate::query_boundaries::common::create_string_literal_type(
+                self.ctx.types,
+                property_name,
+            )
+        };
+
+        let constraint_resolved = self.resolve_lazy_type(constraint);
+        let constraint_evaluated = self.evaluate_type_for_assignability(constraint_resolved);
+        if self.is_assignable_to(key_type, constraint_resolved)
+            || self.is_assignable_to(key_type, constraint_evaluated)
+        {
+            return Some(template);
+        }
+
+        if numeric_key.is_some()
+            && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, constraint)
+        {
+            return Some(template);
+        }
+
         None
     }
 

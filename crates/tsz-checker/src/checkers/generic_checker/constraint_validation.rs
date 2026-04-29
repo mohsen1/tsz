@@ -433,7 +433,11 @@ impl<'a> CheckerState<'a> {
                                 // template is callable, the indexed access is callable.
                                 if let Some((obj, _idx)) = query::index_access_components(db, base)
                                     && let Some(mapped_id) = query::mapped_type_id(db, obj)
-                                    && query::is_mapped_template_callable(db, mapped_id)
+                                    && (query::is_mapped_template_callable(db, mapped_id)
+                                        || self
+                                            .mapped_template_resolves_to_callable_through_constraint(
+                                                obj,
+                                            ))
                                 {
                                     continue;
                                 }
@@ -466,7 +470,8 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.types.as_type_database(),
                                         template_evaluated,
                                     )
-                                    .is_some();
+                                    .is_some()
+                                        || self.indexed_access_resolves_to_callable(template);
                                     if template_callable {
                                         continue;
                                     }
@@ -1447,6 +1452,11 @@ impl<'a> CheckerState<'a> {
         let Some((object, _index)) = query::index_access_components(db, type_id) else {
             return false;
         };
+        if let Some(_mapped_id) = query::mapped_type_id(db, object)
+            && self.mapped_template_resolves_to_callable_through_constraint(object)
+        {
+            return true;
+        }
         // Resolve the object type's constraint chain to find a mapped type
         let object_constraint = if query::is_bare_type_parameter(db, object) {
             let base = query::base_constraint_of_type(db, object);
@@ -1482,6 +1492,24 @@ impl<'a> CheckerState<'a> {
             }
         }
         false
+    }
+
+    fn mapped_template_resolves_to_callable_through_constraint(
+        &mut self,
+        mapped_type: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some(template) = query::mapped_type_template(db, mapped_type) else {
+            return false;
+        };
+
+        let template_eval = self.evaluate_type_for_assignability(template);
+        let db = self.ctx.types.as_type_database();
+        query::is_callable_type(db, template_eval)
+            || query::callable_shape_for_type(db, template_eval).is_some()
+            || query::is_callable_type(db, template)
+            || query::callable_shape_for_type(db, template).is_some()
+            || self.indexed_access_resolves_to_callable(template)
     }
 
     fn satisfies_array_like_constraint(&mut self, source: TypeId, target: TypeId) -> bool {

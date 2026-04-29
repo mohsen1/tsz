@@ -604,11 +604,15 @@ impl<'a> CheckerState<'a> {
                         == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         && diag.start >= arg_node.pos
                         && diag.start < arg_node.end;
-                    let is_object_literal_function_param_implicit_any = unresolved_refresh_context
-                        && is_provisional_implicit_any
-                        && object_literal_function_param_spans
-                            .iter()
-                            .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                    let object_literal_has_unresolved_context = unresolved_refresh_context
+                        || raw_context_requires_generic_epc_skip
+                        || callable_context_requires_generic_epc_skip;
+                    let is_object_literal_function_param_implicit_any =
+                        object_literal_has_unresolved_context
+                            && is_provisional_implicit_any
+                            && object_literal_function_param_spans
+                                .iter()
+                                .any(|(start, end)| diag.start >= *start && diag.start < *end);
                     let is_function_arg_implicit_any_diag = is_provisional_implicit_any
                         && callback_param_spans
                             .iter()
