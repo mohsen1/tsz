@@ -287,6 +287,44 @@ function toString() {
     );
 }
 
+/// Conformance lock: TS2339 for `this.<inexistent>` inside a JS function
+/// must still fire even when the function's name shadows or merges with a
+/// lib ambient declaration (e.g. `function toString` shares the name with
+/// numerous `toString()` overloads in `lib.dom.d.ts`).
+///
+/// Before the synthesizer fix, `synthesize_js_constructor_instance_type`
+/// would resolve the function symbol's `value_declaration` to one of the
+/// body-less ambient lib declarations and short-circuit (returning `None`
+/// because `func.body.is_none()`). That left `this` untyped (`TypeId::ANY`)
+/// inside the JS function body, so `this.yadda` was untyped and no TS2339
+/// fired. Now: when called with a function-declaration / function-expression
+/// node directly, the synthesizer reads the body from that node, bypassing
+/// merged-symbol drift.
+///
+/// Mirrors `compiler/inexistentPropertyInsideToStringType.ts`.
+#[test]
+fn test_js_plain_function_this_read_reports_ts2339_with_lib_name_shadow() {
+    // Use a symbol name that exists in lib defs (e.g., `toString` lives on
+    // Object.prototype / Function.prototype / many DOM types). Without a
+    // direct-function fallback, merged-symbol resolution would steer the
+    // synthesizer toward a body-less ambient lib declaration.
+    let source = r#"
+function toString() {
+    this.yadda;
+    this.someValue = "";
+}
+"#;
+    let diagnostics = check_js(source);
+    let yadda_ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, msg)| *code == 2339 && msg.contains("'yadda'"))
+        .collect();
+    assert!(
+        !yadda_ts2339.is_empty(),
+        "Expected TS2339 for unknown `this.yadda` even when function name shadows a lib symbol, got: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn test_js_static_block_super_expando_reports_ts2565() {
     let source = r#"
