@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/parser-convert-keywords-yes`
-- **PR**: TBD
+- **PR**: #1820
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
