@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-super-keyword-missed-in-method-after-arrow`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1746
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance and Fingerprints)
 
 ## Intent
