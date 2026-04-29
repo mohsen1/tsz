@@ -11668,15 +11668,16 @@ fn test_trivial_identity_widens_literal_without_contextual_type() {
 }
 
 /// Test that a union of a single-overload function and a multi-overload callable
-/// is not callable when the single-overload member's `this` type doesn't match
-/// any of the multi-overload member's `this` types.
+/// remains callable when the actual receiver satisfies the single signature and
+/// one overload's `this` type.
 ///
 /// Corresponds to tsc behavior for:
 ///   type F1 = (this: A) => void;
 ///   interface F4 { (this: C): void; (this: D): void; }
-///   type Union = F1 | F4;  // not callable → TS2349
+///   declare var x: A & C & { f: F1 | F4 };
+///   `x.f()`;  // OK: selected overload has this A & C
 #[test]
-fn test_union_call_mixed_overloads_incompatible_this_not_callable() {
+fn test_union_call_mixed_overloads_intersects_this_types_callable() {
     let interner = TypeInterner::new();
 
     // Create distinct `this` types: A = { a: string }, C = { c: string }, D = { d: number }
@@ -11740,9 +11741,9 @@ fn test_union_call_mixed_overloads_incompatible_this_not_callable() {
     let result = evaluator.resolve_call(union_type, &[]);
 
     assert!(
-        matches!(result, CallResult::NotCallable { .. }),
+        matches!(result, CallResult::Success(_)),
         "Union of single-overload (this: A) and multi-overload (this: C / this: D) \
-         should be not callable because A != C and A != D. Got: {result:?}"
+         should be callable when actual `this` satisfies A & C. Got: {result:?}"
     );
 }
 
@@ -11815,6 +11816,97 @@ fn test_union_call_mixed_overloads_compatible_this_callable() {
         matches!(result, CallResult::Success(_)),
         "Union of single-overload (this: A) and multi-overload (this: A / this: B) \
          should be callable when `this` types match. Got: {result:?}"
+    );
+}
+
+/// Test that multi-overload union call merging compares `this` types by
+/// semantic identity, not raw TypeId. Checker lowering can produce distinct
+/// `TypeIds` for the same source alias across interface call signatures; tsc
+/// still treats those overloads as merge-compatible.
+#[test]
+fn test_union_call_multi_overloads_structurally_identical_this_callable() {
+    let interner = TypeInterner::new();
+
+    let prop_a = interner.intern_string("a");
+    let type_a = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(prop_a, TypeId::STRING)],
+        ObjectFlags::empty(),
+        Some(tsz_binder::SymbolId(1)),
+    );
+    let type_a_shadow = interner.object_with_flags_and_symbol(
+        vec![PropertyInfo::new(prop_a, TypeId::STRING)],
+        ObjectFlags::empty(),
+        Some(tsz_binder::SymbolId(2)),
+    );
+    assert_ne!(
+        type_a, type_a_shadow,
+        "test setup needs distinct TypeIds for structurally identical `this` types"
+    );
+
+    let type_b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("b"),
+        TypeId::NUMBER,
+    )]);
+
+    let type_c = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("c"),
+        TypeId::STRING,
+    )]);
+
+    let left = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_a_shadow),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_b),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    let right = interner.callable(CallableShape {
+        call_signatures: vec![
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_c),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+            CallSignature {
+                type_params: vec![],
+                params: vec![],
+                this_type: Some(type_a),
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_method: false,
+            },
+        ],
+        ..Default::default()
+    });
+
+    let union_type = interner.union(vec![left, right]);
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+    evaluator.set_actual_this_type(Some(type_a));
+    let result = evaluator.resolve_call(union_type, &[]);
+
+    assert!(
+        matches!(result, CallResult::Success(_)),
+        "Union call should merge signatures whose `this` types are semantically \
+         identical even when their TypeIds differ. Got: {result:?}"
     );
 }
 
