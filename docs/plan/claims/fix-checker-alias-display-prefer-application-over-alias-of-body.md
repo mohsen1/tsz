@@ -36,23 +36,46 @@ display for `typeof a` should resolve to `T<A>`, not its alias-equivalent
 keeps the application form on the type when it was encountered before
 the structural alias.
 
-## Required Fix (architectural)
+## Required Fix (architectural — iter 2)
 
-Two viable approaches:
+Instrumented `lookup_type_alias_name_for_display` and confirmed the
+existing display-alias guard at line 1713 works correctly for our case
+— for the `Pick<A,'x'>` Object (TypeId 239), `get_display_alias(239) =
+Some(459)` (an Application of T), so the checker-side helper returns
+`None` already. **The "C" output is coming from the solver-side
+formatter, not from the checker helper.**
 
-1. **Store-time priority.** When `register_resolved_type` runs for a
-   `TypeAlias` whose body is itself an `Application(<other_alias>, …)`,
-   *don't* register the application's resolved-body TypeId as also
-   pointing to the wrapper alias. That prevents `C` from being a
-   display candidate for the structural shape that `T<A>` already
-   represents. The `display_alias` map should keep the most
-   "informative" key, not just the most recent.
-2. **Lookup-time priority.** When the formatter has multiple display
-   candidates for a `TypeId`, prefer the candidate whose syntactic form
-   (Application > bare Lazy alias) provides more information. Implement
-   in `lookup_type_alias_name_for_display`.
+The actual `find_def_for_type(239) -> C_def` lookup happens in
+`crates/tsz-solver/src/diagnostics/format/mod.rs:674-708`. There's
+already a `skip_application_alias_names` flag on the formatter that
+gates the same skip we need at line 690-692:
 
-Approach 1 is cleaner architecturally; approach 2 is more localized.
+```rust
+|| (self.skip_application_alias_names
+    && def.type_params.is_empty()
+    && self.interner.get_display_alias(type_id).is_some())
+```
+
+When `skip_application_alias_names` is **on**, the alias name "C" is
+skipped and the structural form / Application form is used. The flag
+is currently set in three places:
+
+- `error_reporter/assignability.rs:1157`
+- `error_reporter/core/diagnostic_source.rs:648`
+- `error_reporter/core/type_display.rs:1331`
+
+**Required fix:** Set `with_skip_application_alias_names()` on the
+formatter used by `format_type_for_assignability_message` (or the
+specific TS2322 source/target rendering). Caveat: this flag may have
+wide cross-test impact — it's intentionally not on by default — so the
+fix needs careful regression testing across the
+`assignmentCompatibility` / variance suites.
+
+## Out of Scope
+
+The full audit of where to enable `skip_application_alias_names`. This
+turned out to be a substantial change touching the formatter
+configuration system, not a localized helper edit.
 
 ## Files Likely Involved
 
