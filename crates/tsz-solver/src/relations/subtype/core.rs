@@ -460,6 +460,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    fn object_shape_def_id(&self, type_id: TypeId) -> Option<DefId> {
+        let shape_id = object_shape_id(self.interner, type_id)
+            .or_else(|| object_with_index_shape_id(self.interner, type_id))?;
+        let shape = self.interner.object_shape(shape_id);
+        let symbol = shape.symbol?;
+        self.resolver.symbol_to_def_id(SymbolRef(symbol.0))
+    }
+
+    fn non_generic_object_shape_def_id(&self, type_id: TypeId) -> Option<DefId> {
+        let def_id = self.object_shape_def_id(type_id)?;
+        let has_type_params = self
+            .resolver
+            .get_lazy_type_params(def_id)
+            .is_some_and(|params| !params.is_empty());
+        (!has_type_params).then_some(def_id)
+    }
+
     /// Inner subtype check (after cycle detection and type evaluation).
     ///
     /// Wrapped with `stacker::maybe_grow()` so that deeply recursive structural
@@ -496,6 +513,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Note: Weak type checking is handled by CompatChecker (compat.rs:167-170).
         // Removed redundant check here to avoid double-checking which caused false positives.
+
+        // Property access on inherited `this`-returning methods substitutes `this`
+        // with the resolved class instance object. Keep that structural object
+        // assignable to the nominal class reference that denotes the same DefId.
+        if let Some(source_def_id) = self.non_generic_object_shape_def_id(source) {
+            if lazy_def_id(self.interner, target) == Some(source_def_id) {
+                return SubtypeResult::True;
+            }
+            if self.non_generic_object_shape_def_id(target) == Some(source_def_id) {
+                return SubtypeResult::True;
+            }
+        }
 
         // Primitive-to-boxed-wrapper assignability: `string -> String`, `number -> Number`, etc.
         // Must run BEFORE apparent_primitive_shape_for_type which would do a structural
