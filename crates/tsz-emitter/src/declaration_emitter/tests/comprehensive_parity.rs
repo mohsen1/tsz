@@ -1096,6 +1096,40 @@ const printFn = (action: typeof foo) => { action(1); };
 }
 
 #[test]
+fn test_arrow_initializer_generic_constraint_preserves_alias() {
+    // Regression for declarationEmitBindingPatternWithReservedWord: when an
+    // exported function-valued const has source type parameters, declaration
+    // emit should preserve the written constraint instead of reprinting the
+    // solver-expanded structural type.
+    let output = emit_dts_with_binding(
+        r#"
+type LocaleData = Record<string, never>;
+type ConvertLocaleConfig<T extends LocaleData = LocaleData> = Record<string, T>;
+interface GetLocalesOptions<T extends LocaleData> {
+    app: unknown;
+    default: ConvertLocaleConfig<T>;
+    name?: string;
+}
+export const getLocales = <T extends LocaleData>({
+    app,
+    name,
+    default: defaultLocalesConfig,
+}: GetLocalesOptions<T>): ConvertLocaleConfig<T> => {
+    return defaultLocalesConfig;
+};
+"#,
+    );
+    assert!(
+        output.contains("<T extends LocaleData>"),
+        "generic arrow initializer should preserve alias constraint: {output}"
+    );
+    assert!(
+        !output.contains("[x: string]: never"),
+        "generic constraint should not be solver-expanded: {output}"
+    );
+}
+
+#[test]
 fn test_anonymous_function_returning_outer_var_emits_elided_recursive_type() {
     // Regression for declFileTypeofFunction: a `var foo3 = function () { return foo3; }`
     // (anonymous function expression returning the binding it's assigned to)
