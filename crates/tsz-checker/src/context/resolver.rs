@@ -319,6 +319,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         if let Some(sym_id) = sym_id
             && let Some(file_idx) = definition_file_idx
             && file_idx != self.current_file_idx
+            && self.share_owner_symbol_type_results
             && let Some(resolved) = self
                 .definition_store
                 .get_resolved_symbol_type(sym_id.0, file_idx as u32)

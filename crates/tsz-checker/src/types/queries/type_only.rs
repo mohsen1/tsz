@@ -294,13 +294,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Only `import type X = require('...')` (with the `type` keyword) is a
-        // type-only import-equals. Plain `import X = require('...')` is a value
-        // import that yields the module namespace type `typeof import("mod")`, and
-        // property-access diagnostics on it should be TS2339, not TS1361.
-        if !symbol.is_type_only {
-            return false;
-        }
+        let import_equals_is_type_only = symbol.is_type_only;
 
         // If the symbol also has non-alias VALUE flags (e.g., from a local
         // `const I = {}` merged with `import type I = require(...)`), the
@@ -383,6 +377,12 @@ impl<'a> CheckerState<'a> {
             export_equals_binder.get_symbol_with_libs(resolved_export_equals, &lib_binders)
         {
             if !export_symbol.has_any_flags(symbol_flags::VALUE) {
+                if !import_equals_is_type_only
+                    && !export_symbol
+                        .has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+                {
+                    return false;
+                }
                 // For merged class+namespace types, the namespace exports may yield a
                 // TYPE-only symbol (e.g. `interface B`) while the class members table
                 // holds a VALUE symbol with the same name (e.g. `static B: number`).

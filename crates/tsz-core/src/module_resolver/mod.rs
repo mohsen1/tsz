@@ -108,9 +108,9 @@ pub struct ModuleResolver {
     /// previous read+parse.
     package_json_cache: std::cell::RefCell<FxHashMap<PathBuf, Result<PackageJson, String>>>,
     /// Cache for `should_skip_fallback_on_not_found` keyed by
-    /// (containing_dir, specifier, importing_module_kind). The function does
+    /// (`containing_dir`, specifier, `importing_module_kind`). The function does
     /// an unbounded walk up the directory tree calling `is_dir` and reading
-    /// `package.json` at every node_modules ancestor; on multi-package projects
+    /// `package.json` at every `node_modules` ancestor; on multi-package projects
     /// this is the dominant cost in `read_source_files` BFS. Caching collapses
     /// repeat checks for the same (dir, specifier) to an `FxHashMap` lookup.
     /// `RefCell` keeps the function `&self`-callable without cascading

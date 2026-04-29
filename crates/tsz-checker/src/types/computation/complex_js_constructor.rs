@@ -72,9 +72,35 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx))
         };
 
+        // When the caller passes a function declaration/expression node directly,
+        // prefer reading the function body from that node — bypassing symbol-based
+        // resolution. Symbol value_declaration can drift to a body-less ambient
+        // declaration when the JS function name merges with a lib symbol (e.g.,
+        // `function toString()` in JS shares the name with `lib.dom.d.ts`'s
+        // ambient `toString()` overloads, so symbol.value_declaration may resolve
+        // to one of those, and `func.body.is_none()` would short-circuit synthesis
+        // and leave `this` untyped inside the body).
+        let direct_func_kind = expr_kind
+            == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+            || expr_kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION;
+
         // For anonymous function expressions (e.g., `exports.A = function() { this.x = 1; }`),
         // no symbol may exist. Fall back to using the expression node directly as a function.
-        let (func, func_name_str, _func_node_idx) = if let Some(sym_id) = sym_id {
+        let (func, func_name_str, _func_node_idx) = if direct_func_kind
+            && let Some(func) = self.ctx.arena.get_function(expr_node)
+        {
+            let func_name = func
+                .name
+                .into_option()
+                .and_then(|name_idx| {
+                    self.ctx
+                        .arena
+                        .get(name_idx)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                })
+                .map(|ident| ident.escaped_text.clone());
+            (func, func_name, expr_idx)
+        } else if let Some(sym_id) = sym_id {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
             let value_decl = self
                 .checked_js_constructor_value_declaration(
@@ -123,23 +149,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 return None;
             }
-        } else if expr_kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
-            || expr_kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION
-        {
-            // Direct function expression/declaration without a symbol (e.g., anonymous
-            // function expression in `exports.X = function() { ... }`).
-            let func = self.ctx.arena.get_function(expr_node)?;
-            let func_name = func
-                .name
-                .into_option()
-                .and_then(|name_idx| {
-                    self.ctx
-                        .arena
-                        .get(name_idx)
-                        .and_then(|n| self.ctx.arena.get_identifier(n))
-                })
-                .map(|ident| ident.escaped_text.clone());
-            (func, func_name, expr_idx)
         } else {
             return None;
         };
@@ -398,7 +407,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Build an object type from the collected properties
+        // Build an object type from the collected properties.
         let props: Vec<PropertyInfo> = properties.into_values().collect();
         let factory = self.ctx.types.factory();
         let instance_type = factory.object(props);

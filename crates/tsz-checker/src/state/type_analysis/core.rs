@@ -21,6 +21,31 @@ type TypeParamPushResult = (
 );
 
 impl<'a> CheckerState<'a> {
+    fn cache_resolved_symbol_type_for_owner(&self, sym_id: SymbolId, type_id: TypeId) {
+        if !self.ctx.share_owner_symbol_type_results {
+            return;
+        }
+        if type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return;
+        }
+
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+        if symbol.decl_file_idx == u32::MAX {
+            return;
+        }
+        if symbol.decl_file_idx as usize != self.ctx.current_file_idx {
+            return;
+        }
+
+        self.ctx.definition_store.cache_resolved_symbol_type(
+            sym_id.0,
+            symbol.decl_file_idx,
+            type_id,
+        );
+    }
+
     fn can_register_evaluated_alias_form(
         &self,
         alias_def_id: tsz_solver::def::DefId,
@@ -2031,7 +2056,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .is_some_and(|(ld, od)| ld == od)
         };
-        if result_is_lazy_to_self
+        let result_cached_locally = if result_is_lazy_to_self
             && self
                 .ctx
                 .binder
@@ -2039,8 +2064,13 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
         {
             self.ctx.symbol_types.remove(&sym_id);
+            false
         } else {
             self.ctx.symbol_types.insert(sym_id, result);
+            true
+        };
+        if result_cached_locally {
+            self.cache_resolved_symbol_type_for_owner(sym_id, result);
         }
         trace!(
             sym_id = sym_id.0,

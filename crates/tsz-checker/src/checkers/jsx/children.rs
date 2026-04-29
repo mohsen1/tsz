@@ -6,6 +6,7 @@ use crate::query_boundaries::common::{
 };
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -170,6 +171,49 @@ impl<'a> CheckerState<'a> {
                     );
                     return;
                 }
+
+                // React-style class components expose props as an intersection of the
+                // declared component props and the base `Component` props, e.g.
+                // `P & { children?: ReactNode }`.  For a single render-prop child,
+                // the declared `P.children` callable is the right target.  For
+                // multiple JSX body children, however, tsc routes each child through
+                // the multiple-children/rest target (`ReactNode`) instead of
+                // collapsing the callable branch into TS2746.  Preserve the direct
+                // TS2746 path for components that only declare a single non-array
+                // children type, but prefer any intersection member that can actually
+                // accept multiple JSX children.
+                if self.jsx_tag_resolves_to_class(tag_name_idx)
+                    && self.type_has_jsx_children_callable_signature(children_type)
+                    && let Some(react_child_type) =
+                        self.get_react_node_multiple_children_type(tag_name_idx)
+                {
+                    if has_text_child && !self.children_type_accepts_text(react_child_type) {
+                        return;
+                    }
+                    self.report_jsx_multiple_children_individual_assignability(
+                        attributes_idx,
+                        react_child_type,
+                        react_child_type,
+                    );
+                    return;
+                }
+
+                if let Some(multiple_children_type) = self
+                    .get_jsx_tag_instance_multiple_children_prop_type(tag_name_idx)
+                    .or_else(|| self.get_jsx_intersection_multiple_children_prop_type(props_type))
+                {
+                    if has_text_child && !self.children_type_accepts_text(multiple_children_type) {
+                        return;
+                    }
+                    self.check_jsx_multiple_children_assignable(
+                        attributes_idx,
+                        multiple_children_type,
+                        multiple_children_type,
+                        tag_name_idx,
+                    );
+                    return;
+                }
+
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
                     tag_name_idx,
@@ -402,6 +446,211 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(children_type)
+    }
+
+    fn get_jsx_intersection_multiple_children_prop_type(
+        &mut self,
+        props_type: TypeId,
+    ) -> Option<TypeId> {
+        let props_type = self.resolve_type_for_property_access(props_type);
+        let props_type = self.evaluate_type_with_env(props_type);
+        let members =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, props_type)?;
+
+        let mut multiple_candidates = Vec::new();
+        let mut seen = FxHashSet::default();
+        for member in members {
+            let Some(children_type) = self.get_direct_jsx_children_prop_type(member) else {
+                continue;
+            };
+            if !self.type_allows_multiple_children(children_type) {
+                continue;
+            }
+
+            let key = self.format_type(children_type);
+            if seen.insert(key) {
+                multiple_candidates.push(children_type);
+            }
+        }
+
+        match multiple_candidates.as_slice() {
+            [] => None,
+            [candidate] => Some(*candidate),
+            _ => Some(self.ctx.types.factory().union(multiple_candidates)),
+        }
+    }
+
+    fn get_jsx_tag_instance_multiple_children_prop_type(
+        &mut self,
+        tag_name_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let sym_id = self.resolve_identifier_symbol(tag_name_idx)?;
+        let lib_binders = self.get_lib_binders();
+        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::CLASS) {
+            return None;
+        }
+        let instance_type = self.class_instance_type_from_symbol(sym_id)?;
+        self.get_jsx_instance_multiple_children_prop_type(instance_type)
+    }
+
+    fn jsx_tag_resolves_to_class(&mut self, tag_name_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_identifier_symbol(tag_name_idx) else {
+            return false;
+        };
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, &lib_binders)
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+    }
+
+    fn get_jsx_instance_multiple_children_prop_type(
+        &mut self,
+        instance_type: TypeId,
+    ) -> Option<TypeId> {
+        let props_type = match self.resolve_property_access_with_env(instance_type, "props") {
+            PropertyAccessResult::Success { type_id, .. } => type_id,
+            _ => return None,
+        };
+        self.get_jsx_intersection_multiple_children_prop_type(props_type)
+            .or_else(|| {
+                self.get_direct_jsx_children_prop_type(props_type)
+                    .filter(|&children_type| self.type_allows_multiple_children(children_type))
+            })
+    }
+
+    fn get_react_node_multiple_children_type(&mut self, anchor_idx: NodeIndex) -> Option<TypeId> {
+        let react_node_sym_id = self
+            .resolve_namespace_member_from_all_binders("React", "ReactNode")
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .file_locals
+                    .get("React")
+                    .and_then(|react_sym_id| {
+                        self.ctx
+                            .binder
+                            .get_symbol(react_sym_id)
+                            .and_then(|react_symbol| react_symbol.exports.as_ref())
+                            .and_then(|exports| exports.get("ReactNode"))
+                    })
+            })
+            .or_else(|| {
+                let lib_binders = self.get_lib_binders();
+                lib_binders.iter().find_map(|binder| {
+                    binder.file_locals.get("React").and_then(|react_sym_id| {
+                        binder
+                            .get_symbol(react_sym_id)
+                            .and_then(|react_symbol| react_symbol.exports.as_ref())
+                            .and_then(|exports| exports.get("ReactNode"))
+                    })
+                })
+            })
+            .or_else(|| {
+                let lib_binders = self.get_lib_binders();
+                let react_sym_id = self.ctx.binder.resolve_name_with_filter(
+                    "React",
+                    self.ctx.arena,
+                    anchor_idx,
+                    &lib_binders,
+                    |sym_id| {
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .is_some_and(|symbol| {
+                                symbol.has_any_flags(
+                                    tsz_binder::symbol_flags::NAMESPACE_MODULE
+                                        | tsz_binder::symbol_flags::VALUE_MODULE
+                                        | tsz_binder::symbol_flags::ALIAS,
+                                )
+                            })
+                    },
+                )?;
+                let mut visited = AliasCycleTracker::default();
+                let react_sym_id = self
+                    .resolve_alias_symbol(react_sym_id, &mut visited)
+                    .unwrap_or(react_sym_id);
+                let react_symbol = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(react_sym_id, &lib_binders)?;
+                react_symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get("ReactNode"))
+            })?;
+        let react_node_type = self.get_type_of_symbol(react_node_sym_id);
+        self.jsx_multiple_children_element_type_without_empty_object(react_node_type)
+    }
+
+    fn jsx_multiple_children_element_type_without_empty_object(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let resolved = self.select_jsx_multiple_children_target_type(type_id);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolved = self.evaluate_type_with_env(resolved);
+
+        if let Some(element_type) = array_element_type(self.ctx.types, resolved) {
+            return Some(self.refine_jsx_callable_contextual_type(element_type));
+        }
+
+        if let Some(elements) = tuple_elements(self.ctx.types, resolved) {
+            let element_types: Vec<TypeId> = elements
+                .iter()
+                .map(|elem| self.refine_jsx_callable_contextual_type(elem.type_id))
+                .collect();
+            return match element_types.as_slice() {
+                [] => None,
+                [element_type] => Some(*element_type),
+                _ => Some(self.ctx.types.factory().union(element_types)),
+            };
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+        {
+            let mut element_types = Vec::new();
+            for member in members {
+                if let Some(element_type) =
+                    self.jsx_multiple_children_element_type_without_empty_object(member)
+                {
+                    element_types.push(element_type);
+                } else if !self.is_jsx_empty_object_fragment_type(member)
+                    && !matches!(member, TypeId::NULL | TypeId::UNDEFINED)
+                {
+                    element_types.push(member);
+                }
+            }
+            return match element_types.as_slice() {
+                [] => None,
+                [element_type] => Some(*element_type),
+                _ => Some(self.ctx.types.factory().union(element_types)),
+            };
+        }
+
+        if let Some(value_type) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
+                .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
+        {
+            return Some(self.refine_jsx_callable_contextual_type(value_type));
+        }
+
+        if self.is_jsx_empty_object_fragment_type(resolved) {
+            return None;
+        }
+        Some(resolved)
+    }
+
+    fn is_jsx_empty_object_fragment_type(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id).is_some_and(
+            |shape| {
+                shape.properties.is_empty()
+                    && shape.string_index.is_none()
+                    && shape.number_index.is_none()
+            },
+        )
     }
 
     pub(super) fn normalize_jsx_props_member_for_children_resolution(

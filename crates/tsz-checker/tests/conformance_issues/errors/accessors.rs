@@ -864,7 +864,8 @@ export const useCsvParser = () => {
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345 && message.contains("typeof import(\"node_modules/csv-parse/lib/index\")")
+            *code == 2345
+                && message.contains("typeof import(\"p1/node_modules/csv-parse/lib/index\")")
         }),
         "Expected TS2345 message to preserve the resolved package path. Actual diagnostics: {diagnostics:#?}"
     );
@@ -1085,5 +1086,105 @@ mdast.toString();
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 1192),
         "Expected no TS1192 for .d.ts files with allowSyntheticDefaultImports=true. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_bare_esm_package_without_default_uses_resolved_node_modules_display() {
+    let files = [
+        (
+            "/node_modules/mdast-util-to-string/index.d.ts",
+            r#"
+export function toString(): string;
+"#,
+        ),
+        (
+            "/index.ts",
+            r#"
+import mdast, { toString } from "mdast-util-to-string";
+mdast;
+mdast.toString();
+
+const mdast2 = await import("mdast-util-to-string");
+mdast2.toString();
+mdast2.default;
+"#,
+        ),
+    ];
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut roots = Vec::with_capacity(files.len());
+    let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
+
+    for (name, source) in files {
+        let mut parser = ParserState::new(name.to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        arenas.push(Arc::new(parser.get_arena().clone()));
+        binders.push(Arc::new(binder));
+        roots.push(root);
+    }
+
+    let entry_idx = 1;
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        all_arenas[entry_idx].as_ref(),
+        all_binders[entry_idx].as_ref(),
+        &types,
+        file_names[entry_idx].clone(),
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            module: ModuleKind::ESNext,
+            allow_synthetic_default_imports: false,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    checker.ctx.set_all_binders(Arc::clone(&all_binders));
+    checker.ctx.set_current_file_idx(entry_idx);
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(FxHashMap::from_iter([(
+            (entry_idx, "mdast-util-to-string".to_string()),
+            0usize,
+        )])));
+    checker
+        .ctx
+        .set_resolved_modules(FxHashSet::from_iter(["mdast-util-to-string".to_string()]));
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(roots[entry_idx]);
+
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 1192 || d.code == 2339)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 1192 && message.contains("\"node_modules/mdast-util-to-string/index\"")
+        }),
+        "Expected TS1192 to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339
+                && message.contains("typeof import(\"node_modules/mdast-util-to-string/index\")")
+        }),
+        "Expected TS2339 to use the resolved node_modules path. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("typeof import(\"mdast-util-to-string\")")),
+        "Did not expect diagnostics to collapse the resolved package path back to the bare specifier: {diagnostics:#?}"
     );
 }

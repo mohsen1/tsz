@@ -14,7 +14,9 @@ use crate::diagnostics::{
     DiagnosticArg, PendingDiagnostic, RelatedInformation, SourceSpan, TypeDiagnostic,
     get_message_template,
 };
-use crate::types::{IntrinsicKind, StringIntrinsicKind, TypeData, TypeId, TypeParamInfo};
+use crate::types::{
+    IntrinsicKind, StringIntrinsicKind, TypeData, TypeId, TypeListId, TypeParamInfo,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -396,6 +398,13 @@ impl<'a> TypeFormatter<'a> {
     /// When false, optional params append `| undefined` unless already present.
     pub const fn with_preserve_optional_parameter_surface_syntax(mut self, preserve: bool) -> Self {
         self.preserve_optional_parameter_surface_syntax = preserve;
+        self
+    }
+
+    /// Preserve optional property surface syntax when formatting type output.
+    /// When false, optional properties append `| undefined` unless already present.
+    pub const fn with_preserve_optional_property_surface_syntax(mut self, preserve: bool) -> Self {
+        self.preserve_optional_property_surface_syntax = preserve;
         self
     }
 
@@ -1345,6 +1354,19 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::KeyOf(operand) => {
+                // `keyof null`, `keyof undefined`, `keyof void`, `keyof never`
+                // all evaluate to `never`. tsc displays the reduced form, so
+                // collapse to `never` whenever the operand evaluates there.
+                // This catches both the direct intrinsic case and substituted
+                // forms where a type parameter was bound to a nullish type.
+                if matches!(
+                    *operand,
+                    TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::NEVER
+                ) || crate::evaluation::evaluate::evaluate_keyof(self.interner, *operand)
+                    == TypeId::NEVER
+                {
+                    return self.format(TypeId::NEVER);
+                }
                 // For anonymous concrete object operands, evaluate `keyof` eagerly
                 // so diagnostics show the literal key union (e.g. `"x"`) instead
                 // of `keyof { x: number; }`. tsc only writes back `keyof <Name>`
@@ -1379,8 +1401,28 @@ impl<'a> TypeFormatter<'a> {
                 // named/lazy refs, or applications), not concrete structural types like `{}`.
                 // Exception: if any member is a structural object or intrinsic, preserve the
                 // undistributed form (e.g. `keyof (T & {})` stays as-is).
+                // tsc preserves `keyof (T & {})` undistributed because the
+                // empty-object intersection is a non-nullish constraint, not
+                // a structural-shape contributor. Restrict the no-distribute
+                // guard to that specific shape — generic intersections with
+                // *any* structural member (e.g. `T & string`) still
+                // distribute as before.
+                let any_member_empty_object = |list_id: TypeListId| -> bool {
+                    self.interner.type_list(list_id).iter().any(|&m| {
+                        matches!(
+                            self.interner.lookup(m),
+                            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id))
+                                if {
+                                    let shape = self.interner.object_shape(shape_id);
+                                    shape.properties.is_empty()
+                                        && shape.string_index.is_none()
+                                        && shape.number_index.is_none()
+                                }
+                        )
+                    })
+                };
                 let distributed = match self.interner.lookup(*operand) {
-                    Some(TypeData::Union(list_id)) => {
+                    Some(TypeData::Union(list_id)) if !any_member_empty_object(list_id) => {
                         let members = self.interner.type_list(list_id);
                         let parts: Vec<String> = members
                             .iter()
@@ -1404,7 +1446,7 @@ impl<'a> TypeFormatter<'a> {
                             .collect();
                         Some(parts.join(" & "))
                     }
-                    Some(TypeData::Intersection(list_id)) => {
+                    Some(TypeData::Intersection(list_id)) if !any_member_empty_object(list_id) => {
                         let members = self.interner.type_list(list_id);
                         let parts: Vec<String> = members
                             .iter()
@@ -1431,6 +1473,28 @@ impl<'a> TypeFormatter<'a> {
                 };
                 if let Some(s) = distributed {
                     return s.into();
+                }
+                // When we suppressed distribution because a member is structural,
+                // format the intersection/union members individually so we don't
+                // re-collapse `T & {}` into a body-equivalent alias like `QQ<T>`
+                // via the formatter's alias-reverse-lookup.  tsc preserves the
+                // user's spelling (`keyof (T & {})`) in error messages.
+                let inline_compound = match self.interner.lookup(*operand) {
+                    Some(TypeData::Union(list_id)) if any_member_empty_object(list_id) => {
+                        Some((list_id, " | "))
+                    }
+                    Some(TypeData::Intersection(list_id)) if any_member_empty_object(list_id) => {
+                        Some((list_id, " & "))
+                    }
+                    _ => None,
+                };
+                if let Some((list_id, sep)) = inline_compound {
+                    let members = self.interner.type_list(list_id);
+                    let parts: Vec<String> = members
+                        .iter()
+                        .map(|&m| self.format(m).into_owned())
+                        .collect();
+                    return format!("keyof ({})", parts.join(sep)).into();
                 }
                 let operand_str = self.format(*operand);
                 let needs_parens = matches!(
