@@ -65,6 +65,15 @@ pub struct JsExportSurface {
 
     /// Whether the module has any CommonJS export patterns at all.
     pub has_commonjs_exports: bool,
+
+    /// Whether `named_exports` includes properties from genuine augmentation
+    /// (`exports.foo = ...`, `module.exports.foo = ...`,
+    /// `Object.defineProperty(exports, "foo", …)`) — as opposed to only the
+    /// implicit seed extracted from a single `module.exports = { … }` object
+    /// literal. Used to decide whether the synthesized type should be tagged
+    /// with `namespace_module_names` (display as `typeof import("mod")`)
+    /// or left as the bare literal shape (`{ a: number; }`), matching tsc.
+    pub has_augmented_named_exports: bool,
 }
 
 impl JsExportSurface {
@@ -204,6 +213,7 @@ impl JsExportSurface {
             named_exports: Vec::new(),
             prototype_members: Vec::new(),
             has_commonjs_exports: false,
+            has_augmented_named_exports: false,
         }
     }
 
@@ -276,9 +286,17 @@ impl JsExportSurface {
         display_name: Option<String>,
     ) -> Option<TypeId> {
         let type_id = self.to_type_id(checker)?;
-        // Only tag with display name if we have named exports (namespace-like).
-        // A bare direct export (module.exports = X) keeps the raw type display.
+        // Only tag with display name when the synthesized type is namespace-like
+        // — i.e. either there's no direct module.exports = X, or the named
+        // exports include genuine augmentation beyond the direct-export object
+        // literal's own properties. A file that exports a single object
+        // literal (`module.exports = { a: 0 }`) keeps the raw `{ a: number; }`
+        // shape in diagnostics; tsc shows the literal, not `typeof import("mod")`.
+        let synth_is_namespace_like = self.direct_export_type.is_none()
+            || self.has_augmented_named_exports
+            || !self.prototype_members.is_empty();
         if let Some(name) = display_name
+            && synth_is_namespace_like
             && !self.named_exports.is_empty()
             && self.direct_export_type.is_none_or(|direct_export_type| {
                 commonjs_direct_export_supports_named_props(checker.ctx.types, direct_export_type)
@@ -538,7 +556,17 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let type_id = surface.to_type_id(self)?;
-        if let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32)) {
+        // Mirror `to_type_id_with_display_name`: only tag the synthesized
+        // namespace type when it actually represents a namespace-like surface.
+        // A file that just does `module.exports = { … }` (no augmentation, no
+        // prototype members) gets the bare literal type in diagnostics, not
+        // `typeof import("mod")`.
+        let synth_is_namespace_like = surface.direct_export_type.is_none()
+            || surface.has_augmented_named_exports
+            || !surface.prototype_members.is_empty();
+        if synth_is_namespace_like
+            && let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32))
+        {
             self.ctx
                 .namespace_module_names
                 .insert(type_id, specifier.clone());
@@ -571,11 +599,17 @@ impl<'a> CheckerState<'a> {
         // augment the final export object after the last full `module.exports = ...`.
         let mut props =
             self.all_direct_module_export_object_literal_seed_props_for_file(target_file_idx);
+        let seed_count = props.len();
         self.augment_namespace_props_with_commonjs_exports_for_file_after(
             target_file_idx,
             &mut props,
             None,
         );
+        // Track whether the augment step contributed any real named exports
+        // beyond what the direct-export object literal seeded — used downstream
+        // to decide whether to tag the synthesized type as
+        // `typeof import("mod")` (only when there is genuine augmentation).
+        surface.has_augmented_named_exports = props.len() > seed_count;
         JsExportSurface::normalize_property_declaration_order(&mut props);
         surface.named_exports = props;
 
