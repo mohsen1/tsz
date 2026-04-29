@@ -85,15 +85,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .any(|ty| matches!(*ty, TypeId::ANY | TypeId::ERROR))
         {
-            // Context-sensitive callbacks can contribute an uninformative `any`
-            // candidate after direct arguments have already produced conflicting
-            // concrete primitive candidates. Do not let that `any` erase the
-            // first-wins direct-argument mismatch that tsc reports.
-            if self.has_conflicting_literal_bases(&concrete_lower_bounds)
-                && let Some(first_concrete) = concrete_lower_bounds.first().copied()
-            {
-                return first_concrete;
-            }
             return TypeId::ANY;
         }
 
