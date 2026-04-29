@@ -168,6 +168,52 @@ fn test_empty_named_export_has_no_extra_spacing() {
 }
 
 #[test]
+fn test_js_local_renamed_export_aliases_are_grouped() {
+    let source = r#"
+function hh() {}
+export { hh as h };
+export function i() {}
+export { i as ii };
+export { j as jj };
+export function j() {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export { hh as h, i as ii, j as jj };"),
+        "Expected local renamed export aliases to be grouped: {output}"
+    );
+    assert_eq!(
+        output.matches("export {").count(),
+        1,
+        "Expected exactly one export alias statement: {output}"
+    );
+}
+
+#[test]
+fn test_js_cjs_export_aliases_are_grouped_in_source_order() {
+    let source = r#"
+function hh() {}
+module.exports.h = hh;
+module.exports.i = function i() {}
+module.exports.ii = module.exports.i;
+module.exports.jj = module.exports.j;
+module.exports.j = function j() {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export { hh as h, i as ii, j as jj };"),
+        "Expected CJS aliases to be grouped in source order: {output}"
+    );
+    assert_eq!(
+        output.matches("export {").count(),
+        1,
+        "Expected exactly one CJS export alias statement: {output}"
+    );
+}
+
+#[test]
 fn test_private_set_accessor_omits_type_and_uses_value_param_name() {
     let source = r#"
 declare class C {

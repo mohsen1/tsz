@@ -566,8 +566,9 @@ impl<'a> DeclarationEmitter<'a> {
             return empty;
         }
         let export_targets = self.collect_js_named_export_targets(source_file);
-        let mut alias_map: FxHashMap<String, (String, Vec<NodeIndex>)> = FxHashMap::default();
-        for &stmt_idx in &source_file.statements.nodes {
+        let mut alias_map: FxHashMap<String, (String, Vec<NodeIndex>, usize)> =
+            FxHashMap::default();
+        for (order, &stmt_idx) in source_file.statements.nodes.iter().enumerate() {
             if let Some((export_name_idx, rhs_idx)) =
                 self.js_commonjs_named_export_for_statement(stmt_idx)
             {
@@ -582,11 +583,10 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.module_exports_property_reference_name(rhs_idx));
                 let entry = alias_map
                     .entry(export_name.clone())
-                    .or_insert_with(|| (String::new(), Vec::new()));
+                    .or_insert_with(|| (String::new(), Vec::new(), order));
                 entry.1.push(stmt_idx);
                 if let Some(ref ln) = local_name
                     && *ln != export_name
-                    && export_targets.contains_key(ln)
                 {
                     entry.0 = ln.clone();
                 }
@@ -597,9 +597,9 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 let entry = alias_map
                     .entry(export_name.clone())
-                    .or_insert_with(|| (String::new(), Vec::new()));
+                    .or_insert_with(|| (String::new(), Vec::new(), order));
                 entry.1.push(stmt);
-                if export_name != local_name && export_targets.contains_key(&local_name) {
+                if export_name != local_name {
                     entry.0 = local_name;
                 }
             }
@@ -607,8 +607,13 @@ impl<'a> DeclarationEmitter<'a> {
         let mut aliases = Vec::new();
         let mut skipped = FxHashSet::default();
         let mut seen = FxHashSet::default();
-        for (export_name, (local_name, stmts)) in &alias_map {
+        let mut ordered_aliases: Vec<_> = alias_map.iter().collect();
+        ordered_aliases.sort_by_key(|(_, (_, _, order))| *order);
+        for (export_name, (local_name, stmts, _)) in ordered_aliases {
             if local_name.is_empty() {
+                continue;
+            }
+            if !export_targets.contains_key(local_name) && !alias_map.contains_key(local_name) {
                 continue;
             }
             for &s in stmts {
@@ -618,6 +623,59 @@ impl<'a> DeclarationEmitter<'a> {
                 aliases.push((export_name.clone(), local_name.clone()));
             }
         }
+        (aliases, skipped)
+    }
+
+    pub(crate) fn collect_js_local_export_aliases(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> (Vec<NodeIndex>, FxHashSet<NodeIndex>) {
+        let mut aliases = Vec::new();
+        let mut skipped = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return (aliases, skipped);
+        }
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            if named.name.is_some() || named.elements.nodes.is_empty() {
+                continue;
+            }
+            let all_renamed_value_aliases = named.elements.nodes.iter().copied().all(|spec_idx| {
+                self.arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                    .is_some_and(|spec| spec.property_name.is_some() && !spec.is_type_only)
+            });
+            if !all_renamed_value_aliases {
+                continue;
+            }
+
+            aliases.push(stmt_idx);
+            skipped.insert(stmt_idx);
+        }
+
         (aliases, skipped)
     }
 

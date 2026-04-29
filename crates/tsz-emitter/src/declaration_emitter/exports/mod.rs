@@ -115,6 +115,9 @@ impl<'a> DeclarationEmitter<'a> {
         if self.js_skipped_reexports.contains(&export_idx) {
             return;
         }
+        if self.js_skipped_local_export_aliases.contains(&export_idx) {
+            return;
+        }
         if let Some(group) = self.js_grouped_reexports.get(&export_idx).cloned() {
             self.emit_grouped_js_reexports(&group);
             return;
@@ -309,17 +312,57 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         let aliases = self.js_cjs_export_aliases.clone();
+        self.write_indent();
+        self.write("export { ");
+        let mut first = true;
         for (export_name, local_name) in &aliases {
-            self.write_indent();
-            self.write("export { ");
+            if !first {
+                self.write(", ");
+            }
+            first = false;
             self.write(local_name);
             self.write(" as ");
             self.write(export_name);
-            self.write(" };");
-            self.write_line();
-            self.emitted_scope_marker = true;
-            self.emitted_module_indicator = true;
         }
+        self.write(" };");
+        self.write_line();
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
+    }
+
+    pub(crate) fn emit_js_local_export_aliases(&mut self) {
+        if self.js_local_export_aliases.is_empty() {
+            return;
+        }
+        let aliases = self.js_local_export_aliases.clone();
+        self.write_indent();
+        self.write("export { ");
+        let mut first = true;
+        for export_idx in aliases {
+            let Some(export_node) = self.arena.get(export_idx) else {
+                continue;
+            };
+            let Some(export) = self.arena.get_export_decl(export_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.emit_specifier(spec_idx, true);
+            }
+        }
+        self.write(" };");
+        self.write_line();
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
     }
 
     pub(crate) fn emit_export_assignment(&mut self, assign_idx: NodeIndex) {

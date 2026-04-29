@@ -124,6 +124,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_named_export_names = js_named_export_names;
         self.js_folded_named_export_statements = folded_named_exports;
         self.js_deferred_named_export_statements = deferred_named_exports;
+        let (local_export_aliases, skipped_local_export_aliases) =
+            self.collect_js_local_export_aliases(source_file);
+        self.js_local_export_aliases = local_export_aliases;
+        self.js_skipped_local_export_aliases = skipped_local_export_aliases;
         self.js_export_equals_names = self.collect_js_export_equals_names(source_file);
         self.emitted_js_export_equals_names.clear();
         self.js_export_default_names = self.collect_js_export_default_names(source_file);
@@ -236,8 +240,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.emitted_module_indicator = true;
         }
 
-        // Emit CJS export aliases before declarations.
-        self.emit_js_cjs_export_aliases();
         for &stmt_idx in &source_file.statements.nodes {
             if let Some((name_idx, initializer)) =
                 self.js_named_export_equals_class_expression(stmt_idx)
@@ -340,6 +342,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_pending_top_level_jsdoc_type_aliases(source_file);
         self.emit_pending_jsdoc_callback_type_aliases(source_file);
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
+        self.emit_js_local_export_aliases();
+        self.emit_js_cjs_export_aliases();
 
         // Add `export {};` scope fix marker when needed (mirrors tsc's transformDeclarations).
         // Uses emission-time tracking instead of source-file analysis.
