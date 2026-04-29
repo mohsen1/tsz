@@ -791,11 +791,32 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = export_equals_default_name(self, display_ty) {
             return Some(name);
         }
+        // Raw Tuple types must not be resolved to a type alias name via find_def_for_type.
+        // A literal tuple declaration like `let x: [number, string]` interns to the same
+        // TypeId as `type T = [number, string]`, which would cause x's error messages to
+        // show "T" instead of the structural form. Only Lazy(DefId) references (which
+        // arise from explicit alias usage) correctly produce alias names.
+        let ty_is_raw_tuple = crate::query_boundaries::common::is_tuple_type(self.ctx.types, ty);
         let def_id =
             crate::query_boundaries::common::lazy_def_id(self.ctx.types.as_type_database(), ty)
-                .or_else(|| self.ctx.definition_store.find_def_for_type(ty))
-                .or_else(|| self.ctx.definition_store.find_def_for_type(display_ty))
                 .or_else(|| {
+                    if ty_is_raw_tuple {
+                        None
+                    } else {
+                        self.ctx.definition_store.find_def_for_type(ty)
+                    }
+                })
+                .or_else(|| {
+                    if ty_is_raw_tuple {
+                        None
+                    } else {
+                        self.ctx.definition_store.find_def_for_type(display_ty)
+                    }
+                })
+                .or_else(|| {
+                    if ty_is_raw_tuple {
+                        return None;
+                    }
                     let evaluated = self.evaluate_type_for_assignability(ty);
                     self.ctx.definition_store.find_def_for_type(evaluated)
                 })?;

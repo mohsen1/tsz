@@ -77,6 +77,21 @@ impl<'a> CheckerState<'a> {
                 source_element,
                 target_element,
             }) => {
+                // For variadic-rest tuples with trailing fixed elements, only
+                // report element-level errors for the leading fixed section.
+                // A failure at index >= leading_fixed_count means the mismatch
+                // is in the variadic or trailing section — those can't be mapped
+                // to source element positions reliably, so defer to tuple-level.
+                if let Some(target_elements) =
+                    crate::query_boundaries::common::tuple_elements(self.ctx.types, target_type)
+                    && let Some(n_leading) =
+                        crate::query_boundaries::common::tuple_leading_fixed_count_before_trailing(
+                            &target_elements,
+                        )
+                    && index >= n_leading
+                {
+                    return false;
+                }
                 let Some(&elem_idx) = arr.elements.nodes.get(index) else {
                     return false;
                 };

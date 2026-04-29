@@ -439,6 +439,9 @@ mod union_call_resolution_tests;
 #[path = "tests/union_multi_overload_unified_sig_tests.rs"]
 mod union_multi_overload_unified_sig_tests;
 #[cfg(test)]
+#[path = "../tests/variadic_tuple_elaboration_tests.rs"]
+mod variadic_tuple_elaboration_tests;
+#[cfg(test)]
 #[path = "../tests/void_param_optionality_tests.rs"]
 mod void_param_optionality_tests;
 
