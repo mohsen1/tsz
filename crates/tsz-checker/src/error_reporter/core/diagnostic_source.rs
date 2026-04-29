@@ -215,6 +215,20 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Binding-element names are assignment targets, not source expressions.
+        // When TS2322 is anchored at the binding-element name (e.g. `bar` in
+        // `function f({ bar = null }: { bar?: number } = {}) {}`), the source
+        // is the default-value initializer, not the binding name. Without this
+        // guard, `get_type_of_node(bar)` looks up the binding identifier's
+        // post-destructuring local type and the diagnostic source is rendered
+        // as that type instead of the actual default value's type.
+        if parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+            && let Some(elem) = self.ctx.arena.get_binding_element(parent_node)
+            && elem.name == expr_idx
+        {
+            return None;
+        }
+
         // JSX attribute names are not source expressions.
         // When TS2322 is anchored at an attribute name (e.g., `x` in `<Comp x={10} />`),
         // the error reporter must not call get_type_of_node on the attribute name
