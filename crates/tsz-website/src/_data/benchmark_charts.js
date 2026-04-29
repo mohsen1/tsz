@@ -16,6 +16,19 @@ function formatDurationMs(value, fractionDigits = 0) {
   return `${ms.toFixed(fractionDigits)}ms`;
 }
 
+function formatSpeedupLabel(tszMs, tsgoMs) {
+  const tsz = Number(tszMs);
+  const tsgo = Number(tsgoMs);
+  if (!Number.isFinite(tsz) || !Number.isFinite(tsgo) || tsz <= 0 || tsgo <= 0) return "";
+
+  const factor = Math.max(tsz, tsgo) / Math.min(tsz, tsgo);
+  if (factor < 1.05) return "equal";
+
+  return tsz < tsgo
+    ? `tsz ${factor.toFixed(1)}x faster`
+    : `tsgo ${factor.toFixed(1)}x faster`;
+}
+
 const TINY_BENCHMARK_MAX_LINES = 200;
 
 const PROJECT_FALLBACK_CONFIG = {
@@ -66,15 +79,18 @@ function readJsonIfExists(p) {
 
 function loadBenchmarks() {
   const artifactsDir = path.join(ROOT, "artifacts");
+  const ciLatest = path.join(artifactsDir, "bench-vs-tsgo-gcs-latest.json");
   const artifactFiles = (() => {
     try {
-      return fs.readdirSync(artifactsDir)
+      const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
+        .filter((file) => file !== "bench-vs-tsgo-gcs-latest.json")
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
+      return [ciLatest, ...localArtifacts];
     } catch {
-      return [];
+      return [ciLatest];
     }
   })();
 
@@ -373,12 +389,7 @@ function generateCharts(data) {
     for (const r of entries) {
       const tszWidth = Math.max(2, (r.tsz_ms / maxMs) * barMaxWidth);
       const tsgoWidth = Math.max(2, (r.tsgo_ms / maxMs) * barMaxWidth);
-      const winnerLabel =
-        r.winner === "tsz"
-          ? `tsz ${r.factor?.toFixed(1)}x faster`
-          : r.winner === "tsgo"
-            ? `tsgo ${r.factor?.toFixed(1)}x faster`
-            : "";
+      const winnerLabel = formatSpeedupLabel(r.tsz_ms, r.tsgo_ms);
 
       html += `  <div class="bench-row">
 ${shouldHideSingleProjectNames ? "" : `    <div class="bench-name">${escapeHtml(displayName(r.name))}</div>\n`}
@@ -386,15 +397,17 @@ ${shouldHideSingleProjectNames ? "" : `    <div class="bench-name">${escapeHtml(
     <div class="bench-bars">
       <div class="bench-bar-row">
   <span class="bench-bar-label">tsz</span>
-        <div class="bench-bar tsz" style="width: ${tszWidth}px"></div>
-        <span class="bench-bar-time">${formatDurationMs(r.tsz_ms)}</span>
+        <div class="bench-bar tsz" style="width: ${tszWidth}px">
+          <span class="bench-bar-value">${formatDurationMs(r.tsz_ms)}</span>
+        </div>
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
-        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
-        <span class="bench-bar-time">${formatDurationMs(r.tsgo_ms)}</span>
-        ${winnerLabel ? `<span class="bench-winner">${winnerLabel}</span>` : ""}
+        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px">
+          <span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span>
+        </div>
       </div>
+      ${winnerLabel ? `<div class="bench-winner">${winnerLabel}</div>` : ""}
     </div>
   </div>\n`;
     }
@@ -424,12 +437,13 @@ ${shouldHideSingleProjectNames ? "" : `    <div class="bench-name">${escapeHtml(
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsz</span>
         <div class="bench-bar tsz bench-bar-failed" style="width: 2px"></div>
-        <span class="bench-bar-time bench-failed-label">${escapeHtml(r.status || "failed")}</span>
+        <span class="bench-bar-time bench-failed-label">tsz failed</span>
       </div>
       <div class="bench-bar-row">
         <span class="bench-bar-label">tsgo</span>
-        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
-        <span class="bench-bar-time">${formatDurationMs(r.tsgo_ms)}</span>
+        <div class="bench-bar tsgo" style="width: ${tsgoWidth}px">
+          <span class="bench-bar-value">${formatDurationMs(r.tsgo_ms)}</span>
+        </div>
       </div>
     </div>
   </div>\n`;
@@ -437,14 +451,6 @@ ${shouldHideSingleProjectNames ? "" : `    <div class="bench-name">${escapeHtml(
     html += `  </div>
  </section>\n`;
   }
-
-  html += `<section class="bench-category bench-notes">
-  <h3 class="bench-category-title">How to Read These Charts</h3>
-  <p class="bench-category-desc">
-    Each category is normalized independently for readability: bar lengths are scaled to the
-    slowest benchmark <em>within that category</em>.
-  </p>
- </section>`;
 
   return html;
 }

@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ title or "tsz" }} - tsz</title>
+  <title>{{ browser_title or ((title or "tsz") + " - tsz") }}</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   {{ extra_head | safe }}
 </head>
 <body>
   <nav class="site-nav">
-    <a href="/" class="nav-logo">tsz</a>
+    <a href="/" class="nav-logo" aria-label="tsz home"><span class="tsz-logo tsz-logo-nav" aria-hidden="true"></span></a>
     <button class="nav-hamburger" aria-label="Menu" onclick="document.querySelector('.nav-links').classList.toggle('open')">
       <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor"><path d="M3 5h14v1.5H3zm0 4.25h14v1.5H3zm0 4.25h14v1.5H3z"/></svg>
     </button>
@@ -30,7 +30,7 @@
     {{ content | safe }}
   </main>
   <footer class="site-footer">
-    <p>tsz - a TypeScript compiler in Rust. Apache-2.0 License.{% if build.sha %} Built at <a href="https://github.com/mohsen1/tsz/commit/{{ build.sha }}">{{ build.sha7 }}</a>.{% endif %}</p>
+    <p><a href="https://github.com/mohsen1/tsz">tsz</a> - a TypeScript compiler in Rust. Apache-2.0 License.{% if build.sha %} Built at <a href="https://github.com/mohsen1/tsz/commit/{{ build.sha }}">{{ build.sha7 }}</a>.{% endif %}</p>
   </footer>
   {{ extra_scripts | safe }}
 </body>
