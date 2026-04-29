@@ -30,31 +30,54 @@ The same expansion happens for `A2<T> = ( { [P in K]?: never } )` — a
 parenthesized mapped-type body. So the fix must apply uniformly to all
 `PARENTHESIZED_TYPE` bodies, not just intersections.
 
-## Investigation Findings
+## Investigation Findings (iter 2)
 
-- The diagnostic-display alias resolution lives in
-  `tsz-solver`'s `find_type_alias_by_body` lookup, fed by
-  `register_resolved_type` → `set_body(def_id, type_id)` in
-  `crates/tsz-checker/src/context/def_mapping.rs:921`.
-- `set_body` keys on the resolved alias body's `TypeId`. For
-  `A<T> = (T & U)`, the lowered body type is the same intersection
-  `T & U` whether or not the source is parenthesized — so the alias *should*
-  be findable. The bug is upstream of `set_body`.
-- The alias body is lowered through `type_node_resolution.rs::ensure_type_alias_resolved`
-  (see line ~650 in this file). Need to trace whether the inner unwrapping
-  of `PARENTHESIZED_TYPE` happens BEFORE or AFTER the `set_body` call. If
-  before, then the alias's body type is the inner intersection — and any
-  later `format_type` for an *application* of A (i.e.
-  `Application(A_def, [{x:number}])`) ends up evaluating to a plain
-  intersection without the alias-application wrapper.
-- Likely root cause: when applying `A<{x:number}>`, tsz instantiates the
-  alias body and discards the `Application` wrapper / alias-symbol marker
-  during evaluation, so the resulting `TypeId` displays as the structural
-  intersection. tsc preserves the application form for display.
-- Compare: tsc's printer keeps the `aliasSymbol` and `aliasTypeArguments`
-  metadata on the resulting type (see tsc's `getAliasSymbol` /
-  `aliasInstantiations` paths). tsz's solver may have analogous metadata
-  but isn't propagating it through the application instantiation.
+- TS2352 emission path: `dispatch.rs::~1098` → `error_type_assertion_no_overlap`
+  in `crates/tsz-checker/src/error_reporter/generics.rs:485`.
+- Source/target rendering goes through `format_type_assertion_overlap_display`
+  (same file, `:262`). Notable branch at `:279`:
+
+  ```rust
+  let evaluated = self.evaluate_type_with_env(type_id);
+  if let Some(alias_origin) = self.ctx.types.get_display_alias(evaluated)
+      && let Some(app) = type_application(self.ctx.types, alias_origin)
+      && let Some(def_id) = lazy_def_id(self.ctx.types, app.base)
+      && let Some(def) = self.ctx.definition_store.get(def_id)
+      && def.kind == TypeAlias
+      ...
+  { /* render as alias */ }
+  ```
+
+- The display-alias mapping is supposed to be installed by
+  `evaluate_application` in
+  `crates/tsz-solver/src/evaluation/evaluate.rs:920-940`:
+  when an `Application(A, [args])` evaluates to a different `result`
+  (e.g. the inner intersection), it stores
+  `display_alias[result] = Application` so the formatter can recover
+  the alias name.
+- Hypothesis (still to verify): for `A<T> = (T & U)`, the lowering may
+  return the *evaluated* intersection directly (skipping the
+  `Application` form), or `evaluate_application` is short-circuiting
+  before reaching the `store_display_alias` call. Need a debug print of
+  the `TypeId` returned by `lower_type` for the `A<{x:number}>` node and
+  whether it's `TypeData::Application(...)` or a structural type.
+- For `A2<T> = ( { [P in K]?: never } )` (parenthesized mapped-type),
+  the same symptom occurs in the second TS2352 (`A2<...>` not preserved).
+
+## Next Steps
+
+1. Add a `tracing::debug` in `error_type_assertion_no_overlap` that prints
+   the `TypeData` variant of `target_type` and `get_display_alias(target)`
+   for the failing test, then run the conformance test and inspect.
+2. If `target_type` is *not* an `Application`, the bug is upstream in
+   `lower_type` for `TYPE_REFERENCE` whose alias body is `PARENTHESIZED_TYPE`
+   wrapping `INTERSECTION_TYPE` / `MAPPED_TYPE` — need to ensure the
+   lowering keeps the `Application` wrapper.
+3. If `target_type` IS an `Application` but `get_display_alias` returns
+   `None`, the `evaluate_application` path is missing the
+   `store_display_alias` call — likely because of the parenthesized inner
+   shape. Trace the `result != original_type_id` and `has_param_args`
+   conditions.
 
 ## Files Likely Involved
 
