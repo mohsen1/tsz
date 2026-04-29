@@ -71,7 +71,37 @@ jobs:
           pnpm config set store-dir "$PNPM_STORE_DIR"
 
       - name: Prepare benchmark binary and tools
-        run: ./scripts/bench/bench-vs-tsgo.sh --prepare-only
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          (
+            while true; do
+              echo "::group::bench prepare heartbeat $(date -Is)"
+              echo "load:"; uptime || true
+              echo "memory:"; free -h || true
+              echo "disk:"; df -h || true
+              echo "top processes:"; ps -eo pid,ppid,%cpu,%mem,rss,cmd --sort=-rss 2>/dev/null | head -20 || true
+              echo "::endgroup::"
+              sleep 30
+            done
+          ) &
+          _monitor_pid=$!
+          trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
+
+          ./scripts/bench/bench-vs-tsgo.sh --prepare-only \
+            2>&1 | tee "$GITHUB_WORKSPACE/bench-prepare.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload benchmark prep log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-prepare-log
+          path: bench-prepare.log
+          retention-days: 7
+          if-no-files-found: warn
+          compression-level: 1
 
       - name: Save GCS caches
         env:
