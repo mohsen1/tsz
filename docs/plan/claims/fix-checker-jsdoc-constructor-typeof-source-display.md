@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-jsdoc-constructor-typeof-source-display`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1786
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance and Fingerprints)
 
 ## Intent
@@ -25,6 +25,7 @@ symbol carries JS-constructor evidence, the diagnostic prints
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker --lib` for the new regression test
-- `./scripts/conformance/conformance.sh run --filter "jsdocFunctionType" --verbose`
-- Quick regression: `./scripts/conformance/conformance.sh run --max 200`
+- `cargo fmt --check`
+- `cargo check --package tsz-checker`
+- `cargo test --package tsz-checker --lib jsdoc_constructor_identifier_argument_uses_typeof_source_display -- --nocapture`
+- `./scripts/conformance/conformance.sh run --test-dir /Users/mohsen/code/tsz/TypeScript/tests/cases --filter jsdocFunctionType --verbose` (2/2 passed)
