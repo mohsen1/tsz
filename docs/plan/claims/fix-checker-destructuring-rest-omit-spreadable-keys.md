@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-destructuring-rest-omit-spreadable-keys`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1723
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance and Fingerprints)
 
 ## Intent
@@ -44,10 +44,13 @@ the `Omit<T, K>` application.
 
 ## Verification
 
-- `cargo nextest run -p tsz-checker -- destructuring_rest_omit_unspreadable`
-- `./scripts/conformance/conformance.sh run --filter "destructuringUnspreadableIntoRest" --verbose`
-  — expects partial improvement: T-extends-A cases (lines 60-89) move from
-  `Omit<T, "publicProp">` / `T` to `Omit<T, "method"|"getter"|"setter"|<rest>>`.
-  `this`-typed cases (lines 22-47) remain fingerprint-only on the deferred
-  `this` work above.
-- `scripts/session/verify-all.sh` (when relevant)
+- Pre-commit hook all green:
+  - `cargo fmt` already formatted; `cargo clippy` zero warnings;
+    wasm32 rustc warnings gate; architecture guardrails;
+    **21536 / 21536 tests pass** (44.1s, 77 skipped).
+- New unit-test file passes 3/3.
+- `./scripts/conformance/conformance.sh run --filter "destructuringUnspreadableIntoRest" --verbose`:
+  T-extends-A cases (lines 60-89) now match tsc's
+  `Omit<T, "method" | "getter" | "setter" | <explicit>>` rendering.
+  `this`-typed cases (lines 22-47) remain fingerprint-only — that
+  is the deferred-follow-up scope.
