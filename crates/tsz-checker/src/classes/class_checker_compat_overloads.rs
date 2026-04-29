@@ -5,17 +5,17 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE;
 use tsz_solver::TypeId;
 
-fn overload_compare_signature_type(
+fn overload_method_wrapper_value_type(
     types: &dyn tsz_solver::QueryDatabase,
     type_id: TypeId,
-) -> TypeId {
+) -> Option<TypeId> {
     if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(types, type_id)
         && shape.properties.len() == 1
         && shape.properties[0].is_method
     {
-        return shape.properties[0].type_id;
+        return Some(shape.properties[0].type_id);
     }
-    type_id
+    None
 }
 
 impl<'a> CheckerState<'a> {
@@ -221,10 +221,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let derived_compare_sig =
-                overload_compare_signature_type(self.ctx.types, derived_trailing_sig);
-            let base_compare_sig =
-                overload_compare_signature_type(self.ctx.types, base_trailing_sig);
+            let derived_method_value =
+                overload_method_wrapper_value_type(self.ctx.types, derived_trailing_sig);
+            let base_method_value =
+                overload_method_wrapper_value_type(self.ctx.types, base_trailing_sig);
+            let (derived_compare_sig, base_compare_sig) =
+                match (derived_method_value, base_method_value) {
+                    (Some(derived), None) => (derived, base_trailing_sig),
+                    (None, Some(base)) => (derived_trailing_sig, base),
+                    _ => (derived_trailing_sig, base_trailing_sig),
+                };
 
             if !self.is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig)
                 && !self.should_suppress_assignability_for_parse_recovery(
