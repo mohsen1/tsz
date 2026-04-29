@@ -299,7 +299,17 @@ impl<'a> CheckerState<'a> {
                     } else {
                         attr_data.initializer
                     };
-                    self.compute_type_of_node(value_idx)
+                    // Prefer the literal type for syntactic literal values
+                    // (`attr="text"`, `attr={42}`, `attr={true}`). Without
+                    // literal preservation, per-overload assignability
+                    // walks `compute_type_of_node`'s widened result and
+                    // produces false-positive failure-attr matches that
+                    // skew the shared-anchor heuristic in
+                    // `jsx_overload_explicit_failure_attr` — see
+                    // `contextuallyTypedStringLiteralsInJsxAttributes02.tsx`
+                    // (b4 case).
+                    self.literal_type_from_initializer(value_idx)
+                        .unwrap_or_else(|| self.compute_type_of_node(value_idx))
                 } else {
                     TypeId::ANY
                 };
