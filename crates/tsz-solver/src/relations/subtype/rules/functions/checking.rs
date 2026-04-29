@@ -509,15 +509,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // This ensures TS2416 is correctly emitted for incompatible overrides.
                 target_instantiated.type_params.clear();
             } else {
-                // erase_generics=true path: erase target type params to their
-                // constraints so a concrete source signature can match the target's
-                // structural shape through constraint-erasure (tsc's
-                // `getErasedSignature` behavior). This is what single-signature
-                // assignability uses for base-type structural compatibility checks.
-                let target_canonical =
-                    erase_type_params_to_constraints(&target_instantiated.type_params);
-                target_instantiated =
-                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
+                // In regular assignability, a non-generic source still must satisfy a
+                // universally quantified generic target. Keep target type parameters
+                // opaque so nested contravariant comparisons such as `Base <= T`
+                // reject instead of becoming `Base <= Base` after constraint erasure.
+                target_instantiated.type_params.clear();
             }
         }
 
