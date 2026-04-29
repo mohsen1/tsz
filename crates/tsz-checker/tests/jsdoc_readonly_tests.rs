@@ -262,3 +262,51 @@ function bad(x, y, z) {
         "Did not expect TS8024 to preserve '*' as a JSDoc param name, got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_jsdoc_param_postfix_nullable_recovery_and_rest_order() {
+    let source = r#"
+/**
+ * @param {number![]} x
+ * @param {!number[]} y
+ * @param {(number[])!} z
+ * @param {number?[]} a
+ * @param {?number[]} b
+ * @param {(number[])?} c
+ * @param {...?number} e
+ * @param {...number?} f
+ * @param {...number!?} g
+ * @param {...number?!} h
+ * @param {...number[]} i
+ * @param {...number![]?} j
+ * @param {...number?[]!} k
+ * @param {number extends number ? true : false} l
+ * @param {[number, number?]} m
+ */
+function f(x, y, z, a, b, c, e, f, g, h, i, j, k, l, m) {
+}
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let count = |code| diagnostics.iter().filter(|d| d.code == code).count();
+
+    assert_eq!(
+        count(1005),
+        3,
+        "Expected three TS1005 diagnostics for unparenthesized postfix nullable JSDoc arrays, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count(1014),
+        5,
+        "Expected five TS1014 diagnostics for non-final JSDoc rest params, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count(8024),
+        3,
+        "Expected three TS8024 diagnostics for malformed @param tags recovering with an empty name, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count(7006),
+        3,
+        "Expected malformed JSDoc params a/h/k not to suppress TS7006, got: {diagnostics:?}"
+    );
+}

@@ -1,9 +1,9 @@
-# [WIP] fix(conformance): restore JSDoc prefix/postfix parsing diagnostics
+# fix(conformance): restore JSDoc prefix/postfix parsing diagnostics
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/conformance-quick-pick-20260429-7`
 - **PR**: #1823
-- **Status**: claim
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance)
 
 ## Intent
@@ -17,9 +17,16 @@ focused Rust regression test.
 
 ## Files Touched
 
-- TBD after investigation.
+- `crates/tsz-checker/src/jsdoc/params.rs`
+- `crates/tsz-checker/tests/jsdoc_readonly_tests.rs`
 
 ## Verification
 
-- Planned: `./scripts/conformance/conformance.sh run --filter "jsdocPrefixPostfixParsing" --verbose`
-- Planned: targeted `cargo nextest run` for touched crates
+- `cargo check --package tsz-checker`
+- `cargo check --package tsz-solver`
+- `cargo build --profile dist-fast --bin tsz`
+- `cargo nextest run --package tsz-checker --lib` (3021 passed, 10 skipped)
+- `./scripts/conformance/conformance.sh run --filter "jsdocPrefixPostfixParsing" --verbose` (1/1 passed)
+- `./scripts/conformance/conformance.sh run --filter "jsdocPostfixEqualsAddsOptionality" --verbose` (1/1 passed)
+- `./scripts/conformance/conformance.sh run --max 200` (200/200 passed)
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run` (12269/12582 passed, target listed as improved, net +34 vs stored snapshot)

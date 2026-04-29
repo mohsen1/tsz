@@ -99,6 +99,8 @@ impl<'a> CheckerState<'a> {
 
         use tsz_parser::syntax_kind_ext;
 
+        self.check_jsdoc_param_tag_syntax(func_idx);
+
         // Collect actual parameter names and whether each is a binding pattern
         let mut actual_params: Vec<(String, bool)> = Vec::new();
         for &param_idx in param_nodes {
@@ -222,6 +224,117 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    fn check_jsdoc_param_tag_syntax(&mut self, func_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let Some(comment_pos) = self.get_jsdoc_comment_pos_for_function(func_idx) else {
+            return;
+        };
+        let Some(func_node) = self.ctx.arena.get(func_idx) else {
+            return;
+        };
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text = source_file.text.clone();
+        let comment_start = comment_pos as usize;
+        let comment_end = (func_node.pos as usize).min(source_text.len());
+        if comment_start >= comment_end {
+            return;
+        }
+        let Some(comment_text) = source_text.get(comment_start..comment_end) else {
+            return;
+        };
+
+        let mut valid_param_tags = Vec::new();
+        let mut line_start = comment_start;
+        for chunk in comment_text.split_inclusive('\n') {
+            let raw_line = chunk.trim_end_matches('\n').trim_end_matches('\r');
+            let Some(at_param) = raw_line.find("@param") else {
+                line_start += chunk.len();
+                continue;
+            };
+            let after_param_start = at_param + "@param".len();
+            let after_param = &raw_line[after_param_start..];
+            let trimmed_after_param = after_param.trim_start();
+            let leading_ws = after_param.len() - trimmed_after_param.len();
+            if !trimmed_after_param.starts_with('{') {
+                if let Some(param) = Self::parse_jsdoc_param_tag(after_param) {
+                    valid_param_tags.push((param.rest, None));
+                }
+                line_start += chunk.len();
+                continue;
+            }
+
+            let type_open = after_param_start + leading_ws;
+            let type_source_start = type_open + 1;
+            if let Some((type_expr, _after_type)) =
+                Self::parse_jsdoc_curly_type_expr(raw_line.get(type_open..).unwrap_or_default())
+            {
+                if let Some(error_offset) = Self::jsdoc_param_type_syntax_error_offset(type_expr) {
+                    let error_pos = (line_start + type_source_start + error_offset) as u32;
+                    let close_brace_expected =
+                        format_message(diagnostic_messages::EXPECTED, &["}"]);
+                    self.emit_jsdoc_param_syntax_diagnostic_once(
+                        error_pos,
+                        1,
+                        &close_brace_expected,
+                        diagnostic_codes::EXPECTED,
+                    );
+                    let message = format_message(
+                        diagnostic_messages::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                        &[""],
+                    );
+                    self.emit_jsdoc_param_syntax_diagnostic_once(
+                        error_pos,
+                        1,
+                        &message,
+                        diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME,
+                    );
+                } else if let Some(param) = Self::parse_jsdoc_param_tag(after_param) {
+                    let rest_pos = param
+                        .rest
+                        .then_some((line_start + type_source_start) as u32);
+                    valid_param_tags.push((param.rest, rest_pos));
+                }
+            }
+
+            line_start += chunk.len();
+        }
+
+        for (idx, (is_rest, rest_pos)) in valid_param_tags.iter().enumerate() {
+            if !*is_rest || valid_param_tags[idx + 1..].is_empty() {
+                continue;
+            }
+            if let Some(rest_pos) = rest_pos {
+                self.emit_jsdoc_param_syntax_diagnostic_once(
+                    *rest_pos,
+                    3,
+                    diagnostic_messages::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
+                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
+                );
+            }
+        }
+    }
+
+    fn emit_jsdoc_param_syntax_diagnostic_once(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+    ) {
+        if self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.start == start && diag.length == length && diag.code == code)
+        {
+            return;
+        }
+        self.error_at_position(start, length, message, code);
     }
 
     /// Whether a function has an effective name in its declarative context.
@@ -1602,6 +1715,9 @@ impl<'a> CheckerState<'a> {
 
         let (type_expr, name_token) = if rest.starts_with('{') {
             let (expr, after_type) = Self::parse_jsdoc_curly_type_expr(rest)?;
+            if Self::jsdoc_param_type_syntax_error_offset(expr).is_some() {
+                return None;
+            }
             (
                 Some(expr.trim().to_string()),
                 after_type.split_whitespace().next().unwrap_or(""),
@@ -1609,8 +1725,11 @@ impl<'a> CheckerState<'a> {
         } else {
             let first = rest.split_whitespace().next().unwrap_or("");
             let inline_type = rest.find('{').and_then(|idx| {
-                Self::parse_jsdoc_curly_type_expr(&rest[idx..])
-                    .map(|(expr, _)| expr.trim().to_string())
+                Self::parse_jsdoc_curly_type_expr(&rest[idx..]).and_then(|(expr, _)| {
+                    Self::jsdoc_param_type_syntax_error_offset(expr)
+                        .is_none()
+                        .then(|| expr.trim().to_string())
+                })
             });
             (inline_type, first)
         };
@@ -1649,6 +1768,16 @@ impl<'a> CheckerState<'a> {
             optional: bracket_optional || type_optional,
             rest,
         })
+    }
+
+    fn jsdoc_param_type_syntax_error_offset(type_expr: &str) -> Option<usize> {
+        let trimmed = type_expr.trim_start();
+        let leading_ws = type_expr.len() - trimmed.len();
+        let body = trimmed.strip_prefix("...").unwrap_or(trimmed);
+        let body_offset = leading_ws + trimmed.len().saturating_sub(body.len());
+        body.find("?[]")
+            .or_else(|| body.ends_with("?!").then(|| body.len() - 2))
+            .map(|offset| body_offset + offset)
     }
 
     /// Skip leading JSDoc decoration and backtick-quoted sections in a `JSDoc` line.
@@ -1757,6 +1886,9 @@ impl<'a> CheckerState<'a> {
             if decoded == param_name {
                 let after_name = rest[name_part.len()..].trim();
                 if let Some((type_expr, _)) = Self::parse_jsdoc_curly_type_expr(after_name) {
+                    if Self::jsdoc_param_type_syntax_error_offset(type_expr).is_some() {
+                        return None;
+                    }
                     let type_expr = type_expr.trim();
                     let type_expr_start_offset = type_expr.len() - type_expr.trim_start().len();
                     let type_expr_ptr = type_expr.as_ptr() as usize;
@@ -1774,6 +1906,9 @@ impl<'a> CheckerState<'a> {
 
         // Standard syntax: @param {type} name
         if let Some((type_expr, after_type)) = Self::parse_jsdoc_curly_type_expr(rest) {
+            if Self::jsdoc_param_type_syntax_error_offset(type_expr).is_some() {
+                return None;
+            }
             let name = after_type.split_whitespace().next().unwrap_or("");
             let name = name.trim_start_matches('[');
             let name = name.split('=').next().unwrap_or(name);
