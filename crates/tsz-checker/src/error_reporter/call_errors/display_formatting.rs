@@ -1151,6 +1151,23 @@ impl<'a> CheckerState<'a> {
         self.literal_expression_display(arg_idx)
     }
 
+    fn jsdoc_constructor_identifier_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        arg_type: TypeId,
+    ) -> Option<String> {
+        let arg_type = self.evaluate_type_with_env(arg_type);
+        let arg_type = self.resolve_type_for_property_access(arg_type);
+        if !crate::query_boundaries::common::is_constructor_like_type(self.ctx.types, arg_type) {
+            return None;
+        }
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        let ident = self.ctx.arena.get_identifier(expr_node)?;
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        self.symbol_has_js_constructor_evidence(sym_id)
+            .then(|| format!("typeof {}", ident.escaped_text))
+    }
+
     fn zero_argument_call_list_display(&self, arg_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(arg_idx)?;
         if node.kind != syntax_kind_ext::CALL_EXPRESSION
@@ -1206,6 +1223,10 @@ impl<'a> CheckerState<'a> {
 
         if let Some(display) =
             self.identifier_array_object_literal_source_display(expr_idx, param_type)
+        {
+            return display;
+        }
+        if let Some(display) = self.jsdoc_constructor_identifier_source_display(expr_idx, arg_type)
         {
             return display;
         }
