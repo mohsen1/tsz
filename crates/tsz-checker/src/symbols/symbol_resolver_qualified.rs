@@ -146,6 +146,14 @@ impl<'a> CheckerState<'a> {
                 depth + 1,
             ) {
                 TypeSymbolResolution::Type(sym_id) => sym_id,
+                TypeSymbolResolution::ValueOnly(sym_id) => {
+                    match self
+                        .resolve_value_namespace_anchor_for_type_position(sym_id, visited_aliases)
+                    {
+                        Some(anchor_sym) => anchor_sym,
+                        None => return TypeSymbolResolution::ValueOnly(sym_id),
+                    }
+                }
                 other => return other,
             };
 
@@ -280,6 +288,13 @@ impl<'a> CheckerState<'a> {
             depth + 1,
         ) {
             TypeSymbolResolution::Type(sym_id) => sym_id,
+            TypeSymbolResolution::ValueOnly(sym_id) => {
+                match self.resolve_value_namespace_anchor_for_type_position(sym_id, visited_aliases)
+                {
+                    Some(anchor_sym) => anchor_sym,
+                    None => return TypeSymbolResolution::ValueOnly(sym_id),
+                }
+            }
             other => return other,
         };
         left_sym = self
@@ -448,6 +463,30 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeSymbolResolution::NotFound
+    }
+
+    /// A value merged with a namespace is still a valid intermediate anchor in
+    /// a qualified type name (`Q2.Q.A`), even though the same symbol remains
+    /// invalid as the final type name (`Q2.Q`).
+    fn resolve_value_namespace_anchor_for_type_position(
+        &self,
+        sym_id: SymbolId,
+        visited_aliases: &mut AliasCycleTracker,
+    ) -> Option<SymbolId> {
+        let resolved = self
+            .resolve_alias_symbol(sym_id, visited_aliases)
+            .unwrap_or(sym_id);
+        let lib_binders = self.get_lib_binders();
+        let symbol = self
+            .get_cross_file_symbol(resolved)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(resolved, &lib_binders))?;
+
+        (symbol.has_any_flags(symbol_flags::MODULE)
+            || symbol
+                .exports
+                .as_ref()
+                .is_some_and(|exports| !exports.is_empty()))
+        .then_some(resolved)
     }
 
     /// Propagate cross-file symbol ownership from a resolved namespace/module symbol

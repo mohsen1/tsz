@@ -64,13 +64,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut text = text.trim().trim_start_matches(':').trim().to_string();
-        if let Some(nl) = text.find('\n') {
-            text = text[..nl].trim_end().to_string();
-            // After newline truncation, reject if braces are unbalanced
-            // (e.g., multi-line `{\n  foo: bar;\n}` gets truncated to `{`)
-            let open_brace = text.chars().filter(|&c| c == '{').count();
-            let close_brace = text.chars().filter(|&c| c == '}').count();
-            if open_brace != close_brace {
+        if let Some(newline) = text.find('\n') {
+            text = text[..newline].trim_end().to_string();
+            if text.chars().filter(|&c| c == '{').count()
+                != text.chars().filter(|&c| c == '}').count()
+            {
                 return None;
             }
         }
@@ -1978,16 +1976,12 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::RETURN_STATEMENT {
                 return true;
             }
-
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 break;
             };
             if ext.parent.is_none() {
                 break;
             }
-
-            // Expression body of an arrow function is an implicit return.
-            // e.g. `(x: string): string => expr` — `expr` is the return value.
             if let Some(parent_node) = self.ctx.arena.get(ext.parent)
                 && parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
                 && let Some(func) = self.ctx.arena.get_function(parent_node)

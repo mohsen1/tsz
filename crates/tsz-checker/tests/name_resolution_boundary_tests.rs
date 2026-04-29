@@ -472,6 +472,54 @@ let x: NS.val;
     );
 }
 
+#[test]
+fn merged_value_namespace_reexport_anchors_nested_type_member() {
+    let diags = check(
+        r#"
+type A = number;
+declare const Q: number;
+declare namespace Q {
+    export { A };
+}
+declare namespace Q2 {
+    export { Q };
+}
+declare const tryMember: Q2.Q.A;
+export {};
+"#,
+    );
+
+    let ts2749_count = diags.iter().filter(|d| d.code == 2749).count();
+    assert_eq!(
+        ts2749_count, 0,
+        "Expected no TS2749 when a re-exported value/namespace merge anchors a nested type member, got: {diags:?}"
+    );
+}
+
+#[test]
+fn merged_value_namespace_reexport_final_type_still_errors() {
+    let diags = check(
+        r#"
+type A = number;
+declare const Q: number;
+declare namespace Q {
+    export { A };
+}
+declare namespace Q2 {
+    export { Q };
+}
+declare const tryAnchor: Q2.Q;
+export {};
+"#,
+    );
+
+    let ts2749_count = diags.iter().filter(|d| d.code == 2749).count();
+    assert_eq!(
+        ts2749_count, 1,
+        "Expected TS2749 when the merged value/namespace export is used as the final type, got: {diags:?}"
+    );
+}
+
 // =========================================================================
 // Phase 2: Type-position suggestion collection through boundary
 // =========================================================================
