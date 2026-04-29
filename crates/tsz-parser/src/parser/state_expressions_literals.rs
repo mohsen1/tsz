@@ -1840,6 +1840,11 @@ impl ParserState {
 
             // CoverInitializedName: `{ x = expr }` in destructuring patterns
             // ECMAScript: CoverInitializedName[Yield] : IdentifierReference[?Yield] Initializer[In, ?Yield]
+            let equals_token_pos = if self.is_token(SyntaxKind::EqualsToken) {
+                self.token_pos()
+            } else {
+                0
+            };
             let has_equals = self.parse_optional(SyntaxKind::EqualsToken);
             let initializer = if has_equals {
                 self.parse_assignment_expression()
@@ -1857,6 +1862,7 @@ impl ParserState {
                     modifiers: None,
                     name,
                     equals_token: has_equals,
+                    equals_token_pos,
                     exclamation_token_pos: exclamation_pos,
                     object_assignment_initializer: initializer,
                 },

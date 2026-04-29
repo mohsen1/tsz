@@ -1308,8 +1308,26 @@ impl<'a> CheckerState<'a> {
             // name only affects the fallback anchor for non-elaborated value
             // mismatches.
             if check_default_assignability {
-                let _ = self.check_assignable_or_report_at(
-                    default_value_type,
+                let literal_source = self
+                    .literal_type_from_initializer(element_data.initializer)
+                    .or_else(|| {
+                        let node = self.ctx.arena.get(element_data.initializer)?;
+                        if node.kind != tsz_scanner::SyntaxKind::NumericLiteral as u16 {
+                            return None;
+                        }
+                        let lit = self.ctx.arena.get_literal(node)?;
+                        tsz_common::numeric::parse_numeric_literal_value(&lit.text)
+                            .map(|value| self.ctx.types.literal_number(value))
+                    });
+                let source_type = literal_source.unwrap_or(default_value_type);
+                let source_for_display = literal_source
+                    .map(|ty| self.widen_literal_type(ty))
+                    .filter(|&ty| ty == TypeId::NUMBER)
+                    .unwrap_or(source_type);
+                let _ = self.check_assignable_or_report_at_with_display_types(
+                    source_type,
+                    element_type,
+                    source_for_display,
                     element_type,
                     element_data.initializer,
                     element_data.name,

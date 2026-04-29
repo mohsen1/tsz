@@ -18,7 +18,6 @@ use crate::query_boundaries::checkers::call as call_checker;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -655,18 +654,16 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let source_type = self
-                .ctx
-                .arena
-                .get(self.ctx.arena.skip_parenthesized(default_idx))
-                .and_then(|node| match node.kind {
-                    k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
-                    k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
-                    _ => None,
-                })
-                .unwrap_or(default_type);
-            let _ = self.check_assignable_or_report_at_exact_anchor(
+            let literal_source = self.literal_type_from_initializer(default_idx);
+            let source_type = literal_source.unwrap_or(default_type);
+            let source_for_display = literal_source
+                .map(|ty| self.widen_literal_type(ty))
+                .filter(|&ty| ty == TypeId::NUMBER)
+                .unwrap_or(source_type);
+            let _ = self.check_assignable_or_report_at_with_display_types(
                 source_type,
+                target_type,
+                source_for_display,
                 target_type,
                 default_idx,
                 diag_idx,
