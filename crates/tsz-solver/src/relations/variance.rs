@@ -412,20 +412,13 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         let shape = self.computer.db.function_shape(FunctionShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
 
-        // Method parameters are bivariant at assignability time, but variance
-        // probing still has to see type parameters used only in method
-        // parameters. Treat those occurrences as covariant-first so generic
-        // application checks do not classify Promise-like interfaces as
-        // independent.
-        if shape.is_method {
-            if !self.suppress_method_bivariance {
-                self.method_bivariant_depth += 1;
-                for param in &shape.params {
-                    self.visit_with_polarity(param.type_id, !current_polarity);
-                }
-                self.method_bivariant_depth -= 1;
-            }
-        } else {
+        // Method parameters are bivariant in TypeScript compatibility mode.
+        // For generic variance probing, a method-only parameter occurrence
+        // must not make the container covariant or contravariant: both
+        // `Comparer<Animal> = Comparer<Dog>` and the reverse are accepted when
+        // `Comparer<T>` only uses `T` in method parameters. Function-valued
+        // properties still visit parameters contravariantly below.
+        if !shape.is_method {
             for param in &shape.params {
                 self.visit_with_polarity(param.type_id, !current_polarity);
             }
@@ -454,15 +447,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Call signatures
         for sig in &callable.call_signatures {
             // For methods (see visit_function for full rationale).
-            if sig.is_method {
-                if !self.suppress_method_bivariance {
-                    self.method_bivariant_depth += 1;
-                    for param in &sig.params {
-                        self.visit_with_polarity(param.type_id, !current_polarity);
-                    }
-                    self.method_bivariant_depth -= 1;
-                }
-            } else {
+            if !sig.is_method {
                 for param in &sig.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
                 }
