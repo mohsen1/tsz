@@ -829,3 +829,101 @@ fn overload_callback_with_dead_branch_no_leak() {
         diags.len()
     );
 }
+
+// ---------------------------------------------------------------------------
+// JSX props filtered rollback — DiagnosticSpeculationSnapshot migration
+// ---------------------------------------------------------------------------
+
+/// JSX attribute with function value should filter TS7006 from callback params
+/// when contextual type resolves the parameter type.
+#[test]
+fn jsx_attr_callback_no_implicit_any_leak() {
+    let diags = check_with(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+        }
+        interface Props { onClick: (e: string) => void; }
+        declare function Comp(props: Props): JSX.Element;
+        const a = <Comp onClick={(e) => e.length} />;
+    "#,
+        "test.tsx",
+        CheckerOptions {
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts7006_count = diags.iter().filter(|d| d.code == 7006).count();
+    assert_eq!(
+        ts7006_count, 0,
+        "TS7006 should be filtered by JSX props speculation: {diags:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Function expression conditional body — DiagnosticSpeculationSnapshot
+// ---------------------------------------------------------------------------
+
+/// Speculative branch mismatch probe should not emit false diagnostics.
+#[test]
+fn function_expression_branch_mismatch_probe_no_false_positive() {
+    let diags = check(
+        r#"
+        declare function wrap<T>(fn: () => T): T;
+        let x: number = wrap(() => true ? 1 : 2);
+    "#,
+    );
+    assert!(
+        diags.is_empty(),
+        "Expected no errors for matching conditional branches, got: {diags:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Object-literal method rerun — DiagnosticSpeculationSnapshot migration
+// ---------------------------------------------------------------------------
+
+/// Object literal method with `this` reference should not duplicate diagnostics
+/// during the rerun pass with refined this-type.
+#[test]
+fn object_literal_method_this_rerun_no_duplicate() {
+    let diags = check(
+        r#"
+        let obj = {
+            x: 10,
+            getX() {
+                return this.x;
+            }
+        };
+    "#,
+    );
+    let error_count = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2464))
+        .count();
+    assert!(
+        error_count == 0,
+        "Object literal method rerun leaked diagnostics: {diags:?}"
+    );
+}
+
+/// Object literal method rerun filtered rollback preserves non-this errors.
+#[test]
+fn object_literal_method_rerun_preserves_real_errors() {
+    let diags = check(
+        r#"
+        let obj = {
+            x: 10,
+            getY() {
+                return this.nonExistent;
+            }
+        };
+    "#,
+    );
+    let ts2339_count = diags.iter().filter(|d| d.code == 2339).count();
+    assert!(
+        ts2339_count >= 1,
+        "Expected TS2339 for nonExistent property, got: {diags:?}"
+    );
+}
