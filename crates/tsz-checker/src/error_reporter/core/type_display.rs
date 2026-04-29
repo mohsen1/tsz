@@ -1865,6 +1865,15 @@ impl<'a> CheckerState<'a> {
                         .is_some()
                         .then_some(self.terminal_assignment_source_expression(decl.initializer));
                 }
+                k if k == syntax_kind_ext::BINDING_ELEMENT => {
+                    let elem = self.ctx.arena.get_binding_element(node)?;
+                    if elem.initializer.is_some() {
+                        return Some(self.terminal_assignment_source_expression(elem.initializer));
+                    }
+                    // Fall through to walk further up if the binding element has
+                    // no own default — the parameter / variable initializer is
+                    // the relevant source.
+                }
                 k if k == syntax_kind_ext::PARAMETER => {
                     let param = self.ctx.arena.get_parameter(node)?;
                     return param
