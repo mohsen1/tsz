@@ -4,9 +4,7 @@ use crate::query_boundaries::diagnostics as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -294,7 +292,6 @@ impl<'a> CheckerState<'a> {
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
-
         let args: Vec<_> = app
             .args
             .iter()
@@ -312,7 +309,6 @@ impl<'a> CheckerState<'a> {
         let Some(app) = query::type_application(self.ctx.types, ty) else {
             return ty;
         };
-
         let args: Vec<_> = app
             .args
             .iter()
@@ -1985,7 +1981,6 @@ impl<'a> CheckerState<'a> {
             if ext.parent.is_none() {
                 break;
             }
-
             // Expression body of an arrow function is an implicit return.
             // e.g. `(x: string): string => expr` — `expr` is the return value.
             if let Some(parent_node) = self.ctx.arena.get(ext.parent)

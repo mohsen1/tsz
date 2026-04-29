@@ -1,4 +1,4 @@
-# [WIP] fix(parser): align convertKeywordsYes diagnostics
+# fix(parser): preserve modifier-like type parameter names
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/parser-convert-keywords-yes`
@@ -20,6 +20,8 @@ architecture-aligned fix with an owning Rust regression test.
 - `crates/tsz-parser/tests/state_type_tests.rs` (parser regression)
 - `crates/tsz-checker/Cargo.toml` (integration test target)
 - `crates/tsz-checker/tests/convert_keywords_yes_tests.rs` (checker diagnostic regression)
+- `crates/tsz-checker/src/error_reporter/core/type_display.rs` (line-count guard cleanup after rebase)
+- `crates/tsz-cli/src/reporting/reporter.rs` (current-base clippy cleanup after rebase)
 - `docs/plan/claims/fix-parser-convert-keywords-yes.md` (claim)
 
 ## Verification
@@ -35,3 +37,5 @@ architecture-aligned fix with an owning Rust regression test.
 - `./scripts/conformance/conformance.sh run --filter "convertKeywordsYes" --verbose` (1/1 passed)
 - `./scripts/conformance/conformance.sh run --max 200` (200/200 passed)
 - `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep FINAL` (`FINAL RESULTS: 12251/12582 passed (97.4%)`)
+- `cargo fmt --all --check`
+- `scripts/ci/github-suite.sh lint` (passes; local GCS cache restore reports non-fatal reauth noise)

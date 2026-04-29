@@ -552,16 +552,16 @@ impl Reporter {
                 if !as_is.starts_with("..") {
                     return as_is;
                 }
-                if let Ok(canonical) = file_path.canonicalize() {
-                    if let Some(canon_rel) = Self::diff_paths(&canonical, cwd_path) {
-                        let canon_str = canon_rel.to_string_lossy().into_owned();
-                        // Only prefer the canonical-relative form if it's
-                        // actually shorter (fewer `..` hops); keep the
-                        // original otherwise so we don't surprise callers
-                        // whose file is genuinely outside cwd.
-                        if !canon_str.starts_with("..") {
-                            return canon_str;
-                        }
+                if let Ok(canonical) = file_path.canonicalize()
+                    && let Some(canon_rel) = Self::diff_paths(&canonical, cwd_path)
+                {
+                    let canon_str = canon_rel.to_string_lossy().into_owned();
+                    // Only prefer the canonical-relative form if it's
+                    // actually shorter (fewer `..` hops); keep the
+                    // original otherwise so we don't surprise callers
+                    // whose file is genuinely outside cwd.
+                    if !canon_str.starts_with("..") {
+                        return canon_str;
                     }
                 }
                 return as_is;
