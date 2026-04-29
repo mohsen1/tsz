@@ -2,7 +2,7 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/mapped-type-indexed-access-fingerprint`
-- **PR**: TBD
+- **PR**: #1816
 - **Status**: claim
 - **Workstream**: 1 (Diagnostic conformance and fingerprints)
 
