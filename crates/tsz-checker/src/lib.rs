@@ -385,6 +385,9 @@ mod jsdoc_type_expression_tests;
 #[path = "../tests/jsdoc_type_tag_tests.rs"]
 mod jsdoc_type_tag_tests;
 #[cfg(test)]
+#[path = "tests/jsx_excess_attr_with_spread_display_tests.rs"]
+mod jsx_excess_attr_with_spread_display_tests;
+#[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
 #[cfg(test)]
