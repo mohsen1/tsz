@@ -719,6 +719,11 @@ impl<'a> CheckerState<'a> {
                 fallback_return,
                 ..
             } => {
+                let overload_failures_disagree = failures.len() > 1
+                    && failures.windows(2).any(|pair| {
+                        pair[0].code != pair[1].code
+                            || format!("{:?}", pair[0].args) != format!("{:?}", pair[1].args)
+                    });
                 let has_error_surface = callee_type == TypeId::ERROR
                     || args
                         .iter()
@@ -734,13 +739,63 @@ impl<'a> CheckerState<'a> {
                 let suppress_due_to_callback_body_errors =
                     self.should_suppress_no_overload_due_to_callback_body_errors(args);
 
-                if !suppress_due_to_structural_errors
+                let should_emit_no_overload_error = !suppress_due_to_structural_errors
                     && !suppress_due_to_callback_body_errors
-                    && !self.should_suppress_weak_key_no_overload(callee_expr, args)
-                {
+                    && !self.should_suppress_weak_key_no_overload(callee_expr, args);
+
+                if should_emit_no_overload_error {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
-                fallback_return
+                let overloaded_callee_has_type_params =
+                    common::callable_shape_for_type(self.ctx.types, callee_type).is_some_and(
+                        |shape| {
+                            shape
+                                .call_signatures
+                                .iter()
+                                .any(|sig| !sig.type_params.is_empty())
+                        },
+                    );
+                let call_is_typed_variable_initializer =
+                    self.ctx
+                        .arena
+                        .get_extended(call_idx)
+                        .map(|info| info.parent)
+                        .and_then(|parent_idx| {
+                            self.ctx
+                                .arena
+                                .get(parent_idx)
+                                .map(|node| (parent_idx, node))
+                        })
+                        .is_some_and(|(_parent_idx, parent)| {
+                            parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                                && self.ctx.arena.get_variable_declaration(parent).is_some_and(
+                                    |decl| {
+                                        decl.initializer == call_idx
+                                            && decl.type_annotation.is_some()
+                                    },
+                                )
+                        });
+                let callee_is_object_assign = self
+                    .ctx
+                    .arena
+                    .get(callee_expr)
+                    .and_then(|node| self.ctx.arena.get_access_expr(node))
+                    .is_some_and(|access| {
+                        self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
+                            && self.ctx.arena.get_identifier_text(access.name_or_argument)
+                                == Some("assign")
+                    });
+                if overload_failures_disagree
+                    && should_emit_no_overload_error
+                    && !overloaded_callee_has_type_params
+                    && !call_is_typed_variable_initializer
+                    && !callee_is_object_assign
+                    && !common::contains_type_parameters(self.ctx.types, fallback_return)
+                {
+                    TypeId::NEVER
+                } else {
+                    fallback_return
+                }
             }
             CallResult::ThisTypeMismatch {
                 expected_this,
