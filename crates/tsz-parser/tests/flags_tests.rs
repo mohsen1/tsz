@@ -371,11 +371,6 @@ fn node_flags_helpers_treat_input_as_node_flag_layout() {
 
 // Compile-time lock: helpers remain `const fn`. A non-const fn regression
 // would fail compilation here rather than at the (rare) const call sites.
-const _IS_AWAIT_USING_CONST_OK: bool = node_flags::is_await_using(node_flags::AWAIT_USING);
-const _IS_LET_OR_CONST_CONST_OK: bool = node_flags::is_let_or_const(node_flags::LET);
-const _IS_BLOCK_SCOPED_CONST_OK: bool = node_flags::is_block_scoped(node_flags::USING);
-const _: () = {
-    assert!(_IS_AWAIT_USING_CONST_OK);
-    assert!(_IS_LET_OR_CONST_CONST_OK);
-    assert!(_IS_BLOCK_SCOPED_CONST_OK);
-};
+const _: [(); 1] = [(); node_flags::is_await_using(node_flags::AWAIT_USING) as usize];
+const _: [(); 1] = [(); node_flags::is_let_or_const(node_flags::LET) as usize];
+const _: [(); 1] = [(); node_flags::is_block_scoped(node_flags::USING) as usize];
