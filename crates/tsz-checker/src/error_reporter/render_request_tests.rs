@@ -422,6 +422,34 @@ var r4 = $.sammy.x;
     );
 }
 
+/// Verify that TS2339 on a generic mapped-type typed identifier includes
+/// `| undefined` for optional properties in the message.
+///
+/// Regression: `property_receiver_display_for_node` had a shortcut that returned
+/// the raw annotation string for generic-typed identifiers (via
+/// `format_annotation_like_type`), bypassing the type formatter that adds
+/// `| undefined`. The fix removes that shortcut so the proper formatter runs.
+#[test]
+fn ts2339_generic_mapped_type_receiver_includes_optional_undefined() {
+    let source = r#"
+type Req<T> = { [P in keyof T]-?: T[P] };
+const a: Req<{ a?: 1; x: 1 }> = { a: 1, x: 1 };
+a.b;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2339 = diagnostics
+        .iter()
+        .find(|d| d.code == 2339 && d.message_text.contains("Property 'b'"))
+        .unwrap_or_else(|| {
+            panic!("Expected TS2339 for missing property 'b', got: {diagnostics:?}")
+        });
+    assert!(
+        ts2339.message_text.contains("| undefined"),
+        "TS2339 message for generic mapped type receiver should include '| undefined' for optional property, got: {:?}",
+        ts2339.message_text
+    );
+}
+
 /// Verify that object type formatting includes trailing semicolons.
 #[test]
 fn ts2322_object_type_message_has_semicolons() {
