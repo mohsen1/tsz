@@ -67,7 +67,9 @@ v({ s: "", n: 0 });
     assert!(
         ts2769[0].1 == callee_start || ts2769[0].1 >= argument_start,
         "TS2769 should anchor at the callee or the rejected argument. callee={}, argument={}, got start={}",
-        callee_start, argument_start, ts2769[0].1
+        callee_start,
+        argument_start,
+        ts2769[0].1
     );
 }
 
