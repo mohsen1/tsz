@@ -1,4 +1,18 @@
-# `tsz`
+
+<br>
+<br>
+
+<p align="center">
+	<picture>
+		<source media="(prefers-color-scheme: dark)" srcset="crates/tsz-website/static/tsz_logo_dark.png">
+		<source media="(prefers-color-scheme: light)" srcset="crates/tsz-website/static/tsz_logo_light.png">
+		<img src="crates/tsz-website/static/tsz_logo_light.png" alt="tsz logo" width="200">
+	</picture>
+</p>
+
+<br>
+<br>
+
 
 `tsz` is a performance-first TypeScript compiler in Rust. _z_ is for _Zang_!<sup>[1](#footnote-1)</sup>
 The goal is a correct, fast, drop-in replacement for `tsc`, with both native and WASM targets.
@@ -10,8 +24,8 @@ engine on top to match TypeScript behavior while preserving correctness where po
 
 ### Status
 
-> [!WARNING]
-> This project is not ready for general use yet.
+> [!NOTE]
+> **Nearly complete.** TypeScript support is in its final compiler stages, with remaining work focused on performance tuning and LSP support in WebAssembly.
 
 `tsz` will be released after TypeScript 6 stable is released. `tsz` will only be compatible with TypeScript 6, not any older versions.
 
