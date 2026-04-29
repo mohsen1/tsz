@@ -864,7 +864,8 @@ export const useCsvParser = () => {
     );
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345 && message.contains("typeof import(\"node_modules/csv-parse/lib/index\")")
+            *code == 2345
+                && message.contains("typeof import(\"p1/node_modules/csv-parse/lib/index\")")
         }),
         "Expected TS2345 message to preserve the resolved package path. Actual diagnostics: {diagnostics:#?}"
     );
