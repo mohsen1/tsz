@@ -1457,6 +1457,9 @@ impl<'a> CheckerState<'a> {
                     return (direct_export_type, Vec::new());
                 }
 
+                let uses_module_exports_require_interop = export_name == "default"
+                    && self.current_file_uses_module_exports_require_interop(module_name);
+
                 // In node16/nodenext, when an ESM file default-imports a CJS module,
                 // the default binding is the entire module namespace (module.exports),
                 // not the "default" export. This matches tsc's behavior where Node.js
@@ -1468,6 +1471,7 @@ impl<'a> CheckerState<'a> {
 
                 if export_name == "default"
                     && (self.source_file_import_uses_system_default_namespace_fallback(module_name)
+                        || uses_module_exports_require_interop
                         || is_node_esm_importing_cjs)
                 {
                     if self

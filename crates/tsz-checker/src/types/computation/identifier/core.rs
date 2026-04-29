@@ -1060,6 +1060,28 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            let default_import_module = (!self.is_identifier_in_type_position(idx))
+                .then(|| {
+                    self.get_cross_file_symbol(sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                        .and_then(|symbol| {
+                            (symbol.import_name.as_deref() == Some("default"))
+                                .then(|| symbol.import_module.clone())
+                                .flatten()
+                        })
+                })
+                .flatten()
+                .or_else(|| self.source_file_default_import_module_named(idx, name));
+            if let Some(module_name) = default_import_module.as_deref()
+                && self.current_file_uses_module_exports_require_interop(module_name)
+                && let Some(module_exports_type) = self
+                    .resolve_effective_module_exports(module_name)
+                    .and_then(|exports| exports.get("module.exports"))
+                    .map(|sym_id| self.get_type_of_symbol(sym_id))
+            {
+                return self.check_flow_usage(idx, module_exports_type, sym_id);
+            }
+
             // Merged TYPE_ALIAS + VALUE symbols: when a user-defined value (e.g.,
             // `declare const Readonly: unique symbol`) shares a name with a global
             // type alias (e.g., `type Readonly<T> = ...` from lib.d.ts), the binder

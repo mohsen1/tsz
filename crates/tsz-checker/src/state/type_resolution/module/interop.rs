@@ -84,4 +84,20 @@ impl<'a> CheckerState<'a> {
 
         target_is_esm && has_module_exports
     }
+
+    pub(crate) fn current_file_uses_module_exports_require_interop(
+        &self,
+        module_specifier: &str,
+    ) -> bool {
+        matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::Node20 | ModuleKind::NodeNext
+        ) && matches!(
+            self.current_file_emit_resolution_mode(),
+            ResolutionModeOverride::Require
+        ) && self.module_is_esm(module_specifier)
+            && self
+                .resolve_effective_module_exports(module_specifier)
+                .is_some_and(|exports| exports.has("module.exports"))
+    }
 }

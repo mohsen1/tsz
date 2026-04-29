@@ -603,6 +603,41 @@ new Foo();
 }
 
 #[test]
+fn test_esm_module_exports_non_default_binding_default_import_is_namespace_object() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"
+export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+                "#,
+            ),
+            (
+                "importer.cts",
+                r#"
+import Foo2 from "./exporter.mjs";
+new Foo2();
+                "#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    let ts2351_count = diagnostics.iter().filter(|(code, _)| *code == 2351).count();
+    assert_eq!(
+        ts2351_count, 1,
+        "Default imports of a non-constructable \"module.exports\" binding should \
+         be non-constructable. Got diagnostics: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_no_false_ts2339_on_generic_class_computed_property_self_reference() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
