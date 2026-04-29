@@ -367,13 +367,9 @@ fn test_variance_method_parameters_contravariant() {
     let t_atom = interner.intern_string("T");
     let variance = compute_variance(&interner, method, t_atom);
 
-    // Method parameters contribute COVARIANT due to method bivariance.
-    // In tsc, method bivariance makes type params appear BIVARIANT through
-    // marker types, but checks bivariant using covariant direction first.
-    // We match this by recording all method-param occurrences as COVARIANT.
     assert!(
         variance.is_covariant(),
-        "Method parameter T should be covariant (method bivariance → covariant-first)"
+        "Method-parameter-only T should be covariant for variance computation"
     );
 }
 
@@ -446,12 +442,9 @@ fn test_variance_method_with_callback_param_is_covariant() {
     let t_atom = interner.intern_string("T");
     let variance = compute_variance(&interner, method, t_atom);
 
-    // T at double-contravariant depth (method param → callback param) is covariant.
-    // This is the key fix: previously method params were skipped entirely, making T
-    // independent and causing Promise<Foo> <: Promise<Bar> to skip variance checks.
     assert!(
         variance.is_covariant(),
-        "T in callback param of method param should be covariant (contra × contra = co)"
+        "T under a method parameter callback should be covariant for variance computation"
     );
 }
 
