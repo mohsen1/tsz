@@ -34,8 +34,18 @@ impl Reporter {
     }
 
     /// Override the working directory used for computing relative paths.
+    ///
+    /// Canonicalises the path (resolving macOS-style `/tmp` → `/private/tmp`
+    /// symlinks) so it shares a real common prefix with diagnostic file
+    /// paths, which the compiler stores in canonical form. Without this, a
+    /// caller setting cwd to `/tmp/foo/src` while diagnostics carry
+    /// `/private/tmp/foo/src/a.ts` produces nonsensical relative paths like
+    /// `../../../private/tmp/foo/src/a.ts` (zero shared components past `/`).
+    /// Falls back to the unresolved path if canonicalisation fails (e.g. the
+    /// directory doesn't exist).
     pub fn set_cwd(&mut self, cwd: &Path) {
-        self.cwd = Some(cwd.to_string_lossy().into_owned());
+        let resolved = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        self.cwd = Some(resolved.to_string_lossy().into_owned());
     }
 
     /// Force color output regardless of TTY detection.
@@ -527,10 +537,34 @@ impl Reporter {
             return file.to_string();
         }
         if let Some(ref cwd) = self.cwd {
-            let file_path = Path::new(file);
             let cwd_path = Path::new(cwd);
+            // Try the file path as-is first.
+            let file_path = Path::new(file);
             if let Some(rel) = Self::diff_paths(file_path, cwd_path) {
-                return rel.to_string_lossy().into_owned();
+                let as_is = rel.to_string_lossy().into_owned();
+                // Canonical-vs-as-is mismatches show up as a leading `..`
+                // chain — e.g. cwd `/private/tmp/x` vs file `/tmp/x/y.ts`
+                // yields `../../../../tmp/x/y.ts` because no path component
+                // past `/` actually matches. Detect this and retry with the
+                // file's canonical form, which on macOS resolves the
+                // `/tmp` → `/private/tmp` symlink that the diagnostic
+                // pipeline doesn't normalise.
+                if !as_is.starts_with("..") {
+                    return as_is;
+                }
+                if let Ok(canonical) = file_path.canonicalize() {
+                    if let Some(canon_rel) = Self::diff_paths(&canonical, cwd_path) {
+                        let canon_str = canon_rel.to_string_lossy().into_owned();
+                        // Only prefer the canonical-relative form if it's
+                        // actually shorter (fewer `..` hops); keep the
+                        // original otherwise so we don't surprise callers
+                        // whose file is genuinely outside cwd.
+                        if !canon_str.starts_with("..") {
+                            return canon_str;
+                        }
+                    }
+                }
+                return as_is;
             }
         }
         file.to_string()
