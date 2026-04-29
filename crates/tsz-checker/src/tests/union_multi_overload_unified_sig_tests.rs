@@ -12,7 +12,7 @@
 
 use crate::test_utils::check_source_diagnostics;
 
-/// `{ (a: number): number; } | { (a: number): Date; (a: string): boolean; }`
+/// `{ (a: number): number; } | { (a: number): string; (a: string): boolean; }`
 /// has only `(a: number)` as the unified callable. Calling with `"hello"`
 /// must emit TS2345 even though M2 has a `(a: string)` overload that would
 /// individually accept the arg. Mirrors
@@ -21,7 +21,7 @@ use crate::test_utils::check_source_diagnostics;
 fn union_single_plus_multi_overload_rejects_via_unified_sig() {
     let diags = check_source_diagnostics(
         r#"
-declare var f: { (a: number): number; } | { (a: number): Date; (a: string): boolean; };
+declare var f: { (a: number): number; } | { (a: number): string; (a: string): boolean; };
 f("hello");
 "#,
     );
@@ -49,7 +49,7 @@ f("hello");
 fn union_single_plus_multi_overload_accepts_matching_arg() {
     let diags = check_source_diagnostics(
         r#"
-declare var f: { (a: number): number; } | { (a: number): Date; (a: string): boolean; };
+declare var f: { (a: number): number; } | { (a: number): string; (a: string): boolean; };
 const r = f(10);
 "#,
     );
@@ -71,14 +71,14 @@ const r = f(10);
 }
 
 /// Negative lock: when the multi-overload member has NO sig matching the
-/// single-overload member (e.g. M1=`(a: number)` vs M2=`(a: boolean)/(a: Date)`),
+/// single-overload member (e.g. M1=`(a: number)` vs M2=`(a: boolean)/(a: string)`),
 /// the union is not callable at all (TS2349). This was already correct prior
 /// to the fix; locked here so the unified-sig path doesn't regress it.
 #[test]
 fn union_single_plus_multi_overload_no_match_emits_ts2349() {
     let diags = check_source_diagnostics(
         r#"
-declare var f: { (a: number): number; } | { (a: boolean): Date; (a: Date): boolean; };
+declare var f: { (a: number): number; } | { (a: boolean): string; (a: string): boolean; };
 f(10);
 "#,
     );

@@ -2047,6 +2047,63 @@ x2.f4();
 }
 
 #[test]
+fn union_single_and_multi_overload_matching_this_no_ts2349() {
+    // Regression test for unionTypeCallSignatures6.ts line 37: `F1 | F3`
+    // is callable because F3 has an overload with the same `this: A` as F1.
+    let source = r#"
+type A = { a: string };
+type B = { b: number };
+type C = { c: string };
+
+type F1 = (this: A) => void;
+interface F3 {
+    (this: A): void;
+    (this: B): void;
+}
+
+declare var x1: A & C & {
+    f1: F1 | F3;
+};
+x1.f1();
+"#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2349),
+        "Union of single signature and overload set with matching `this` should \
+         be callable, got: {codes:?}"
+    );
+}
+
+#[test]
+fn union_single_and_multi_overload_intersected_this_no_ts2349() {
+    // Regression test for unionTypeCallSignatures6.ts line 38: `F1 | F4`
+    // is callable because the receiver satisfies F1's `this: A` and F4's
+    // selected overload `this: C`.
+    let source = r#"
+type A = { a: string };
+type C = { c: string };
+type D = { d: number };
+
+type F1 = (this: A) => void;
+interface F4 {
+    (this: C): void;
+    (this: D): void;
+}
+
+declare var x1: A & C & {
+    f2: F1 | F4;
+};
+x1.f2();
+"#;
+    let codes = get_codes(source);
+    assert!(
+        !codes.contains(&2349),
+        "Union of single signature and overload set should intersect `this` \
+         types rather than reporting not-callable, got: {codes:?}"
+    );
+}
+
+#[test]
 fn block_body_callback_emits_ts2345_not_ts2322_for_return_type_mismatch() {
     // When a block-bodied callback's return type doesn't match the expected
     // parameter type, tsc emits TS2345 at the argument level ("Argument of

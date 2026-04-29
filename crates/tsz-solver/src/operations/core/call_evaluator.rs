@@ -418,9 +418,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// `partialMatch=true`, `ignoreReturnTypes=true`).
     ///
     /// Two signatures are compatible when they have the same number of required
-    /// parameters (allowing extra optional params) and their `this` types are
-    /// identical (by TypeId equality).
-    fn are_signatures_compatible_for_union(&self, a: &CallSignature, b: &CallSignature) -> bool {
+    /// parameters (allowing extra optional params) and their type positions are
+    /// identical under the checker-backed type identity hook.
+    pub(super) fn are_signatures_compatible_for_union(
+        &mut self,
+        a: &CallSignature,
+        b: &CallSignature,
+    ) -> bool {
+        if !self.are_signature_params_compatible_for_union(a, b) {
+            return false;
+        }
+
+        // Check this types match. A missing `this` type does not constrain the
+        // merged union signature, matching tsc's compareSignaturesIdentical path.
+        match (a.this_type, b.this_type) {
+            (Some(a_this), Some(b_this)) => self.checker.are_types_identical(a_this, b_this),
+            _ => true,
+        }
+    }
+
+    pub(super) fn are_signature_params_compatible_for_union(
+        &mut self,
+        a: &CallSignature,
+        b: &CallSignature,
+    ) -> bool {
         // Generic signatures require exact match — skip them for now
         if !a.type_params.is_empty() || !b.type_params.is_empty() {
             return false;
@@ -437,19 +458,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Use the minimum total — both must have at least that many params
         let min_total = a.params.len().min(b.params.len());
 
-        // Check parameter types are identical (by TypeId) for overlapping positions
+        // Check parameter types are identical for overlapping positions. Use the
+        // checker hook instead of raw TypeId equality so aliases/lazy refs that
+        // resolve to the same semantic type can still participate in tsc's
+        // union-signature merging.
         for i in 0..min_total {
-            if a.params[i].type_id != b.params[i].type_id {
+            if !self
+                .checker
+                .are_types_identical(a.params[i].type_id, b.params[i].type_id)
+            {
                 return false;
             }
         }
 
-        // Check this types match
-        match (a.this_type, b.this_type) {
-            (Some(a_this), Some(b_this)) => a_this == b_this,
-            (None, None) => true,
-            _ => false,
-        }
+        true
     }
 
     /// Find compatible signatures across all union members, mimicking tsc's
@@ -463,7 +485,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// other member. If multiple members have multiple overloads and no compatible
     /// pair exists, returns `None` → the union is not callable (TS2349).
     pub(super) fn find_union_compatible_signatures(
-        &self,
+        &mut self,
         sig_lists: &[(usize, Vec<CallSignature>)],
     ) -> Option<Vec<CallSignature>> {
         if sig_lists.is_empty() {

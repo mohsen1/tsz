@@ -890,8 +890,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // multi-overload member. If any single-overload member has no compatible
             // match, the union is not callable (TS2349).
             //
-            // Use TypeId equality for `this` types (safe, no side effects) plus the
-            // None-matches-any rule from tsc's compareSignaturesIdentical.
+            // Single-signature members combine with each matching overload
+            // by intersecting `this` types. Unlike multi-vs-multi overload
+            // merging, the `this` types do not have to be identical here;
+            // the caller's actual `this` context selects whether the
+            // intersected overload can be invoked.
             let multi_idx = sig_lists.iter().position(|(_, sigs)| sigs.len() > 1);
             if let Some(multi_idx) = multi_idx {
                 let multi_sigs = &sig_lists[multi_idx].1;
@@ -904,31 +907,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // Check if this single-overload sig is compatible with ANY
                         // overload from the multi-overload member.
                         let has_match = multi_sigs.iter().any(|multi_sig| {
-                            // Skip generic signatures
-                            if !single_sig.type_params.is_empty()
-                                || !multi_sig.type_params.is_empty()
-                            {
-                                return false;
-                            }
-                            // Check required param count
-                            let s_req =
-                                single_sig.params.iter().filter(|p| p.is_required()).count();
-                            let m_req = multi_sig.params.iter().filter(|p| p.is_required()).count();
-                            if s_req != m_req {
-                                return false;
-                            }
-                            // Check param types
-                            let min_total = single_sig.params.len().min(multi_sig.params.len());
-                            for i in 0..min_total {
-                                if single_sig.params[i].type_id != multi_sig.params[i].type_id {
-                                    return false;
-                                }
-                            }
-                            // Check this types (None matches any per tsc)
-                            match (single_sig.this_type, multi_sig.this_type) {
-                                (Some(a), Some(b)) => a == b,
-                                _ => true,
-                            }
+                            self.are_signature_params_compatible_for_union(single_sig, multi_sig)
                         });
                         if !has_match {
                             all_compatible = false;
