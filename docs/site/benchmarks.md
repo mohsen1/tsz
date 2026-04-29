@@ -9,7 +9,7 @@ permalink: /benchmarks/index.html
 
 ## Summary
 
-This page is a quick progress signal for relative performance across benchmark categories. It compares tsz against tsgo, and lower time is faster.
+This page is a quick progress signal for relative performance across benchmark categories. It compares tsz against tsgo, lower time is faster, and successful rows require zero compiler exit codes.
 
 <div class="bench-legend">
   <span class="bench-legend-item"><span class="bench-legend-swatch tsz"></span> tsz (Rust compiler)</span>
