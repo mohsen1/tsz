@@ -1324,11 +1324,25 @@ impl<'a> CheckerState<'a> {
                     .map(|ty| self.widen_literal_type(ty))
                     .filter(|&ty| ty == TypeId::NUMBER)
                     .unwrap_or(source_type);
+                // Narrow `element_type` by stripping `| undefined`: the binding
+                // default fills the undefined slot, so the assignability check
+                // is between the default value's type and the *non-undefined*
+                // shape of the property type. tsc reports the target as the
+                // narrowed type (`number` rather than `number | undefined`).
+                let target_type = if self.ctx.strict_null_checks() {
+                    crate::query_boundaries::flow::narrow_destructuring_default(
+                        self.ctx.types,
+                        element_type,
+                        true,
+                    )
+                } else {
+                    element_type
+                };
                 let _ = self.check_assignable_or_report_at_with_display_types(
                     source_type,
-                    element_type,
+                    target_type,
                     source_for_display,
-                    element_type,
+                    target_type,
                     element_data.initializer,
                     element_data.name,
                 );
