@@ -1162,6 +1162,16 @@ impl ParserState {
         let start = self.u32_from_usize(self.scanner.get_token_start());
         let end = self.u32_from_usize(self.scanner.get_token_end());
         let length = end - start;
+        self.parse_companion_error_at(start, length, message, code);
+    }
+
+    pub(crate) fn parse_companion_error_at(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+    ) {
         self.parse_diagnostics.push(ParseDiagnostic {
             start,
             length,
@@ -2085,7 +2095,7 @@ impl ParserState {
     /// not at the start (the backtick). We match that behavior.
     pub(crate) fn error_unterminated_template_literal_at(&mut self, _start: u32, end: u32) {
         use tsz_common::diagnostics::diagnostic_codes;
-        self.parse_error_at(
+        self.parse_companion_error_at(
             end,
             1,
             "Unterminated template literal.",
