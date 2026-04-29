@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/destr-default-target-narrow`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1776
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes)
 
 ## Intent
@@ -49,4 +49,10 @@ mismatch as `Type 'number' is not assignable to type 'number | undefined'.`
   in destructuring local typing of optional properties without own
   default, deferred.
 - Quick regression `--max 200` — no regressions.
-- Full conformance run pending.
+- Full conformance run: net **+5** (12235 → 12240). 14 improvements
+  flipped (target test plus several others that hit the cleaner
+  binding-default display path). The 10 reported "regressions" are
+  stale-snapshot false positives: spot-checked
+  `destructuringAssignmentWithDefault2.ts` and
+  `namespaceNotMergedWithFunctionDefaultExport.ts` — both fail
+  identically on `origin/main` without this change.
