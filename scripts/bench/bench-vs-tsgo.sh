@@ -36,8 +36,13 @@ fi
 BENCH_TARGET_DIR="$PROJECT_ROOT/.target-bench"
 TSZ_OUTPUT_DIR="$BENCH_TARGET_DIR/dist"
 
-# Compilers
-TSZ="$TSZ_OUTPUT_DIR/tsz"
+# Compilers. TSZ can be provided by CI so benchmark runs reuse the already
+# compiled binary instead of spending the bench job rebuilding it.
+TSZ="${TSZ:-$TSZ_OUTPUT_DIR/tsz}"
+TSZ_IS_OVERRIDE=false
+if [ "$TSZ" != "$TSZ_OUTPUT_DIR/tsz" ]; then
+    TSZ_IS_OVERRIDE=true
+fi
 TSGO="${TSGO:-}"
 TSGO_TOOL_DIR="${TSGO_TOOL_DIR:-$BENCH_TARGET_DIR/tools/tsgo}"
 TSGO_LOCAL_BIN="$TSGO_TOOL_DIR/node_modules/.bin/tsgo"
@@ -139,6 +144,7 @@ while [[ $# -gt 0 ]]; do
             echo "  TSGO_NPM_SPEC=<spec>   Override pinned npm package (default: $TSGO_NPM_SPEC)"
             echo "  TSC=<path>             Use a specific tsc binary (skip auto-install)"
             echo "  TSC_NPM_SPEC=<spec>    Override pinned typescript npm version"
+            echo "  TSZ=<path>             Use a specific tsz binary (skip benchmark build)"
             echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: embedded)"
             echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
             echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
@@ -368,11 +374,20 @@ check_prerequisites() {
         echo -e "${GREEN}✓${NC} tsz lib assets: embedded (built-in)"
     fi
 
-    # Check/build tsz with dedicated benchmark target directory
-    # Using isolated target dir prevents other cargo builds from affecting benchmark binary
+    # Check/build tsz with dedicated benchmark target directory unless caller
+    # provided TSZ. CI uses this to benchmark the dist-fast artifact that was
+    # already compiled by the main CI build.
     local need_rebuild=false
-    
-    if [ "$FORCE_REBUILD" = true ]; then
+
+    if [ "$TSZ_IS_OVERRIDE" = true ]; then
+        if [ "$FORCE_REBUILD" = true ]; then
+            echo -e "${YELLOW}Ignoring --rebuild because TSZ override is set: $TSZ${NC}"
+        fi
+        if [ ! -x "$TSZ" ]; then
+            echo -e "${RED}✗ TSZ is set but not executable: $TSZ${NC}"
+            exit 1
+        fi
+    elif [ "$FORCE_REBUILD" = true ]; then
         echo -e "${YELLOW}Force rebuild requested...${NC}"
         need_rebuild=true
     elif [ ! -x "$TSZ" ]; then
