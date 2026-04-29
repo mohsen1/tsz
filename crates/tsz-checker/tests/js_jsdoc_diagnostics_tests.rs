@@ -139,6 +139,71 @@ console.log(typeof TruffleContract);
 }
 
 #[test]
+fn checked_js_elided_default_namespace_import_reports_duplicate_and_value_errors() {
+    let files = [
+        (
+            "node_modules/@truffle/contract/index.d.ts",
+            r#"
+declare module "@truffle/contract" {
+    interface ContractObject {
+        foo: number;
+    }
+    namespace TruffleContract {
+        export type Contract = ContractObject;
+    }
+    export default TruffleContract;
+}
+                "#,
+        ),
+        (
+            "caller.js",
+            r#"
+import TruffleContract from "@truffle/contract";
+console.log(typeof TruffleContract, TruffleContract);
+                "#,
+        ),
+    ];
+
+    let declaration_diagnostics = compile_named_files(
+        &files,
+        "node_modules/@truffle/contract/index.d.ts",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+    let declaration_codes: Vec<u32> = declaration_diagnostics
+        .iter()
+        .map(|(code, _)| *code)
+        .collect();
+    assert!(
+        declaration_codes.contains(&2300),
+        "Expected TS2300 for default export colliding with namespace. Actual diagnostics: {declaration_diagnostics:#?}"
+    );
+
+    let caller_diagnostics = compile_named_files(
+        &files,
+        "caller.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2020,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let caller_codes: Vec<u32> = caller_diagnostics.iter().map(|(code, _)| *code).collect();
+    assert!(
+        caller_codes.iter().filter(|&&code| code == 2708).count() >= 2,
+        "Expected TS2708 for both value uses of the elided namespace import. Actual diagnostics: {caller_diagnostics:#?}"
+    );
+}
+
+#[test]
 fn checked_js_type_import_and_type_export_report_ts18042_ts18043() {
     let diagnostics = compile_named_files(
         &[

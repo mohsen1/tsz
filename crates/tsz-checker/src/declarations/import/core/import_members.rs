@@ -331,6 +331,14 @@ impl<'a> CheckerState<'a> {
             && self.should_report_js_type_only_import_diagnostic(clause.is_type_only, false)
         {
             self.emit_js_type_only_import_diagnostic(default_name_idx, &default_name, module_name);
+            if self.import_default_binding_targets_uninstantiated_namespace(module_name)
+                || self.ambient_module_declares_namespace(module_name, &default_name)
+            {
+                self.report_checked_js_default_namespace_import_value_uses(
+                    default_name_idx,
+                    &default_name,
+                );
+            }
         }
 
         // Check named imports: import { X, Y } from "module"
@@ -754,6 +762,14 @@ impl<'a> CheckerState<'a> {
             && self.should_report_js_type_only_import_diagnostic(clause.is_type_only, false)
         {
             self.emit_js_type_only_import_diagnostic(default_name_idx, &default_name, module_name);
+            if self.import_default_binding_targets_uninstantiated_namespace(module_name)
+                || self.ambient_module_declares_namespace(module_name, &default_name)
+            {
+                self.report_checked_js_default_namespace_import_value_uses(
+                    default_name_idx,
+                    &default_name,
+                );
+            }
         }
 
         let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
@@ -827,6 +843,155 @@ impl<'a> CheckerState<'a> {
         };
 
         self.import_member_binder_symbol_is_type_only(owner_binder, sym_id)
+    }
+
+    fn import_default_binding_targets_uninstantiated_namespace(&self, module_name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let Some(target_idx) = self.ctx.resolve_import_target(normalized) else {
+            return false;
+        };
+        let mut visited = rustc_hash::FxHashSet::default();
+        let Some((default_sym_id, owner_idx)) =
+            self.resolve_export_in_file(target_idx, "default", &mut visited)
+        else {
+            return false;
+        };
+        let Some(owner_binder) = self.ctx.get_binder_for_file(owner_idx) else {
+            return false;
+        };
+        let Some(default_sym) = owner_binder.get_symbol(default_sym_id) else {
+            return false;
+        };
+        let Some(default_decl) = default_sym.primary_declaration() else {
+            return false;
+        };
+        let Some(owner_arena) = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .and_then(|arenas| arenas.get(owner_idx))
+        else {
+            return false;
+        };
+        let Some(default_decl_node) = owner_arena.get(default_decl) else {
+            return false;
+        };
+        let Some(default_ident) = owner_arena.get_identifier(default_decl_node) else {
+            return false;
+        };
+        let target_name = default_ident.escaped_text.as_str();
+        let Some(target_sym_id) = owner_binder.file_locals.get(target_name).or_else(|| {
+            self.ctx
+                .module_exports_for_module(owner_binder, normalized)
+                .and_then(|exports| exports.get(target_name))
+        }) else {
+            return false;
+        };
+        let Some(target_sym) = owner_binder.get_symbol(target_sym_id) else {
+            return false;
+        };
+
+        let is_namespace = target_sym.has_any_flags(symbol_flags::NAMESPACE_MODULE);
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        is_namespace
+            && !target_sym.has_any_flags(value_flags_except_module)
+            && !self.symbol_has_runtime_value_in_binder(owner_binder, target_sym_id)
+    }
+
+    fn ambient_module_declares_namespace(&self, module_name: &str, namespace_name: &str) -> bool {
+        let clean_module = module_name.trim_matches('"').trim_matches('\'');
+        let Some(all_arenas) = self.ctx.all_arenas.as_ref() else {
+            return false;
+        };
+
+        for arena in all_arenas.iter() {
+            for node in &arena.nodes {
+                if node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                    continue;
+                }
+                let Some(module_decl) = arena.get_module(node) else {
+                    continue;
+                };
+                let Some(name_node) = arena.get(module_decl.name) else {
+                    continue;
+                };
+                if !arena.get_literal(name_node).is_some_and(|lit| {
+                    lit.text.trim_matches('"').trim_matches('\'') == clean_module
+                }) {
+                    continue;
+                }
+                let Some(body_node) = arena.get(module_decl.body) else {
+                    continue;
+                };
+                let Some(block) = arena.get_module_block(body_node) else {
+                    continue;
+                };
+                let Some(statements) = block.statements.as_ref() else {
+                    continue;
+                };
+                for &stmt_idx in &statements.nodes {
+                    let Some(stmt_node) = arena.get(stmt_idx) else {
+                        continue;
+                    };
+                    if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                        continue;
+                    }
+                    let Some(inner_module) = arena.get_module(stmt_node) else {
+                        continue;
+                    };
+                    let Some(inner_name_node) = arena.get(inner_module.name) else {
+                        continue;
+                    };
+                    if arena
+                        .get_identifier(inner_name_node)
+                        .is_some_and(|ident| ident.escaped_text == namespace_name)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn report_checked_js_default_namespace_import_value_uses(
+        &mut self,
+        binding_idx: NodeIndex,
+        local_name: &str,
+    ) {
+        let Some(local_sym_id) = self.resolve_identifier_symbol_without_tracking(binding_idx)
+        else {
+            return;
+        };
+
+        for (raw_idx, node) in self.ctx.arena.nodes.iter().enumerate() {
+            if node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let idx = NodeIndex(raw_idx as u32);
+            if idx == binding_idx || self.is_identifier_in_type_position(idx) {
+                continue;
+            }
+            let Some(ident) = self.ctx.arena.get_identifier(node) else {
+                continue;
+            };
+            if ident.escaped_text != local_name {
+                continue;
+            }
+            if self.resolve_identifier_symbol_without_tracking(idx) != Some(local_sym_id) {
+                continue;
+            }
+            self.report_wrong_meaning(
+                local_name,
+                idx,
+                local_sym_id,
+                crate::query_boundaries::name_resolution::NameLookupKind::Namespace,
+                crate::query_boundaries::name_resolution::NameLookupKind::Value,
+            );
+        }
     }
 
     fn import_local_binding_is_type_only(&self, local_name_idx: NodeIndex) -> bool {

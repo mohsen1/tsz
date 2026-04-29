@@ -586,6 +586,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     {
                         self.check_export_assignment(&statements.nodes);
                         self.check_import_alias_duplicates(&statements.nodes);
+                        self.check_ambient_default_namespace_export_duplicates(&statements.nodes);
                         // Check import equals declarations for circular imports (TS2303)
                         for &stmt_idx in &statements.nodes {
                             if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
