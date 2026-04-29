@@ -96,6 +96,62 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2300: `export default N` inside an ambient external module conflicts
+    /// with a sibling type-only namespace declaration named `N`.
+    ///
+    /// TypeScript reports the duplicate on the namespace declaration name. This
+    /// is separate from normal symbol duplicate checking because the binder
+    /// synthesizes the default export under the name `default`, while the source
+    /// identifier still occupies the namespace's declaration name.
+    pub(crate) fn check_ambient_default_namespace_export_duplicates(
+        &mut self,
+        statements: &[NodeIndex],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use std::collections::HashMap;
+
+        let mut namespaces = HashMap::new();
+        let mut default_export_names = Vec::new();
+
+        for &stmt_idx in statements {
+            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_decl) = self.ctx.arena.get_module(node)
+                && let Some(name_node) = self.ctx.arena.get(module_decl.name)
+                && name_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                namespaces.insert(ident.escaped_text.clone(), module_decl.name);
+                continue;
+            }
+
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export_decl) = self.ctx.arena.get_export_decl(node)
+                && export_decl.is_default_export
+                && let Some(exported_node) = self.ctx.arena.get(export_decl.export_clause)
+                && exported_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(exported_node)
+            {
+                default_export_names.push((ident.escaped_text.clone(), export_decl.export_clause));
+            }
+        }
+
+        for (name, export_name_node) in default_export_names {
+            if !namespaces.contains_key(&name) {
+                continue;
+            }
+            let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+            self.error_at_node(
+                export_name_node,
+                &message,
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+            );
+        }
+    }
+
     // =========================================================================
     // Import Equals Declaration Validation
     // =========================================================================
