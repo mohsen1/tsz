@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # safe-run.sh — Memory-guarded command runner
 #
-# Monitors the total RSS of a command's process tree and kills it
-# if memory usage exceeds a configurable limit. Designed to prevent
-# runaway builds/tests from bricking the system via OOM.
+# Monitors a command's process tree and kills it if memory usage exceeds
+# a configurable limit. On macOS, uses physical footprint when available;
+# elsewhere falls back to RSS. Designed to prevent runaway builds/tests
+# from bricking the system via OOM.
 #
 # Usage:
 #   scripts/safe-run.sh [OPTIONS] [--] COMMAND [ARGS...]
@@ -80,6 +81,12 @@ fi
 
 WARN_MB=$((LIMIT_MB * 80 / 100))
 
+if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]] && command -v footprint &>/dev/null; then
+    MEMORY_MODE="physical footprint"
+else
+    MEMORY_MODE="RSS"
+fi
+
 # ─── Process tree RSS (KB) ──────────────────────────────────────────
 # Walks the full descendant tree from a root PID using a single ps
 # snapshot. Multi-pass awk ensures children appearing before parents
@@ -109,6 +116,78 @@ get_tree_rss_kb() {
         }
         print total
     }'
+}
+
+get_tree_pids() {
+    local root_pid=$1
+    ps -eo pid=,ppid= 2>/dev/null | awk -v root="$root_pid" '
+    {
+        pid[NR] = $1; ppid[NR] = $2; n = NR
+    }
+    END {
+        tree[root] = 1
+        changed = 1
+        while (changed) {
+            changed = 0
+            for (i = 1; i <= n; i++) {
+                if (!tree[pid[i]] && tree[ppid[i]]) {
+                    tree[pid[i]] = 1
+                    changed = 1
+                }
+            }
+        }
+        for (i = 1; i <= n; i++) {
+            if (tree[pid[i]]) print pid[i]
+        }
+    }'
+}
+
+get_tree_footprint_kb() {
+    local root_pid=$1
+    local footprint_args=()
+    local pid
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        footprint_args+=("-p" "$pid")
+    done < <(get_tree_pids "$root_pid")
+
+    [[ "${#footprint_args[@]}" -gt 0 ]] || return 1
+
+    local bytes
+    bytes=$(footprint -f bytes --noCategories "${footprint_args[@]}" 2>/dev/null | awk '
+    /Summary Footprint:/ { summary = $(NF - 1) }
+    /^[[:space:]]*phys_footprint:/ {
+        phys += $(NF - 1)
+        phys_found = 1
+    }
+    !/Summary/ && /Footprint:/ {
+        for (i = 1; i <= NF; i++) {
+            if ($i == "Footprint:") {
+                header += $(i + 1)
+                header_found = 1
+            }
+        }
+    }
+    END {
+        if (summary != "") print summary
+        else if (phys_found) print phys
+        else if (header_found) print header
+        else print 0
+    }') || return 1
+
+    [[ "$bytes" =~ ^[0-9]+$ ]] || return 1
+    printf "%d\n" $(((bytes + 1023) / 1024))
+}
+
+get_tree_memory_kb() {
+    local root_pid=$1
+
+    if [[ "$MEMORY_MODE" == "physical footprint" ]]; then
+        get_tree_footprint_kb "$root_pid" && return 0
+    fi
+
+    get_tree_rss_kb "$root_pid"
 }
 
 # ─── Kill process tree (bottom-up) ──────────────────────────────────
@@ -157,7 +236,7 @@ trap forward_signal INT TERM
 "$@" &
 CMD_PID=$!
 
-echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | system RAM ${TOTAL_RAM_MB}MB" >&2
+echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | mode ${MEMORY_MODE} | system RAM ${TOTAL_RAM_MB}MB" >&2
 
 # ─── Monitor loop (background) ──────────────────────────────────────
 
@@ -169,24 +248,24 @@ echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | sy
         # Guard: process may have exited during sleep
         kill -0 "$CMD_PID" 2>/dev/null || break
 
-        RSS_KB=$(get_tree_rss_kb "$CMD_PID")
-        RSS_MB=$((RSS_KB / 1024))
+        MEMORY_KB=$(get_tree_memory_kb "$CMD_PID")
+        MEMORY_MB=$((MEMORY_KB / 1024))
 
         if [[ "$VERBOSE" -eq 1 ]]; then
-            echo "[safe-run] RSS: ${RSS_MB}MB / ${LIMIT_MB}MB" >&2
+            echo "[safe-run] ${MEMORY_MODE}: ${MEMORY_MB}MB / ${LIMIT_MB}MB" >&2
         fi
 
-        if [[ "$RSS_MB" -gt "$LIMIT_MB" ]]; then
+        if [[ "$MEMORY_MB" -gt "$LIMIT_MB" ]]; then
             echo "" >&2
             echo "[safe-run] *** MEMORY LIMIT EXCEEDED ***" >&2
-            echo "[safe-run] Process tree using ${RSS_MB}MB (limit: ${LIMIT_MB}MB)" >&2
+            echo "[safe-run] Process tree using ${MEMORY_MB}MB ${MEMORY_MODE} (limit: ${LIMIT_MB}MB)" >&2
             echo "[safe-run] Killing process tree (PID $CMD_PID)..." >&2
             kill_tree "$CMD_PID" TERM
             sleep 2
             kill_tree "$CMD_PID" KILL
             exit 1
-        elif [[ "$RSS_MB" -gt "$WARN_MB" ]] && [[ "$warn_printed" -eq 0 ]]; then
-            echo "[safe-run] WARNING: ${RSS_MB}MB used (80% of ${LIMIT_MB}MB limit)" >&2
+        elif [[ "$MEMORY_MB" -gt "$WARN_MB" ]] && [[ "$warn_printed" -eq 0 ]]; then
+            echo "[safe-run] WARNING: ${MEMORY_MB}MB ${MEMORY_MODE} used (80% of ${LIMIT_MB}MB limit)" >&2
             warn_printed=1
         fi
     done

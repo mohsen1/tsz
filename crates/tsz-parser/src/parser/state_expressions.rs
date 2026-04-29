@@ -255,6 +255,14 @@ impl ParserState {
         left
     }
 
+    pub(crate) fn parse_assignment_expression_allowing_arrow_return_type(&mut self) -> NodeIndex {
+        let saved_flags = self.context_flags;
+        self.context_flags &= !CONTEXT_FLAG_IN_CONDITIONAL_TRUE;
+        let expression = self.parse_assignment_expression();
+        self.context_flags = saved_flags;
+        expression
+    }
+
     fn look_ahead_can_commit_async_arrow_function(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -365,6 +373,14 @@ impl ParserState {
             let token = self.token();
             let at_type_parameter_top_level =
                 depth == 1 && paren_depth == 0 && brace_depth == 0 && bracket_depth == 0;
+
+            if matches!(
+                token,
+                SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead
+            ) {
+                self.skip_template_literal_in_arrow_lookahead();
+                continue;
+            }
 
             // In TSX/JSX ambiguity resolution, malformed `extends` clauses such as
             // `<T extends>() => {}` and `<T extends={...}>() => {}` should NOT commit
@@ -648,6 +664,20 @@ impl ParserState {
                 slot_in_initializer_context = true;
             }
 
+            if matches!(
+                token,
+                SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead
+            ) {
+                self.skip_template_literal_in_arrow_lookahead();
+                at_param_start = false;
+                previous_top_level_can_end_parameter_name = false;
+                previous_top_level_was_optional_parameter = false;
+                if at_top_level {
+                    previous_top_level_token = token;
+                }
+                continue;
+            }
+
             if token == SyntaxKind::OpenParenToken {
                 // `(` at the start of a top-level parameter slot is not a valid
                 // parameter pattern. Reject early so the expression is NOT parsed
@@ -690,6 +720,7 @@ impl ParserState {
                 // starts a new parameter slot.
                 slot_in_type_context = false;
                 slot_in_initializer_context = false;
+                saw_top_level_conditional_operator = false;
                 at_param_start = true;
             } else {
                 // Any other token (identifier, keyword, `[`, `{`, `...`, `=`, etc.)
@@ -806,6 +837,82 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_arrow
+    }
+
+    fn skip_template_literal_in_arrow_lookahead(&mut self) {
+        match self.token() {
+            SyntaxKind::NoSubstitutionTemplateLiteral => {
+                self.next_token();
+                return;
+            }
+            SyntaxKind::TemplateHead => {}
+            _ => return,
+        }
+
+        self.next_token();
+
+        loop {
+            let mut brace_depth = 0u32;
+            let mut paren_depth = 0u32;
+            let mut bracket_depth = 0u32;
+            let mut angle_depth = 0u32;
+
+            while !self.is_token(SyntaxKind::EndOfFileToken) {
+                match self.token() {
+                    SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead => {
+                        self.skip_template_literal_in_arrow_lookahead();
+                        continue;
+                    }
+                    SyntaxKind::OpenBraceToken => {
+                        brace_depth += 1;
+                    }
+                    SyntaxKind::CloseBraceToken if brace_depth == 0 => {
+                        break;
+                    }
+                    SyntaxKind::CloseBraceToken => {
+                        brace_depth -= 1;
+                    }
+                    SyntaxKind::OpenParenToken => {
+                        paren_depth += 1;
+                    }
+                    SyntaxKind::CloseParenToken if paren_depth > 0 => {
+                        paren_depth -= 1;
+                    }
+                    SyntaxKind::OpenBracketToken => {
+                        bracket_depth += 1;
+                    }
+                    SyntaxKind::CloseBracketToken if bracket_depth > 0 => {
+                        bracket_depth -= 1;
+                    }
+                    SyntaxKind::LessThanToken => {
+                        angle_depth += 1;
+                    }
+                    SyntaxKind::GreaterThanToken if angle_depth > 0 => {
+                        angle_depth -= 1;
+                    }
+                    _ => {}
+                }
+                self.next_token();
+            }
+
+            if !self.is_token(SyntaxKind::CloseBraceToken) {
+                return;
+            }
+
+            self.scanner.re_scan_template_token(false);
+            self.current_token = self.scanner.get_token();
+
+            match self.token() {
+                SyntaxKind::TemplateTail => {
+                    self.next_token();
+                    return;
+                }
+                SyntaxKind::TemplateMiddle => {
+                    self.next_token();
+                }
+                _ => return,
+            }
+        }
     }
 
     // Look ahead to see if identifier is followed by => (simple arrow function)
@@ -2555,7 +2662,7 @@ impl ParserState {
             if self.is_token(SyntaxKind::DotDotDotToken) {
                 let spread_start = self.token_pos();
                 self.next_token();
-                let expression = self.parse_assignment_expression();
+                let expression = self.parse_assignment_expression_allowing_arrow_return_type();
                 if expression.is_none() {
                     // Emit TS1135 for incomplete spread argument: func(...missing)
                     self.error_argument_expression_expected();
@@ -2578,7 +2685,7 @@ impl ParserState {
                 // matching tsc which treats `;` as a clear boundary.
                 break;
             } else {
-                let arg = self.parse_assignment_expression();
+                let arg = self.parse_assignment_expression_allowing_arrow_return_type();
                 if arg.is_none() {
                     // TS1135 for missing function argument
                     self.error_argument_expression_expected();

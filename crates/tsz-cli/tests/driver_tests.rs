@@ -1699,6 +1699,44 @@ fn compile_with_explicit_files_without_tsconfig() {
 }
 
 #[test]
+fn compile_no_check_no_emit_is_parse_only() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "import { value } from './missing';\nconst typed: string = 1;\nconst broken = ;\n",
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1109),
+        "expected --noCheck --noEmit to report TS1109 parse error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2307),
+        "expected --noCheck --noEmit to skip module resolution diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2322),
+        "expected --noCheck --noEmit to skip type diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+    assert_eq!(result.files_read.len(), 1);
+}
+
+#[test]
 fn compile_promise_is_assignable_to_promise_like_with_default_libs() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

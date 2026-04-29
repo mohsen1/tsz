@@ -398,6 +398,21 @@ const regexes: RegExp[] = [
 }
 
 #[test]
+fn test_regex_hyphen_after_range_is_literal() {
+    let source = "const idSuffixPattern = /^([a-z][a-z0-9-]*)(:[a-z0-9-.]*)?$/i;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Hyphen after an already-consumed range should be literal: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_character_class_escape_does_not_report_ts1517() {
     let source = r#"
 /(#?-?\d*\.\d\w*%?)|(@?#?[\w-?]+%?)/g;

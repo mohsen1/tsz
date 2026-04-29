@@ -1272,6 +1272,58 @@ pub(super) fn parse_diagnostic_to_checker(
     )
 }
 
+pub(super) fn collect_no_check_parse_diagnostics_for_file(
+    file_name: &str,
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    parse_diagnostics: &[ParseDiagnostic],
+    options: &ResolvedCompilerOptions,
+    program_has_real_syntax_errors: bool,
+) -> Vec<Diagnostic> {
+    let filtered_parse_diagnostics =
+        filtered_parse_diagnostics(parse_diagnostics, program_has_real_syntax_errors);
+    let is_js = is_js_file(Path::new(file_name));
+
+    let mut file_diagnostics: Vec<Diagnostic> = if is_js {
+        let source_text = arena
+            .get_source_file_at(source_file)
+            .map(|sf| sf.text.as_ref());
+        let mut diags = Vec::new();
+        convert_js_parse_diagnostics_to_ts8xxx(
+            parse_diagnostics,
+            file_name,
+            &mut diags,
+            source_text,
+        );
+        for parse_diagnostic in &filtered_parse_diagnostics {
+            if is_ts1xxx_allowed_in_js(parse_diagnostic.code) {
+                diags.push(parse_diagnostic_to_checker(file_name, parse_diagnostic));
+            }
+        }
+        diags
+    } else {
+        filtered_parse_diagnostics
+            .into_iter()
+            .map(|d| parse_diagnostic_to_checker(file_name, d))
+            .collect()
+    };
+
+    if is_js {
+        file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
+    }
+
+    if let Some(source) = arena.get_source_file_at(source_file) {
+        apply_ts_directive_suppression(
+            file_name,
+            source.text.as_ref(),
+            &mut file_diagnostics,
+            options.checker.emit_declarations && options.check_js && is_js,
+        );
+    }
+
+    file_diagnostics
+}
+
 pub(super) fn filtered_parse_diagnostics(
     parse_diagnostics: &[ParseDiagnostic],
     program_has_real_syntax_errors: bool,

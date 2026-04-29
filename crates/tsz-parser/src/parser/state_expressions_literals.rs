@@ -1301,7 +1301,7 @@ impl ParserState {
                 // Spread element: ...expr
                 let spread_start = self.token_pos();
                 self.next_token();
-                let expression = self.parse_assignment_expression();
+                let expression = self.parse_assignment_expression_allowing_arrow_return_type();
                 if expression.is_none() {
                     // Emit TS1109 for incomplete spread element: [...missing]
                     self.error_expression_expected();
@@ -1315,7 +1315,7 @@ impl ParserState {
                 );
                 elements.push(spread);
             } else {
-                let elem = self.parse_assignment_expression();
+                let elem = self.parse_assignment_expression_allowing_arrow_return_type();
                 if elem.is_none() {
                     // tsc uses TS1137 ("Expression or comma expected") when a closing
                     // delimiter from an outer context terminates the array (e.g. `[)` or

@@ -10,6 +10,16 @@ fn parse_complex_type_expressions_have_no_errors() {
 }
 
 #[test]
+fn parse_tuple_indexed_access_type() {
+    let (parser, _root) = parse_source("type NoInfer<T> = [T][0];");
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn parse_conditional_and_infer_types_emit_expected_members() {
     let (parser, _root) =
         parse_source("type T<T> = T extends string ? { kind: 's' } : { kind: 'o' };");
@@ -63,6 +73,126 @@ fn parse_modifier_like_type_parameter_names_without_empty_name_recovery() {
 fn parse_template_literal_type_with_placeholder() {
     let (parser, _root) = parse_source("type T = `a${string}b`;");
     assert_eq!(parser.get_diagnostics().len(), 0);
+}
+
+#[test]
+fn parse_template_literal_type_with_multiple_placeholders() {
+    let (parser, _root) = parse_source(
+        "type Timestamp = `${number}-${number}-${number}T${number}:${number}:${number}Z`;",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_template_literal_type_as_generic_argument_in_assertion() {
+    let (parser, _root) = parse_source(
+        "type Brand<T extends string> = { value: T };\nconst value = `close-${String(x)}` as Brand<`close-${string}`>;",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_template_literal_type_after_typeof_generic_argument_in_assertion() {
+    let (parser, _root) = parse_source(
+        "type Brand<T extends string> = { value: T };\ntype Result<T, U extends string> = { value: U };\ndeclare function fallback<T>(value: T): T;\nfunction f(input: { domain: 'signal' }, extra: unknown) {\n  return fallback({\n    value: `close-${String((extra as { value: string }).value)}` as Brand<`close-${string}`>,\n  } as Result<typeof input, `close-${string}`>);\n}",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_variance_annotations_on_interface_type_parameters() {
+    let (parser, _root) = parse_source(
+        "interface SolverDispatcher<in TInput, out TOutput> { run(input: TInput): TOutput; }",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_multiline_generic_arrow_returning_parenthesized_object() {
+    let (parser, _root) = parse_source(
+        "type Box<T> = { value: T };\nexport const make = <\n  T extends string,\n>(input: T): Box<typeof input> => ({\n  value: input,\n});",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_const_generic_arrow_with_template_literal_constraint() {
+    let (parser, _root) = parse_source(
+        "export const signalKindSet = <const TSignals extends readonly `signal:${string}`[]>(\n  values: NoInfer<TSignals>,\n): Readonly<{ readonly values: TSignals; readonly keys: string[] }> => ({\n  values,\n  keys: values.map((value) => value.replace('signal:', '')),\n});",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_template_expression_in_returned_object_literal() {
+    let (parser, _root) = parse_source(
+        "export const make = (input: { a: string; b: string }) => ({\n  route: `${input.a}:${input.b}`,\n});",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_typed_arrow_argument_in_conditional_true_branch() {
+    let (parser, _root) = parse_source(
+        "type Row = { x: number };\ndeclare const cond: boolean;\ndeclare const values: number[];\ndeclare function empty(): Row;\nconst rows = cond\n  ? values.map((value): Row => {\n    return { x: value };\n  })\n  : [empty()];",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_type_predicate_arrow_argument_in_conditional_true_branch() {
+    let (parser, _root) = parse_source(
+        "type Route = 'all' | 'one';\ndeclare const route: Route;\ndeclare const allRoutes: readonly Route[];\nconst routes = route === 'all'\n  ? allRoutes.filter((candidate): candidate is Exclude<Route, 'all'> => candidate !== 'all')\n  : [route];",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn parse_arrow_parameters_after_conditional_type_parameter() {
+    let (parser, _root) = parse_source(
+        "export const withScopeAsync = async <TValue extends object, TResult>(\n  name: NoInfer<TValue> extends string ? string : string,\n  callback: (scope: SubscriptionScope) => Promise<TResult> | TResult,\n): Promise<TResult> => callback(undefined as any);",
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
 }
 
 #[test]

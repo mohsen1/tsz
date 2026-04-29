@@ -234,17 +234,21 @@ impl ParserState {
                             i = next_i;
                         }
 
-                        if let Some(offending_start) =
-                            tokens.windows(3).find_map(|window| match window {
+                        let mut token_index = 0usize;
+                        while token_index + 2 < tokens.len() {
+                            match &tokens[token_index..token_index + 3] {
                                 [
                                     ClassToken::Atom { value: left, start },
                                     ClassToken::Hyphen,
                                     ClassToken::Atom { value: right, .. },
-                                ] if left > right => Some(*start),
-                                _ => None,
-                            })
-                        {
-                            errors.push((offending_start, 1));
+                                ] => {
+                                    if left > right {
+                                        errors.push((*start, 1));
+                                    }
+                                    token_index += 3;
+                                }
+                                _ => token_index += 1,
+                            }
                         }
                     }
                     _ => {
