@@ -21,8 +21,16 @@ RUNNER_INSTANCES="${RUNNER_INSTANCES:-1}"
 BUILD_POOL="${BUILD_POOL:-projects/${PROJECT_ID}/locations/${REGION}/workerPools/tsz-ci-n2d-224}"
 BUILD_MODE="${BUILD_MODE:-local}"
 IMAGE_TAG="${IMAGE_TAG:-${REGION}-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/tsz-gh-runner:latest}"
+
+# Keep this in sync with scripts/ci/update-crema.sh. Long CI jobs, especially
+# bench PGO prep, need warm worker capacity after they leave GitHub's queue.
+MIN_REPLICAS="${MIN_REPLICAS:-30}"
+MAX_REPLICAS="${MAX_REPLICAS:-200}"
 TARGET_QUEUE_LENGTH="${TARGET_QUEUE_LENGTH:-1}"
 POLLING_INTERVAL="${POLLING_INTERVAL:-10}"
+SCALE_UP_VALUE="${SCALE_UP_VALUE:-30}"
+SCALE_UP_PERIOD="${SCALE_UP_PERIOD:-10}"
+SCALE_DOWN_WINDOW="${SCALE_DOWN_WINDOW:-60}"
 CREMA_IMAGE="${CREMA_IMAGE:-us-central1-docker.pkg.dev/cloud-run-oss-images/crema-v1/autoscaler:1.0}"
 CREMA_BASE_IMAGE="${CREMA_BASE_IMAGE:-us-central1-docker.pkg.dev/serverless-runtimes/google-24/runtimes/java25}"
 
@@ -148,6 +156,8 @@ spec:
               version: latest
   scaledObjects:
     - spec:
+        minReplicaCount: ${MIN_REPLICAS}
+        maxReplicaCount: ${MAX_REPLICAS}
         scaleTargetRef:
           name: projects/${PROJECT_ID}/locations/${REGION}/workerpools/${POOL_NAME}
         triggers:
@@ -165,7 +175,7 @@ spec:
           horizontalPodAutoscalerConfig:
             behavior:
               scaleDown:
-                stabilizationWindowSeconds: 30
+                stabilizationWindowSeconds: ${SCALE_DOWN_WINDOW}
                 policies:
                   - type: Pods
                     value: 100
@@ -174,8 +184,8 @@ spec:
                 stabilizationWindowSeconds: 0
                 policies:
                   - type: Pods
-                    value: 20
-                    periodSeconds: 10
+                    value: ${SCALE_UP_VALUE}
+                    periodSeconds: ${SCALE_UP_PERIOD}
 YAML
 
 if ! gcloud parametermanager parameters describe "$PARAMETER_ID" --project="$PROJECT_ID" --location="$PARAMETER_REGION" >/dev/null 2>&1; then
