@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/printer-recursive-typeof-self-reference`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1739
+- **Status**: ready
 - **Workstream**: 1 (Conformance fixes) — Tier 1 type-display-parity campaign
 
 ## Intent
@@ -47,4 +47,8 @@ shape intact for the formatter.
   (one of three). The remaining two patterns (line 25 TS2322 expecting
   `() => ...` and line 34 TS2345 expecting an unwrapped overload set) need
   separate, distinct policies and are out of scope here.
-- Full conformance run pending before flipping `Status: ready`.
+- Full conformance run: 12235 → 12235 (delta=+0). No regressions; the
+  test still fails because two other fingerprint mismatches in the same
+  file (line 25 TS2322, line 34 TS2345 overload set) need separate
+  policies. The fix is a correct, atomic improvement that gets the file
+  closer to parity.
