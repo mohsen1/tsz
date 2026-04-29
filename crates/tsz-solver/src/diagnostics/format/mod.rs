@@ -1525,8 +1525,20 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)).into(),
-            // NoInfer<T> is transparent in error messages - tsc displays just T
-            TypeData::NoInfer(inner) => self.format(*inner),
+            // NoInfer<T> is transparent at the outermost layer of the
+            // displayed type — matching tsc, which strips a single outer
+            // `NoInfer<>` wrapper but preserves nested `NoInfer<>` markers
+            // (e.g. inside a union member or function return). `format()`
+            // increments `current_depth` from 0 → 1 before delegating here,
+            // so the top-level call sees `current_depth == 1` and inner
+            // recursions see `>= 2`.
+            TypeData::NoInfer(inner) => {
+                if self.current_depth == 1 {
+                    self.format(*inner)
+                } else {
+                    format!("NoInfer<{}>", self.format(*inner)).into()
+                }
+            }
             TypeData::UniqueSymbol(_) => Cow::Borrowed("unique symbol"),
             TypeData::Infer(info) => format!("infer {}", self.atom(info.name)).into(),
             TypeData::ThisType => Cow::Borrowed("this"),
