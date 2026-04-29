@@ -873,6 +873,7 @@ impl TypeInterner {
         // e.g., 1 | 2 | number => number
         // e.g., true | boolean => boolean
         self.absorb_literals_into_primitives(&mut flat);
+        self.absorb_intersections_with_union_constituents(&mut flat);
 
         if flat.is_empty() {
             return TypeId::NEVER;
@@ -928,6 +929,21 @@ impl TypeInterner {
 
         let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
+    }
+
+    fn absorb_intersections_with_union_constituents(&self, flat: &mut TypeListBuffer) {
+        if flat.len() <= 1 {
+            return;
+        }
+
+        let present: FxHashSet<TypeId> = flat.iter().copied().collect();
+        flat.retain(|id| {
+            let Some(TypeData::Intersection(list_id)) = self.lookup(*id) else {
+                return true;
+            };
+            let parts = self.type_list(list_id);
+            !parts.iter().any(|part| present.contains(part))
+        });
     }
 
     /// Normalize a union with literal-only reduction (no subtype reduction).

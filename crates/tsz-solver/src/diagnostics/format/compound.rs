@@ -570,11 +570,46 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|&m| self.format_union_member(m))
             .collect();
+        let (ordered, formatted) = Self::remove_redundant_intersection_displays(ordered, formatted);
         // Disambiguate duplicate display names by adding namespace qualification.
         // tsc shows `Foo.Yep | Bar.Yep` instead of `Yep | Yep` when two different
         // types share the same name in different namespaces.
         let disambiguated = self.disambiguate_union_member_names(&ordered, formatted);
         disambiguated.join(" | ")
+    }
+
+    fn remove_redundant_intersection_displays(
+        ordered: Vec<TypeId>,
+        formatted: Vec<String>,
+    ) -> (Vec<TypeId>, Vec<String>) {
+        if formatted.len() <= 1 {
+            return (ordered, formatted);
+        }
+
+        let keep: Vec<bool> = formatted
+            .iter()
+            .map(|display| {
+                let inner = display
+                    .strip_prefix('(')
+                    .and_then(|s| s.strip_suffix(')'))
+                    .unwrap_or(display);
+                let parts: Vec<&str> = inner.split(" & ").collect();
+                parts.len() <= 1
+                    || !parts
+                        .iter()
+                        .any(|part| formatted.iter().any(|other| other == part))
+            })
+            .collect();
+
+        let mut kept_ordered = Vec::with_capacity(ordered.len());
+        let mut kept_formatted = Vec::with_capacity(formatted.len());
+        for ((type_id, display), keep) in ordered.into_iter().zip(formatted).zip(keep) {
+            if keep {
+                kept_ordered.push(type_id);
+                kept_formatted.push(display);
+            }
+        }
+        (kept_ordered, kept_formatted)
     }
 
     fn collapse_same_enum_members_for_display(&mut self, members: &[TypeId]) -> Option<String> {
