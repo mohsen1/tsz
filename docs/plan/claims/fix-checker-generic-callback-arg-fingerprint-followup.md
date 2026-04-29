@@ -2,8 +2,8 @@
 
 - **Date**: 2026-04-29
 - **Branch**: `fix/checker-generic-callback-arg-fingerprint-followup`
-- **PR**: TBD
-- **Status**: claim
+- **PR**: #1778
+- **Status**: ready
 - **Workstream**: 1 (Diagnostic Conformance And Fingerprints)
 
 ## Intent
@@ -16,13 +16,18 @@ type 'T'.` fingerprint for the `f(y)` call.
 
 ## Files Touched
 
-- TBD after implementation.
+- `crates/tsz-checker/src/types/computation/call_result.rs` (~8 LOC)
+- `crates/tsz-checker/tests/generic_tests.rs` (+22 LOC)
+- `crates/tsz-solver/tests/integration_tests.rs` (+24 LOC)
 
 ## Verification
 
-- Planned: `cargo check --package tsz-checker`
-- Planned: `cargo check --package tsz-solver`
-- Planned: `cargo build --profile dist-fast --bin tsz`
-- Planned: owning crate unit tests with `cargo nextest run`
-- Planned: `./scripts/conformance/conformance.sh run --filter "genericCallbackInvokedInsideItsContainingFunction1" --verbose`
-- Planned: `./scripts/conformance/conformance.sh run --max 200`
+- `cargo fmt --all --check`
+- `cargo check --package tsz-checker`
+- `cargo check --package tsz-solver`
+- `cargo build --profile dist-fast --bin tsz`
+- `cargo nextest run --package tsz-checker --lib` (2969 passed, 11 skipped)
+- `cargo nextest run --package tsz-solver --lib` (5546 passed, 9 skipped)
+- `./scripts/conformance/conformance.sh run --filter "genericCallbackInvokedInsideItsContainingFunction1" --verbose` (1/1 passed)
+- `./scripts/conformance/conformance.sh run --max 200` (200/200 passed)
+- `scripts/safe-run.sh ./scripts/conformance/conformance.sh run 2>&1 | grep FINAL` (`FINAL RESULTS: 12241/12582 passed (97.3%)`)

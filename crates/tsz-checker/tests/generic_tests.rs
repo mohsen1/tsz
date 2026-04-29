@@ -584,6 +584,28 @@ g("", 3, a => a);
 }
 
 #[test]
+fn test_non_generic_callback_rejects_distinct_outer_type_parameter_argument() {
+    let source = r#"
+function foo<T, U>(x: T, y: U, f: (v: T) => U) {
+    f(y);
+}
+"#;
+    let diags = crate::test_utils::check_source_diagnostics(source);
+    let ts2345: Vec<_> = diags.iter().filter(|d| d.code == 2345).collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "Expected TS2345 for passing U to callback parameter T, got: {diags:#?}"
+    );
+    assert!(
+        ts2345[0].message_text.contains("Argument of type 'U'")
+            && ts2345[0].message_text.contains("parameter of type 'T'"),
+        "Expected TS2345 to display U vs T, got: {:?}",
+        ts2345[0]
+    );
+}
+
+#[test]
 fn test_forward_referencing_type_param_defaults_no_spurious_ts2345() {
     // When type parameter defaults forward-reference later-declared type parameters
     // (flagged by TS2744), the defaults should resolve to error for type-checking

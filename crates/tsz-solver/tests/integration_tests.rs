@@ -84,6 +84,30 @@ mod generic_strictness_tests {
         );
     }
 
+    #[test]
+    fn test_distinct_unconstrained_type_params_are_not_assignable() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+
+        let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }));
+        let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: interner.intern_string("U"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }));
+
+        assert!(
+            !checker.is_assignable(u_param, t_param),
+            "Distinct unconstrained type parameters are opaque; U is not assignable to T"
+        );
+    }
+
     /// Test that multiple generic constraints are correctly combined
     ///
     /// NOTE: This test was deleted because it had incorrect expectations.

@@ -879,6 +879,14 @@ impl<'a> CheckerState<'a> {
             && assign_query::contains_type_parameters(self.ctx.types, actual)
             && assign_query::contains_type_parameters(self.ctx.types, expected)
         {
+            if let (Some(actual_param), Some(expected_param)) = (
+                common::type_param_info(self.ctx.types, actual),
+                common::type_param_info(self.ctx.types, expected),
+            ) && actual_param.name != expected_param.name
+            {
+                return false;
+            }
+
             // Don't defer when the base types of generic instantiations are different
             // classes. For example, B<T> vs A<T> where A has private members should
             // NOT be deferred — the mismatch is structural and type parameter resolution
