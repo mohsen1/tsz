@@ -496,6 +496,43 @@ fn parse_template_recovery_preserves_follow_up_statement() {
 }
 
 #[test]
+fn parse_unterminated_template_recovery_reports_comma_after_next_template_literal() {
+    let source = "function f(){\n  this.classFormat(`${style('active')});\n  const x = [\n    `font-size: var(--button-size-${fontType}-fontSize)`,\n    `height: var foo`,\n  ].join(';')\n}\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    let comma_pos = source
+        .find("`height: var foo`,")
+        .map(|pos| pos + "`height: var foo".len())
+        .expect("comma after recovered template literal") as u32;
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.message == "',' expected."
+                && diag.start == comma_pos
+        }),
+        "expected TS1005 comma diagnostic at recovered template comma, got {diags:?}"
+    );
+}
+
+#[test]
+fn parse_unterminated_template_recovery_reports_missing_close_brace_at_eof() {
+    let source = "function f(){\n  this.classFormat(`${style('active')});\n  const x = [\n    `height: var foo`,\n  ].join(';')\n}\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::EXPECTED
+                && diag.message == "'}' expected."
+                && diag.start == source.len() as u32
+        }),
+        "expected TS1005 missing close brace at EOF, got {diags:?}"
+    );
+}
+
+#[test]
 fn parse_return_statement_outside_function_recovers_and_continues() {
     let (parser, root) = parse_source("return;\nconst ok = 1;");
     let sf = parser.get_arena().get_source_file_at(root).unwrap();
