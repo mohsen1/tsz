@@ -2130,6 +2130,7 @@ impl<'a> CheckerState<'a> {
                     if self.is_js_file()
                         && self.ctx.compiler_options.check_js
                         && !skip_js_write_assigned_value_fallback
+                        && !self.property_access_root_is_imported_namespace(access.expression)
                         && let Some(expr_text) = self.expression_text(idx)
                         && let Some(jsdoc_type) = if skip_flow_narrowing
                             && self.property_access_is_direct_write_target(idx)

@@ -201,3 +201,38 @@ js1.b;
         "Expected CommonJS require assignment mismatch to report missing property, got: {diagnostics:#?}"
     );
 }
+
+/// Writes to an unknown property on a `const X = require("…")` namespace must
+/// surface as TS2339 on both the read and the write side. The earlier behavior
+/// silently suppressed TS2339 because the JSDoc "assigned-value type" recovery
+/// path treated `mod.X = 0` as a JS-style expando declaration on `mod`,
+/// returning the RHS type and short-circuiting the diagnostic. require'd
+/// namespaces are imports, not local expando hosts.
+#[test]
+fn check_js_require_namespace_does_not_admit_expando_writes() {
+    let diagnostics = check_js_require_value_diagnostics(
+        r#"{ "a": 0 }"#,
+        r#"exports.thing = 1;"#,
+        r#"
+const mod = require("./js.js");
+mod.other;
+mod.other = 0;
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        2,
+        "Expected TS2339 on both the read and the write of `mod.other`, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|(_, message)| message.contains("Property 'other' does not exist")),
+        "Expected each TS2339 to name 'other', got: {diagnostics:#?}"
+    );
+}
