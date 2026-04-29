@@ -1277,9 +1277,9 @@ pub(crate) fn function_signature_has_typeof(db: &dyn TypeDatabase, type_id: Type
                 .params
                 .iter()
                 .any(|p| is_type_query_type(db, p.type_id)))
-        {
-            return true;
-        }
+    {
+        return true;
+    }
     if let Some(shape) = callable_shape_for_type(db, type_id) {
         return shape.call_signatures.iter().any(|sig| {
             is_type_query_type(db, sig.return_type)
