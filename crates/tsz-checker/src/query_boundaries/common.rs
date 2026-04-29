@@ -587,6 +587,14 @@ pub(crate) fn widen_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::widen_type_for_display(db, type_id)
 }
 
+/// Widen a type for call-argument diagnostic display: widens boolean
+/// literals inside compound shapes (tuples/objects) so TS2345 source-type
+/// renders match tsc, e.g. `[number, number, boolean, boolean]` instead of
+/// `[number, number, false, true]`. Function param types are still skipped.
+pub(crate) fn widen_argument_type_for_display(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::widen_argument_type_for_display(db, type_id)
+}
+
 /// Extract the element type from a rest-argument array/tuple type.
 pub(crate) fn rest_argument_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::rest_argument_element_type(db, type_id)
