@@ -348,11 +348,11 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
     ) -> Option<String> {
-        if !self
+        if self
             .ctx
             .arena
             .get(idx)
-            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
         {
             return None;
         }
@@ -622,7 +622,7 @@ impl<'a> CheckerState<'a> {
         let left_str = if let Some(text) =
             self.operator_type_parameter_annotation_text_for_expression(left_idx)
         {
-            text.into()
+            text
         } else if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
             self.format_type(left_diag)
         } else {
@@ -631,7 +631,7 @@ impl<'a> CheckerState<'a> {
         let right_str = if let Some(text) =
             self.operator_type_parameter_annotation_text_for_expression(right_idx)
         {
-            text.into()
+            text
         } else if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
             self.format_type(right_diag)
         } else {
