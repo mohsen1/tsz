@@ -216,6 +216,36 @@ function diamondTop<Top>() {
     );
 }
 
+#[test]
+fn test_ts2322_narrowed_string_literal_residual_union_to_never_display() {
+    let diagnostics = get_all_diagnostics(
+        r#"
+type Variants = "a" | "b" | "c" | "d";
+
+function fx1(x: Variants) {
+    if (x === "a" || x === "b") {
+    } else {
+        const y: never = x;
+    }
+}
+"#,
+    );
+
+    let message = diagnostics
+        .iter()
+        .find_map(|(code, message)| {
+            (*code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && message.contains("is not assignable to type 'never'."))
+            .then_some(message.as_str())
+        })
+        .expect("expected TS2322 diagnostic for narrowed residual union assigned to never");
+
+    assert!(
+        message.contains(r#"Type '"d" | "c"' is not assignable to type 'never'."#),
+        "expected residual string-literal union display to match tsc, got: {message}"
+    );
+}
+
 fn compile_with_options(
     source: &str,
     file_name: &str,
@@ -4242,6 +4272,29 @@ u2.email = e;
                 == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2
         }),
         "Expected TS2412 for exact-optional property write mismatch, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn exact_optional_property_object_message_preserves_optional_target_surface() {
+    let source = r#"
+const x: { foo?: number } = { foo: undefined };
+"#;
+    let options = CheckerOptions {
+        exact_optional_property_types: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = with_lib_contexts(source, "test.ts", options);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code
+                == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD
+                && message.contains("type '{ foo?: number; }'")
+                && !message.contains("foo?: number | undefined")
+        }),
+        "Expected TS2375 target display to omit synthetic undefined, got: {diagnostics:#?}"
     );
 }
 

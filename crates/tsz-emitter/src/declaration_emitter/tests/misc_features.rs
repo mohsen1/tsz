@@ -573,6 +573,70 @@ fn test_export_type_with_resolution_mode_attributes_is_preserved() {
 }
 
 #[test]
+fn test_inferred_printer_reduces_conditional_alias_applications() {
+    use tsz_solver::types::{ConditionalType, TypeParamInfo};
+
+    let mut parser = ParserState::new("test.ts".to_string(), String::new());
+    let _ = parser.parse_source_file();
+
+    let mut foreign_parser = ParserState::new(
+        "lib.d.ts".to_string(),
+        "type Select<T> = T extends string ? 1 : 2;".to_string(),
+    );
+    let _ = foreign_parser.parse_source_file();
+    let alias_decl = foreign_parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing conditional type alias declaration");
+
+    let mut binder = BinderState::new();
+    let select_sym = binder
+        .symbols
+        .alloc(symbol_flags::TYPE_ALIAS, "Select".to_string());
+    binder
+        .symbols
+        .get_mut(select_sym)
+        .expect("missing synthetic conditional alias symbol")
+        .declarations
+        .push(alias_decl);
+
+    let interner = TypeInterner::new();
+    let type_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let cond = interner.conditional(ConditionalType {
+        check_type: interner.type_param(type_param),
+        extends_type: TypeId::STRING,
+        true_type: interner.literal_number(1.0),
+        false_type: interner.literal_number(2.0),
+        is_distributive: false,
+    });
+
+    let def_id = DefId(99);
+    let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.def_to_symbol.insert(def_id, select_sym);
+    type_cache.def_types.insert(def_id.0, cond);
+    type_cache
+        .def_type_params
+        .insert(def_id.0, vec![type_param]);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    assert_eq!(emitter.print_type_id(app), "Select<string>");
+    assert_eq!(emitter.print_type_id_for_inferred_declaration(app), "1");
+}
+
+#[test]
 fn test_asserted_import_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts(
         r#"
@@ -781,6 +845,58 @@ fn test_destructuring_variable_declaration_groups_typed_bindings() {
     assert!(
         output.contains("declare var x: number, y: string;"),
         "Expected destructured bindings to emit in one typed declaration: {output}"
+    );
+}
+
+#[test]
+fn test_destructured_parameter_with_defaulted_property_uses_multiline_object_type() {
+    let output = emit_dts("const k = ({ x: z = 'y' }) => {};");
+    assert!(
+        output.contains("declare const k: ({ x: z }: {\n    x?: string;\n}) => void;"),
+        "Expected defaulted object binding parameter to emit a multiline object type: {output}"
+    );
+}
+
+#[test]
+fn test_destructured_parameter_defaulting_from_any_emits_any() {
+    let output = emit_dts("var a; function f({ p: {} = a } = a) {}");
+    assert!(
+        output.contains("declare function f({ p: {} }?: any): void;"),
+        "Expected destructured parameter defaulting from any to emit any: {output}"
+    );
+}
+
+#[test]
+fn test_returned_function_expression_preserves_destructured_typeof_alias_parameter() {
+    let output = emit_dts(
+        "type Named = { name: string }; function f({ name: alias }: Named) { return function(p: typeof alias) {} }",
+    );
+    assert!(
+        output.contains("declare function f({ name: alias }: Named): (p: typeof alias) => void;"),
+        "Expected returned function expression parameter to preserve typeof alias: {output}"
+    );
+}
+
+#[test]
+fn test_method_returning_non_null_null_widens_to_any() {
+    let output = emit_dts(
+        "type Named = { name: string }; class C { m({ name: alias }: Named, p: typeof alias) { return null!; } }",
+    );
+    assert!(
+        output.contains("m({ name: alias }: Named, p: typeof alias): any;"),
+        "Expected null! method return to emit any: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_object_return_preserves_destructured_typeof_alias_member() {
+    let output = emit_dts_with_binding(
+        "type Named = { name: string }; function f({ name: alias }: Named) { type Named2 = { name: typeof alias }; return null! as Named2; }",
+    );
+    assert!(
+        output
+            .contains("declare function f({ name: alias }: Named): {\n    name: typeof alias;\n};"),
+        "Expected asserted local alias return to preserve typeof destructured alias: {output}"
     );
 }
 

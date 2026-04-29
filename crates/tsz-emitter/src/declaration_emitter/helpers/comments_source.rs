@@ -28,6 +28,63 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(crate) fn emit_jsdoc_comment_chain(&mut self, chain: &[String]) {
+        if self.remove_comments {
+            return;
+        }
+
+        for jsdoc in chain {
+            self.write_indent();
+            let trimmed = jsdoc.trim();
+            if !trimmed.contains('\n') {
+                self.write("/** ");
+                self.write(trimmed);
+                self.write(" */");
+                self.write_line();
+                continue;
+            }
+
+            self.write("/**");
+            self.write_line();
+            for line in trimmed.lines() {
+                self.write_indent();
+                if line.trim().is_empty() {
+                    self.write(" *");
+                } else {
+                    self.write(" * ");
+                    self.write(line.trim());
+                }
+                self.write_line();
+            }
+            self.write_indent();
+            self.write(" */");
+            self.write_line();
+        }
+    }
+
+    pub(crate) fn emit_multiline_jsdoc_comment(&mut self, jsdoc: &str) {
+        if self.remove_comments {
+            return;
+        }
+
+        self.write_indent();
+        self.write("/**");
+        self.write_line();
+        for line in jsdoc.trim().lines() {
+            self.write_indent();
+            if line.trim().is_empty() {
+                self.write(" *");
+            } else {
+                self.write(" * ");
+                self.write(line.trim());
+            }
+            self.write_line();
+        }
+        self.write_indent();
+        self.write(" */");
+        self.write_line();
+    }
+
     pub(crate) fn emit_leading_jsdoc_comments(&mut self, pos: u32) {
         if self.remove_comments {
             return;

@@ -415,10 +415,64 @@ impl<'a> CheckerState<'a> {
                 if !params.is_empty() {
                     return params;
                 }
+                // JS class declared with `@template T` JSDoc but no syntax-level
+                // `<T>` list: surface the JSDoc-derived params so a reference
+                // like `Foo<number>` is not flagged as `not generic` (TS2315).
+                if self.is_js_file()
+                    && let Some(jsdoc_params) =
+                        self.jsdoc_template_type_params_for_class_decl(decl_idx)
+                    && !jsdoc_params.is_empty()
+                {
+                    return jsdoc_params;
+                }
             }
         }
 
         Vec::new()
+    }
+
+    /// Read leading JSDoc on a JS class declaration and synthesize
+    /// `TypeParamInfo` entries from `@template T` tags. Walks up to the
+    /// wrapping `EXPORT_DECLARATION` so `export class Foo` still locates
+    /// the JSDoc that sits before the `export` keyword.
+    fn jsdoc_template_type_params_for_class_decl(
+        &mut self,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = self.ctx.arena.get(decl_idx)?;
+        let mut search_pos = node.pos;
+        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+            && let Some(parent) = self.ctx.arena.get(ext.parent)
+            && parent.kind == syntax_kind_ext::EXPORT_DECLARATION
+        {
+            search_pos = parent.pos;
+        }
+        let jsdoc = self.try_leading_jsdoc(comments, search_pos, source_text)?;
+        let names = Self::jsdoc_template_type_params(&jsdoc);
+        if names.is_empty() {
+            return None;
+        }
+        let mut params = Vec::with_capacity(names.len());
+        for (name, is_const) in names {
+            if name.is_empty() {
+                continue;
+            }
+            params.push(tsz_solver::TypeParamInfo {
+                name: self.ctx.types.intern_string(&name),
+                constraint: None,
+                default: None,
+                is_const,
+            });
+        }
+        if params.is_empty() {
+            None
+        } else {
+            Some(params)
+        }
     }
 
     pub(crate) fn symbol_is_namespace_only(&self, sym_id: SymbolId) -> bool {

@@ -115,6 +115,9 @@ impl<'a> DeclarationEmitter<'a> {
         if self.js_skipped_reexports.contains(&export_idx) {
             return;
         }
+        if self.js_skipped_local_export_aliases.contains(&export_idx) {
+            return;
+        }
         if let Some(group) = self.js_grouped_reexports.get(&export_idx).cloned() {
             self.emit_grouped_js_reexports(&group);
             return;
@@ -309,17 +312,57 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         let aliases = self.js_cjs_export_aliases.clone();
+        self.write_indent();
+        self.write("export { ");
+        let mut first = true;
         for (export_name, local_name) in &aliases {
-            self.write_indent();
-            self.write("export { ");
+            if !first {
+                self.write(", ");
+            }
+            first = false;
             self.write(local_name);
             self.write(" as ");
             self.write(export_name);
-            self.write(" };");
-            self.write_line();
-            self.emitted_scope_marker = true;
-            self.emitted_module_indicator = true;
         }
+        self.write(" };");
+        self.write_line();
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
+    }
+
+    pub(crate) fn emit_js_local_export_aliases(&mut self) {
+        if self.js_local_export_aliases.is_empty() {
+            return;
+        }
+        let aliases = self.js_local_export_aliases.clone();
+        self.write_indent();
+        self.write("export { ");
+        let mut first = true;
+        for export_idx in aliases {
+            let Some(export_node) = self.arena.get(export_idx) else {
+                continue;
+            };
+            let Some(export) = self.arena.get_export_decl(export_node) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.emit_specifier(spec_idx, true);
+            }
+        }
+        self.write(" };");
+        self.write_line();
+        self.emitted_scope_marker = true;
+        self.emitted_module_indicator = true;
     }
 
     pub(crate) fn emit_export_assignment(&mut self, assign_idx: NodeIndex) {
@@ -567,10 +610,24 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
+        let preferred_return = if func_body.is_some() {
+            self.function_body_preferred_return_type_text(func_body)
+        } else {
+            None
+        };
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                func.name,
+                &func.parameters,
+            )
+        {
             self.write(": ");
             self.write(&return_type_text);
         } else if func_body.is_some()
@@ -593,6 +650,11 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                {
+                    self.write(": ");
+                    self.write(type_text);
                 } else {
                     let printed_type_text = self.print_type_id(return_type_id);
                     self.write(": ");
@@ -693,6 +755,16 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        if self.source_is_js_file {
+            self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                true,
+                func_idx,
+            );
+            self.emit_js_namespace_export_aliases_for_name(func.name, true);
+        }
     }
 
     pub(crate) fn emit_export_default_class(&mut self, class_idx: NodeIndex) {
@@ -1262,6 +1334,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return;
             }
         }
+        let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
 
         self.write_indent();
         if self.should_emit_export_keyword() {
@@ -1298,10 +1371,24 @@ impl<'a> DeclarationEmitter<'a> {
 
         let func_body = func.body;
         let func_name = func.name;
+        let preferred_return = if func_body.is_some() {
+            self.function_body_preferred_return_type_text(func_body)
+        } else {
+            None
+        };
         if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if let Some(return_type_text) = self
+            .js_function_body_preferred_return_text_for_declaration(
+                func.body,
+                func.name,
+                &func.parameters,
+            )
+        {
             self.write(": ");
             self.write(&return_type_text);
         } else if func_body.is_some()
@@ -1324,6 +1411,11 @@ impl<'a> DeclarationEmitter<'a> {
                     && self.body_returns_void(func_body)
                 {
                     self.write(": void");
+                } else if let Some(type_text) = preferred_return.as_ref()
+                    && self.should_prefer_source_return_type_text(type_text, return_type_id)
+                {
+                    self.write(": ");
+                    self.write(type_text);
                 } else {
                     if let Some(name_text) = self.get_identifier_text(func_name)
                         && let Some(name_node) = self.arena.get(func_name)
@@ -1362,6 +1454,21 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_ts_late_bound_function_namespace_from_members(
+            func.name,
+            true,
+            &late_bound_members,
+        );
+        if self.source_is_js_file {
+            self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                true,
+                func_idx,
+            );
+            self.emit_js_namespace_export_aliases_for_name(func.name, true);
+        }
     }
 
     pub(crate) fn emit_exported_type_alias(&mut self, alias_idx: NodeIndex) {

@@ -483,13 +483,14 @@ impl<'a> CheckerState<'a> {
                         if !Self::enter_cross_arena_delegation() {
                             continue;
                         }
-                        let mut checker = Box::new(CheckerState::with_parent_cache(
+                        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                             arena.as_ref(),
                             self.ctx.binder,
                             self.ctx.types,
                             self.ctx.file_name.clone(),
                             self.ctx.compiler_options.clone(),
                             self,
+                            tsz_common::perf_counters::CheckerCreationReason::ClassAbstract,
                         ));
                         let params = Self::extract_class_type_params_from_current_arena(
                             &mut checker,

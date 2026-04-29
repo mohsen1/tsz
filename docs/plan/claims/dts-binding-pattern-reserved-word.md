@@ -2,8 +2,8 @@
 
 Date: 2026-04-28
 Branch: `codex/dts-binding-pattern-reserved-word`
-PR: TBD
-Status: verified locally; publish pending GitHub auth/DNS availability
+PR: #1695
+Status: rebased onto main; verified locally
 
 ## Workstream
 

@@ -883,7 +883,7 @@ impl<'a> CheckerState<'a> {
                 source,
                 DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
             );
-            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let tgt_str = self.format_exact_optional_target_type_for_message(target);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
                 &[&src_str, &tgt_str],
@@ -907,7 +907,7 @@ impl<'a> CheckerState<'a> {
                 source,
                 DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
             );
-            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let tgt_str = self.format_exact_optional_target_type_for_message(target);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD_2,
                 &[&src_str, &tgt_str],
@@ -1090,6 +1090,16 @@ impl<'a> CheckerState<'a> {
                 self.error_type_not_assignable_generic_with_anchor(source, target, anchor_idx);
             }
         }
+    }
+
+    fn format_exact_optional_target_type_for_message(&mut self, target: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_preserve_optional_parameter_surface_syntax(true)
+            .with_preserve_optional_property_surface_syntax(true);
+        formatter.format(target).into_owned()
     }
 
     pub(super) fn format_top_level_assignability_message_types(

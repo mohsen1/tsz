@@ -183,21 +183,7 @@ impl<'a> CheckerState<'a> {
             .strip_prefix("./")
             .or_else(|| module_specifier.strip_prefix("../"))
             .unwrap_or(module_specifier);
-        stripped
-            .strip_suffix(".d.ts")
-            .or_else(|| stripped.strip_suffix(".d.tsx"))
-            .or_else(|| stripped.strip_suffix(".d.mts"))
-            .or_else(|| stripped.strip_suffix(".d.cts"))
-            .or_else(|| stripped.strip_suffix(".ts"))
-            .or_else(|| stripped.strip_suffix(".tsx"))
-            .or_else(|| stripped.strip_suffix(".mts"))
-            .or_else(|| stripped.strip_suffix(".cts"))
-            .or_else(|| stripped.strip_suffix(".js"))
-            .or_else(|| stripped.strip_suffix(".jsx"))
-            .or_else(|| stripped.strip_suffix(".mjs"))
-            .or_else(|| stripped.strip_suffix(".cjs"))
-            .unwrap_or(stripped)
-            .to_string()
+        tsz_common::file_extensions::strip_known_extension(stripped).to_string()
     }
 
     fn import_type_namespace_name(&self, module_specifier: &str) -> String {
@@ -460,18 +446,22 @@ impl<'a> CheckerState<'a> {
         for source_file in &target_arena.source_files {
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
-            let mut checker = Box::new(CheckerState::with_parent_cache(
+            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 &target_arena,
                 &target_binder,
                 self.ctx.types,
                 source_file.file_name.clone(),
                 self.ctx.compiler_options.clone(),
                 self,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
             ));
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
             checker.ctx.copy_cross_file_state_from(&self.ctx);
             checker.ctx.current_file_idx = target_file_idx;
-            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+            self.ctx.copy_symbol_file_targets_to_attributed(
+                &mut checker.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
+            );
 
             if let Some((ty, _)) =
                 checker.resolve_jsdoc_typedef_info(typedef_name, &comments, &source_text)
@@ -513,18 +503,22 @@ impl<'a> CheckerState<'a> {
         for source_file in &target_arena.source_files {
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
-            let mut checker = Box::new(CheckerState::with_parent_cache(
+            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 &target_arena,
                 &target_binder,
                 self.ctx.types,
                 source_file.file_name.clone(),
                 self.ctx.compiler_options.clone(),
                 self,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
             ));
             checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
             checker.ctx.copy_cross_file_state_from(&self.ctx);
             checker.ctx.current_file_idx = target_file_idx;
-            self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+            self.ctx.copy_symbol_file_targets_to_attributed(
+                &mut checker.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::ImportType,
+            );
 
             if let Some((_, type_params)) =
                 checker.resolve_jsdoc_typedef_info(member_name, &comments, &source_text)

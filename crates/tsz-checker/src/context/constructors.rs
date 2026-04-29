@@ -216,6 +216,7 @@ impl<'a> CheckerContext<'a> {
             enclosing_class_chain: Vec::new(),
             type_env: RefCell::new(TypeEnvironment::new()),
             definition_store: Arc::new(DefinitionStore::new()),
+            share_owner_symbol_type_results: false,
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
@@ -225,7 +226,7 @@ impl<'a> CheckerContext<'a> {
             abstract_constructor_types: FxHashSet::default(),
             protected_constructor_types: FxHashSet::default(),
             private_constructor_types: FxHashSet::default(),
-            cross_file_symbol_targets: RefCell::new(FxHashMap::default()),
+            cross_file_symbol_targets: RefCell::new(super::SymbolFileTargetsOverlay::default()),
             global_symbol_file_index: None,
             all_arenas: None,
             all_binders: None,
@@ -652,6 +653,7 @@ impl<'a> CheckerContext<'a> {
         // across parent/child checkers. This prevents DefId collisions where
         // the child's DefId(1) means a different thing than the parent's DefId(1).
         ctx.definition_store = Arc::clone(&parent.definition_store);
+        ctx.share_owner_symbol_type_results = parent.share_owner_symbol_type_results;
 
         ctx
     }

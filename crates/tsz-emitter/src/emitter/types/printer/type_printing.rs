@@ -691,6 +691,18 @@ impl<'a> TypePrinter<'a> {
             parts.push(part);
         }
 
+        if let Some(indent) = self.indent_level
+            && elements.iter().any(|elem| elem.name.is_some())
+        {
+            let member_indent = "    ".repeat((indent + 1) as usize);
+            let closing_indent = "    ".repeat(indent as usize);
+            let lines: Vec<String> = parts
+                .iter()
+                .map(|part| format!("{member_indent}{part}"))
+                .collect();
+            return format!("[\n{}\n{closing_indent}]", lines.join(",\n"));
+        }
+
         format!("[{}]", parts.join(", "))
     }
 

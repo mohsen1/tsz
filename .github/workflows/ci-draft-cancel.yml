@@ -18,4 +18,5 @@ jobs:
       - name: Log cancellation
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: echo "Cancelling in-progress CI for draft/closed PR #${PR_NUMBER} via concurrency group."
+        run: |
+          echo "Cancelling in-progress CI for draft/closed PR #${PR_NUMBER} via concurrency group."

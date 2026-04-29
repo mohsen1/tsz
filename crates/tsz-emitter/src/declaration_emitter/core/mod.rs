@@ -6,6 +6,7 @@ mod emit_members;
 mod js_emit;
 mod setup;
 
+use super::helpers::JsNamespaceExportAlias;
 use crate::output::source_writer::{SourcePosition, SourceWriter};
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -124,6 +125,10 @@ pub struct DeclarationEmitter<'a> {
     /// JS local statements skipped at their original position and re-emitted at
     /// a later `export { ... }` clause to preserve declaration order.
     pub(super) js_deferred_named_export_statements: FxHashSet<NodeIndex>,
+    /// JS local renamed export declarations emitted as one trailing alias group.
+    pub(super) js_local_export_aliases: Vec<NodeIndex>,
+    /// JS local renamed export declarations skipped at their source position.
+    pub(super) js_skipped_local_export_aliases: FxHashSet<NodeIndex>,
     /// Top-level JS bindings referenced by an explicit `export = name` assignment.
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.
@@ -139,7 +144,7 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_shadowed_export_equals_local_aliases: FxHashMap<String, String>,
     /// JS namespace-like alias exports synthesized from expando assignments such
     /// as `foo.default = foo` and `module.exports.Bar = Bar`.
-    pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<(String, String)>>,
+    pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<JsNamespaceExportAlias>>,
     /// CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
     pub(super) js_cjs_export_aliases: Vec<(String, String)>,
     /// Statements consumed by CJS export alias collection.
@@ -179,8 +184,16 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_grouped_reexports: FxHashMap<NodeIndex, Vec<NodeIndex>>,
     /// JS re-export declarations skipped because they are emitted by an earlier merged group.
     pub(super) js_skipped_reexports: FxHashSet<NodeIndex>,
+    /// Top-level JS function declarations hoisted ahead of other declarations.
+    pub(super) js_hoisted_function_declarations: FxHashSet<NodeIndex>,
     /// Synthetic JSDoc type aliases already emitted for the current file.
     pub(super) emitted_jsdoc_type_aliases: FxHashSet<String>,
+    /// Scoped flag for JS `const fn = (...) => {}` emit, where `@satisfies`
+    /// can supply fallback parameter types without affecting real functions.
+    pub(super) use_jsdoc_satisfies_parameter_fallback: bool,
+    /// Suppress the variable statement's leading JSDoc when re-emitting it as
+    /// a synthetic JS function declaration.
+    pub(super) suppress_current_statement_jsdoc_comments: bool,
     /// Local declarations emitted on-demand to support synthetic class base aliases.
     pub(super) emitted_synthetic_dependency_symbols: FxHashSet<SymbolId>,
     /// Diagnostics collected during declaration emit (e.g., TS2883 for non-portable types).

@@ -191,6 +191,43 @@ let x = MyNs;
     );
 }
 
+#[test]
+fn ts2708_plain_import_equals_require_to_uninstantiated_export_equals_namespace() {
+    let diags = check_named_files(
+        &[
+            (
+                "decl.ts",
+                r#"
+declare module "foo" {
+    namespace B {
+        export interface A {}
+    }
+    interface B {
+        bar(name: string): B.A;
+    }
+    export = B;
+}
+"#,
+            ),
+            (
+                "use.ts",
+                r#"
+import foo = require("foo");
+declare var z: foo;
+z.bar("hello");
+var x: foo.A = foo.bar("hello");
+"#,
+            ),
+        ],
+        "use.ts",
+    );
+    let ts2708_count = diags.iter().filter(|d| d.code == 2708).count();
+    assert_eq!(
+        ts2708_count, 1,
+        "Expected exactly one TS2708 for value access through the import alias, got: {diags:?}"
+    );
+}
+
 // =========================================================================
 // TS2749: Value used as type
 // =========================================================================

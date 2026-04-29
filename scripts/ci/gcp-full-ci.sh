@@ -13,9 +13,10 @@ export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
 export RUST_TEST_TIMEOUT="${RUST_TEST_TIMEOUT:-300}"
 export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$ROOT_DIR/.ci-cache/npm}"
 export npm_config_cache="$NPM_CONFIG_CACHE"
+export TSZ_CI_WASM_PACK_CACHE="${TSZ_CI_WASM_PACK_CACHE:-$ROOT_DIR/.ci-cache/wasm-pack}"
 export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
 
-mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE"
+mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
 
@@ -216,13 +217,13 @@ suite_needs_group() {
       [[ "$suite" == "unit" || "$suite" == "unit-shard" || "$suite" == "unit-archive" ]]
       ;;
     wasm)
-      [[ "$suite" == "wasm" || "$suite" == "wasm-web" ]]
+      [[ "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" ]]
       ;;
     node)
       [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
       ;;
     rust_compile)
-      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
+      [[ "$suite" == "build" || "$suite" == "lint" || "$suite" == "unit" || "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" || "$suite" == "dist-binaries" || "$suite" == "unit-archive" ]]
       ;;
     *)
       return 1
@@ -380,6 +381,29 @@ configure_sccache() {
   fi
 }
 
+setup_wasm_pack_cache() {
+  local home_cache="$HOME/.cache"
+  local link_path="$home_cache/.wasm-pack"
+  mkdir -p "$home_cache" "$TSZ_CI_WASM_PACK_CACHE"
+
+  if [[ -e "$link_path" && ! -L "$link_path" ]]; then
+    if [[ -d "$link_path" ]]; then
+      shopt -s dotglob nullglob
+      local entries=("$link_path"/*)
+      if (( ${#entries[@]} > 0 )); then
+        cp -a "${entries[@]}" "$TSZ_CI_WASM_PACK_CACHE"/
+      fi
+      shopt -u dotglob nullglob
+      rm -rf "$link_path"
+    else
+      rm -f "$link_path"
+    fi
+  fi
+
+  ln -sfn "$TSZ_CI_WASM_PACK_CACHE" "$link_path"
+  echo "wasm-pack cache: ${link_path} -> ${TSZ_CI_WASM_PACK_CACHE}"
+}
+
 ensure_source_git_context() {
   ci_section "Ensure git metadata"
 
@@ -433,9 +457,9 @@ init_typescript_submodule() {
 
 run_lint() {
   ci_section "Lint"
-  cargo fmt --check
-  scripts/arch/check-workspace-metadata.sh
-  scripts/check-crate-root-files.sh
+  cargo fmt --all --check || return $?
+  scripts/arch/check-workspace-metadata.sh || return $?
+  scripts/check-crate-root-files.sh || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
   # — separate cache key from .target/debug so dev incrementals on a
@@ -444,8 +468,8 @@ run_lint() {
   cargo clippy --profile ci-lint \
     -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
     -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
-    --all-targets -- -D warnings
-  scripts/arch/check-checker-boundaries.sh
+    --all-targets -- -D warnings || return $?
+  scripts/arch/check-checker-boundaries.sh || return $?
   # Surface sccache stats so the cache health is visible without reading
   # the workflow log into a separate step.
   if command -v sccache >/dev/null 2>&1; then
@@ -481,6 +505,7 @@ _UNIT_TEST_PACKAGES=(
 run_unit_tests() {
   ci_section "Workspace nextest suites"
   cargo nextest run --profile ci --cargo-profile ci-unit \
+    --build-jobs "$CARGO_BUILD_JOBS" \
     "${_UNIT_TEST_PACKAGES[@]}"
 }
 
@@ -507,6 +532,7 @@ build_unit_test_archive() {
   local archive_rc=0
   cargo nextest archive \
     --cargo-profile ci-unit \
+    --build-jobs "$CARGO_BUILD_JOBS" \
     --archive-file "$tmp_archive" \
     "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
   if [[ "$archive_rc" -ne 0 ]]; then
@@ -604,8 +630,13 @@ build_test_binaries() {
     return 0
   fi
 
-  cargo build --profile dist-fast -p tsz-cli --bin tsz --bin tsz-server
-  cargo build --profile dist-fast -p tsz-conformance --bin tsz-conformance --bin generate-tsc-cache
+  cargo build --profile dist-fast \
+    -p tsz-cli \
+    -p tsz-conformance \
+    --bin tsz \
+    --bin tsz-server \
+    --bin tsz-conformance \
+    --bin generate-tsc-cache
   mkdir -p .target/release
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"
@@ -615,7 +646,11 @@ build_wasm() {
   ci_section "WASM build (nodejs target)"
   (
     cd crates/tsz-wasm
-    wasm-pack build --target nodejs --out-dir ../../pkg --no-opt
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
+      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
+      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
+      wasm-pack build --target nodejs --out-dir ../../pkg --no-opt -- --jobs "$CARGO_BUILD_JOBS"
   )
   mkdir -p pkg/lib
   cp -R TypeScript/src/lib/. pkg/lib/
@@ -626,8 +661,20 @@ build_wasm_web() {
   cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
   (
     cd crates/tsz-wasm
-    wasm-pack build --target web --out-dir ../../pkg/web --no-opt
+    CARGO_PROFILE_RELEASE_OPT_LEVEL="${TSZ_CI_WASM_OPT_LEVEL:-0}" \
+      CARGO_PROFILE_RELEASE_LTO="${TSZ_CI_WASM_LTO:-false}" \
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS="${TSZ_CI_WASM_CODEGEN_UNITS:-16}" \
+      CARGO_PROFILE_RELEASE_DEBUG="${TSZ_CI_WASM_DEBUG:-false}" \
+      wasm-pack build --target web --out-dir ../../pkg/web --no-opt -- --jobs "$CARGO_BUILD_JOBS"
   )
+}
+
+build_wasm_all() {
+  # Build both targets in one job so the web build reuses the nodejs build's
+  # warmed wasm target dir and wasm-bindgen CLI install instead of paying a
+  # second cold dependency/toolchain compile in another job.
+  build_wasm
+  build_wasm_web
 }
 
 prep_node_artifacts() {
@@ -724,10 +771,19 @@ for path in test_dir.rglob("*"):
         continue
     if "APISample" in path_str or "APILibCheck" in path_str:
         continue
-    files.append(path_str)
+    files.append(path)
 
 files.sort()
-selected = [path for i, path in enumerate(files) if i % count == index]
+
+def stable_shard(path):
+    rel = path.relative_to(test_dir).as_posix()
+    h = 1469598103934665603
+    for byte in rel.encode("utf-8"):
+        h ^= byte
+        h = (h * 1099511628211) & 0xffffffffffffffff
+    return h % count
+
+selected = [path.as_posix() for path in files if stable_shard(path) == index]
 passed = sum(1 for path in selected if baseline_status.get(path) == "PASS")
 print(passed, len(selected))
 PY
@@ -952,6 +1008,36 @@ PYEOF
   fi
 }
 
+validate_emit_aggregate_counts() {
+  local js_passed="$1" js_total="$2" js_skipped="$3" js_timeouts="$4"
+  local dts_passed="$5" dts_total="$6" dts_skipped="$7"
+  local files_count="$8" expected_shards="$9"
+
+  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${files_count}/${expected_shards} shards"
+
+  if [[ "$files_count" -lt "$expected_shards" ]]; then
+    echo "error: only ${files_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
+    return 1
+  fi
+  if [[ "$js_total" -eq 0 ]]; then
+    echo "error: emit aggregate has zero JS tests — something is wrong" >&2
+    return 1
+  fi
+
+  local base_js base_dts
+  base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
+  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
+  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
+    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
+    return 1
+  fi
+  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
+    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
+    return 1
+  fi
+  echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+}
+
 run_emit_shard() {
   ci_section "Emit shard"
   local bucket run_key shard_index shard_count
@@ -1011,6 +1097,11 @@ run_emit_shard() {
       && echo "Uploaded emit shard result: shard-${shard_index}.json" \
       || echo "warning: failed to upload emit shard result (non-fatal)" >&2
   fi
+
+  if [[ "$shard_count" -eq 1 ]]; then
+    ci_section "Emit aggregate"
+    validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1
+  fi
   return 0
 }
 
@@ -1053,29 +1144,8 @@ run_emit_aggregate() {
     dts_skipped=$((dts_skipped + $(num_or_zero "$(jq -r '.dts_skipped // 0' "$f")")))
   done
 
-  echo "Emit aggregate: JS ${js_passed}/${js_total} (skip=${js_skipped}, timeout=${js_timeouts}), DTS ${dts_passed}/${dts_total} across ${files_count}/${expected_shards} shards"
-
-  if [[ "$files_count" -lt "$expected_shards" ]]; then
-    echo "error: only ${files_count}/${expected_shards} emit shards collected; some shards may have crashed" >&2
-    return 1
-  fi
-  if [[ "$js_total" -eq 0 ]]; then
-    echo "error: emit aggregate has zero JS tests — something is wrong" >&2
-    return 1
-  fi
-
-  local base_js base_dts
-  base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
-  base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
-  if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
-    echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
-    return 1
-  fi
-  if [[ "$base_dts" -gt 0 && "$dts_passed" -lt "$base_dts" ]]; then
-    echo "error: emit DTS regression: ${dts_passed} < ${base_dts}" >&2
-    return 1
-  fi
-  echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
+  validate_emit_aggregate_counts "$js_passed" "$js_total" "$js_skipped" "$js_timeouts" \
+    "$dts_passed" "$dts_total" "$dts_skipped" "$files_count" "$expected_shards"
 }
 
 run_fourslash_shard() {
@@ -1095,6 +1165,7 @@ run_fourslash_shard() {
     --skip-cargo-build \
     --skip-ts-build \
     --shard="${shard_index}/${shard_count}" \
+    --shard-strategy="${TSZ_CI_FOURSLASH_SHARD_STRATEGY:-weighted}" \
     --workers="$FOURSLASH_WORKERS" \
     --memory-limit=512 \
     --json-out="$detail_json" \
@@ -1102,24 +1173,50 @@ run_fourslash_shard() {
   local rc="$?"
   set -e
 
-  local results passed total
+  local results passed total timed_out
   results="$(grep -a '^Results:' "$LOG_DIR/fourslash/shard-${shard_index}.log" | tail -1 || true)"
-  passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
-  total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+  if [[ -f "$detail_json" ]]; then
+    passed="$(jq -r '.summary.passed // 0' "$detail_json")"
+    total="$(jq -r '.summary.total // 0' "$detail_json")"
+    timed_out="$(jq -r '.summary.timedOut // 0' "$detail_json")"
+  else
+    passed="$(echo "$results" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)"
+    total="$(echo "$results" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)"
+    timed_out=0
+  fi
   passed="$(num_or_zero "$passed")"
   total="$(num_or_zero "$total")"
+  timed_out="$(num_or_zero "$timed_out")"
 
-  local result_json
-  result_json="$(printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s}' "$shard_index" "$rc" "$passed" "$total")"
-  echo "$result_json" > "$METRICS_DIR/fourslash-shard-${shard_index}.json"
-  echo "FOURSLASH_SHARD shard=${shard_index} rc=${rc} passed=${passed}/${total}"
+  if [[ -f "$detail_json" ]]; then
+    local enriched_json
+    enriched_json="${detail_json}.enriched"
+    jq \
+      --argjson shard "$shard_index" \
+      --argjson rc "$rc" \
+      --argjson passed "$passed" \
+      --argjson total "$total" \
+      --argjson timed_out "$timed_out" \
+      '. + {shard:$shard, rc:$rc, passed:$passed, total:$total, timedOut:$timed_out, slowest:(.summary.slowest // [])}' \
+      "$detail_json" >"$enriched_json"
+    mv "$enriched_json" "$detail_json"
+  else
+    printf '{"shard":%s,"rc":%s,"passed":%s,"total":%s,"timedOut":%s,"slowest":[]}\n' \
+      "$shard_index" "$rc" "$passed" "$total" "$timed_out" >"$detail_json"
+  fi
+
+  echo "FOURSLASH_SHARD shard=${shard_index} rc=${rc} passed=${passed}/${total} timeout=${timed_out}"
+  if [[ -f "$detail_json" ]]; then
+    echo "Fourslash slowest tests for shard ${shard_index}:"
+    jq -r '.slowest[:10][]? | "  \(.elapsed)ms \(.status) \(.name)"' "$detail_json" || true
+  fi
   if [[ "$rc" -ne 0 ]]; then
     show_log_tail "$LOG_DIR/fourslash/shard-${shard_index}.log"
   fi
 
   if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
     local prefix="${bucket%/}/fourslash-runs/${run_key}"
-    gsutil cp "$METRICS_DIR/fourslash-shard-${shard_index}.json" "${prefix}/shard-${shard_index}.json" \
+    gsutil cp "$detail_json" "${prefix}/shard-${shard_index}.json" \
       && echo "Uploaded fourslash shard result: shard-${shard_index}.json" \
       || echo "warning: failed to upload fourslash shard result (non-fatal)" >&2
   fi
@@ -1148,15 +1245,24 @@ run_fourslash_aggregate() {
     return 1
   fi
 
-  local total_passed=0 total_tests=0 shard_count=0
+  local total_passed=0 total_tests=0 shard_count=0 failed_shards=0 timed_out=0
   for f in "$tmp_dir"/shard-*.json; do
     [[ -f "$f" ]] || continue
-    total_passed=$((total_passed + $(num_or_zero "$(jq -r '.passed // 0' "$f")")))
-    total_tests=$((total_tests   + $(num_or_zero "$(jq -r '.total // 0'  "$f")")))
+    total_passed=$((total_passed + $(num_or_zero "$(jq -r '.passed // .summary.passed // 0' "$f")")))
+    total_tests=$((total_tests   + $(num_or_zero "$(jq -r '.total // .summary.total // 0'  "$f")")))
+    timed_out=$((timed_out + $(num_or_zero "$(jq -r '.timedOut // .summary.timedOut // 0' "$f")")))
+    if [[ "$(num_or_zero "$(jq -r '.rc // 0' "$f")")" -ne 0 ]]; then
+      failed_shards=$((failed_shards + 1))
+    fi
     shard_count=$((shard_count + 1))
   done
 
-  echo "Fourslash aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards"
+  echo "Fourslash aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards (timeout=${timed_out}, failed_shards=${failed_shards})"
+  echo "Fourslash aggregate slowest tests:"
+  jq -s -r '[.[] | (.slowest // .summary.slowest // [])[]] | sort_by(.elapsed) | reverse | .[:10][]? | "  \(.elapsed)ms \(.status) \(.name)"' "$tmp_dir"/shard-*.json || true
+  if [[ "$failed_shards" -gt 0 ]]; then
+    echo "warning: ${failed_shards} fourslash shard(s) returned non-zero; aggregate still applies the baseline floor" >&2
+  fi
 
   if [[ "$shard_count" -lt "$expected_shards" ]]; then
     echo "error: only ${shard_count}/${expected_shards} fourslash shards collected; some shards may have crashed" >&2
@@ -1346,6 +1452,10 @@ aggregate_fourslash() {
 run_dist_binaries() {
   ci_section "Build dist-fast binaries"
   timed build_test_binaries build_test_binaries
+  show_sccache_stats
+}
+
+show_sccache_stats() {
   if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
     sccache --show-stats 2>/dev/null || true
   fi
@@ -1354,6 +1464,7 @@ run_dist_binaries() {
 run_unit_archive_only() {
   ci_section "Build unit test archive"
   timed build_unit_test_archive build_unit_test_archive
+  show_sccache_stats
 }
 
 run_node_harness_prep() {
@@ -1378,9 +1489,7 @@ run_build() {
   else
     echo "scripts/node_modules already present (cache hit)"
   fi
-  if command -v sccache >/dev/null 2>&1 && [[ -n "${RUSTC_WRAPPER:-}" ]]; then
-    sccache --show-stats 2>/dev/null || true
-  fi
+  show_sccache_stats
 }
 
 # Mirrors the typescript-source tag in gcp-cache.sh's suite_caches().
@@ -1391,12 +1500,14 @@ run_build() {
 # invocations reference TypeScript/src/lib (and test fixtures pull from
 # tests/cases). The exceptions are explicit:
 #   - lint runs only `cargo clippy`, no build/test.
+#   - dist-binaries and unit-archive only compile Rust artifacts.
 #   - unit-shard runs nextest from a pre-built archive, no compilation.
 # Aggregate suites bypass run_common_setup() entirely (see main()).
 suite_needs_typescript_source() {
   local suite="$1"
   case "$suite" in
     lint) return 1 ;;
+    dist-binaries|unit-archive) return 1 ;;
     unit-shard) return 1 ;;
     # Aggregate suites only download per-shard JSONs from GCS, jq-sum
     # them, and compare to a snapshot file. They never read TypeScript/.
@@ -1412,14 +1523,16 @@ run_common_setup() {
   if suite_needs_typescript_source "$suite"; then
     timed init_typescript_submodule init_typescript_submodule
   else
-    # lint, dist-binaries, unit-archive, unit*, wasm, wasm-web don't read
-    # TypeScript/ at compile time. Skipping the submodule init avoids
-    # downloading ~50 MB of source and avoids the gitlink-vs-ref-file
-    # staleness check that's only relevant when the tree is actually used.
+    # Skipping the submodule init avoids downloading ~50 MB of source and
+    # avoids the gitlink-vs-ref-file staleness check that's only relevant
+    # when the tree is actually used.
     echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
   fi
   if suite_needs_group "$suite" rust_compile; then
     configure_sccache
+  fi
+  if suite_needs_group "$suite" wasm; then
+    setup_wasm_pack_cache
   fi
 }
 
@@ -1428,6 +1541,7 @@ run_all_suites() {
   timed run_unit_tests run_unit_tests
   timed build_test_binaries build_test_binaries
   timed build_wasm build_wasm
+  timed build_wasm_web build_wasm_web
   timed prep_node_artifacts prep_node_artifacts
   timed run_conformance run_conformance
   timed run_emit_shards run_emit_shards
@@ -1468,9 +1582,15 @@ main() {
       ;;
     wasm)
       timed build_wasm build_wasm
+      show_sccache_stats
       ;;
     wasm-web)
       timed build_wasm_web build_wasm_web
+      show_sccache_stats
+      ;;
+    wasm-all)
+      timed build_wasm_all build_wasm_all
+      show_sccache_stats
       ;;
     conformance)
       timed build_test_binaries build_test_binaries
@@ -1509,7 +1629,7 @@ main() {
       ;;
     *)
       echo "error: unknown CI suite '${suite}'" >&2
-      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
+      echo "valid suites: all, build, dist-binaries, unit-archive, node-harness-prep, lint, unit, unit-shard, wasm, wasm-web, wasm-all, conformance, conformance-aggregate, emit, emit-shard, emit-aggregate, fourslash, fourslash-shard, fourslash-aggregate" >&2
       return 2
       ;;
   esac

@@ -72,7 +72,16 @@ export function parseBaseline(content: string): BaselineContent {
 
   // Split by file markers: //// [filename]
   const fileMarkerRegex = /^\/\/\/\/ \[([^\]]+)\](?:[^\S\n\r]*[\/]{4})?/gm;
-  const segments: { name: string; markerStart: number; start: number; end: number; missingFromOriginalEmit?: boolean }[] = [];
+  interface BaselineSegment {
+    name: string;
+    markerStart: number;
+    start: number;
+    end: number;
+    missingFromOriginalEmit?: boolean;
+    differsFromOriginalEmit?: boolean;
+    differsFromOriginalEmitMarkerStart?: number;
+  }
+  const segments: BaselineSegment[] = [];
 
   // Detect "!!!! File X missing from original emit" markers.
   // When tsc's --noEmitOnError is set and the file has type errors, tsc produces
@@ -97,22 +106,47 @@ export function parseBaseline(content: string): BaselineContent {
     }
   }
 
+  // Detect "!!!! File X differs from original emit in noCheck emit" markers.
+  // TypeScript places a unified diff in a repeated output-file segment after
+  // this marker; that diff is metadata about --noCheck behavior, not the
+  // expected full-check emit output.
+  const differsFromOriginalEmitRegex = /^!!!! File (\S+) differs from original emit in noCheck emit/gm;
+  const differsFromOriginalEmitMarkers: Array<{ file: string; index: number }> = [];
+  let differsMatch: RegExpExecArray | null;
+  while ((differsMatch = differsFromOriginalEmitRegex.exec(content)) !== null) {
+    differsFromOriginalEmitMarkers.push({ file: differsMatch[1], index: differsMatch.index });
+  }
+
   let match: RegExpExecArray | null;
   while ((match = fileMarkerRegex.exec(content)) !== null) {
     const name = match[1];
+    const markerStart = match.index;
+    const segmentStart = match.index + match[0].length;
+    const differsFromOriginalEmitMarker = differsFromOriginalEmitMarkers.find(marker => {
+      if (marker.file !== name || marker.index >= markerStart) return false;
+      const between = content.slice(marker.index, markerStart).trim();
+      return between === `!!!! File ${name} differs from original emit in noCheck emit`;
+    });
+    const differsFromOriginalEmit = differsFromOriginalEmitMarker !== undefined;
     segments.push({
       name,
-      markerStart: match.index,
-      start: match.index + match[0].length,
+      markerStart,
+      start: segmentStart,
       end: content.length, // Will be updated
       missingFromOriginalEmit: missingFromOriginalEmitFiles.has(name),
+      differsFromOriginalEmit,
+      differsFromOriginalEmitMarkerStart: differsFromOriginalEmitMarker?.index,
     });
   }
 
   // Update end positions
   for (let i = 0; i < segments.length - 1; i++) {
     // Next marker start marks the end of the current segment content.
-    segments[i].end = segments[i + 1].markerStart;
+    // For "differs from original emit in noCheck emit" metadata blocks,
+    // trim the preceding real output before the metadata marker line.
+    segments[i].end = segments[i + 1].differsFromOriginalEmit
+      ? (segments[i + 1].differsFromOriginalEmitMarkerStart ?? segments[i + 1].markerStart)
+      : segments[i + 1].markerStart;
   }
 
   const isTsSourceLike = (name: string): boolean => {
@@ -286,7 +320,7 @@ export function parseBaseline(content: string): BaselineContent {
         sourceLikeFiles.push({ name, content: fileContent });
       }
       sourceFileNames.add(name);
-    } else if (segIndex >= outputStart) {
+    } else if (segIndex >= outputStart && !seg.differsFromOriginalEmit) {
       outputSegments.push(seg);
       outputFileNames.add(name);
     }
@@ -307,6 +341,10 @@ export function parseBaseline(content: string): BaselineContent {
     const seg = segments[segIndex];
     const name = seg.name.trim();
     const fileContent = content.slice(seg.start, seg.end).trim();
+
+    if (seg.differsFromOriginalEmit) {
+      continue;
+    }
 
     result.files.set(name, fileContent);
 

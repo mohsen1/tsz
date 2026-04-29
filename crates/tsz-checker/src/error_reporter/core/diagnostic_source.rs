@@ -1414,6 +1414,13 @@ impl<'a> CheckerState<'a> {
         {
             return Some(display);
         }
+        if let Some(display) = self.narrowed_string_literal_residual_union_display(
+            declared_type,
+            expr_display_type,
+            target,
+        ) {
+            return Some(display);
+        }
         if let Some(display) = self.rebuilt_array_source_display(declared_type, target) {
             return Some(display);
         }
@@ -1523,6 +1530,54 @@ impl<'a> CheckerState<'a> {
         let expr_display = self.format_assignability_type_for_message(expr_display_type, target);
 
         (prefer_declared_display && declared_display != expr_display).then_some(declared_display)
+    }
+
+    fn narrowed_string_literal_residual_union_display(
+        &mut self,
+        declared_type: TypeId,
+        expr_display_type: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        if target != TypeId::NEVER || declared_type == expr_display_type {
+            return None;
+        }
+        let source_members =
+            crate::query_boundaries::common::union_members(self.ctx.types, expr_display_type)?;
+        let declared_members =
+            crate::query_boundaries::common::union_members(self.ctx.types, declared_type)?;
+        if source_members.len() < 2 || source_members.len() >= declared_members.len() {
+            return None;
+        }
+        if !source_members.iter().all(|&member| {
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, member).is_some()
+        }) || !declared_members.iter().all(|&member| {
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, member).is_some()
+        }) {
+            return None;
+        }
+        if !source_members
+            .iter()
+            .all(|member| declared_members.contains(member))
+        {
+            return None;
+        }
+
+        let mut ordered = source_members;
+        ordered.sort_by_key(|member| {
+            std::cmp::Reverse(
+                declared_members
+                    .iter()
+                    .position(|declared| declared == member)
+                    .unwrap_or(usize::MAX),
+            )
+        });
+        Some(
+            ordered
+                .into_iter()
+                .map(|member| self.format_assignability_type_for_message(member, target))
+                .collect::<Vec<_>>()
+                .join(" | "),
+        )
     }
 
     pub(in crate::error_reporter) fn rebuilt_array_source_display(
@@ -1659,11 +1714,5 @@ impl<'a> CheckerState<'a> {
 /// Element-access diagnostics for current-file `module.exports[...]` can opt into
 /// the raw namespace display name before this generic property-receiver path runs.
 pub(crate) fn strip_module_specifier_extension(module_name: &str) -> &str {
-    const EXTS: &[&str] = &[".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"];
-    for ext in EXTS {
-        if let Some(stripped) = module_name.strip_suffix(ext) {
-            return stripped;
-        }
-    }
-    module_name
+    tsz_common::file_extensions::strip_ts_extension(module_name)
 }

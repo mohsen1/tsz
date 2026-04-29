@@ -51,17 +51,10 @@ impl<'a> CheckerState<'a> {
                         return components[node_modules_idx - 1..].join("/");
                     }
                 }
-                // tsc displays node_modules imports by their bare package name,
-                // e.g. `typeof import("shortid")` not `typeof import("node_modules/shortid/index")`.
-                // Scoped packages (`@scope/pkg`) keep both segments; unscoped packages
-                // keep just the package directory name.
-                let after_nm = &components[node_modules_idx + 1..];
-                if let Some(first) = after_nm.first() {
-                    if first.starts_with('@') && after_nm.len() >= 2 {
-                        return format!("{}/{}", after_nm[0], after_nm[1]);
-                    }
-                    return (*first).to_string();
-                }
+                // Resolved declaration packages display from their stable
+                // package path, not the original bare specifier. Drop any
+                // host temp/project prefix before node_modules, but preserve
+                // the package subpath that tsc includes in diagnostics.
                 return components[node_modules_idx..].join("/");
             }
 
@@ -89,15 +82,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| module_name.to_string())
         };
         let trimmed = trim_namespace_display_path(&resolved_name);
-        for ext in &[
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(stripped) = trimmed.strip_suffix(ext) {
-                return stripped.to_string();
-            }
-        }
-        trimmed
+        tsz_common::file_extensions::strip_known_extension(&trimmed).to_string()
     }
 
     /// Resolve the display module name for namespace `typeof import("...")`.
@@ -571,17 +556,21 @@ impl<'a> CheckerState<'a> {
                     .map(|sf| sf.file_name.clone())
                     .unwrap_or_else(|| self.ctx.file_name.clone());
 
-                let mut checker = Box::new(CheckerState::with_parent_cache(
+                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                     arena.as_ref(),
                     delegate_binder,
                     self.ctx.types,
                     delegate_file_name,
                     self.ctx.compiler_options.clone(),
                     self,
+                    tsz_common::perf_counters::CheckerCreationReason::BindingHelpers,
                 ));
                 checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
                 checker.ctx.copy_cross_file_state_from(&self.ctx);
-                self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+                self.ctx.copy_symbol_file_targets_to_attributed(
+                    &mut checker.ctx,
+                    tsz_common::perf_counters::CheckerCreationReason::BindingHelpers,
+                );
                 checker.ctx.current_file_idx = file_idx;
                 for &id in &self.ctx.class_instance_resolution_set {
                     checker.ctx.class_instance_resolution_set.insert(id);
@@ -1056,15 +1045,7 @@ impl<'a> CheckerState<'a> {
         let base = file_name.rsplit('/').next().unwrap_or(file_name);
         // Also handle Windows path separators
         let base = base.rsplit('\\').next().unwrap_or(base);
-        for ext in &[
-            ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx",
-            ".mjs", ".cjs",
-        ] {
-            if let Some(stem) = base.strip_suffix(ext) {
-                return stem.to_string();
-            }
-        }
-        base.to_string()
+        tsz_common::file_extensions::strip_known_extension(base).to_string()
     }
 
     fn expression_has_self_file_import_inner(&self, node_idx: NodeIndex, file_stem: &str) -> bool {

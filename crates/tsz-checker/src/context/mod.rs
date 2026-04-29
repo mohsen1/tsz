@@ -31,9 +31,11 @@ mod request_cache;
 mod resolver;
 pub(crate) mod speculation;
 mod strict_mode;
+mod symbol_file_targets;
 pub mod typing_request;
 pub use aliases::*;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
+pub use symbol_file_targets::SymbolFileTargetsOverlay;
 pub use typing_request::{ContextualOrigin, FlowIntent, TypingRequest};
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -911,6 +913,14 @@ pub struct CheckerContext<'a> {
     /// Part of the `DefId` migration to decouple Solver from Binder.
     pub definition_store: Arc<DefinitionStore>,
 
+    /// Whether per-run type results should be mirrored into the shared
+    /// `DefinitionStore` result caches.
+    ///
+    /// Batch project checking enables this through `ProjectEnv`; interactive/LSP
+    /// callers keep it disabled so persistent shared stores do not accumulate
+    /// speculative request-local results across editor operations.
+    pub share_owner_symbol_type_results: bool,
+
     /// Mapping from Binder `SymbolId` to Solver `DefId`.
     /// Used during migration to avoid creating duplicate `DefIds` for the same symbol.
     /// Wrapped in `RefCell` to allow mutation through shared references (for use in Fn closures).
@@ -954,14 +964,11 @@ pub struct CheckerContext<'a> {
     /// Private constructor types (`TypeIds`) produced for private constructors.
     pub private_constructor_types: FxHashSet<TypeId>,
 
-    /// Maps cross-file `SymbolIds` to their source file index.
-    /// Populated by `resolve_cross_file_export/resolve_cross_file_namespace_exports`
-    /// so `delegate_cross_arena_symbol_resolution` can find the correct arena.
+    /// Maps dynamically-discovered cross-file `SymbolIds` to their source file index.
     ///
-    /// This is the local overlay for dynamically discovered mappings. For lookups,
-    /// use `resolve_symbol_file_index()` which checks this overlay first, then
-    /// falls back to the shared `global_symbol_file_index`.
-    pub cross_file_symbol_targets: RefCell<FxHashMap<SymbolId, usize>>,
+    /// Child checkers inherit this as a parent+delta snapshot rather than cloning
+    /// the full overlay map on every cross-arena delegation.
+    pub cross_file_symbol_targets: RefCell<SymbolFileTargetsOverlay>,
 
     /// Shared base map: `SymbolId` → owning file index (pre-built from `ProjectEnv`).
     ///
@@ -1540,6 +1547,7 @@ impl ProjectEnv {
         // prepopulation so `is_fully_populated()` reflects project-wide state.
         if let Some(ref store) = self.shared_definition_store {
             ctx.definition_store = Arc::clone(store);
+            ctx.share_owner_symbol_type_results = true;
         }
         ctx.set_all_binders(Arc::clone(&self.all_binders));
         // When the shared DefinitionStore was fully populated (via from_semantic_defs

@@ -654,6 +654,13 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     None
                 };
+                let jsdoc_satisfies_param =
+                    if self.source_is_js_file && self.use_jsdoc_satisfies_parameter_fallback {
+                        self.jsdoc_satisfies_param_decl_for_parameter(param_idx, i)
+                    } else {
+                        None
+                    };
+                let effective_jsdoc_param = jsdoc_param.as_ref().or(jsdoc_satisfies_param.as_ref());
                 let is_parameter_property = self.in_constructor_params
                     && self.parameter_has_property_modifier(&param.modifiers);
 
@@ -692,7 +699,7 @@ impl<'a> DeclarationEmitter<'a> {
                     param.initializer.is_some() && !param.question_token && i < last_required_idx;
 
                 if param.question_token
-                    || jsdoc_param
+                    || effective_jsdoc_param
                         .as_ref()
                         .is_some_and(|decl| decl.optional && !decl.rest)
                     || (param.initializer.is_some() && !has_initializer_before_required)
@@ -717,34 +724,26 @@ impl<'a> DeclarationEmitter<'a> {
                             self.write(" | undefined");
                         }
                     }
-                } else if let Some(ref jsdoc_param) = jsdoc_param
+                } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && !Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                 {
                     self.write(": ");
                     self.write(&jsdoc_param.type_text);
-                } else if let Some(ref jsdoc_param) = jsdoc_param
+                } else if let Some(jsdoc_param) = effective_jsdoc_param
                     && Self::jsdoc_type_needs_checker_resolution(&jsdoc_param.type_text)
                     && let Some(converted) =
                         Self::convert_jsdoc_function_type(&jsdoc_param.type_text)
                 {
                     self.write(": ");
                     self.write(&converted);
-                } else if let Some(type_id) = self
-                    .get_node_type_or_names(&[param_idx, param.name])
-                    .or_else(|| {
-                        // Parameters with binding-pattern names store their inferred type in
-                        // symbol_types (via cache_parameter_types), not in node_types.
-                        // Try the parameter node's symbol first, then the name node's symbol.
-                        let name_node = self.arena.get(param.name)?;
-                        (name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN)
-                            .then(|| {
-                                self.get_symbol_cached_type(param_idx)
-                                    .or_else(|| self.get_symbol_cached_type(param.name))
-                            })
-                            .flatten()
-                    })
-                {
+                } else if let Some(type_text) = self.binding_pattern_parameter_type_text(
+                    param_idx,
+                    param.name,
+                    param.initializer,
+                ) {
+                    self.write(": ");
+                    self.write(&type_text);
+                } else if let Some(type_id) = self.parameter_type_for_emit(param_idx, param.name) {
                     // Inferred type from type cache
                     self.write(": ");
                     self.write(&self.print_type_id(type_id));
@@ -829,6 +828,409 @@ impl<'a> DeclarationEmitter<'a> {
     /// rename-aliased, or initialized properties — those are handled by
     /// other branches in `emit_parameters_with_body` or fall through to
     /// the default `any` behavior.
+    fn parameter_type_for_emit(
+        &self,
+        param_idx: NodeIndex,
+        param_name: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let name_node = self.arena.get(param_name)?;
+        let is_binding_pattern = name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
+
+        if is_binding_pattern {
+            if let Some(type_id) = self.parameter_type_from_enclosing_signature(param_idx)
+                && !type_id.is_any_unknown_or_error()
+            {
+                return Some(type_id);
+            }
+
+            // Binding-pattern parameters often have a widened local node_type on the
+            // pattern itself, while the declaration-grade parameter type may still
+            // be cached on the parameter/name symbol.
+            return self
+                .get_symbol_cached_type(param_idx)
+                .or_else(|| self.get_symbol_cached_type(param_name))
+                .filter(|type_id| !type_id.is_any_unknown_or_error());
+        }
+
+        self.get_node_type_or_names(&[param_idx, param_name])
+    }
+
+    fn parameter_type_from_enclosing_signature(
+        &self,
+        param_idx: NodeIndex,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        let ext = self.arena.get_extended(param_idx)?;
+        let parent_idx = ext.parent;
+        let parent_node = self.arena.get(parent_idx)?;
+        let func = self.arena.get_function(parent_node)?;
+        let param_position = func
+            .parameters
+            .nodes
+            .iter()
+            .position(|&candidate| candidate == param_idx)?;
+        let func_type = self
+            .get_node_type_or_names(&[parent_idx, func.name])
+            .or_else(|| self.get_type_via_symbol_for_func(parent_idx, func.name))?;
+        let callable = tsz_solver::type_queries::get_callable_shape_for_type(interner, func_type)?;
+        callable
+            .call_signatures
+            .first()?
+            .params
+            .get(param_position)
+            .map(|param| param.type_id)
+    }
+
+    fn binding_pattern_parameter_type_text(
+        &self,
+        param_idx: NodeIndex,
+        param_name: NodeIndex,
+        param_initializer: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(param_name)?;
+        let is_binding_pattern = name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
+        if !is_binding_pattern {
+            return None;
+        }
+
+        if param_initializer.is_some()
+            && (self.binding_pattern_initializer_is_unannotated_var(param_initializer)
+                || (self
+                    .get_node_type_or_names(&[param_initializer])
+                    .is_none_or(|type_id| type_id.is_any_unknown_or_error())
+                    && self
+                        .allowlisted_initializer_type_text(param_initializer)
+                        .is_none()))
+        {
+            return Some("any".to_string());
+        }
+
+        let source_type = self
+            .parameter_type_from_enclosing_signature(param_idx)
+            .or_else(|| {
+                self.get_symbol_cached_type(param_idx)
+                    .or_else(|| self.get_symbol_cached_type(param_name))
+                    .filter(|type_id| !type_id.is_any_unknown_or_error())
+            });
+
+        self.binding_pattern_type_text(param_name, source_type, param_initializer)
+            .or_else(|| self.synthesize_destructured_param_type(param_name))
+    }
+
+    fn binding_pattern_initializer_is_unannotated_var(&self, initializer: NodeIndex) -> bool {
+        let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(sym_id) = self.value_reference_symbol(initializer) else {
+            return false;
+        };
+        binder
+            .symbols
+            .get(sym_id)
+            .and_then(|symbol| symbol.declarations.first().copied())
+            .and_then(|decl_idx| self.arena.get(decl_idx))
+            .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+            .is_some_and(|decl| decl.type_annotation.is_none() && decl.initializer.is_none())
+    }
+
+    fn binding_pattern_type_text(
+        &self,
+        pattern_idx: NodeIndex,
+        source_type: Option<tsz_solver::types::TypeId>,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let node = self.arena.get(pattern_idx)?;
+        if node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            let pat = self.arena.get_binding_pattern(node)?;
+            if pat.elements.nodes.is_empty() {
+                return None;
+            }
+
+            let tuple_elements = self.type_interner.and_then(|interner| {
+                source_type.and_then(|type_id| {
+                    tsz_solver::type_queries::get_tuple_elements(interner, type_id)
+                })
+            });
+            let array_element_type = self.type_interner.and_then(|interner| {
+                source_type.and_then(|type_id| {
+                    tsz_solver::type_queries::get_array_element_type(interner, type_id).or_else(
+                        || {
+                            tsz_solver::type_queries::get_tuple_element_type_union(
+                                interner, type_id,
+                            )
+                        },
+                    )
+                })
+            });
+            let last_present_index = pat
+                .elements
+                .nodes
+                .iter()
+                .rposition(|&elem_idx| {
+                    self.arena.get(elem_idx).is_some_and(|elem_node| {
+                        elem_node.kind != syntax_kind_ext::OMITTED_EXPRESSION
+                    })
+                })
+                .unwrap_or(0);
+            let array_init = self
+                .arena
+                .get(initializer)
+                .filter(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                .and_then(|n| self.arena.get_literal_expr(n));
+            let literal_len = array_init.map_or(0, |lit| lit.elements.nodes.len());
+            let use_literal_slots = array_init.is_some()
+                && tuple_elements.as_ref().is_none_or(|elements| {
+                    elements.iter().any(|element| element.rest)
+                        || elements.len() < pat.elements.nodes.len()
+                        || elements.len() < literal_len
+                });
+
+            let mut parts = Vec::new();
+            let mut source_index = 0usize;
+            for (pattern_index, &element_idx) in pat.elements.nodes.iter().enumerate() {
+                if element_idx.is_none() {
+                    let literal_slot = array_init
+                        .and_then(|lit| lit.elements.nodes.get(source_index).copied())
+                        .unwrap_or(NodeIndex::NONE);
+                    let mut slot_text = tuple_elements
+                        .as_deref()
+                        .and_then(|elements| elements.get(source_index))
+                        .map(|element| self.print_type_id(element.type_id))
+                        .or_else(|| {
+                            (!use_literal_slots)
+                                .then(|| array_element_type.map(|t| self.print_type_id(t)))
+                                .flatten()
+                        })
+                        .or_else(|| self.type_text_from_initializer(literal_slot))
+                        .unwrap_or_else(|| "any".to_string());
+                    if !use_literal_slots && pattern_index > last_present_index {
+                        slot_text.push('?');
+                    }
+                    parts.push(slot_text);
+                    source_index += 1;
+                    continue;
+                }
+                if let Some(element_node) = self.arena.get(element_idx)
+                    && element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION
+                {
+                    let literal_slot = array_init
+                        .and_then(|lit| lit.elements.nodes.get(source_index).copied())
+                        .unwrap_or(NodeIndex::NONE);
+                    let mut slot_text = tuple_elements
+                        .as_deref()
+                        .and_then(|elements| elements.get(source_index))
+                        .map(|element| self.print_type_id(element.type_id))
+                        .or_else(|| {
+                            (!use_literal_slots)
+                                .then(|| array_element_type.map(|t| self.print_type_id(t)))
+                                .flatten()
+                        })
+                        .or_else(|| self.type_text_from_initializer(literal_slot))
+                        .unwrap_or_else(|| "any".to_string());
+                    if !use_literal_slots && pattern_index > last_present_index {
+                        slot_text.push('?');
+                    }
+                    parts.push(slot_text);
+                    source_index += 1;
+                    continue;
+                }
+
+                let Some(element_node) = self.arena.get(element_idx) else {
+                    parts.push("any".to_string());
+                    source_index += 1;
+                    continue;
+                };
+                let Some(element) = self.arena.get_binding_element(element_node) else {
+                    parts.push("any".to_string());
+                    source_index += 1;
+                    continue;
+                };
+
+                if element.dot_dot_dot_token {
+                    if use_literal_slots && let Some(lit) = array_init {
+                        for &literal_idx in lit.elements.nodes.iter().skip(source_index) {
+                            parts.push(
+                                self.type_text_from_initializer(literal_idx)
+                                    .unwrap_or_else(|| "any".to_string()),
+                            );
+                        }
+                        source_index = lit.elements.nodes.len();
+                    } else if let Some(elements) = tuple_elements.as_deref() {
+                        for tuple_element in elements.iter().skip(source_index) {
+                            if tuple_element.rest {
+                                let rest_type = self
+                                    .type_interner
+                                    .and_then(|interner| {
+                                        tsz_solver::type_queries::get_array_element_type(
+                                            interner,
+                                            tuple_element.type_id,
+                                        )
+                                        .or(Some(tuple_element.type_id))
+                                    })
+                                    .map(|type_id| self.print_type_id(type_id))
+                                    .unwrap_or_else(|| "any".to_string());
+                                parts.push(format!("...{rest_type}[]"));
+                            } else {
+                                let mut slot_text = self.print_type_id(tuple_element.type_id);
+                                if tuple_element.optional {
+                                    slot_text.push('?');
+                                }
+                                parts.push(slot_text);
+                            }
+                        }
+                    } else {
+                        let rest_type = array_element_type
+                            .map(|type_id| self.print_type_id(type_id))
+                            .unwrap_or_else(|| "any".to_string());
+                        parts.push(format!("...{rest_type}[]"));
+                    }
+                    break;
+                }
+
+                let slot_source_type = self.array_binding_element_type(
+                    tuple_elements.as_deref(),
+                    source_index,
+                    array_element_type,
+                );
+                let literal_slot = array_init
+                    .and_then(|lit| lit.elements.nodes.get(source_index).copied())
+                    .unwrap_or(NodeIndex::NONE);
+                let slot_initializer = if element.initializer.is_some() {
+                    element.initializer
+                } else {
+                    literal_slot
+                };
+                let slot_node = self.arena.get(element.name)?;
+                let mut slot_text = if slot_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    || slot_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                {
+                    self.binding_pattern_type_text(element.name, slot_source_type, slot_initializer)
+                        .or_else(|| slot_source_type.map(|type_id| self.print_type_id(type_id)))
+                        .or_else(|| self.type_text_from_initializer(slot_initializer))
+                        .unwrap_or_else(|| "any".to_string())
+                } else {
+                    slot_source_type
+                        .map(|type_id| self.print_type_id(type_id))
+                        .or_else(|| {
+                            self.get_symbol_cached_type(element.name)
+                                .map(|type_id| self.print_type_id(type_id))
+                        })
+                        .or_else(|| self.type_text_from_initializer(slot_initializer))
+                        .unwrap_or_else(|| "any".to_string())
+                };
+                if tuple_elements
+                    .as_deref()
+                    .and_then(|elements| elements.get(source_index))
+                    .is_some_and(|element| element.optional)
+                {
+                    slot_text.push('?');
+                }
+                parts.push(slot_text);
+                source_index += 1;
+            }
+
+            if use_literal_slots && let Some(lit) = array_init {
+                for &literal_idx in lit.elements.nodes.iter().skip(source_index) {
+                    parts.push(
+                        self.type_text_from_initializer(literal_idx)
+                            .unwrap_or_else(|| "any".to_string()),
+                    );
+                }
+            }
+
+            return Some(format!("[{}]", parts.join(", ")));
+        }
+
+        if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+        let pat = self.arena.get_binding_pattern(node)?;
+        if pat.elements.nodes.is_empty() {
+            return None;
+        }
+
+        let mut members = Vec::new();
+        for &elem_idx in &pat.elements.nodes {
+            if elem_idx.is_none() {
+                return None;
+            }
+            let elem_node = self.arena.get(elem_idx)?;
+            let elem = self.arena.get_binding_element(elem_node)?;
+            if elem.dot_dot_dot_token {
+                let rest_name = self
+                    .arena
+                    .get(elem.name)
+                    .and_then(|n| self.arena.get_identifier(n))
+                    .map(|id| id.escaped_text.as_str())
+                    .unwrap_or("rest");
+                members.push(format!("...{rest_name}: any;"));
+                continue;
+            }
+            let prop_name_idx = if elem.property_name.is_some() {
+                elem.property_name
+            } else {
+                elem.name
+            };
+            let name_node = self.arena.get(prop_name_idx)?;
+            if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                return None;
+            }
+            let ident = self.arena.get_identifier(name_node)?;
+            let mut member_text = ident.escaped_text.to_string();
+            if elem.initializer.is_some() {
+                member_text.push_str("?: ");
+            } else {
+                member_text.push_str(": ");
+            }
+            let prop_source_type = self.object_binding_element_type(source_type, elem);
+            let prop_initializer = elem.initializer;
+            let value_node = self.arena.get(elem.name)?;
+            let value_type = if value_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || value_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            {
+                self.binding_pattern_type_text(elem.name, prop_source_type, prop_initializer)
+                    .or_else(|| prop_source_type.map(|type_id| self.print_type_id(type_id)))
+                    .or_else(|| self.type_text_from_initializer(prop_initializer))
+                    .unwrap_or_else(|| String::from("any"))
+            } else {
+                prop_source_type
+                    .map(|type_id| self.print_type_id(type_id))
+                    .or_else(|| {
+                        self.get_symbol_cached_type(elem.name)
+                            .map(|type_id| self.print_type_id(type_id))
+                    })
+                    .or_else(|| self.type_text_from_initializer(prop_initializer))
+                    .unwrap_or_else(|| String::from("any"))
+            };
+            member_text.push_str(&value_type);
+            member_text.push(';');
+            members.push(member_text);
+        }
+        let member_indent = "    ".repeat((self.indent_level + 1) as usize);
+        let closing_indent = "    ".repeat(self.indent_level as usize);
+        let lines: Vec<String> = members
+            .into_iter()
+            .map(|member| format!("{member_indent}{member}"))
+            .collect();
+        Some(format!("{{\n{}\n{closing_indent}}}", lines.join("\n")))
+    }
+
+    fn type_text_from_initializer(&self, initializer: NodeIndex) -> Option<String> {
+        initializer
+            .is_some()
+            .then(|| self.allowlisted_initializer_type_text(initializer))
+            .flatten()
+    }
+
     fn synthesize_destructured_param_type(&self, pattern_idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(pattern_idx)?;
         if node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
@@ -836,21 +1238,44 @@ impl<'a> DeclarationEmitter<'a> {
             if pat.elements.nodes.is_empty() {
                 return None;
             }
+            let last_present_index = pat
+                .elements
+                .nodes
+                .iter()
+                .rposition(|&elem_idx| {
+                    self.arena.get(elem_idx).is_some_and(|elem_node| {
+                        elem_node.kind != syntax_kind_ext::OMITTED_EXPRESSION
+                    })
+                })
+                .unwrap_or(0);
             let mut out = String::from("[");
             let mut first = true;
-            for &elem_idx in &pat.elements.nodes {
+            for (index, &elem_idx) in pat.elements.nodes.iter().enumerate() {
                 if !first {
                     out.push_str(", ");
                 }
                 first = false;
                 if elem_idx.is_none() {
                     out.push_str("any");
+                    if index > last_present_index {
+                        out.push('?');
+                    }
                     continue;
                 }
                 let Some(elem_node) = self.arena.get(elem_idx) else {
                     out.push_str("any");
+                    if index > last_present_index {
+                        out.push('?');
+                    }
                     continue;
                 };
+                if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                    out.push_str("any");
+                    if index > last_present_index {
+                        out.push('?');
+                    }
+                    continue;
+                }
                 let Some(elem) = self.arena.get_binding_element(elem_node) else {
                     out.push_str("any");
                     continue;
@@ -861,6 +1286,12 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 let inner = self
                     .synthesize_destructured_param_type(elem.name)
+                    .or_else(|| {
+                        elem.initializer
+                            .is_some()
+                            .then(|| self.allowlisted_initializer_type_text(elem.initializer))
+                            .flatten()
+                    })
                     .unwrap_or_else(|| String::from("any"));
                 out.push_str(&inner);
             }
@@ -909,9 +1340,19 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 let ident = self.arena.get_identifier(name_node)?;
                 out.push_str(&ident.escaped_text);
-                out.push_str(": ");
+                if elem.initializer.is_some() {
+                    out.push_str("?: ");
+                } else {
+                    out.push_str(": ");
+                }
                 let value_type = self
                     .synthesize_destructured_param_type(elem.name)
+                    .or_else(|| {
+                        elem.initializer
+                            .is_some()
+                            .then(|| self.allowlisted_initializer_type_text(elem.initializer))
+                            .flatten()
+                    })
                     .unwrap_or_else(|| String::from("any"));
                 out.push_str(&value_type);
                 out.push(';');

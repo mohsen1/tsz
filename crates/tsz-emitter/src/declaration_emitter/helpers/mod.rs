@@ -31,7 +31,13 @@ type JsFoldedNamedExports = (
     FxHashMap<NodeIndex, Vec<NodeIndex>>,
     FxHashSet<NodeIndex>,
 );
-type JsNamespaceExportAliases = FxHashMap<String, Vec<(String, String)>>;
+#[derive(Clone)]
+pub(crate) struct JsNamespaceExportAlias {
+    pub(crate) export_name: String,
+    pub(crate) local_name: String,
+    pub(crate) use_import_alias: bool,
+}
+type JsNamespaceExportAliases = FxHashMap<String, Vec<JsNamespaceExportAlias>>;
 type JsCommonjsSyntheticStatements = FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>;
 type JsCommonjsNamedExports = (
     FxHashSet<String>,
@@ -100,6 +106,13 @@ pub(in crate::declaration_emitter) struct JsDefinedPropertyDecl {
     pub(in crate::declaration_emitter) name: String,
     pub(in crate::declaration_emitter) type_text: String,
     pub(in crate::declaration_emitter) readonly: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct LateBoundAssignmentMember {
+    pub(crate) property_name_text: String,
+    pub(crate) namespace_member_name: Option<String>,
+    pub(crate) type_text: String,
 }
 
 #[derive(Clone)]

@@ -20,6 +20,7 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::SourceFileData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -28,6 +29,8 @@ use tsz_solver::TypeId;
 /// `None` means fully-dangling (no attached statement); `Some` gives the
 /// statement's source position and length for diagnostic anchoring.
 type OrphanedExtendsTag = (&'static str, Option<(u32, u32)>);
+
+const JSDOC_TYPEDEF_PRESCAN_MIN_FILES: usize = 256;
 
 impl<'a> CheckerState<'a> {
     fn global_source_file_idx_for_name(&self, file_name: &str) -> Option<usize> {
@@ -93,6 +96,35 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    fn source_file_has_jsdoc_typedef_named(source_file: &SourceFileData, name: &str) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        if source_file.comments.is_empty() {
+            return false;
+        }
+
+        let text = &source_file.text;
+        if !text.contains("@typedef") && !text.contains("@callback") && !text.contains("@import") {
+            return false;
+        }
+        if !name.is_empty() && !text.contains(name) {
+            return false;
+        }
+
+        source_file.comments.iter().any(|comment| {
+            if !is_jsdoc_comment(comment, text) {
+                return false;
+            }
+            let content = get_jsdoc_content(comment, text);
+            if !name.is_empty() && !content.contains(name) {
+                return false;
+            }
+            Self::parse_jsdoc_typedefs(&content)
+                .iter()
+                .any(|(typedef_name, _)| typedef_name == name)
+        })
+    }
+
     pub(crate) fn jsdoc_callable_type_annotation_for_node(
         &mut self,
         idx: NodeIndex,
@@ -155,12 +187,20 @@ impl<'a> CheckerState<'a> {
 
         let current_file_name = self.ctx.file_name.clone();
         let current_file_idx = self.ctx.current_file_idx;
+        let use_typedef_prescan = self
+            .ctx
+            .all_arenas
+            .as_ref()
+            .is_some_and(|arenas| arenas.len() >= JSDOC_TYPEDEF_PRESCAN_MIN_FILES);
         let mut current_arena_sources: Vec<_> = self
             .ctx
             .arena
             .source_files
             .iter()
             .enumerate()
+            .filter(|(_, source_file)| {
+                !use_typedef_prescan || Self::source_file_has_jsdoc_typedef_named(source_file, name)
+            })
             .map(|(source_file_idx, source_file)| {
                 (
                     source_file_idx,
@@ -206,20 +246,30 @@ impl<'a> CheckerState<'a> {
             }
 
             for source_file in &arena.source_files {
+                if use_typedef_prescan
+                    && !Self::source_file_has_jsdoc_typedef_named(source_file, name)
+                {
+                    continue;
+                }
+
                 let comments = source_file.comments.clone();
                 let source_text = source_file.text.to_string();
-                let mut checker = Box::new(CheckerState::with_parent_cache(
+                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                     arena.as_ref(),
                     binder.as_ref(),
                     self.ctx.types,
                     source_file.file_name.clone(),
                     self.ctx.compiler_options.clone(),
                     self,
+                    tsz_common::perf_counters::CheckerCreationReason::JsDocLookup,
                 ));
                 checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
                 checker.ctx.copy_cross_file_state_from(&self.ctx);
                 checker.ctx.current_file_idx = file_idx;
-                self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
+                self.ctx.copy_symbol_file_targets_to_attributed(
+                    &mut checker.ctx,
+                    tsz_common::perf_counters::CheckerCreationReason::JsDocLookup,
+                );
 
                 if let Some(info) =
                     checker.resolve_jsdoc_typedef_info(name, &comments, &source_text)

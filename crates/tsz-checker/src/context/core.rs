@@ -100,9 +100,9 @@ impl<'a> CheckerContext<'a> {
     /// Resolve a `SymbolId` to its owning file index.
     ///
     /// Checks the shared `global_symbol_file_index` first (pre-built, read-only,
-    /// no `RefCell` overhead), then falls back to the local `cross_file_symbol_targets`
-    /// overlay for dynamically-discovered mappings. Returns `None` if the symbol
-    /// has no known cross-file owner.
+    /// no `RefCell` overhead), then falls back to the layered
+    /// `cross_file_symbol_targets` overlay for dynamically-discovered mappings.
+    /// Returns `None` if the symbol has no known cross-file owner.
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
         // Check shared base map first (covers all pre-computed entries, no RefCell cost)
         if let Some(&idx) = self
@@ -112,11 +112,7 @@ impl<'a> CheckerContext<'a> {
         {
             return Some(idx);
         }
-        // Fall back to local overlay (dynamically discovered during this check)
-        self.cross_file_symbol_targets
-            .borrow()
-            .get(&sym_id)
-            .copied()
+        self.cross_file_symbol_targets.borrow().get(sym_id)
     }
 
     /// Check whether a `SymbolId` has a known cross-file owner.
@@ -124,10 +120,7 @@ impl<'a> CheckerContext<'a> {
         self.global_symbol_file_index
             .as_ref()
             .is_some_and(|map| map.contains_key(&sym_id))
-            || self
-                .cross_file_symbol_targets
-                .borrow()
-                .contains_key(&sym_id)
+            || self.cross_file_symbol_targets.borrow().contains_key(sym_id)
     }
 
     /// Register a dynamically-discovered `SymbolId` → file index mapping
@@ -142,18 +135,40 @@ impl<'a> CheckerContext<'a> {
         self.register_symbol_file_target(sym_id, file_idx);
     }
 
-    /// Copy the local overlay of symbol-file targets to a child checker context.
+    /// Attach the local overlay of symbol-file targets to a child checker context.
     ///
-    /// This copies only the dynamically-discovered overlay entries, NOT the
-    /// entries from `global_symbol_file_index` (which is already shared via
-    /// `copy_cross_file_state_from`). This makes child-checker creation O(D)
-    /// where D = number of dynamically discovered entries, instead of O(N)
-    /// where N = total entries (base + dynamic).
+    /// The dynamically-discovered overlay is frozen into an immutable parent
+    /// snapshot and shared with the child. No map entries are cloned; only the
+    /// `Arc` parent pointer is copied.
     pub fn copy_symbol_file_targets_to(&self, child: &mut CheckerContext<'_>) {
-        let overlay = self.cross_file_symbol_targets.borrow();
-        if !overlay.is_empty() {
-            *child.cross_file_symbol_targets.borrow_mut() = overlay.clone();
+        // Untracked variant: attributes to `CheckerCreationReason::Other`.
+        // Prefer `copy_symbol_file_targets_to_attributed` at call sites we
+        // want to see in the per-reason dump.
+        self.copy_symbol_file_targets_to_attributed(
+            child,
+            tsz_common::perf_counters::CheckerCreationReason::Other,
+        );
+    }
+
+    /// Attributed overlay inheritance. The counter call remains so the perf
+    /// dump tracks how often this handoff occurs, but entries-copied is zero
+    /// because the child now inherits an `Arc` parent snapshot.
+    pub fn copy_symbol_file_targets_to_attributed(
+        &self,
+        child: &mut CheckerContext<'_>,
+        reason: tsz_common::perf_counters::CheckerCreationReason,
+    ) {
+        let parent_snapshot = self
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .snapshot_for_child();
+        if parent_snapshot.is_some() {
+            tsz_common::perf_counters::record_overlay_copy(reason, 0);
         }
+        child
+            .cross_file_symbol_targets
+            .borrow_mut()
+            .install_parent_snapshot(parent_snapshot);
     }
 
     /// Merge the child checker's local overlay back into this context.
@@ -164,9 +179,17 @@ impl<'a> CheckerContext<'a> {
         let child_overlay = child.cross_file_symbol_targets.borrow();
         if !child_overlay.is_empty() {
             let mut parent_overlay = self.cross_file_symbol_targets.borrow_mut();
-            for (&sym_id, &file_idx) in child_overlay.iter() {
-                parent_overlay.insert(sym_id, file_idx);
-            }
+            parent_overlay.merge_from(&child_overlay, true);
+        }
+    }
+
+    /// Merge child symbol-file targets without overwriting mappings already
+    /// known by the parent.
+    pub fn merge_missing_symbol_file_targets_from(&self, child: &CheckerContext<'_>) {
+        let child_overlay = child.cross_file_symbol_targets.borrow();
+        if !child_overlay.is_empty() {
+            let mut parent_overlay = self.cross_file_symbol_targets.borrow_mut();
+            parent_overlay.merge_from(&child_overlay, false);
         }
     }
 

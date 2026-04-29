@@ -9,6 +9,138 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Format a single property fragment "name: type" used inside the synthesized
+    /// JSX-attributes source-type display. Mirrors tsc's per-property display:
+    /// shorthand attrs render as `name: true`, others use the formatted value type.
+    fn format_jsx_synthesized_prop_fragment(&mut self, name: &str, type_id: TypeId) -> String {
+        let display_name = {
+            let mut chars = name.chars();
+            let is_ident = chars.next().is_some_and(|first| {
+                (first == '_' || first == '$' || first.is_ascii_alphabetic())
+                    && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            });
+            if is_ident {
+                name.to_string()
+            } else {
+                format!("\"{name}\"")
+            }
+        };
+        let type_str = if type_id == TypeId::BOOLEAN_TRUE {
+            "true".to_string()
+        } else {
+            self.format_type(type_id)
+        };
+        format!("{display_name}: {type_str}")
+    }
+
+    /// Build the synthesized JSX-attributes source-type display string for the
+    /// per-attribute excess-property TS2322 diagnostic.
+    ///
+    /// Walks the attributes once and produces a formatted object-type string with
+    /// explicit (non-spread) attrs first (in source order), then spread-derived
+    /// props that aren't shadowed by an explicit attr (in spread source order).
+    /// This matches tsc's display for elements like `<X {...{p: v}} q />` where
+    /// the printed source type is `{ q: true; p: v; }`.
+    ///
+    /// All `compute_*` calls below are cache hits during a normal check pass:
+    /// the main attribute loop has already computed each attribute and spread
+    /// type, so re-walking does not double-report diagnostics.
+    fn format_jsx_attrs_synthesized_source_for_excess(
+        &mut self,
+        attributes_idx: NodeIndex,
+        props_type: TypeId,
+        request: &TypingRequest,
+    ) -> Option<String> {
+        let attrs_node = self.ctx.arena.get(attributes_idx)?;
+        let attrs = self.ctx.arena.get_jsx_attributes(attrs_node)?;
+
+        let mut explicit: Vec<(String, TypeId)> = Vec::new();
+        let mut spread_props: Vec<(String, TypeId)> = Vec::new();
+
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+
+            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
+                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                    continue;
+                };
+                let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                    continue;
+                };
+                let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
+                    continue;
+                };
+                if attr_name == "key" || attr_name == "ref" {
+                    continue;
+                }
+
+                let attr_value_type = if attr_data.initializer.is_none() {
+                    TypeId::BOOLEAN_TRUE
+                } else {
+                    self.compute_jsx_attr_value_type_without_context(attr_data.initializer)
+                };
+
+                if let Some(existing) = explicit.iter_mut().find(|(n, _)| n == &attr_name) {
+                    existing.1 = attr_value_type;
+                } else {
+                    explicit.push((attr_name, attr_value_type));
+                }
+            } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                    continue;
+                };
+                let spread_request = request.read().normal_origin().contextual(props_type);
+                let spread_type = self.compute_normalized_jsx_spread_type_with_request(
+                    spread_data.expression,
+                    &spread_request,
+                );
+                if matches!(spread_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
+                    continue;
+                }
+                if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
+                    self.ctx.types,
+                    spread_type,
+                ) {
+                    for prop in &shape.properties {
+                        let name = self.ctx.types.resolve_atom(prop.name).to_string();
+                        if name == "key" || name == "ref" {
+                            continue;
+                        }
+                        if let Some(existing) = spread_props.iter_mut().find(|(n, _)| *n == name) {
+                            existing.1 = prop.type_id;
+                        } else {
+                            spread_props.push((name, prop.type_id));
+                        }
+                    }
+                }
+            }
+        }
+
+        if explicit.is_empty() && spread_props.is_empty() {
+            return None;
+        }
+
+        let explicit_names: rustc_hash::FxHashSet<String> =
+            explicit.iter().map(|(n, _)| n.clone()).collect();
+        let mut fragments: Vec<String> = Vec::with_capacity(explicit.len() + spread_props.len());
+        for (name, type_id) in &explicit {
+            fragments.push(self.format_jsx_synthesized_prop_fragment(name, *type_id));
+        }
+        for (name, type_id) in &spread_props {
+            if explicit_names.contains(name) {
+                continue;
+            }
+            fragments.push(self.format_jsx_synthesized_prop_fragment(name, *type_id));
+        }
+
+        if fragments.is_empty() {
+            return None;
+        }
+        Some(format!("{{ {}; }}", fragments.join("; ")))
+    }
+
     fn compute_jsx_attr_value_type_without_context(&mut self, initializer: NodeIndex) -> TypeId {
         if initializer.is_none() {
             return TypeId::BOOLEAN_TRUE;
@@ -712,26 +844,41 @@ impl<'a> CheckerState<'a> {
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                         {
-                            let attr_type_name = if attr_data.initializer.is_none() {
-                                "true".to_string()
-                            } else {
-                                self.format_type(attr_value_type)
-                            };
-                            let display_name = {
-                                let mut chars = attr_name.chars();
-                                let is_ident = chars.next().is_some_and(|first| {
-                                    (first == '_' || first == '$' || first.is_ascii_alphabetic())
-                                        && chars.all(|ch| {
-                                            ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
-                                        })
-                                });
-                                if is_ident {
-                                    attr_name.clone()
+                            // Build the synthesized JSX-attributes source-type display:
+                            // when the element has spread attributes, tsc prints the merged
+                            // object (`{ extra: true; onClick: ... }`) rather than just the
+                            // single failing attribute. The helper falls back to `None` when
+                            // it can't materialize the attrs, in which case we use the
+                            // original single-attr fallback.
+                            let synthesized = self.format_jsx_attrs_synthesized_source_for_excess(
+                                attributes_idx,
+                                props_type,
+                                request,
+                            );
+                            let source_display = synthesized.unwrap_or_else(|| {
+                                let attr_type_name = if attr_data.initializer.is_none() {
+                                    "true".to_string()
                                 } else {
-                                    format!("\"{attr_name}\"")
-                                }
-                            };
-                            let source_display = format!("{{ {display_name}: {attr_type_name}; }}");
+                                    self.format_type(attr_value_type)
+                                };
+                                let display_name = {
+                                    let mut chars = attr_name.chars();
+                                    let is_ident = chars.next().is_some_and(|first| {
+                                        (first == '_'
+                                            || first == '$'
+                                            || first.is_ascii_alphabetic())
+                                            && chars.all(|ch| {
+                                                ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+                                            })
+                                    });
+                                    if is_ident {
+                                        attr_name.clone()
+                                    } else {
+                                        format!("\"{attr_name}\"")
+                                    }
+                                };
+                                format!("{{ {display_name}: {attr_type_name}; }}")
+                            });
                             let base = format_message(
                                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                                 &[&source_display, &display_target],

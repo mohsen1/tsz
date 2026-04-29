@@ -66,6 +66,54 @@ fn test_jsx_eof_unclosed() {
 }
 
 #[test]
+fn test_jsx_unclosed_tag_suppressed_after_conflict_marker() {
+    // `<div>` followed by a Git merge conflict marker — tsc emits TS1185 for
+    // the marker but does NOT emit TS17008 for the unclosed `<div>`. tsz
+    // matches.
+    let source = "const x = <div>\n<<<<<<< HEAD\n";
+    let errors = get_parser_errors(source, "test.tsx");
+    let ts17008: Vec<_> = errors.iter().filter(|(c, _)| *c == 17008).collect();
+    assert!(
+        ts17008.is_empty(),
+        "Conflict marker should suppress TS17008, got: {errors:?}"
+    );
+    let ts1185: Vec<_> = errors.iter().filter(|(c, _)| *c == 1185).collect();
+    assert!(
+        !ts1185.is_empty(),
+        "Expected TS1185 for conflict marker, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_jsx_missing_closing_tag_anchor_after_conflict_marker_uses_opening_end() {
+    // After a Git merge conflict marker terminates JSX child scanning, tsc
+    // anchors the missing `</` error at the END of the opening element, not
+    // at the EOF position. Match that anchor so the diagnostic fingerprint
+    // lines up with tsc.
+    let source = "const x = <div>\n<<<<<<< HEAD";
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let _root = parser.parse_source_file();
+    let ts1005: Vec<_> = parser
+        .parse_diagnostics
+        .iter()
+        .filter(|d| d.code == 1005 && d.message == "'</' expected.")
+        .collect();
+    assert_eq!(
+        ts1005.len(),
+        1,
+        "Expected exactly one TS1005 `</` diagnostic, got: {ts1005:?}",
+    );
+    // Anchor must be at end of `<div>`. The opening tag occupies bytes 10..15
+    // (`<div>`); its end is byte 15.
+    let opening_end = source.find("<div>").unwrap() as u32 + "<div>".len() as u32;
+    let actual_start = ts1005[0].start;
+    assert_eq!(
+        actual_start, opening_end,
+        "TS1005 must anchor at the end of `<div>` (offset {opening_end}), got offset {actual_start}",
+    );
+}
+
+#[test]
 fn test_jsx_nested_eof_unclosed() {
     // <div><span> at EOF → TS17008 on both 'div' and 'span'
     let errors = get_parser_errors("let x = <div><span>", "test.tsx");
