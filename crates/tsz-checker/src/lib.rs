@@ -409,6 +409,9 @@ mod new_typeof_property_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/property_alias_display_tests.rs"]
+mod property_alias_display_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
