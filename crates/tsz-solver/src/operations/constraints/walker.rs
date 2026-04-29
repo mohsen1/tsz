@@ -1153,6 +1153,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
                     }
                     // Covariant return: source_return <: target_return
+                    // Return types must never be inferred at NakedTypeVariable priority
+                    // (which is reserved for direct value arguments). Cap at ReturnType so
+                    // that a direct-arg inference of U from `y: U` always wins over a
+                    // callback's return type. Matches tsc's behaviour.
+                    //
+                    // Skip the cap for construct signatures: when matching a generic
+                    // construct signature against an outer construct callback type
+                    // (e.g. `cb: new(a: T) => U`), the source's return type is often
+                    // erased to `unknown` before we get here, and lowering its
+                    // priority below an outer direct-arg pin causes a spurious
+                    // mismatch on the constructor's apparent type.
+                    let return_priority = if t_fn.is_constructor || s_fn.is_constructor {
+                        priority
+                    } else {
+                        priority.max(crate::types::InferencePriority::ReturnType)
+                    };
                     debug!(
                         source_return_id = s_fn.return_type.0,
                         source_return_key = ?self.interner.lookup(s_fn.return_type),
@@ -1160,6 +1176,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         target_return_key = ?self.interner.lookup(t_fn.return_type),
                         var_map_keys = ?var_map.keys().collect::<Vec<_>>(),
                         priority = ?priority,
+                        return_priority = ?return_priority,
                         "Constraining return types"
                     );
                     self.constrain_types(
@@ -1167,7 +1184,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         var_map,
                         s_fn.return_type,
                         t_fn.return_type,
-                        priority,
+                        return_priority,
                     );
 
                     // Constrain type predicates if both functions have them
@@ -1178,7 +1195,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         var_map,
                         s_fn.type_predicate.as_ref(),
                         t_fn.type_predicate.as_ref(),
-                        priority,
+                        return_priority,
                     );
                 } else {
                     // Generic source function - instantiate with fresh inference variables
@@ -1321,6 +1338,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // This handles chains like: compose(unbox, unlist) where
                     // unlist's U is related to B through Array<U> = B, and C = U.
                     // Without unification, U gets no direct candidates.
+                    //
+                    // Skip the cap for construct signatures (see non-generic branch
+                    // above for rationale).
+                    let return_priority = if t_fn.is_constructor || s_fn.is_constructor {
+                        priority
+                    } else {
+                        priority.max(crate::types::InferencePriority::ReturnType)
+                    };
                     if let (Some(&s_var), Some(&t_var)) = (
                         combined_var_map.get(&instantiated_return),
                         combined_var_map.get(&t_fn.return_type),
@@ -1332,7 +1357,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             &combined_var_map,
                             instantiated_return,
                             t_fn.return_type,
-                            priority,
+                            return_priority,
                         );
                     }
 
@@ -1342,7 +1367,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         &combined_var_map,
                         instantiated_predicate.as_ref(),
                         t_fn.type_predicate.as_ref(),
-                        priority,
+                        return_priority,
                     );
                 }
             }
