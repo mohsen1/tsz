@@ -243,7 +243,20 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         // For object types that come from lib declarations (ErrorConstructor, RegExp, etc.),
         // check if the type's symbol name matches any global augmentation.
-        let def_id = crate::query_boundaries::property_access::def_id(self.ctx.types, object_type)?;
+        let Some(def_id) =
+            crate::query_boundaries::property_access::def_id(self.ctx.types, object_type)
+        else {
+            let display_name = self.format_type_diagnostic(object_type);
+            if self
+                .ctx
+                .binder
+                .global_augmentations
+                .contains_key(&display_name)
+            {
+                return self.resolve_augmentation_property_by_name(&display_name, property_name);
+            }
+            return None;
+        };
 
         // Look up the symbol for this DefId
         let sym_id = self.ctx.def_to_symbol_id(def_id)?;
@@ -253,6 +266,17 @@ impl<'a> CheckerState<'a> {
 
         if self.ctx.binder.global_augmentations.contains_key(name) {
             return self.resolve_augmentation_property_by_name(name, property_name);
+        }
+
+        let display_name = self.format_type_diagnostic(object_type);
+        if display_name != *name
+            && self
+                .ctx
+                .binder
+                .global_augmentations
+                .contains_key(&display_name)
+        {
+            return self.resolve_augmentation_property_by_name(&display_name, property_name);
         }
         None
     }
