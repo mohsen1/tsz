@@ -455,6 +455,8 @@ impl<'a> NarrowingContext<'a> {
                 || crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type)
             {
                 keep_matching
+            } else if crate::type_queries::contains_generic_type_parameters_db(self.db, prop_type) {
+                keep_matching
             } else if keep_matching {
                 // true branch: keep members where literal <: property_type
                 self.literal_subtype_fast(literal_value, prop_type)

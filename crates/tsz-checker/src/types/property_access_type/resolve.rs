@@ -1056,12 +1056,60 @@ impl<'a> CheckerState<'a> {
         {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;
-                if self.known_declared_receiver_has_property(
-                    access.expression,
-                    display_object_type,
-                    property_name,
-                ) {
+                let declared_receiver = self.resolve_type_for_property_access(display_object_type);
+                if declared_receiver != TypeId::NEVER
+                    && let PropertyAccessResult::Success { .. } =
+                        self.resolve_property_access_with_env(declared_receiver, property_name)
+                {
                     return TypeId::ERROR;
+                }
+                let no_flow_base = self.get_type_of_write_target_base_expression(access.expression);
+                let no_flow_base = self.evaluate_application_type(no_flow_base);
+                let no_flow_receiver = self.resolve_type_for_property_access(no_flow_base);
+                if no_flow_receiver != TypeId::NEVER
+                    && let PropertyAccessResult::Success { .. } =
+                        self.resolve_property_access_with_env(no_flow_receiver, property_name)
+                {
+                    return TypeId::ERROR;
+                }
+                if let Some(sym_id) =
+                    self.resolve_identifier_symbol_without_tracking(access.expression)
+                    && let Some(declarations) = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map(|symbol| symbol.declarations.clone())
+                {
+                    for decl_idx in declarations {
+                        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let declared_type = if decl_node.kind == syntax_kind_ext::PARAMETER {
+                            self.ctx
+                                .arena
+                                .get_parameter(decl_node)
+                                .and_then(|param| {
+                                    param
+                                        .type_annotation
+                                        .is_some()
+                                        .then_some(param.type_annotation)
+                                })
+                                .map(|type_node| self.get_type_from_type_node(type_node))
+                        } else {
+                            None
+                        };
+                        let Some(declared_type) = declared_type else {
+                            continue;
+                        };
+                        let declared_type = self.evaluate_application_type(declared_type);
+                        let declared_type = self.resolve_type_for_property_access(declared_type);
+                        if declared_type != TypeId::NEVER
+                            && let PropertyAccessResult::Success { .. } =
+                                self.resolve_property_access_with_env(declared_type, property_name)
+                        {
+                            return TypeId::ERROR;
+                        }
+                    }
                 }
                 if !property_name.starts_with('#') {
                     // Report at the property name node, not the full expression (matches tsc behavior)
