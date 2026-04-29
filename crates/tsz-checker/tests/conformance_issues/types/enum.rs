@@ -136,6 +136,41 @@ function foo<T>(arr: T[], depth: number) {
 }
 
 #[test]
+fn test_mixin_class_extends_type_param_does_not_emit_ts5088() {
+    // Repro pattern from `conformance/classes/mixinAccessors1.ts`. The inferred
+    // return type of `mixin` references `Awaited<T>` (and other lib utility
+    // types whose bodies contain self-recursive conditional types) through
+    // the lib type graph — `symbol_is_from_actual_lib`'s Arc-pointer arena
+    // comparison misses these symbols, so before this fix the cycle detector
+    // wrongly classified the inferred type as non-serializable. tsc accepts
+    // the declaration here.
+    let source = r#"
+function mixin<T extends { new (...args: any[]): {} }>(superclass: T) {
+  return class extends superclass {
+    get validationTarget(): unknown {
+      return null;
+    }
+  };
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        source,
+        CheckerOptions {
+            emit_declarations: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 5088),
+        "Did not expect TS5088 on a mixin function whose inferred return type \
+         only crosses into named lib aliases. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_explicit_return_annotation_suppresses_ts5088() {
     let source = r#"
 type BadFlatArray<Arr, Depth extends number> = {obj: {
@@ -341,6 +376,10 @@ fn compile_and_get_raw_diagnostics_named_with_lib_and_options(
             })
             .collect()
     };
+    // Match the CLI/LSP convention: stamp the user file with a stable
+    // `file_idx` so checker-side `def_file_idx` lookups can distinguish
+    // user-defined aliases from merged-in lib symbols.
+    binder.set_file_idx(0);
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
