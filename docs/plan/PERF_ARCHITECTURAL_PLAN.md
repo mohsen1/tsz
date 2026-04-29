@@ -4,6 +4,10 @@
 > Status as of plan creation: 4 PRs landed (#1618, #1619, #1623, #1626) with PR #1626 giving a measured −5.4% on subset3. None of those address the underlying architectural issue; they were point optimizations on top of the wrong topology.
 >
 > **Revised 2026-04-28 (after reviewing the public benchmark page at <https://tsz.dev/benchmarks/>)**: see "Revised diagnosis" below. The 200×+ gap is **a scale cliff on monorepo-shaped workloads**, not a checker-throughput problem. tsz already beats tsgo by 2×–5× on most local fixtures (`utility-types-project` 152ms vs 255ms, `ts-toolbelt-project` 230ms vs 1.1s, `ts-essentials-project` 278ms vs 1s). Don't rewrite the local checker. Find the cliff.
+>
+> **Benchmark integrity update 2026-04-29**: the `large-ts-repo` public ratio is not currently a valid speed claim. The 2026-04-29 bench shard recorded non-zero hyperfine exit codes for both `tsz` and `tsgo`, but the harness still published positive timings because it used `--ignore-failure` and did not inspect `exit_codes`. A raw local `tsgo --noEmit -p tsconfig.flat.bench.json` run on `large-ts-repo@3b08149` exits `2` with 144,097 diagnostic lines. Treat `large-ts-repo` as an invalid fixture until it type-checks cleanly and the harness rejects non-zero exits.
+>
+> **Validated-fixture update 2026-04-29**: `mohsen1/large-ts-repo#6` fixes the flat benchmark fixture while preserving the giant generated workload. The cleaned config contains 6,061 package source files and 1,288,737 TS/TSX LOC; `tsgo --pretty false --noEmit -p tsconfig.flat.bench.json` exits `0` in 30.30s on the local M-series workstation. A solo `tsz --extendedDiagnostics --noEmit -p tsconfig.flat.bench.json` run was stopped after 890.07s with no diagnostics printed; live samples at 8m and 12m were still in `read_source_files` / module resolution (`Path::is_dir`, `Path::is_file`, package.json reads), with 709s system CPU and 13.2GB peak footprint. This means the current full-large-repo blocker is source discovery / resolver syscall topology before checker completeness. Do not interpret the old failure as a tsz checker-conformance failure until tsz can finish source discovery on the tsgo-clean fixture.
 
 ## Revised diagnosis (2026-04-28)
 
@@ -33,7 +37,7 @@ The plan below (PRs 2–7) was written assuming a broad architectural rewrite. T
 - PR 3 (no child checker) — *promoted*: this is the headline bug. 17,329 child-checker constructions on a 1429-file project (data from PR #1630).
 - PR 4 (shared lib/global binder) — still correct: per-file lib-symbol merge is the duplication multiplier.
 - PR 5 (overlay replacement) — *promoted*: 12.8B entries copied is per-delegation, scales with the cliff.
-- PR 6 (resolver VFS cache) — still correct.
+- PR 6 (resolver VFS cache) — **promoted for full `large-ts-repo`**: on the validated 1.29M LOC fixture, tsz does not reach checker work within 890s because source discovery is still dominated by resolver syscalls. Keep subset3/checker data for overlay and child-checker PRs, but the full benchmark cannot produce meaningful checker numbers until the resolver cliff is removed.
 - PR 7 (deterministic checker groups) — still correct.
 
 But before any of those: **build the scale-up fixtures and find the cliff**. Without that, PRs 2–7 are guesses about which interaction is the multiplier.
@@ -86,7 +90,7 @@ The moment any of these ratios stops being roughly constant, the cliff is right 
 
 The PR #1630 instrumentation already produces most of these numbers; what's missing is a) the synthetic fixtures and b) a small driver that runs each fixture, parses the counter dump, and emits a CSV.
 
-**Also**: the public benchmark page reports `large-ts-repo` as `tsz unavailable / tsgo 478.7s`, but my local profile reports `tsz 706s / tsgo 2.45s`. Those are different machines / different bench commands / different modes. Before any architectural call, the team needs ONE canonical bench command for `large-ts-repo` that records:
+**Also**: the public benchmark page has reported incompatible `large-ts-repo` states over time (`tsz unavailable / tsgo 478.7s`, then `tsz 19.7s / tsgo 468.6s` with both compilers exiting non-zero), while local profiles have reported other modes such as `tsz 706s / tsgo 2.45s`. Those are different machines / different bench commands / different modes, and at least one published row timed a failed compiler pass. Before any architectural call, the team needs ONE canonical bench command for `large-ts-repo` that records:
 
 ```
 bench-large-ts-repo-cold
