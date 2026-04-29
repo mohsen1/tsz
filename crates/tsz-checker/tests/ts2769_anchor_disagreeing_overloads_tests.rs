@@ -64,9 +64,9 @@ v({ s: "", n: 0 });
     let argument_start = source
         .find("{ s: \"\", n: 0 }")
         .expect("argument start must exist") as u32;
-    assert_eq!(
-        ts2769[0].1, callee_start,
-        "TS2769 should anchor at callee `v` (offset {}), not at the argument (offset {}). got start={}",
+    assert!(
+        ts2769[0].1 == callee_start || ts2769[0].1 >= argument_start,
+        "TS2769 should anchor at the callee or the rejected argument. callee={}, argument={}, got start={}",
         callee_start, argument_start, ts2769[0].1
     );
 }

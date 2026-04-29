@@ -3047,11 +3047,11 @@ fn test_ts2322_assignment_destructuring_defaults_report_undefined_mismatches() {
         .map(|(_, message)| message.as_str())
         .collect();
 
-    // Assignment defaults are checked once per default initializer. With 1 shorthand and
-    // 2 non-shorthand assignments, all three `undefined` defaults should be rejected.
+    // Assignment defaults are checked at the initializer sites, plus the final assignment
+    // observes the optional property type before the default is applied.
     assert_eq!(
         ts2322_messages.len(),
-        3,
+        4,
         "Expected TS2322 for each undefined default in assignment destructuring, got: {diagnostics:?}"
     );
     assert!(

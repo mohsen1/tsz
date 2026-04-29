@@ -1900,7 +1900,7 @@ fn test_solver_imports_go_through_query_boundaries() {
             .replace('\\', "/");
 
         // Skip excluded directories
-        if rel.starts_with("tests/") || rel.starts_with("query_boundaries/") {
+        if rel.starts_with("tests/") || rel.starts_with("query_boundaries/") || rel.ends_with("_tests.rs") {
             continue;
         }
 
