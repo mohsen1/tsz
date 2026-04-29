@@ -1659,6 +1659,102 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
+        // Check @param and @return/@returns type references for missing required type arguments
+        // (TS2314) when noImplicitAny is enabled. This covers bare generic lib types like
+        // `Array` and `Promise` that resolve to `X<any>` under normal rules but require a
+        // type argument when strict/noImplicitAny is active. Only lib-provided types are
+        // checked here; user-defined generic types in file_locals are already handled by
+        // resolve_jsdoc_param_type_with_pos during function type construction.
+        if self.ctx.no_implicit_any() {
+            for comment in &comments {
+                if !is_jsdoc_comment(comment, &source_text) {
+                    continue;
+                }
+                let end = (comment.end as usize).min(source_text.len());
+                let comment_text = &source_text[comment.pos as usize..end];
+                let type_spans = Self::jsdoc_bare_param_return_type_spans(comment_text);
+                for (type_expr, offset_in_comment) in type_spans {
+                    // Only check lib builtin types that are skipped by the @param path.
+                    // resolve_jsdoc_implicit_any_builtin_type returns Some for types like
+                    // Array and Promise, causing required_generic_count_for_jsdoc_type_name
+                    // to early-return None (no TS2314 from the params path). This pass fills
+                    // that gap when noImplicitAny is enabled.
+                    // User-defined generic types are handled by required_generic_count_for_jsdoc_type_name
+                    // directly (they get None from resolve_jsdoc_implicit_any_builtin_type,
+                    // so the params path does check them).
+                    if self
+                        .resolve_jsdoc_implicit_any_builtin_type(type_expr.as_str())
+                        .is_none()
+                    {
+                        continue;
+                    }
+                    // Look up the type in global lib/ambient symbols.
+                    let sym_id = {
+                        use tsz_binder::symbol_flags;
+                        self.ctx
+                            .binder
+                            .get_symbols()
+                            .find_all_by_name(type_expr.as_str())
+                            .iter()
+                            .copied()
+                            .find(|&s| {
+                                self.ctx.binder.get_symbol(s).is_some_and(|sym| {
+                                    (sym.flags
+                                        & (symbol_flags::TYPE_ALIAS
+                                            | symbol_flags::CLASS
+                                            | symbol_flags::INTERFACE
+                                            | symbol_flags::ENUM))
+                                        != 0
+                                })
+                            })
+                    };
+                    let Some(sym_id) = sym_id else {
+                        continue;
+                    };
+                    let type_params = self.type_reference_symbol_type_with_params(sym_id).1;
+                    if type_params.is_empty() {
+                        continue;
+                    }
+                    let min_required = type_params.iter().filter(|p| p.default.is_none()).count();
+                    if min_required == 0 {
+                        continue;
+                    }
+                    let max_expected = type_params.len();
+                    let display_name = Self::format_generic_display_name_with_interner(
+                        type_expr.as_str(),
+                        &type_params,
+                        self.ctx.types,
+                    );
+                    let abs_pos = comment.pos + offset_in_comment as u32;
+                    use crate::diagnostics::{
+                        diagnostic_codes as dc, diagnostic_messages as dm, format_message,
+                    };
+                    let (message, code) = if min_required < max_expected {
+                        (
+                            format_message(
+                                dm::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                                &[
+                                    &display_name,
+                                    &min_required.to_string(),
+                                    &max_expected.to_string(),
+                                ],
+                            ),
+                            dc::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                        )
+                    } else {
+                        (
+                            format_message(
+                                dm::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                                &[&display_name, &max_expected.to_string()],
+                            ),
+                            dc::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+                        )
+                    };
+                    self.error_at_position(abs_pos, type_expr.len() as u32, &message, code);
+                }
+            }
+        }
     }
 
     /// Emit TS2304 "Cannot find name 'X'" or TS2552 "Did you mean 'Y'?" for an
@@ -1932,6 +2028,53 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TAG_ALREADY_SPECIFIED,
             );
         }
+    }
+
+    /// Extract `@param {BareType}` and `@return {BareType}` / `@returns {BareType}` type
+    /// expressions from a raw JSDoc comment block (the full `/**...*/` text slice).
+    ///
+    /// Returns `(type_expr_str, byte_offset_from_comment_start)` for each match where
+    /// the type expression is a simple identifier (no `<`, `|`, `&`, `[`, `(`, `.`, spaces).
+    /// Only bare names are returned; already-parameterized types like `Array<T>` are excluded.
+    fn jsdoc_bare_param_return_type_spans(comment_text: &str) -> Vec<(String, usize)> {
+        let mut results = Vec::new();
+        let mut line_offset = 0usize;
+        for raw_line in comment_text.split_inclusive('\n') {
+            let line = raw_line.trim_end_matches('\n').trim_end_matches('\r');
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let is_param_or_return = trimmed.starts_with("@param ")
+                || trimmed.starts_with("@param\t")
+                || trimmed.starts_with("@param{")
+                || trimmed.starts_with("@returns ")
+                || trimmed.starts_with("@returns\t")
+                || trimmed.starts_with("@returns{")
+                || trimmed.starts_with("@return ")
+                || trimmed.starts_with("@return\t")
+                || trimmed.starts_with("@return{");
+            if is_param_or_return && let Some(open_pos_in_line) = line.find('{') {
+                let after_open = &line[open_pos_in_line + 1..];
+                if let Some(close_rel) = after_open.find('}') {
+                    let raw_type = &after_open[..close_rel];
+                    let type_expr = raw_type.trim();
+                    if !type_expr.is_empty()
+                        && !type_expr.contains('<')
+                        && !type_expr.contains('|')
+                        && !type_expr.contains('&')
+                        && !type_expr.contains('[')
+                        && !type_expr.contains('(')
+                        && !type_expr.contains('.')
+                        && !type_expr.contains(' ')
+                        && !type_expr.contains('\t')
+                    {
+                        let ws_before = raw_type.len().saturating_sub(raw_type.trim_start().len());
+                        let type_expr_offset = line_offset + open_pos_in_line + 1 + ws_before;
+                        results.push((type_expr.to_string(), type_expr_offset));
+                    }
+                }
+            }
+            line_offset += raw_line.len();
+        }
+        results
     }
 
     fn malformed_jsdoc_satisfies_positions(
