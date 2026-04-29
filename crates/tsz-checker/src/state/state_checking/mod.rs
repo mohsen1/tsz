@@ -5,6 +5,7 @@ mod core;
 pub(crate) mod directive;
 mod dts_rules;
 pub(crate) mod heritage;
+mod heritage_class_recovery;
 mod isolated_declarations;
 mod js_grammar;
 mod module_none;
