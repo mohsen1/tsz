@@ -939,6 +939,54 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
         .unwrap_or_else(|| resolved.clone())
 }
 
+/// Normalize the path inside a "File 'X' not found." message to be machine-independent.
+///
+/// Handles:
+/// 1. Windows-style backslashes → forward slashes
+/// 2. macOS temp-dir prefix `/var/folders/XX/YY/` or `/private/var/folders/XX/YY/`
+/// 3. Any other leading absolute `/` prefix
+/// 4. Leading `../` components that escape the project root
+///
+/// This ensures that `/// <reference path="..\..\..\src\harness\external\mocha.d.ts" />`
+/// produces the same normalized message on both Linux and macOS regardless of how
+/// deep the temp directory is relative to the reference path's `..` escapes.
+pub(crate) fn normalize_file_not_found_message_key(message: &str) -> String {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static FILE_NOT_FOUND_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"File '([^']*)' not found\.").expect("valid regex"));
+    // Matches /var/folders/XX/ or /private/var/folders/XX/ (macOS temp dir prefix).
+    // On macOS, temp dirs live under /var/folders/XX/YYYY/T/. When a reference path
+    // escapes 3 levels up from there it lands at /var/folders/XX/ (only ONE hash
+    // component above the stable path). Strip exactly that one component.
+    static VAR_FOLDERS_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^(?:/private)?/var/folders/[^/]+/").expect("valid regex"));
+
+    FILE_NOT_FOUND_RE
+        .replace_all(message, |caps: &regex::Captures| {
+            let raw = &caps[1];
+
+            // Step 1: normalize backslashes
+            let path = raw.replace('\\', "/");
+
+            // Step 2: strip macOS-specific /var/folders/XX/YY/ prefix
+            let path = VAR_FOLDERS_RE.replace(&path, "").into_owned();
+
+            // Step 3: strip any remaining leading `/`
+            let path = path.trim_start_matches('/').to_string();
+
+            // Step 4: strip leading `../` components
+            let mut p = path.as_str();
+            while let Some(rest) = p.strip_prefix("../") {
+                p = rest;
+            }
+
+            format!("File '{p}' not found.")
+        })
+        .into_owned()
+}
+
 /// Strip temp directory paths embedded in diagnostic messages.
 ///
 /// tsz resolves `/// <reference path="lib.ts" />` to an absolute path like
@@ -1008,6 +1056,12 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
             format!("'rootDir' '/{}'", &caps[1])
         })
         .into_owned();
+
+    // Normalize machine-specific absolute paths inside "File 'X' not found." messages.
+    // When a `/// <reference path>` escapes the temp dir (e.g., `../../../src/harness/...`),
+    // the resolved path is machine-specific (/src/... on Linux, /var/folders/.../src/... on macOS).
+    // Strip those prefixes so the fingerprint matches the cached tsc value.
+    result = normalize_file_not_found_message_key(&result);
 
     result
 }

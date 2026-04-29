@@ -129,10 +129,13 @@ impl<'a> CheckerState<'a> {
 
                 // Resolve the reference path relative to the source file's directory,
                 // matching tsc behavior which reports absolute/resolved paths.
+                // tsc normalizes Windows-style backslashes before resolution, so
+                // `../../../foo` from `..\..\..\foo` resolves correctly on Unix.
+                let forward_slash_path = reference_path.replace('\\', "/");
                 let resolved = source_path
                     .parent()
                     .unwrap_or_else(|| Path::new(""))
-                    .join(&reference_path);
+                    .join(&forward_slash_path);
 
                 // Normalize the path to resolve . and .. components.
                 // tsc reports normalized paths like "/tmp/file.ts" not "/tmp/dir/../file.ts".

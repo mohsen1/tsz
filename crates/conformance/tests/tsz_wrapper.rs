@@ -1231,3 +1231,105 @@ fn test_atypes_package_in_handles_subdir_paths() {
         Some("node".to_string())
     );
 }
+
+// ── normalize_file_not_found_message_key ──────────────────────────────────────
+
+#[test]
+fn test_normalize_file_not_found_message_key_handles_windows_backslashes() {
+    // Triple-slash reference with Windows-style backslashes should normalize
+    // to a forward-slash relative path.
+    let msg = r"File '..\..\..\src\harness\external\mocha.d.ts' not found.";
+    assert_eq!(
+        normalize_file_not_found_message_key(msg),
+        "File 'src/harness/external/mocha.d.ts' not found."
+    );
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_strips_macos_var_folders() {
+    // Paths stored in the tsc cache on macOS include machine-specific
+    // /var/folders/XX/ prefixes that should be stripped.
+    // macOS CI temp dirs sit at /var/folders/XX/YYYY/T/test-ZZZ/. A reference
+    // path with 3x ../ lands at /var/folders/XX/ (one hash component above the
+    // meaningful path). The cache stores the resolved path with that one prefix.
+    let msg = "File '/var/folders/6z/src/harness/external/mocha.d.ts' not found.";
+    assert_eq!(
+        normalize_file_not_found_message_key(msg),
+        "File 'src/harness/external/mocha.d.ts' not found."
+    );
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_strips_private_var_folders() {
+    // macOS resolves /var/... to /private/var/... via symlink.
+    let msg = "File '/private/var/folders/6z/src/harness/external/mocha.d.ts' not found.";
+    assert_eq!(
+        normalize_file_not_found_message_key(msg),
+        "File 'src/harness/external/mocha.d.ts' not found."
+    );
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_strips_leading_slash_on_linux() {
+    // On Linux, an escaped temp path produces an absolute path at the filesystem
+    // root like /src/harness/... (when temp dir is only 1-2 levels deep).
+    let msg = "File '/src/harness/external/mocha.d.ts' not found.";
+    assert_eq!(
+        normalize_file_not_found_message_key(msg),
+        "File 'src/harness/external/mocha.d.ts' not found."
+    );
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_strips_leading_dotdot() {
+    // Relative paths with leading ../ should have those stripped.
+    let msg = "File '../../../src/harness/external/mocha.d.ts' not found.";
+    assert_eq!(
+        normalize_file_not_found_message_key(msg),
+        "File 'src/harness/external/mocha.d.ts' not found."
+    );
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_preserves_simple_relative_path() {
+    // A simple relative path (no escaping) should be left unchanged.
+    let msg = "File 'lib.d.ts' not found.";
+    assert_eq!(normalize_file_not_found_message_key(msg), msg);
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_preserves_project_relative_path() {
+    // A relative path within the project should be left unchanged.
+    let msg = "File 'src/utils.ts' not found.";
+    assert_eq!(normalize_file_not_found_message_key(msg), msg);
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_does_not_alter_non_file_not_found_messages() {
+    // Only "File 'X' not found." patterns should be normalized; other messages untouched.
+    let msg = "Cannot find name 'foo'.";
+    assert_eq!(normalize_file_not_found_message_key(msg), msg);
+}
+
+#[test]
+fn test_normalize_file_not_found_message_key_both_sides_converge() {
+    // The Linux actual output and macOS-cache expected output should normalize
+    // to the same canonical form, making fingerprint comparison succeed.
+    // linux_actual: resolved from /tmp/xxx/ going 3 levels up → /src/harness/...
+    // macos_cache:  as stored in the tsc CI cache (one hash component after /var/folders/)
+    // backslash_actual: tsz output before the directive.rs backslash-normalization fix
+    let linux_actual = "File '/src/harness/external/mocha.d.ts' not found.";
+    let macos_cache = "File '/var/folders/6z/src/harness/external/mocha.d.ts' not found.";
+    let backslash_actual = r"File '..\..\..\src\harness\external\mocha.d.ts' not found.";
+
+    let canonical = "File 'src/harness/external/mocha.d.ts' not found.";
+    assert_eq!(
+        normalize_file_not_found_message_key(linux_actual),
+        canonical
+    );
+    assert_eq!(normalize_file_not_found_message_key(macos_cache), canonical);
+    assert_eq!(
+        normalize_file_not_found_message_key(backslash_actual),
+        canonical
+    );
+}
