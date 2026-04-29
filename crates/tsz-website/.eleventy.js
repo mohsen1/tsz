@@ -3,6 +3,7 @@ import fs from "node:fs";
 export default function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy({ static: "." });
   eleventyConfig.addPassthroughCopy({ "src/lib": "lib" });
+  eleventyConfig.addWatchTarget("../../artifacts");
 
   eleventyConfig.setServerOptions({
     watch: ["static/playground-app.js", "static/playground-app.js.map"],

@@ -13,15 +13,18 @@ function readJsonIfExists(p) {
 
 function loadBenchmarks() {
   const artifactsDir = path.join(ROOT, "artifacts");
+  const ciLatest = path.join(artifactsDir, "bench-vs-tsgo-gcs-latest.json");
   const artifactFiles = (() => {
     try {
-      return fs.readdirSync(artifactsDir)
+      const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
+        .filter((file) => file !== "bench-vs-tsgo-gcs-latest.json")
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
+      return [ciLatest, ...localArtifacts];
     } catch {
-      return [];
+      return [ciLatest];
     }
   })();
 
@@ -44,9 +47,13 @@ function formatDurationMs(value) {
   const ms = Number(value);
   if (!Number.isFinite(ms)) return "";
   if (ms > 1000) {
-    return `${(ms / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}s`;
+    return `${Math.round(ms / 1000).toLocaleString("en-US")}s`;
   }
-  return `${ms.toFixed(1)}ms`;
+  return `${Math.round(ms).toLocaleString("en-US")}ms`;
+}
+
+function formatDurationPrecision(value) {
+  return 0;
 }
 
 function formatRatio(value) {
@@ -78,9 +85,8 @@ function renderMeanChart(results) {
   const tszMean = valid.reduce((sum, r) => sum + r.tsz_ms, 0) / valid.length;
   const tsgoMean = valid.reduce((sum, r) => sum + r.tsgo_ms, 0) / valid.length;
   const maxMs = Math.max(tszMean, tsgoMean);
-  const widthMax = 420;
-  const tszWidth = Math.max(2, (tszMean / maxMs) * widthMax);
-  const tsgoWidth = Math.max(2, (tsgoMean / maxMs) * widthMax);
+  const tszWidth = Math.max(0.5, (tszMean / maxMs) * 100);
+  const tsgoWidth = Math.max(0.5, (tsgoMean / maxMs) * 100);
   const speedupLabel = formatSpeedupLabel(tszMean, tsgoMean);
 
   return `<section class="benchmark-mean-card">
@@ -88,15 +94,17 @@ function renderMeanChart(results) {
   <div class="bench-bars">
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsz</span>
-      <div class="bench-bar tsz" style="width: ${tszWidth}px"></div>
-      <span class="bench-bar-time">${formatDurationMs(tszMean)}</span>
+      <div class="bench-bar tsz" style="--bench-bar-width: ${tszWidth}%" data-target-width="${tszWidth}" data-target-ms="${tszMean}" data-duration-precision="${formatDurationPrecision(tszMean)}">
+        <span class="bench-bar-value">${formatDurationMs(tszMean)}</span>
+      </div>
     </div>
     <div class="bench-bar-row">
       <span class="bench-bar-label">tsgo</span>
-      <div class="bench-bar tsgo" style="width: ${tsgoWidth}px"></div>
-      <span class="bench-bar-time">${formatDurationMs(tsgoMean)}</span>
-      ${speedupLabel ? `<span class="bench-winner">${speedupLabel}</span>` : ""}
+      <div class="bench-bar tsgo" style="--bench-bar-width: ${tsgoWidth}%" data-target-width="${tsgoWidth}" data-target-ms="${tsgoMean}" data-duration-precision="${formatDurationPrecision(tsgoMean)}">
+        <span class="bench-bar-value">${formatDurationMs(tsgoMean)}</span>
+      </div>
     </div>
+    ${speedupLabel ? `<div class="bench-winner">${speedupLabel}</div>` : ""}
   </div>
 </section>`;
 }
