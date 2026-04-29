@@ -141,6 +141,16 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 }
 
 impl<'a> CheckerState<'a> {
+    #[inline]
+    fn record_root_checker_construction() {
+        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Count every
+        // standalone/per-file checker constructor. Child checkers created via
+        // `with_parent_cache` are counted separately with call-site attribution.
+        tsz_common::perf_counters::inc(
+            &tsz_common::perf_counters::counters().checker_state_constructed,
+        );
+    }
+
     /// Create a new `CheckerState`.
     ///
     /// # Arguments
@@ -156,12 +166,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
     ) -> Self {
-        // PERF: see `docs/plan/PERF_ARCHITECTURAL_PLAN.md`. Each per-file
-        // and each cross-arena delegation creates a fresh CheckerState; the
-        // count is one of the headline numbers we need to watch.
-        tsz_common::perf_counters::inc(
-            &tsz_common::perf_counters::counters().checker_state_constructed,
-        );
+        Self::record_root_checker_construction();
         CheckerState {
             ctx: CheckerContext::new(arena, binder, types, file_name, compiler_options),
         }
@@ -184,6 +189,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
+        Self::record_root_checker_construction();
         CheckerState {
             ctx: CheckerContext::new_with_shared_def_store(
                 arena,
@@ -214,6 +220,7 @@ impl<'a> CheckerState<'a> {
         cache: crate::TypeCache,
         compiler_options: CheckerOptions,
     ) -> Self {
+        Self::record_root_checker_construction();
         CheckerState {
             ctx: CheckerContext::with_cache(
                 arena,
@@ -624,6 +631,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
+        Self::record_root_checker_construction();
         CheckerState {
             ctx: CheckerContext::with_options(arena, binder, types, file_name, compiler_options),
         }
@@ -639,6 +647,7 @@ impl<'a> CheckerState<'a> {
         file_name: String,
         compiler_options: &CheckerOptions,
     ) -> Self {
+        Self::record_root_checker_construction();
         CheckerState {
             ctx: CheckerContext::with_options_deferred_def_store(
                 arena,
@@ -661,6 +670,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: &CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
+        Self::record_root_checker_construction();
         let compiler_options = compiler_options.clone().apply_strict_defaults();
         CheckerState {
             ctx: CheckerContext::new_with_shared_def_store(
@@ -683,6 +693,7 @@ impl<'a> CheckerState<'a> {
         cache: crate::TypeCache,
         compiler_options: &CheckerOptions,
     ) -> Self {
+        Self::record_root_checker_construction();
         CheckerState {
             ctx: CheckerContext::with_cache_and_options(
                 arena,
@@ -709,6 +720,7 @@ impl<'a> CheckerState<'a> {
         compiler_options: CheckerOptions,
         definition_store: std::sync::Arc<tsz_solver::def::DefinitionStore>,
     ) -> Self {
+        Self::record_root_checker_construction();
         CheckerState {
             ctx: CheckerContext::with_cache_and_shared_def_store(
                 arena,
