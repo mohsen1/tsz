@@ -154,6 +154,39 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                     return SubtypeResult::True;
                 }
 
+                // Nested string mapping: Mapping_outer<Mapping_inner<X>>.
+                // Per tsc, `s extends Mapping_outer<T>` iff `outer(s) == s` (fixed
+                // point — already checked) AND `inverse(outer)(s) ∈ T`. For nested
+                // StringIntrinsic targets, recurse: inverse-map the source and
+                // check it against the inner type. Example:
+                //   `"A" extends Uppercase<Lowercase<string>>` →
+                //     Uppercase("A") = "A" ✓, then `Lowercase("A") = "a"` extends
+                //     `Lowercase<string>` → fixed-point + `Uppercase("a") = "A"`
+                //     extends `string` ✓.
+                if let Some(TypeData::StringIntrinsic { .. }) =
+                    self.checker.interner.lookup(type_arg)
+                {
+                    let inverse_kind = match kind {
+                        StringIntrinsicKind::Uppercase => StringIntrinsicKind::Lowercase,
+                        StringIntrinsicKind::Lowercase => StringIntrinsicKind::Uppercase,
+                        StringIntrinsicKind::Capitalize => StringIntrinsicKind::Uncapitalize,
+                        StringIntrinsicKind::Uncapitalize => StringIntrinsicKind::Capitalize,
+                    };
+                    let inverted_source = self.checker.evaluate_type(
+                        self.checker
+                            .interner
+                            .string_intrinsic(inverse_kind, self.source),
+                    );
+                    if inverted_source != self.source
+                        && self
+                            .checker
+                            .check_subtype(inverted_source, type_arg)
+                            .is_true()
+                    {
+                        return SubtypeResult::True;
+                    }
+                }
+
                 // Construct the underlying pattern target. For non-string primitive
                 // type args, wrap as `\`${type_arg}\`` so the standard template-literal
                 // pattern matcher decides set membership.
