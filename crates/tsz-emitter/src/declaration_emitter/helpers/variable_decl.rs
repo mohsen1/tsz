@@ -340,10 +340,12 @@ impl<'a> DeclarationEmitter<'a> {
 
                 if let Some(type_text) = emitted_type_text.as_deref() {
                     self.write(": ");
-                    self.write(type_text);
+                    self.write(&Self::strip_synthetic_anonymous_object_members(type_text));
                 } else {
                     self.write(": ");
-                    self.write(&printed_type_text);
+                    self.write(&Self::strip_synthetic_anonymous_object_members(
+                        &printed_type_text,
+                    ));
                 }
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)
@@ -363,7 +365,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.data_view_new_expression_type_text(initializer))
             {
                 self.write(": ");
-                self.write(&type_text);
+                self.write(&Self::strip_synthetic_anonymous_object_members(&type_text));
             } else if has_initializer || keyword != "const" {
                 // tsc always emits a type annotation in .d.ts output.
                 // For var/let without type info, and for const with an

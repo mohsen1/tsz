@@ -231,9 +231,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.value_reference_symbol_type_text(expr_idx))
                     .or_else(|| self.undefined_identifier_type_text(expr_idx))
             }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                self.call_expression_declared_return_type_text(expr_idx)
-            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .call_expression_source_return_type_text(expr_idx)
+                .or_else(|| self.call_expression_declared_return_type_text(expr_idx)),
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
                 self.tagged_template_declared_return_type_text(expr_idx)
             }
@@ -282,6 +282,17 @@ impl<'a> DeclarationEmitter<'a> {
             return typeof_text;
         }
 
+        if (type_id == tsz_solver::types::TypeId::ANY
+            || type_id == tsz_solver::types::TypeId::ERROR)
+            && self
+                .arena
+                .get(initializer)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+            && let Some(type_text) = self.preferred_expression_type_text(initializer)
+        {
+            return type_text;
+        }
+
         if type_id != tsz_solver::types::TypeId::ANY
             && type_id != tsz_solver::types::TypeId::ERROR
             && self
@@ -289,17 +300,37 @@ impl<'a> DeclarationEmitter<'a> {
                 .get(initializer)
                 .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
         {
-            return printed_type_text.to_string();
+            return Self::strip_synthetic_anonymous_object_members(printed_type_text);
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY
             || !self.initializer_is_new_expression(initializer))
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
-            return type_text;
+            return Self::strip_synthetic_anonymous_object_members(&type_text);
         }
 
-        printed_type_text.to_string()
+        Self::strip_synthetic_anonymous_object_members(printed_type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn strip_synthetic_anonymous_object_members(
+        type_text: &str,
+    ) -> String {
+        if !type_text.contains(": {") {
+            return type_text.to_string();
+        }
+        let stripped = type_text
+            .replace("\n    : {\n", "\n")
+            .replace("{\n    : {\n", "{\n")
+            .lines()
+            .filter(|line| line.trim() != ": {")
+            .collect::<Vec<_>>()
+            .join("\n");
+        if type_text.ends_with('\n') && !stripped.ends_with('\n') {
+            format!("{stripped}\n")
+        } else {
+            stripped
+        }
     }
 
     pub(in crate::declaration_emitter) fn explicit_asserted_type_text(
@@ -982,6 +1013,106 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn call_expression_source_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(expr_node)?;
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let source_arena = binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(|arena| arena.as_ref())
+            .unwrap_or(self.arena);
+
+        let mut function_decl_count = 0usize;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = source_arena.get_function(decl_node) else {
+                continue;
+            };
+            if func
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| !params.nodes.is_empty())
+            {
+                continue;
+            }
+            function_decl_count += 1;
+            if function_decl_count > 1 {
+                return None;
+            }
+        }
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = source_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = source_arena.get_function(decl_node) else {
+                continue;
+            };
+            if func
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| !params.nodes.is_empty())
+            {
+                continue;
+            }
+            if func.type_annotation.is_some() {
+                if let Some(type_text) =
+                    self.source_slice_from_arena(source_arena, func.type_annotation)
+                {
+                    return Some(
+                        type_text
+                            .trim_end()
+                            .trim_end_matches(';')
+                            .trim_end()
+                            .to_string(),
+                    );
+                }
+            } else if func.body.is_some()
+                && let Some(type_text) = {
+                    let mut scratch = if std::ptr::eq(source_arena, self.arena)
+                        && let (Some(type_cache), Some(type_interner), Some(binder)) =
+                            (&self.type_cache, self.type_interner, self.binder)
+                    {
+                        DeclarationEmitter::with_type_info(
+                            source_arena,
+                            type_cache.clone(),
+                            type_interner,
+                            binder,
+                        )
+                    } else {
+                        DeclarationEmitter::new(source_arena)
+                    };
+                    let source_file = self.arena_source_file(source_arena)?;
+                    scratch.source_is_declaration_file = source_file.is_declaration_file;
+                    scratch.source_is_js_file = scratch.source_file_is_js(source_file);
+                    scratch.current_source_file_idx = self.current_source_file_idx;
+                    scratch.source_file_text = Some(source_file.text.clone());
+                    scratch.current_file_path = self.current_file_path.clone();
+                    scratch.current_arena = self.current_arena.clone();
+                    scratch.arena_to_path = self.arena_to_path.clone();
+                    scratch.indent_level = self.indent_level;
+                    scratch.function_body_preferred_return_type_text(func.body)
+                }
+            {
+                return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
+            }
+        }
+
+        None
+    }
+
     pub(in crate::declaration_emitter) fn tagged_template_declared_return_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -1620,6 +1751,9 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(name) = self.object_literal_member_name_text(name_idx) else {
                 continue;
             };
+            if name.is_empty() || name == ":" {
+                continue;
+            }
 
             if let Some(member_text) = self.infer_object_member_type_text_named_at(
                 member_idx,
@@ -1628,6 +1762,9 @@ impl<'a> DeclarationEmitter<'a> {
                 getter_names.contains(&name),
                 setter_names.contains(&name),
             ) {
+                if member_text.trim_start().starts_with(':') {
+                    continue;
+                }
                 members.push(member_text);
             }
         }
