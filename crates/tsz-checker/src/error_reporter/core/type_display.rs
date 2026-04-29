@@ -1967,14 +1967,12 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::RETURN_STATEMENT {
                 return true;
             }
-
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 break;
             };
             if ext.parent.is_none() {
                 break;
             }
-
             if let Some(parent_node) = self.ctx.arena.get(ext.parent)
                 && parent_node.kind == syntax_kind_ext::ARROW_FUNCTION
                 && let Some(func) = self.ctx.arena.get_function(parent_node)
