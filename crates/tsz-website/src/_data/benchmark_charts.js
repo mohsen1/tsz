@@ -82,6 +82,10 @@ function loadBenchmarks() {
     const data = readJsonIfExists(location);
     if (data?.results) return data;
   }
+
+  const snapshot = readJsonIfExists(path.join(ROOT, "crates/tsz-website/bench-snapshot.json"));
+  if (snapshot?.results) return snapshot;
+
   return null;
 }
 

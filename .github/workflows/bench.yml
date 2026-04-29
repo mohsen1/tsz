@@ -51,6 +51,31 @@ jobs:
           _TSZ_CI_SUITE: bench
         run: scripts/ci/gcp-cache.sh restore
 
+      - name: Download dist-fast binaries from CI
+        id: dist-fast-ci-download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CI_RUN=$(gh api \
+            "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?status=success&branch=main&per_page=10" \
+            --jq "[.workflow_runs[] | select(.head_sha == \"${{ github.sha }}\")][0].id" 2>/dev/null || echo "")
+          if [[ -n "$CI_RUN" && "$CI_RUN" != "null" ]]; then
+            echo "Found CI run $CI_RUN for this SHA, downloading dist-fast-binaries artifact..."
+            gh run download "$CI_RUN" -n dist-fast-binaries -D . 2>/dev/null \
+              && echo "downloaded=true" >> "$GITHUB_OUTPUT" \
+              || echo "Artifact download failed, will use cache/build fallback."
+          else
+            echo "No matching successful CI run found for ${{ github.sha }}, will use cache/build fallback."
+          fi
+        continue-on-error: true
+
+      - name: Unpack dist-fast binaries
+        if: steps.dist-fast-ci-download.outputs.downloaded == 'true'
+        run: |
+          mkdir -p .target/dist-fast
+          tar -C .target/dist-fast -xf dist-fast-binaries.tar
+          ls -lh .target/dist-fast/tsz
+
       - name: Restore bench npm/tool cache
         uses: actions/cache@v4
         with:
@@ -73,7 +98,12 @@ jobs:
 
       - name: Prepare benchmark binary and tools
         shell: bash
-        run: ./scripts/bench/bench-vs-tsgo.sh --prepare-only
+        run: |
+          if [[ -x "$GITHUB_WORKSPACE/.target/dist-fast/tsz" ]]; then
+            export TSZ="$GITHUB_WORKSPACE/.target/dist-fast/tsz"
+            echo "Using precompiled TSZ binary for benchmark prep: $TSZ"
+          fi
+          ./scripts/bench/bench-vs-tsgo.sh --prepare-only
 
       - name: Save GCS caches
         env:
@@ -81,7 +111,7 @@ jobs:
         run: scripts/ci/gcp-cache.sh save
 
       - name: Pack benchmark prep artifact
-        run: tar -cf bench-prep.tar .target-bench/dist .target-bench/tools
+        run: tar -cf bench-prep.tar .target-bench/tools .target/dist-fast
 
       - name: Upload benchmark prep artifact
         uses: actions/upload-artifact@v4
@@ -169,6 +199,10 @@ jobs:
           _monitor_pid=$!
           trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
 
+          if [[ -x "$GITHUB_WORKSPACE/.target/dist-fast/tsz" ]]; then
+            export TSZ="$GITHUB_WORKSPACE/.target/dist-fast/tsz"
+            echo "Using precompiled TSZ binary: $TSZ"
+          fi
           ./scripts/bench/bench-vs-tsgo.sh \
             --filter '${{ matrix.filter }}' \
             --json \

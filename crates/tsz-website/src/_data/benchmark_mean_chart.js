@@ -30,6 +30,9 @@ function loadBenchmarks() {
     if (data?.results?.length) return data.results;
   }
 
+  const snapshot = readJsonIfExists(path.join(ROOT, "crates/tsz-website/bench-snapshot.json"));
+  if (snapshot?.results?.length) return snapshot.results;
+
   return [];
 }
 

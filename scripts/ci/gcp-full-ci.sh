@@ -201,6 +201,20 @@ num_or_zero() {
   fi
 }
 
+publish_latest_metric() {
+  local suite="$1"
+  local file="$2"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  if [[ -z "$bucket" || ! -f "$file" ]]; then
+    return 0
+  fi
+  if command -v gsutil >/dev/null 2>&1; then
+    gsutil -q cp "$file" "${bucket%/}/metrics/latest/${suite}.json" \
+      && echo "Published latest ${suite} metrics" \
+      || echo "warning: failed to publish latest ${suite} metrics (non-fatal)" >&2
+  fi
+}
+
 suite_needs_group() {
   local suite="$1" group="$2"
   case "$suite" in
@@ -939,6 +953,17 @@ run_conformance_aggregate() {
     _show_conformance_regressions "$tmp_dir" "$prefix" "$baseline"
     return 1
   fi
+  local pass_rate
+  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "conformance" \
+    --arg pass_rate "$pass_rate" \
+    --argjson passed "$total_passed" \
+    --argjson total "$total_tests" \
+    --argjson shards "$shard_count" \
+    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    > "$METRICS_DIR/conformance.json"
+  publish_latest_metric conformance "$METRICS_DIR/conformance.json"
   echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
 }
 
@@ -1284,6 +1309,17 @@ run_fourslash_aggregate() {
       return 1
     fi
   fi
+  local pass_rate
+  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "fourslash" \
+    --arg pass_rate "$pass_rate" \
+    --argjson passed "$total_passed" \
+    --argjson total "$total_tests" \
+    --argjson shards "$shard_count" \
+    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    > "$METRICS_DIR/fourslash.json"
+  publish_latest_metric fourslash "$METRICS_DIR/fourslash.json"
   echo "Fourslash OK: ${total_passed}/${total_tests}"
 }
 
@@ -1382,6 +1418,7 @@ aggregate_emit() {
     show_log_tails "$LOG_DIR/emit"
     return 1
   fi
+  publish_latest_metric emit "$METRICS_DIR/emit.json"
 }
 
 run_fourslash_shards() {
@@ -1447,6 +1484,17 @@ aggregate_fourslash() {
       return 1
     fi
   fi
+  local pass_rate
+  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  jq -n \
+    --arg suite "fourslash" \
+    --arg pass_rate "$pass_rate" \
+    --argjson passed "$total_passed" \
+    --argjson total "$total_tests" \
+    --argjson shards "$shard_count" \
+    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    > "$METRICS_DIR/fourslash.json"
+  publish_latest_metric fourslash "$METRICS_DIR/fourslash.json"
 }
 
 run_dist_binaries() {
