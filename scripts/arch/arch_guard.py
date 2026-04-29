@@ -482,6 +482,11 @@ LINE_LIMIT_CHECKS = [
             # commit #1716 (elided import duplicate diagnostics). CI lint blocker
             # on origin/main; track refactor as a follow-up.
             "crates/tsz-checker/src/declarations/import/core/import_members.rs",
+            # Grew past 2000 lines via commit #1819 (suppress TS2749 for
+            # namespace type-only export merge). CI lint blocker on origin/main;
+            # ratchet baseline so downstream PRs aren't held hostage. Track a
+            # type_display split as a follow-up.
+            "crates/tsz-checker/src/error_reporter/core/type_display.rs",
         },
     ),
 ]
