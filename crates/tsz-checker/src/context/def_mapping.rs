@@ -905,6 +905,7 @@ impl<'a> CheckerContext<'a> {
         self.create_type_formatter()
             .with_diagnostic_mode()
             .with_strict_null_checks(self.compiler_options.strict_null_checks)
+            .with_exact_optional_property_types(self.compiler_options.exact_optional_property_types)
     }
 
     /// Register a resolved type in the `TypeEnvironment` for both `SymbolRef` and `DefId`.

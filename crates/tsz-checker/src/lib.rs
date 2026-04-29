@@ -225,6 +225,9 @@ mod ts2347_tests;
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]
+#[path = "../tests/ts2375_exact_optional_property_display_tests.rs"]
+mod ts2375_exact_optional_property_display_tests;
+#[cfg(test)]
 #[path = "../tests/ts2385_overload_modifier_tests.rs"]
 mod ts2385_overload_modifier_tests;
 #[cfg(test)]
