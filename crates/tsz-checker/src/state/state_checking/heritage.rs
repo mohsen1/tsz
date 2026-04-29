@@ -212,6 +212,11 @@ impl<'a> CheckerState<'a> {
                         type_idx
                     };
 
+                if is_class_declaration {
+                    self.check_class_heritage_reserved_leftmost_name(expr_idx);
+                    self.check_class_heritage_type_only_namespace_left(expr_idx);
+                }
+
                 // Evaluate the heritage expression to trigger control flow analysis (TS2454)
                 // and compute the actual type of the expression. We only do this for class
                 // `extends` because classes can have expression-based heritage (mixins).

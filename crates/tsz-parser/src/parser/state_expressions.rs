@@ -1103,6 +1103,8 @@ impl ParserState {
                     type_arguments: None,
                 },
             )
+        } else if self.is_strict_mode_future_reserved_word() {
+            self.parse_identifier_name()
         } else {
             self.parse_identifier()
         };
@@ -1199,12 +1201,12 @@ impl ParserState {
                     let saved_token = self.current_token;
                     let saved_state = self.scanner.save_state();
                     self.next_token();
-                    let _next = self.current_token;
+                    let next = self.current_token;
                     self.scanner.restore_state(saved_state);
                     self.current_token = saved_token;
 
                     // If next token could be a type parameter name, consume this as a modifier
-                    if self.is_identifier_or_keyword() || self.is_reserved_word() {
+                    if tsz_scanner::token_is_identifier_or_keyword(next) {
                         let kind = self.token();
                         let pos = self.token_pos();
                         let end = self.token_end();

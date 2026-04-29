@@ -238,6 +238,11 @@ impl<'a> CheckerState<'a> {
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
         self.check_duplicate_type_parameters(&class.type_parameters);
+        self.check_strict_mode_reserved_type_parameter_names(
+            &class.type_parameters,
+            stmt_idx,
+            true,
+        );
         let class_name_str = self
             .ctx
             .arena
@@ -892,6 +897,11 @@ impl<'a> CheckerState<'a> {
         let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
 
         self.check_duplicate_type_parameters(&class.type_parameters);
+        self.check_strict_mode_reserved_type_parameter_names(
+            &class.type_parameters,
+            class_idx,
+            true,
+        );
         let class_name = self.get_class_name_from_decl(class_idx);
         if class.name != NodeIndex::NONE && !class_name.is_empty() {
             self.check_type_parameters_for_missing_names_with_enclosing(

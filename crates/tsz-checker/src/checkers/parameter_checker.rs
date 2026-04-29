@@ -101,7 +101,7 @@ impl<'a> CheckerState<'a> {
         strict_context_node: NodeIndex,
         use_class_strict_message: bool,
     ) {
-        if !self.is_strict_mode_for_node(strict_context_node) {
+        if !use_class_strict_message && !self.is_strict_mode_for_node(strict_context_node) {
             return;
         }
 

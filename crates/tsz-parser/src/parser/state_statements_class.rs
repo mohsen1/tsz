@@ -576,7 +576,12 @@ impl ParserState {
                 },
             )
         } else if self.is_identifier_or_keyword() {
-            if self.is_reserved_word() {
+            if parameter_name_is_reserved_word {
+                // Strict-mode reserved parameter names are grammar-checked later.
+                // Preserve the spelling so checker diagnostics and implicit-any
+                // messages use `static`/`let` instead of an empty recovery name.
+                self.parse_identifier_name()
+            } else if self.is_reserved_word() {
                 let reserved_start = self.token_pos();
                 let reserved_end = self.token_end();
                 self.error_reserved_word_identifier();

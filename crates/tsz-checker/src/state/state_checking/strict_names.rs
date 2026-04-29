@@ -126,7 +126,9 @@ impl<'a> CheckerState<'a> {
                 return;
             }
         }
-        if use_class_message && self.ctx.enclosing_class.is_some() {
+        let in_class_context =
+            self.ctx.enclosing_class.is_some() || self.nearest_enclosing_class(name_idx).is_some();
+        if use_class_message && in_class_context {
             let message = format_message(
                 diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
                 &[escaped_text],

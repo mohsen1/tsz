@@ -187,6 +187,8 @@ impl<'a> CheckerState<'a> {
             .modifiers
             .as_ref()
             .is_some_and(|m| !m.nodes.is_empty());
+        let in_class_context = self.ctx.enclosing_class.is_some()
+            || self.nearest_enclosing_class(param.name).is_some();
 
         if param.dot_dot_dot_token {
             // TS7019/TS7051 for rest parameters: tsc anchors the span at the `...`
@@ -246,6 +248,7 @@ impl<'a> CheckerState<'a> {
             // (which conventionally refer to classes/interfaces).
             // Only when the parameter has NO modifiers (public A is clearly a parameter name).
             if !has_parameter_modifiers
+                && !in_class_context
                 && (Self::is_type_keyword_name(&param_name)
                     || param_name
                         .chars()

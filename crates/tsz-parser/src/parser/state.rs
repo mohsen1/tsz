@@ -1811,6 +1811,24 @@ impl ParserState {
             && self.current_token as u16 <= SyntaxKind::LAST_RESERVED_WORD as u16
     }
 
+    /// ES strict-mode future reserved words that can still be parsed as names
+    /// so the checker can issue context-specific TS1212/TS1213/TS1214 errors.
+    #[inline]
+    pub(crate) const fn is_strict_mode_future_reserved_word(&self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::ImplementsKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::PackageKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::PublicKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::YieldKeyword
+        )
+    }
+
     /// Check if current token is a reserved word that, when encountered at the
     /// start of a statement, begins a construct whose grammar is `kw ( expr )`.
     /// These are the keywords whose cascade (`'(' expected.`, `')' expected.`)
