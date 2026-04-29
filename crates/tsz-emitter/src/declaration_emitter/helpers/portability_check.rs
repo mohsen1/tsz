@@ -806,11 +806,13 @@ impl<'a> DeclarationEmitter<'a> {
                 let matches = if module_specifier.starts_with('.')
                     || module_specifier.starts_with('/')
                 {
-                    Some(self.strip_ts_extensions(
+                    let relative = self.strip_ts_extensions(
                         &self.calculate_relative_path(current_path, module_path),
-                    ))
-                    .as_deref()
-                        == Some(module_specifier)
+                    );
+                    relative == module_specifier
+                        || relative
+                            .strip_suffix("/index")
+                            .is_some_and(|without_index| without_index == module_specifier)
                 } else {
                     self.node_modules_path_matches_import_specifier(module_path, module_specifier)
                 };

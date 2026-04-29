@@ -275,6 +275,7 @@ impl<'a> TypePrinter<'a> {
                 // Don't prepend for source files and blocks
                 if !parent_sym.escaped_name.starts_with('"')
                     && !parent_sym.escaped_name.starts_with("__")
+                    && Self::is_valid_identifier(&parent_sym.escaped_name)
                 {
                     // If the current name is not a valid identifier, use indexed access
                     // notation: (typeof Parent)["member"] instead of Parent.member
@@ -466,7 +467,6 @@ impl<'a> TypePrinter<'a> {
 
         None
     }
-
     pub(crate) fn symbol_is_import_qualifiable(&self, sym_id: SymbolId) -> bool {
         let Some(arena) = self.symbol_arena else {
             return true;

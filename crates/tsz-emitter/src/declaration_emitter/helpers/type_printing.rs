@@ -919,28 +919,36 @@ impl<'a> DeclarationEmitter<'a> {
         binder: &BinderState,
         current_path: &str,
     ) -> Option<String> {
+        let resolve_from_arena = |source_arena: &Arc<NodeArena>| {
+            let arena_addr = Arc::as_ptr(source_arena) as usize;
+            let source_path = self.arena_to_path.get(&arena_addr)?;
+            if self.paths_refer_to_same_source_file(current_path, source_path) {
+                return None;
+            }
+
+            if let Some(package_specifier) =
+                self.package_specifier_for_node_modules_path(current_path, source_path)
+            {
+                return Some(package_specifier);
+            }
+
+            let rel_path = self.calculate_relative_path(current_path, source_path);
+            Some(self.strip_ts_extensions(&rel_path))
+        };
+
         if let Some(ambient_path) = self.check_ambient_module(sym_id, binder) {
             return Some(ambient_path);
         }
 
         if let Some(source_arena) = binder.symbol_arenas.get(&sym_id) {
-            let arena_addr = Arc::as_ptr(source_arena) as usize;
-            if let Some(source_path) = self.arena_to_path.get(&arena_addr) {
-                if self.paths_refer_to_same_source_file(current_path, source_path) {
-                    return None;
-                }
+            if let Some(path) = resolve_from_arena(source_arena) {
+                return Some(path);
+            }
+        }
 
-                // Symbols sourced from node_modules should retain the package
-                // export subpath that tsc would print in declaration emit rather
-                // than the raw source import text or a relative filesystem path.
-                if let Some(package_specifier) =
-                    self.package_specifier_for_node_modules_path(current_path, source_path)
-                {
-                    return Some(package_specifier);
-                }
-
-                let rel_path = self.calculate_relative_path(current_path, source_path);
-                return Some(self.strip_ts_extensions(&rel_path));
+        if let Some(source_arena) = self.global_symbol_arenas.get(&sym_id) {
+            if let Some(path) = resolve_from_arena(source_arena) {
+                return Some(path);
             }
         }
 
