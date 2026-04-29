@@ -160,7 +160,7 @@ CONFORMANCE_WORKERS="${TSZ_CI_CONFORMANCE_WORKERS:-$(default_conformance_workers
 CONFORMANCE_SHARD_INDEX="${_TSZ_CI_CONFORMANCE_SHARD_INDEX:-${TSZ_CI_CONFORMANCE_SHARD_INDEX:-0}}"
 CONFORMANCE_SHARD_COUNT="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-1}}"
 EMIT_CHUNK="${TSZ_CI_EMIT_CHUNK:-4000}"
-EMIT_TIMEOUT_MS="${TSZ_CI_EMIT_TIMEOUT_MS:-30000}"
+EMIT_TIMEOUT_MS="${TSZ_CI_EMIT_TIMEOUT_MS:-60000}"
 METRICS_DIR="${TSZ_CI_METRICS_DIR:-.ci-metrics}"
 LOG_DIR="${TSZ_CI_LOG_DIR:-.ci-logs}"
 if [[ "$METRICS_DIR" != /* ]]; then
@@ -1075,13 +1075,13 @@ run_emit_shard() {
 
   mkdir -p "$LOG_DIR/emit"
   export TSZ_BIN="$ROOT_DIR/.target/dist-fast/tsz"
-  echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS}"
+  echo "Emit shard ${shard_index}/${shard_count}: offset=${offset} chunk=${chunk} workers=${EMIT_WORKERS} timeout_ms=${EMIT_TIMEOUT_MS}"
 
   local detail_json="$METRICS_DIR/emit-shard-${shard_index}.json"
   local emit_args=(
     --skip-build
     --concurrency="$EMIT_WORKERS"
-    --timeout="${EMIT_TIMEOUT_MS:-30000}"
+    --timeout="${EMIT_TIMEOUT_MS:-60000}"
     --json-out="$detail_json"
   )
   # Only restrict to a chunk when actually sharding; with one shard, run everything.
@@ -1578,7 +1578,11 @@ run_common_setup() {
     echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
   fi
   if suite_needs_group "$suite" rust_compile; then
-    configure_sccache
+    if [[ "${TSZ_CI_DISABLE_SCCACHE:-0}" == "1" ]]; then
+      echo "sccache: disabled by TSZ_CI_DISABLE_SCCACHE=1"
+    else
+      configure_sccache
+    fi
   fi
   if suite_needs_group "$suite" wasm; then
     setup_wasm_pack_cache

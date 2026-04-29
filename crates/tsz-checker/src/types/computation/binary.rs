@@ -1853,7 +1853,7 @@ impl<'a> CheckerState<'a> {
                         //   see `any` rather than a misleading concrete type.
                         // - Arithmetic without error (comparable) → number
                         if !is_comparable && is_arithmetic_op {
-                            self.operator_error_result_type(left_type, right_type, TypeId::NUMBER)
+                            TypeId::ANY
                         } else if is_arithmetic_op {
                             TypeId::NUMBER
                         } else {

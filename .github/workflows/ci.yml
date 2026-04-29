@@ -127,6 +127,10 @@ jobs:
       # 25057027232, saving cargo-target-deps took ~100s after a 75s build,
       # while sccache already had 100% Rust hits.
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
+      # Keep artifact production independent from sccache service hangs. The
+      # dist-fast build is short enough without sccache, and all harness suites
+      # are blocked until this artifact uploads.
+      TSZ_CI_DISABLE_SCCACHE: "1"
     steps:
       - uses: actions/checkout@v4
         with:
